@@ -1,0 +1,46 @@
+# AutoDrama default configuration.
+# Copy this file to config/config.yaml and customize.
+project:
+  name: "AutoDrama"
+  output_dir: "./output"
+  temp_dir: "./temp"
+
+llm:
+  default_provider: openai
+  providers:
+    openai:
+      api_key: "${OPENAI_API_KEY}"
+      model: "gpt-4o"
+      max_tokens: 4096
+      temperature: 0.8
+
+media:
+  image:
+    default_provider: openai
+    providers:
+      openai:
+        api_key: "${OPENAI_API_KEY}"
+        model: "dall-e-3"
+        size: "1792x1024"
+        quality: "standard"
+  audio:
+    default_provider: edge_tts
+    providers:
+      edge_tts:
+        voice: "zh-CN-XiaoxiaoNeural"
+        rate: "+0%"
+        volume: "+0%"
+
+pipeline:
+  max_retries: 3
+  parallel_media_generation: true
+  subtitle_enabled: true
+  subtitle_font: "./fonts/NotoSansSC-Regular.ttf"
+  fps: 30
+  resolution: [1920, 1080]
+  transition_duration: 0.5
+
+logging:
+  level: "INFO"
+  file: "./logs/autodrama.log"
+  format: "structured"

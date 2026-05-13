@@ -1,0 +1,112 @@
+# =====================
+# AutoDrama Configuration
+# =====================
+
+project:
+  name: "AutoDrama"
+  output_dir: "./output"
+  temp_dir: "./temp"
+
+# =====================
+# LLM Provider Settings
+# =====================
+llm:
+  default_provider: openai
+
+  providers:
+    openai:
+      api_key: "${OPENAI_API_KEY}"
+      base_url: ""
+      model: "gpt-4o"
+      max_tokens: 4096
+      temperature: 0.8
+
+    anthropic:
+      api_key: "${ANTHROPIC_API_KEY}"
+      base_url: ""
+      model: "claude-sonnet-4-20250514"
+      max_tokens: 4096
+      temperature: 0.8
+
+    ernie:
+      api_key: "${ERNIE_API_KEY}"
+      secret_key: "${ERNIE_SECRET_KEY}"
+      model: "ernie-4.0"
+      max_tokens: 4096
+      temperature: 0.8
+
+    qwen:
+      api_key: "${QWEN_API_KEY}"
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      model: "qwen-plus"
+      max_tokens: 4096
+      temperature: 0.8
+
+    deepseek:
+      api_key: "${DEEPSEEK_API_KEY}"
+      base_url: "https://api.deepseek.com"
+      model: "deepseek-chat"
+      max_tokens: 4096
+      temperature: 0.8
+
+# =====================
+# Media Generation Settings
+# =====================
+media:
+  image:
+    default_provider: openai
+
+    providers:
+      openai:
+        api_key: "${OPENAI_API_KEY}"
+        model: "dall-e-3"
+        size: "1792x1024"
+        quality: "standard"
+
+      stability:
+        api_key: "${STABILITY_API_KEY}"
+        model: "stable-diffusion-3.5-large"
+        size: "1024x1024"
+
+  audio:
+    default_provider: edge_tts
+
+    providers:
+      edge_tts:
+        voice: "zh-CN-XiaoxiaoNeural"
+        rate: "+0%"
+        volume: "+0%"
+
+      openai_tts:
+        api_key: "${OPENAI_API_KEY}"
+        model: "tts-1"
+        voice: "alloy"
+
+# =====================
+# Pipeline Settings
+# =====================
+pipeline:
+  max_retries: 3
+  parallel_media_generation: true
+  subtitle_enabled: true
+  subtitle_font: "./fonts/NotoSansSC-Regular.ttf"
+  subtitle_position: "bottom"
+  subtitle_font_size: 48
+  subtitle_color: "white"
+
+  fps: 30
+  resolution: [1920, 1080]
+  transition_duration: 0.5
+  default_shot_duration: 3.0
+
+  background_music_volume: 0.15
+  dialogue_volume: 1.0
+  cleanup_temp: true
+
+# =====================
+# Logging Settings
+# =====================
+logging:
+  level: "INFO"
+  file: "./logs/autodrama.log"
+  format: "structured"
