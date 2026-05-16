@@ -3,13 +3,26 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || $# -lt 1 ]]; then
-  cat <<'USAGE'
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --config)
+      AUTODRAMA_CONFIG="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      cat <<'USAGE'
 Usage:
-  scripts/inspect_state.sh PROJECT_ID
+  scripts/inspect_state.sh [--config FILE]
 USAGE
-  exit $([[ $# -lt 1 ]] && echo 2 || echo 0)
-fi
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 cd "${AUTODRAMA_ROOT}"
-autodrama_cli inspect state --config "${AUTODRAMA_CONFIG}" --project "$1"
+args=(inspect state --config "${AUTODRAMA_CONFIG}")
+autodrama_cli "${args[@]}"

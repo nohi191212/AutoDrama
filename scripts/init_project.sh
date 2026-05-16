@@ -6,30 +6,24 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/init_project.sh --title TITLE --script-file FILE [--project-id ID]
+  scripts/init_project.sh [--config FILE]
 
 Environment:
   AUTODRAMA_CONFIG   Defaults to config.yaml, then config.yaml.example.
   AUTODRAMA_PYTHON   Defaults to D:/miniforge3/envs/autodrama/python.exe.
+
+Project title, project ID, and input outline file are read from config.yaml:
+
+  project.id
+  project.title
+  project.script_outline_file
 USAGE
 }
 
-title=""
-script_file=""
-project_id=""
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --title)
-      title="${2:-}"
-      shift 2
-      ;;
-    --script-file)
-      script_file="${2:-}"
-      shift 2
-      ;;
-    --project-id)
-      project_id="${2:-}"
+    --config)
+      AUTODRAMA_CONFIG="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -44,15 +38,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${title}" || -z "${script_file}" ]]; then
-  usage >&2
-  exit 2
-fi
-
-args=(init --config "${AUTODRAMA_CONFIG}" --title "${title}" --script-file "${script_file}")
-if [[ -n "${project_id}" ]]; then
-  args+=(--project-id "${project_id}")
-fi
+args=(init --config "${AUTODRAMA_CONFIG}")
 
 cd "${AUTODRAMA_ROOT}"
 autodrama_cli "${args[@]}"

@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from pathlib import Path
 
 from autodrama.config import load_settings
 from autodrama.providers.router import ProviderRouter
@@ -17,15 +16,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     init_parser = subparsers.add_parser("init", help="Create a project directory")
     init_parser.add_argument("--config", required=True)
-    init_parser.add_argument("--title", required=True)
-    init_parser.add_argument("--script-file", required=True)
+    init_parser.add_argument("--title")
+    init_parser.add_argument("--script-file")
     init_parser.add_argument("--project-id")
 
     run_parser = subparsers.add_parser("run", help="Run a workflow")
     run_subparsers = run_parser.add_subparsers(dest="workflow", required=True)
     pregen_parser = run_subparsers.add_parser("pregen", help="Run pre-generation nodes")
     pregen_parser.add_argument("--config", required=True)
-    pregen_parser.add_argument("--project", required=True)
+    pregen_parser.add_argument("--project")
     pregen_parser.add_argument("--until", choices=PREGEN_NODES, default="role_voice_design")
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     pregen_parser.add_argument("--force", action="store_true")
@@ -34,10 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_subparsers = inspect_parser.add_subparsers(dest="target", required=True)
     state_parser = inspect_subparsers.add_parser("state", help="Print state summary")
     state_parser.add_argument("--config", required=True)
-    state_parser.add_argument("--project", required=True)
+    state_parser.add_argument("--project")
     nodes_parser = inspect_subparsers.add_parser("nodes", help="List node JSON outputs")
     nodes_parser.add_argument("--config", required=True)
-    nodes_parser.add_argument("--project", required=True)
+    nodes_parser.add_argument("--project")
 
     return parser
 
@@ -45,8 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_init(args: argparse.Namespace) -> int:
     settings = load_settings(args.config)
     repo = ProjectRepository(settings)
-    raw_script = Path(args.script_file).read_text(encoding="utf-8")
-    project_dir = repo.create_project(title=args.title, raw_script=raw_script, project_id=args.project_id)
+    project_dir = repo.create_project_from_config(
+        title=args.title,
+        script_file=args.script_file,
+        project_id=args.project_id,
+    )
     state = repo.load_state(project_dir)
     print(json.dumps({"project_id": state.project_id, "project_dir": str(project_dir)}, ensure_ascii=False, indent=2))
     return 0
@@ -55,7 +57,14 @@ def cmd_init(args: argparse.Namespace) -> int:
 async def cmd_run_pregen(args: argparse.Namespace) -> int:
     settings = load_settings(args.config)
     repo = ProjectRepository(settings)
-    project_dir = repo.resolve_project_dir(args.project)
+    try:
+        project_dir = repo.resolve_active_project_dir(args.project)
+    except ValueError:
+        project_dir = repo.create_project_from_config(project_id=args.project)
+
+    if not (project_dir / "state.json").exists():
+        project_dir = repo.create_project_from_config(project_id=args.project)
+
     provider_override = "fake" if args.provider == "fake" else None
     router = ProviderRouter(settings, provider_override=provider_override)
     workflow = PregenWorkflow(repo=repo, router=router)
@@ -79,7 +88,7 @@ async def cmd_run_pregen(args: argparse.Namespace) -> int:
 def cmd_inspect_state(args: argparse.Namespace) -> int:
     settings = load_settings(args.config)
     repo = ProjectRepository(settings)
-    project_dir = repo.resolve_project_dir(args.project)
+    project_dir = repo.resolve_active_project_dir(args.project)
     state = repo.load_state(project_dir)
     print(
         json.dumps(
@@ -106,10 +115,11 @@ def cmd_inspect_state(args: argparse.Namespace) -> int:
 def cmd_inspect_nodes(args: argparse.Namespace) -> int:
     settings = load_settings(args.config)
     repo = ProjectRepository(settings)
-    project_dir = repo.resolve_project_dir(args.project)
+    project_dir = repo.resolve_active_project_dir(args.project)
     node_dir = project_dir / "assets" / "json" / "nodes"
     outputs = sorted(str(path.relative_to(project_dir)) for path in node_dir.glob("*.json"))
-    print(json.dumps({"project_id": args.project, "node_outputs": outputs}, ensure_ascii=False, indent=2))
+    state = repo.load_state(project_dir)
+    print(json.dumps({"project_id": state.project_id, "node_outputs": outputs}, ensure_ascii=False, indent=2))
     return 0
 
 

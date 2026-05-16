@@ -3,6 +3,12 @@ app:
   default_quality_preset: cheap
   enable_human_review: false
 
+project:
+  # Stable ID is recommended because resume relies on it.
+  id: review_demo
+  title: 测试短片
+  script_outline_file: ./inputs/story_outline.md
+
 output:
   # All generated assets are saved under this directory.
   # Relative paths are resolved from the working directory.

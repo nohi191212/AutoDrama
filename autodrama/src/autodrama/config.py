@@ -14,6 +14,12 @@ class AppSettings(BaseModel):
     enable_human_review: bool = False
 
 
+class ProjectSettings(BaseModel):
+    id: str | None = None
+    title: str | None = None
+    script_outline_file: Path | None = None
+
+
 class OutputSettings(BaseModel):
     root_dir: Path = Path("./outputs")
     project_dir_template: str = "{date}_{slug}"
@@ -64,6 +70,7 @@ class ProviderSettings(BaseModel):
 
 class Settings(BaseModel):
     app: AppSettings = Field(default_factory=AppSettings)
+    project: ProjectSettings = Field(default_factory=ProjectSettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
@@ -73,6 +80,9 @@ class Settings(BaseModel):
 
     def project_dir(self, project_id: str) -> Path:
         return self.output.root_dir / project_id
+
+    def configured_project_id(self) -> str | None:
+        return self.project.id
 
     def provider_for(self, capability: str, purpose: str) -> str:
         try:
@@ -94,5 +104,8 @@ def load_settings(config_path: str | Path) -> Settings:
         settings.output.root_dir = (path.parent / settings.output.root_dir).resolve()
     else:
         settings.output.root_dir = settings.output.root_dir.resolve()
+
+    if settings.project.script_outline_file and not settings.project.script_outline_file.is_absolute():
+        settings.project.script_outline_file = (path.parent / settings.project.script_outline_file).resolve()
 
     return settings

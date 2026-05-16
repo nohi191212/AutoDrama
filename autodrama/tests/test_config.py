@@ -9,6 +9,10 @@ def test_load_settings_resolves_output_root(tmp_path: Path) -> None:
         """
 output:
   root_dir: ./outputs
+project:
+  id: demo
+  title: Demo
+  script_outline_file: ./story.md
 routing:
   text:
     script: fake
@@ -21,4 +25,5 @@ providers: {}
     settings = load_settings(config)
 
     assert settings.output.root_dir == tmp_path / "outputs"
+    assert settings.project.script_outline_file == tmp_path / "story.md"
     assert settings.provider_for("text", "script") == "fake"
