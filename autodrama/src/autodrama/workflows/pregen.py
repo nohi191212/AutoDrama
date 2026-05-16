@@ -5,6 +5,7 @@ from typing import Awaitable, Callable
 
 from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import ProjectState, Role, RoleAudio
+from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.services.role_service import RoleService
@@ -47,18 +48,46 @@ class PregenWorkflow:
         if until not in PREGEN_NODES:
             raise ValueError(f"Unsupported pregen stop node: {until}")
 
+        logger = setup_logging(project_dir)
         state = self.repo.load_state(project_dir)
         stop_index = PREGEN_NODES.index(until)
-        for node_name in PREGEN_NODES[: stop_index + 1]:
+        target_nodes = PREGEN_NODES[: stop_index + 1]
+        logger.info(
+            "workflow=pregen project_id=%s until=%s force=%s completed=%s",
+            state.project_id,
+            until,
+            force,
+            ",".join(state.completed_nodes) or "-",
+        )
+        for index, node_name in enumerate(target_nodes, start=1):
             if not force and node_name in state.completed_nodes:
+                logger.info("node %d/%d %s skipped", index, len(target_nodes), node_name)
                 continue
-            state = await getattr(self, f"_run_{node_name}")(project_dir, state)
-            state.mark_completed(node_name)
-            self.repo.save_state(project_dir, state)
+            logger.info("node %d/%d %s started", index, len(target_nodes), node_name)
+            try:
+                state = await getattr(self, f"_run_{node_name}")(project_dir, state)
+                state.mark_completed(node_name)
+                self.repo.save_state(project_dir, state)
+            except Exception:
+                logger.exception("node %d/%d %s failed", index, len(target_nodes), node_name)
+                raise
+            logger.info(
+                "node %d/%d %s completed current_node=%s",
+                index,
+                len(target_nodes),
+                node_name,
+                state.current_node,
+            )
+        logger.info("workflow=pregen completed project_id=%s current_node=%s", state.project_id, state.current_node)
         return state
 
     async def _run_script_outline(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("script")
+        get_logger().info(
+            "node=script_outline provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
         output = await self.script_service.script_outline(state, provider)
         state.script.outline = output.outline
         state.budget.used_text_calls += 1
@@ -67,6 +96,11 @@ class PregenWorkflow:
 
     async def _run_script_detail(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("script")
+        get_logger().info(
+            "node=script_detail provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
         output = await self.script_service.script_detail(state, provider)
         state.script.detailed_script = output.detailed_script
         state.budget.used_text_calls += 1
@@ -75,6 +109,11 @@ class PregenWorkflow:
 
     async def _run_script_polish(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("script")
+        get_logger().info(
+            "node=script_polish provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
         output = await self.script_service.script_polish(state, provider)
         state.script.final_script = output.final_script
         state.script.revision_notes = output.revision_notes
@@ -84,6 +123,11 @@ class PregenWorkflow:
 
     async def _run_role_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("role")
+        get_logger().info(
+            "node=role_design provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
         output = await self.role_service.role_design(state, provider)
         roles: dict[str, Role] = {}
         for item in output.roles:
@@ -102,6 +146,11 @@ class PregenWorkflow:
 
     async def _run_role_voice_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("role")
+        get_logger().info(
+            "node=role_voice_design provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
         output = await self.role_service.role_voice_design(state, provider)
         roles_by_name = {role.name: role for role in state.roles.values()}
 

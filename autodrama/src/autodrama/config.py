@@ -39,6 +39,7 @@ class OutputSettings(BaseModel):
 
 
 class RuntimeSettings(BaseModel):
+    python: dict[str, str] = Field(default_factory=dict)
     max_text_retry: int = 3
     max_media_retry: int = 2
     request_timeout_seconds: int = 120

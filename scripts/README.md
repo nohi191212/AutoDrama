@@ -5,8 +5,15 @@ These Bash scripts wrap common AutoDrama commands.
 Default Python:
 
 ```bash
-D:/miniforge3/envs/autodrama/python.exe
+runtime.python.<platform> in config.yaml
 ```
+
+Supported platform keys:
+
+- `windows`
+- `macos`
+- `linux`
+- `default`
 
 Override when needed:
 
@@ -58,10 +65,25 @@ bash run/start.sh --config config.yaml
 create the project if missing, or resume from `state.json` when it already
 exists.
 
+Native Windows start with the configured Windows Python:
+
+```bat
+run\start.cmd --config config.yaml
+```
+
+Use this when you want to run with `D:/miniforge3/envs/autodrama/python.exe`.
+Do not use WSL for that mode; WSL is treated as Linux by `env.sh`.
+
 One-command fake run for review:
 
 ```bash
 bash run/start.sh --config config.yaml --fake --force
+```
+
+Native Windows fake run:
+
+```bat
+run\start.cmd --config config.yaml --fake --force
 ```
 
 Inspect state:

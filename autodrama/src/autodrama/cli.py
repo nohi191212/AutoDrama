@@ -5,6 +5,7 @@ import asyncio
 import json
 
 from autodrama.config import load_settings
+from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow
@@ -49,7 +50,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         script_file=args.script_file,
         project_id=args.project_id,
     )
+    logger = setup_logging(project_dir)
     state = repo.load_state(project_dir)
+    logger.info("project initialized project_id=%s project_dir=%s", state.project_id, project_dir)
     print(json.dumps({"project_id": state.project_id, "project_dir": str(project_dir)}, ensure_ascii=False, indent=2))
     return 0
 
@@ -69,6 +72,13 @@ async def cmd_run_pregen(args: argparse.Namespace) -> int:
     router = ProviderRouter(settings, provider_override=provider_override)
     workflow = PregenWorkflow(repo=repo, router=router)
     state = await workflow.run(project_dir, until=args.until, force=args.force)
+    get_logger().info(
+        "run summary project_id=%s current_node=%s role_count=%d project_dir=%s",
+        state.project_id,
+        state.current_node,
+        len(state.roles),
+        project_dir,
+    )
     print(
         json.dumps(
             {

@@ -25,6 +25,13 @@ output:
     json: assets/json
 
 runtime:
+  python:
+    # The key is selected by scripts/env.sh after platform detection.
+    # Supported keys: windows, macos, linux, default.
+    windows: D:/miniforge3/envs/autodrama/python.exe
+    linux: python3
+    macos: python3
+    default: python3
   max_text_retry: 3
   max_media_retry: 2
   request_timeout_seconds: 120

@@ -8,6 +8,12 @@ config="${AUTODRAMA_CONFIG:-config.yaml}"
 until="role_voice_design"
 force=""
 provider_script="scripts/run_pregen.sh"
+blue=$'\033[34m'
+reset=$'\033[0m'
+
+log() {
+  printf '%b[autodrama]%b %s\n' "${blue}" "${reset}" "$*"
+}
 
 usage() {
   cat <<'USAGE'
@@ -54,8 +60,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "[autodrama] config: ${config}"
-echo "[autodrama] running pregen until ${until}"
+log "config: ${config}"
+log "running pregen until ${until}"
 args=(--config "${config}" --until "${until}")
 if [[ -n "${force}" ]]; then
   args+=("${force}")
