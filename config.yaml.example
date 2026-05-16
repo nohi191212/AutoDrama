@@ -38,11 +38,22 @@ budget:
   max_text_calls: 200
 
 providers:
+  qwen:
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key_env: DASHSCOPE_API_KEY
+    models:
+      text: qwen-plus
+    options:
+      response_format: true
+
   deepseek:
     base_url: https://api.deepseek.com
     api_key_env: DEEPSEEK_API_KEY
     models:
-      text: deepseek-chat
+      text: deepseek-v4-pro
+    options:
+      reasoning_effort: high
+      thinking_enabled: true
 
   bailian:
     base_url: https://dashscope.aliyuncs.com
@@ -51,6 +62,19 @@ providers:
       text: qwen-max
       vision: qwen-vl-max
       omni: qwen-omni-turbo
+
+  wanxiang:
+    base_url: https://dashscope.aliyuncs.com/api/v1
+    api_key_env: DASHSCOPE_API_KEY
+    models:
+      text_to_video: wan2.7-t2v-2026-04-25
+    options:
+      resolution: 720P
+      ratio: "16:9"
+      prompt_extend: true
+      watermark: false
+      poll_interval_seconds: 15
+      max_polls: 80
 
   minimax:
     base_url: https://api.minimax.chat
@@ -71,7 +95,7 @@ providers:
 
 routing:
   text:
-    script: deepseek
+    script: qwen
     role: deepseek
     prop: deepseek
     layout: deepseek
@@ -84,7 +108,7 @@ routing:
     layout: volcengine
     ref_frame: volcengine
   video:
-    shot: volcengine
+    shot: wanxiang
     upscale: volcengine
   audio:
     speech: minimax

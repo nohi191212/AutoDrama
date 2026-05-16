@@ -11,6 +11,7 @@ from autodrama.core.schemas import (
     ScriptOutlineOutput,
     ScriptPolishOutput,
 )
+from autodrama.providers.base import AssetRef, VideoGenerationResult
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -115,3 +116,55 @@ class FakeTextProvider:
             raise ValueError(f"Fake provider has no fixture for schema {schema.__name__}")
 
         return schema.model_validate(data)
+
+
+class FakeVideoProvider:
+    name = "fake"
+
+    async def submit_video(
+        self,
+        prompt: str,
+        refs: list[AssetRef] | None = None,
+        *,
+        duration: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> VideoGenerationResult:
+        del prompt, refs, metadata
+        return VideoGenerationResult(
+            provider=self.name,
+            model="fake-video",
+            task_id="fake_video_task",
+            task_status="PENDING",
+            usage={"duration": duration or 5},
+            raw_response={"output": {"task_id": "fake_video_task", "task_status": "PENDING"}},
+        )
+
+    async def query_video_task(self, task_id: str) -> VideoGenerationResult:
+        return VideoGenerationResult(
+            provider=self.name,
+            model="fake-video",
+            task_id=task_id,
+            task_status="SUCCEEDED",
+            video_url="https://example.invalid/fake.mp4",
+            raw_response={
+                "output": {
+                    "task_id": task_id,
+                    "task_status": "SUCCEEDED",
+                    "video_url": "https://example.invalid/fake.mp4",
+                }
+            },
+        )
+
+    async def generate_video(
+        self,
+        prompt: str,
+        refs: list[AssetRef] | None = None,
+        *,
+        duration: float | None = None,
+        wait: bool = False,
+        metadata: dict[str, Any] | None = None,
+    ) -> VideoGenerationResult:
+        result = await self.submit_video(prompt, refs, duration=duration, metadata=metadata)
+        if wait:
+            return await self.query_video_task(result.task_id or "fake_video_task")
+        return result

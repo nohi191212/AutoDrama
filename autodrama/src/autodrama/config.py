@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 from typing import Literal
 
 import yaml
@@ -60,6 +61,7 @@ class ProviderSettings(BaseModel):
     secret_key_env: str | None = None
     region: str | None = None
     models: dict[str, str] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(default_factory=dict)
 
     def secret(self, field_name: str) -> str | None:
         env_name = getattr(self, field_name, None)
