@@ -25,6 +25,8 @@ routing:
   text:
     script: fake
     role: fake
+  audio:
+    speech: fake
 providers: {}
 """,
         encoding="utf-8",
@@ -47,6 +49,7 @@ def test_pregen_stops_at_role_voice_design(tmp_path: Path) -> None:
         "script_polish",
         "role_design",
         "role_voice_design",
+        "role_voice_generation",
     ]
     assert state.script.final_script
     assert state.metadata["episode_count"] == 3
@@ -56,5 +59,8 @@ def test_pregen_stops_at_role_voice_design(tmp_path: Path) -> None:
     assert set(state.script.final_script) == {"episode_001", "episode_002", "episode_003"}
     assert "role_林舟".lower() in {key.lower() for key in state.roles}
     assert any(role.audio for role in state.roles.values())
+    assert all(audio.asset_id for role in state.roles.values() for audio in role.audio.values())
+    assert all(audio.asset_path for role in state.roles.values() for audio in role.audio.values())
     assert (project_dir / "assets" / "json" / "nodes" / "role_voice_design.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "role_voice_generation.json").exists()
     assert (settings.output.root_dir / "current_project.json").exists()

@@ -9,15 +9,15 @@ Usage:
   scripts/run_pregen_fake.sh [--config FILE] [--until NODE] [--force]
 
 Default NODE:
-  role_voice_design
+  role_voice_generation
 
-This runs the current MVP only with fake provider and stops at role_voice_design.
+This runs the current MVP only with fake provider and stops at role_voice_generation.
 Project ID and input outline file are read from config.yaml. If project.id is
 omitted, outputs/current_project.json is used.
 USAGE
 }
 
-until="role_voice_design"
+until="role_voice_generation"
 force=""
 
 while [[ $# -gt 0 ]]; do

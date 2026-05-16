@@ -2,6 +2,7 @@ from pathlib import Path
 
 from autodrama.config import load_settings
 from autodrama.providers.qwen import QwenTextProvider
+from autodrama.providers.qwen_tts import QwenVoiceDesignProvider
 from autodrama.providers.router import ProviderRouter
 from autodrama.providers.wanxiang import WanxiangVideoProvider
 
@@ -22,6 +23,12 @@ providers:
     api_key_env: DASHSCOPE_API_KEY
     models:
       text: qwen-plus
+  qwen_tts:
+    base_url: https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization
+    api_key_env: DASHSCOPE_API_KEY
+    models:
+      voice_design: qwen-voice-design
+      target_model: qwen3-tts-vd-realtime-2026-01-15
   wanxiang:
     base_url: https://dashscope.aliyuncs.com/api/v1
     api_key_env: DASHSCOPE_API_KEY
@@ -32,6 +39,8 @@ routing:
     script: qwen
   video:
     shot: wanxiang
+  audio:
+    speech: qwen_tts
 """,
         encoding="utf-8",
     )
@@ -41,3 +50,4 @@ routing:
 
     assert isinstance(router.text("script"), QwenTextProvider)
     assert isinstance(router.video("shot"), WanxiangVideoProvider)
+    assert isinstance(router.audio("speech"), QwenVoiceDesignProvider)

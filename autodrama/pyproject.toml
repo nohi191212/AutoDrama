@@ -1,7 +1,7 @@
 [project]
 name = "autodrama"
 version = "0.1.0"
-description = "AutoDrama MVP pipeline up to role voice design."
+description = "AutoDrama MVP pipeline up to role voice generation."
 requires-python = ">=3.11"
 dependencies = [
   "pydantic>=2",

@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     pregen_parser = run_subparsers.add_parser("pregen", help="Run pre-generation nodes")
     pregen_parser.add_argument("--config", required=True)
     pregen_parser.add_argument("--project")
-    pregen_parser.add_argument("--until", choices=PREGEN_NODES, default="role_voice_design")
+    pregen_parser.add_argument("--until", choices=PREGEN_NODES, default=PREGEN_NODES[-1])
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     pregen_parser.add_argument("--force", action="store_true")
 
@@ -111,6 +111,13 @@ def cmd_inspect_state(args: argparse.Namespace) -> int:
                     role_id: {
                         "name": role.name,
                         "audio_emotions": list(role.audio.keys()),
+                        "audio_assets": {
+                            emotion: {
+                                "voice": audio.asset_id,
+                                "path": audio.asset_path,
+                            }
+                            for emotion, audio in role.audio.items()
+                        },
                     }
                     for role_id, role in state.roles.items()
                 },

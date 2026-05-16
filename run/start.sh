@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 config="${AUTODRAMA_CONFIG:-config.yaml}"
-until="role_voice_design"
+until="role_voice_generation"
 force=""
 provider_script="scripts/run_pregen.sh"
 blue=$'\033[34m'
@@ -24,7 +24,7 @@ This is the config-driven one-command entry point:
 
   - If the configured project does not exist, create it from config.yaml.
   - If state.json already exists, resume/continue from that state.
-  - Run the current MVP to role_voice_design.
+  - Run the current MVP to role_voice_generation.
 
 Project ID, title, and script outline file must be configured in config.yaml.
 USAGE

@@ -9,8 +9,9 @@ Implemented scope:
 3. `script_polish`
 4. `role_design`
 5. `role_voice_design`
+6. `role_voice_generation`
 
-The pipeline stops after role voice design. It does not generate voice audio, images, video, BGM, reference frames, or edits.
+The pipeline stops after role voice generation. It does not generate images, video, BGM, reference frames, or edits.
 
 ## Local commands
 

@@ -22,6 +22,7 @@ class RoleAudio(BaseModel):
     desc: str
     sample_text: str | None = None
     asset_id: str | None = None
+    asset_path: str | None = None
 
 
 class Role(BaseModel):
@@ -104,8 +105,38 @@ class RoleVoiceItem(BaseModel):
     role_name: str
     emotion: Literal["normal", "angry", "sad", "happy", "tense", "whisper", "other"] | str
     desc: str
-    sample_text: str | None = None
+    sample_text: str | None = Field(
+        default=None,
+        description=(
+            "Voice-design reference text in first person. It should be 2-4 sentences in the format "
+            "'identity self-introduction + early inner monologue', reflect the role identity/personality/tone, "
+            "and avoid late key plot, final twists, key evidence, endings, or outcome spoilers."
+        ),
+    )
 
 
 class RoleVoiceDesignOutput(BaseModel):
     role_voices: list[RoleVoiceItem]
+
+
+class RoleVoiceGenerationItem(BaseModel):
+    role_id: str
+    role_name: str
+    emotion: str
+    audio_id: str
+    voice: str
+    voice_prompt: str
+    preview_text: str
+    preview_audio_path: str | None = None
+    provider: str
+    model: str
+    target_model: str | None = None
+    sample_rate: int | None = None
+    response_format: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class RoleVoiceGenerationOutput(BaseModel):
+    generated_voices: list[RoleVoiceGenerationItem]

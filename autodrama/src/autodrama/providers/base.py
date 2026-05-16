@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -26,7 +26,34 @@ class AssetRef(BaseModel):
     type: Literal["image", "video", "audio", "file", "url"] = "url"
     path: str | None = None
     url: str | None = None
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class VoiceDesignResult(BaseModel):
+    provider: str
+    model: str
+    voice: str
+    target_model: str | None = None
+    preview_audio_data: str | None = None
+    preview_audio_sample_rate: int | None = None
+    preview_audio_format: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class VoiceDesigner(Protocol):
+    name: str
+
+    async def create_voice(
+        self,
+        *,
+        voice_prompt: str,
+        preview_text: str,
+        preferred_name: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceDesignResult:
+        """Create a reusable TTS voice and return its preview audio."""
 
 
 class VideoGenerationResult(BaseModel):
@@ -35,8 +62,8 @@ class VideoGenerationResult(BaseModel):
     task_id: str | None = None
     task_status: str | None = None
     video_url: str | None = None
-    usage: dict[str, Any] = {}
-    raw_response: dict[str, Any] = {}
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
 class VideoGenerator(Protocol):

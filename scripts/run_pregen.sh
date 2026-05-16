@@ -9,16 +9,16 @@ Usage:
   scripts/run_pregen.sh [--config FILE] [--until NODE] [--force]
 
 Default NODE:
-  role_voice_design
+  role_voice_generation
 
 This uses provider routing from config.yaml. For current config.yaml.example,
-script/role text routing points to DeepSeek.
+script/role text routing points to DeepSeek and audio.speech points to Qwen TTS.
 Project ID and input outline file are read from config.yaml. If project.id is
 omitted, outputs/current_project.json is used.
 USAGE
 }
 
-until="role_voice_design"
+until="role_voice_generation"
 force=""
 
 while [[ $# -gt 0 ]]; do

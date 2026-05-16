@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import re
 from typing import Any, TypeVar
 
@@ -12,7 +13,7 @@ from autodrama.core.schemas import (
     ScriptOutlineOutput,
     ScriptPolishOutput,
 )
-from autodrama.providers.base import AssetRef, VideoGenerationResult
+from autodrama.providers.base import AssetRef, VideoGenerationResult, VoiceDesignResult
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -115,31 +116,31 @@ class FakeTextProvider:
                         "role_name": "林舟",
                         "emotion": "normal",
                         "desc": "二十八岁青年男声，低沉克制，略带疲惫感，语速中等，咬字清晰。",
-                        "sample_text": "这份合同，不是我昨天交上去的那一份。",
+                        "sample_text": "我是林舟，一个总在办公室熬到深夜的普通职员。我不擅长争辩，只习惯把每个细节记在心里。最近的风向不太对，但我相信只要冷静下来，总能找到问题的源头。",
                     },
                     {
                         "role_name": "林舟",
                         "emotion": "tense",
                         "desc": "同一青年男声，压低音量，呼吸略紧，语尾收住，表现强忍怒意。",
-                        "sample_text": "你们看这里的时间线。",
+                        "sample_text": "我是林舟，一个被压力推到角落的职员。我知道现在每句话都可能被误解，所以只能把情绪压住。越是混乱的时候，我越要盯紧那些不该被忽略的细节。",
                     },
                     {
                         "role_name": "苏晚",
                         "emotion": "normal",
                         "desc": "二十六岁女性声音，清冷理性，音色干净，语速稳定。",
-                        "sample_text": "别急，我把原始邮件找出来了。",
+                        "sample_text": "我是苏晚，负责数据分析，也习惯用证据说话。很多人只看结果，我更在意过程里那些微小的偏差。只要线索还在，我就不会轻易下结论。",
                     },
                     {
                         "role_name": "赵启",
                         "emotion": "normal",
                         "desc": "三十五岁男性声音，成熟强势，语气带压迫感，习惯短暂停顿后下判断。",
-                        "sample_text": "这件事，公司必须有一个交代。",
+                        "sample_text": "我是赵启，这个部门的负责人。会议室里的节奏必须由我来掌控，任何失误都要有人承担。一个团队想往上走，就不能让犹豫和软弱拖慢脚步。",
                     },
                     {
                         "role_name": "赵启",
                         "emotion": "tense",
                         "desc": "同一成熟男声，音量变虚，语速变快，带掩饰慌张的强硬。",
-                        "sample_text": "这不可能，你从哪里拿到的？",
+                        "sample_text": "我是赵启，我必须让所有事情看起来仍在掌控之中。越有人追问，我越不能露出破绽。只要会议还没结束，局面就还有被我拉回来的机会。",
                     },
                 ]
             }
@@ -199,3 +200,47 @@ class FakeVideoProvider:
         if wait:
             return await self.query_video_task(result.task_id or "fake_video_task")
         return result
+
+
+class FakeVoiceDesignProvider:
+    name = "fake"
+    model = "fake-voice-design"
+    target_model = "fake-tts"
+
+    async def create_voice(
+        self,
+        *,
+        voice_prompt: str,
+        preview_text: str,
+        preferred_name: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceDesignResult:
+        metadata = metadata or {}
+        audio_bytes = f"fake audio preview: {preview_text}".encode("utf-8")
+        response_format = str(metadata.get("response_format", "wav"))
+        sample_rate = int(metadata.get("sample_rate", 24000))
+        voice = f"fake_{preferred_name}"
+        return VoiceDesignResult(
+            provider=self.name,
+            model=self.model,
+            voice=voice,
+            target_model=self.target_model,
+            preview_audio_data=base64.b64encode(audio_bytes).decode("ascii"),
+            preview_audio_sample_rate=sample_rate,
+            preview_audio_format=response_format,
+            request_id=f"fake-request-{preferred_name}",
+            usage={"count": 1},
+            raw_response={
+                "output": {
+                    "voice": voice,
+                    "target_model": self.target_model,
+                    "preview_audio": {
+                        "data": "<base64 preview audio omitted>",
+                        "sample_rate": sample_rate,
+                        "response_format": response_format,
+                    },
+                },
+                "usage": {"count": 1},
+                "request_id": f"fake-request-{preferred_name}",
+            },
+        )

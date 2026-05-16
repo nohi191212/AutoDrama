@@ -11,3 +11,8 @@ config.yaml
 outputs/
 .tmp/
 intpus/
+
+run/cmd.txt
+qwen_tts_sample.py
+cosyvoice3_clone.md
+

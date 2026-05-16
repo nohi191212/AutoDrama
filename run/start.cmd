@@ -6,7 +6,7 @@ pushd "%ROOT_DIR%" >nul
 
 set "CONFIG=config.yaml"
 set "PROVIDER_ARGS="
-set "UNTIL=role_voice_design"
+set "UNTIL=role_voice_generation"
 set "FORCE="
 
 :parse
