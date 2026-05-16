@@ -61,6 +61,8 @@ def test_pregen_stops_at_role_voice_design(tmp_path: Path) -> None:
     assert any(role.audio for role in state.roles.values())
     assert all(audio.asset_id for role in state.roles.values() for audio in role.audio.values())
     assert all(audio.asset_path for role in state.roles.values() for audio in role.audio.values())
+    assert state.roles["role_林舟"].audio["normal"].asset_id.startswith("fake_ad_")
+    assert state.roles["role_林舟"].audio["tense"].asset_id.startswith("fake_clone_ad_")
     assert (project_dir / "assets" / "json" / "nodes" / "role_voice_design.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "role_voice_generation.json").exists()
     assert (settings.output.root_dir / "current_project.json").exists()

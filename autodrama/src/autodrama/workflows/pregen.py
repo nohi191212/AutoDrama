@@ -240,6 +240,142 @@ class PregenWorkflow:
         output_path.write_bytes(base64.b64decode(data))
         return str(output_path.relative_to(project_dir)).replace("\\", "/")
 
+    def _absolute_project_path(self, project_dir: Path, relative_path: str) -> str:
+        return str(project_dir / relative_path)
+
+    async def _generate_designed_voice(
+        self,
+        *,
+        provider,
+        project_dir: Path,
+        state: ProjectState,
+        role: Role,
+        audio: RoleAudio,
+    ) -> RoleVoiceGenerationItem:
+        preview_text = self._preview_text(role, audio)
+        result = await provider.create_voice(
+            voice_prompt=audio.desc,
+            preview_text=preview_text,
+            preferred_name=self._voice_preferred_name(state, audio),
+            metadata={
+                "node_name": "role_voice_generation",
+                "project_id": state.project_id,
+                "role_id": role.id,
+                "role_name": role.name,
+                "audio_id": audio.id,
+                "emotion": audio.emotion,
+                "generation_method": "design",
+            },
+        )
+        preview_audio_path = self._write_preview_audio(
+            project_dir,
+            audio=audio,
+            data=result.preview_audio_data,
+            response_format=result.preview_audio_format,
+        )
+        audio.asset_id = result.voice
+        audio.asset_path = preview_audio_path
+        return RoleVoiceGenerationItem(
+            role_id=role.id,
+            role_name=role.name,
+            emotion=audio.emotion,
+            audio_id=audio.id,
+            generation_method="design",
+            voice=result.voice,
+            voice_prompt=audio.desc,
+            preview_text=preview_text,
+            preview_audio_path=preview_audio_path,
+            provider=result.provider,
+            model=result.model,
+            target_model=result.target_model,
+            sample_rate=result.preview_audio_sample_rate,
+            response_format=result.preview_audio_format,
+            request_id=result.request_id,
+            usage=result.usage,
+            raw_response=result.raw_response,
+        )
+
+    async def _generate_cloned_voice(
+        self,
+        *,
+        provider,
+        project_dir: Path,
+        state: ProjectState,
+        role: Role,
+        audio: RoleAudio,
+        normal_audio: RoleAudio,
+    ) -> RoleVoiceGenerationItem:
+        if not normal_audio.asset_path:
+            raise ValueError(f"Cannot clone {role.name}/{audio.emotion}: normal voice preview audio is missing")
+
+        preview_text = self._preview_text(role, audio)
+        clone_result = await provider.clone_voice_from_audio(
+            source_audio_path=self._absolute_project_path(project_dir, normal_audio.asset_path),
+            preferred_name=self._voice_preferred_name(state, audio),
+            metadata={
+                "node_name": "role_voice_generation",
+                "project_id": state.project_id,
+                "role_id": role.id,
+                "role_name": role.name,
+                "audio_id": audio.id,
+                "emotion": audio.emotion,
+                "generation_method": "clone",
+                "source_audio_id": normal_audio.id,
+                "source_audio_path": normal_audio.asset_path,
+            },
+        )
+        synthesis_result = await provider.synthesize_speech(
+            voice=clone_result.voice,
+            text=preview_text,
+            metadata={
+                "node_name": "role_voice_generation",
+                "project_id": state.project_id,
+                "role_id": role.id,
+                "role_name": role.name,
+                "audio_id": audio.id,
+                "emotion": audio.emotion,
+                "generation_method": "clone",
+                "source_audio_id": normal_audio.id,
+                "source_audio_path": normal_audio.asset_path,
+                "target_model": clone_result.target_model,
+            },
+        )
+        preview_audio_path = self._write_preview_audio(
+            project_dir,
+            audio=audio,
+            data=synthesis_result.audio_data,
+            response_format=synthesis_result.audio_format,
+        )
+        audio.asset_id = clone_result.voice
+        audio.asset_path = preview_audio_path
+        return RoleVoiceGenerationItem(
+            role_id=role.id,
+            role_name=role.name,
+            emotion=audio.emotion,
+            audio_id=audio.id,
+            generation_method="clone",
+            voice=clone_result.voice,
+            source_audio_id=normal_audio.id,
+            source_audio_path=normal_audio.asset_path,
+            voice_prompt=audio.desc,
+            preview_text=preview_text,
+            preview_audio_path=preview_audio_path,
+            provider=clone_result.provider,
+            model=clone_result.model,
+            target_model=clone_result.target_model,
+            sample_rate=synthesis_result.audio_sample_rate,
+            response_format=synthesis_result.audio_format,
+            request_id=clone_result.request_id,
+            usage={
+                "clone": clone_result.usage,
+                "synthesis": synthesis_result.usage,
+            },
+            raw_response={
+                "clone": clone_result.raw_response,
+                "synthesis": synthesis_result.raw_response,
+            },
+        )
+
     async def _run_role_voice_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.audio("speech")
         get_logger().info(
@@ -250,48 +386,31 @@ class PregenWorkflow:
 
         generated: list[RoleVoiceGenerationItem] = []
         for role in state.roles.values():
-            for audio in role.audio.values():
-                preview_text = self._preview_text(role, audio)
-                result = await provider.create_voice(
-                    voice_prompt=audio.desc,
-                    preview_text=preview_text,
-                    preferred_name=self._voice_preferred_name(state, audio),
-                    metadata={
-                        "node_name": "role_voice_generation",
-                        "project_id": state.project_id,
-                        "role_id": role.id,
-                        "role_name": role.name,
-                        "audio_id": audio.id,
-                        "emotion": audio.emotion,
-                    },
-                )
-                preview_audio_path = self._write_preview_audio(
-                    project_dir,
-                    audio=audio,
-                    data=result.preview_audio_data,
-                    response_format=result.preview_audio_format,
-                )
+            normal_audio = role.audio.get("normal")
+            if normal_audio is None:
+                raise ValueError(f"Cannot generate role voice for {role.name}: missing normal voice design")
 
-                audio.asset_id = result.voice
-                audio.asset_path = preview_audio_path
+            generated.append(
+                await self._generate_designed_voice(
+                    provider=provider,
+                    project_dir=project_dir,
+                    state=state,
+                    role=role,
+                    audio=normal_audio,
+                )
+            )
+
+            for emotion, audio in role.audio.items():
+                if emotion == "normal":
+                    continue
                 generated.append(
-                    RoleVoiceGenerationItem(
-                        role_id=role.id,
-                        role_name=role.name,
-                        emotion=audio.emotion,
-                        audio_id=audio.id,
-                        voice=result.voice,
-                        voice_prompt=audio.desc,
-                        preview_text=preview_text,
-                        preview_audio_path=preview_audio_path,
-                        provider=result.provider,
-                        model=result.model,
-                        target_model=result.target_model,
-                        sample_rate=result.preview_audio_sample_rate,
-                        response_format=result.preview_audio_format,
-                        request_id=result.request_id,
-                        usage=result.usage,
-                        raw_response=result.raw_response,
+                    await self._generate_cloned_voice(
+                        provider=provider,
+                        project_dir=project_dir,
+                        state=state,
+                        role=role,
+                        audio=audio,
+                        normal_audio=normal_audio,
                     )
                 )
 

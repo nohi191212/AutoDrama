@@ -28,7 +28,9 @@ providers:
     api_key_env: DASHSCOPE_API_KEY
     models:
       voice_design: qwen-voice-design
-      target_model: qwen3-tts-vd-realtime-2026-01-15
+      voice_clone: qwen-voice-enrollment
+      target_model: qwen3-tts-vc-2026-01-22
+      clone_target_model: qwen3-tts-vc-2026-01-22
   wanxiang:
     base_url: https://dashscope.aliyuncs.com/api/v1
     api_key_env: DASHSCOPE_API_KEY

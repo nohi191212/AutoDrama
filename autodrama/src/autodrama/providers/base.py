@@ -42,6 +42,18 @@ class VoiceDesignResult(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
+class VoiceSynthesisResult(BaseModel):
+    provider: str
+    model: str
+    voice: str
+    audio_data: str | None = None
+    audio_sample_rate: int | None = None
+    audio_format: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
 class VoiceDesigner(Protocol):
     name: str
 
@@ -54,6 +66,24 @@ class VoiceDesigner(Protocol):
         metadata: dict[str, Any] | None = None,
     ) -> VoiceDesignResult:
         """Create a reusable TTS voice and return its preview audio."""
+
+    async def clone_voice_from_audio(
+        self,
+        *,
+        source_audio_path: str,
+        preferred_name: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceDesignResult:
+        """Clone a reusable TTS voice from a local audio sample."""
+
+    async def synthesize_speech(
+        self,
+        *,
+        voice: str,
+        text: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceSynthesisResult:
+        """Synthesize sample speech using an existing voice."""
 
 
 class VideoGenerationResult(BaseModel):

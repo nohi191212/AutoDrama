@@ -13,7 +13,7 @@ from autodrama.core.schemas import (
     ScriptOutlineOutput,
     ScriptPolishOutput,
 )
-from autodrama.providers.base import AssetRef, VideoGenerationResult, VoiceDesignResult
+from autodrama.providers.base import AssetRef, VideoGenerationResult, VoiceDesignResult, VoiceSynthesisResult
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -205,6 +205,7 @@ class FakeVideoProvider:
 class FakeVoiceDesignProvider:
     name = "fake"
     model = "fake-voice-design"
+    clone_model = "fake-voice-clone"
     target_model = "fake-tts"
 
     async def create_voice(
@@ -242,5 +243,66 @@ class FakeVoiceDesignProvider:
                 },
                 "usage": {"count": 1},
                 "request_id": f"fake-request-{preferred_name}",
+            },
+        )
+
+    async def clone_voice_from_audio(
+        self,
+        *,
+        source_audio_path: str,
+        preferred_name: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceDesignResult:
+        metadata = metadata or {}
+        voice = f"fake_clone_{preferred_name}"
+        return VoiceDesignResult(
+            provider=self.name,
+            model=self.clone_model,
+            voice=voice,
+            target_model=self.target_model,
+            request_id=f"fake-clone-request-{preferred_name}",
+            usage={"count": 1},
+            raw_response={
+                "output": {
+                    "voice": voice,
+                    "target_model": self.target_model,
+                    "source_audio_path": source_audio_path,
+                },
+                "usage": {"count": 1},
+                "request_id": f"fake-clone-request-{preferred_name}",
+                "metadata": metadata,
+            },
+        )
+
+    async def synthesize_speech(
+        self,
+        *,
+        voice: str,
+        text: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceSynthesisResult:
+        metadata = metadata or {}
+        response_format = str(metadata.get("response_format", "wav"))
+        sample_rate = int(metadata.get("sample_rate", 24000))
+        audio_bytes = f"fake synthesized audio: {voice}: {text}".encode("utf-8")
+        return VoiceSynthesisResult(
+            provider=self.name,
+            model=self.target_model,
+            voice=voice,
+            audio_data=base64.b64encode(audio_bytes).decode("ascii"),
+            audio_sample_rate=sample_rate,
+            audio_format=response_format,
+            request_id=f"fake-synthesis-request-{voice}",
+            usage={"count": 1},
+            raw_response={
+                "output": {
+                    "audio": {
+                        "data": "<base64 audio omitted>",
+                        "sample_rate": sample_rate,
+                        "response_format": response_format,
+                    }
+                },
+                "usage": {"count": 1},
+                "request_id": f"fake-synthesis-request-{voice}",
             },
         )
