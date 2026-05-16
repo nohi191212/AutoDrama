@@ -73,10 +73,14 @@ class ProjectRepository:
         raw_script: str,
         project_id: str | None = None,
         source_script_file: Path | None = None,
+        episode_count: int | None = None,
+        episode_duration_seconds: int | None = None,
     ) -> Path:
         project_id = project_id or make_project_id(title, self.settings.output.project_dir_template)
         project_dir = self.settings.project_dir(project_id)
         self._create_project_dirs(project_dir)
+        resolved_episode_count = episode_count or self.settings.project.episode_count
+        resolved_episode_duration_seconds = episode_duration_seconds or self.settings.project.episode_duration_seconds
 
         state = ProjectState(
             project_id=project_id,
@@ -88,6 +92,8 @@ class ProjectRepository:
                 "created_by": "autodrama",
                 "source_script_file": str(source_script_file) if source_script_file else None,
                 "config_path": str(self.settings.config_path) if self.settings.config_path else None,
+                "episode_count": resolved_episode_count,
+                "episode_duration_seconds": resolved_episode_duration_seconds,
             },
         )
         self.save_state(project_dir, state)

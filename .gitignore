@@ -6,6 +6,7 @@ __pycache__
 plan.md
 短剧生成方案.md
 代码规划.md
+apikeys.yaml
 config.yaml
 outputs/
 .tmp/

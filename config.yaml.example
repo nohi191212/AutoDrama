@@ -8,6 +8,10 @@ project:
   id: review_demo
   title: 测试短片
   script_outline_file: ./inputs/story_outline.md
+  # The script pipeline lets the text model split the story into this many episodes.
+  episode_count: 1
+  # Target duration for each episode, in seconds.
+  episode_duration_seconds: 30
 
 output:
   # All generated assets are saved under this directory.

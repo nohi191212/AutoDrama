@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class ScriptBundle(BaseModel):
     raw_script: str
     outline: str | None = None
+    episode_outlines: dict[str, str] = Field(default_factory=dict)
     detailed_script: dict[str, str] = Field(default_factory=dict)
     final_script: dict[str, str] = Field(default_factory=dict)
     revision_notes: list[str] = Field(default_factory=list)
@@ -76,6 +77,7 @@ class ScriptOutlineOutput(BaseModel):
     outline: str
     episode_count: int = 1
     target_duration_seconds: int = 30
+    episode_outlines: dict[str, str] = Field(default_factory=dict)
 
 
 class ScriptDetailOutput(BaseModel):

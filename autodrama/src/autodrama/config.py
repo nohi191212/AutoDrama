@@ -19,6 +19,8 @@ class ProjectSettings(BaseModel):
     id: str | None = None
     title: str | None = None
     script_outline_file: Path | None = None
+    episode_count: int = Field(default=1, ge=1)
+    episode_duration_seconds: int = Field(default=30, ge=1)
 
 
 class OutputSettings(BaseModel):

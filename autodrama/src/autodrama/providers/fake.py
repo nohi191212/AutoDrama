@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -16,6 +17,17 @@ from autodrama.providers.base import AssetRef, VideoGenerationResult
 T = TypeVar("T", bound=BaseModel)
 
 
+def _extract_prompt_int(prompt: str, label: str, default: int) -> int:
+    match = re.search(rf"{re.escape(label)}\s*[：:]\s*(\d+)", prompt)
+    if match:
+        return int(match.group(1))
+    return default
+
+
+def _episode_keys(episode_count: int) -> list[str]:
+    return [f"episode_{index:03d}" for index in range(1, episode_count + 1)]
+
+
 class FakeTextProvider:
     name = "fake"
 
@@ -27,27 +39,46 @@ class FakeTextProvider:
         temperature: float = 0.7,
         metadata: dict[str, Any] | None = None,
     ) -> T:
-        del prompt, temperature
+        del temperature
         metadata = metadata or {}
         node_name = metadata.get("node_name")
+
+        episode_count = _extract_prompt_int(prompt, "目标集数", 1)
+        episode_duration_seconds = _extract_prompt_int(prompt, "单集目标时长", 30)
+        episode_keys = _episode_keys(episode_count)
 
         if schema is ScriptOutlineOutput or node_name == "script_outline":
             data = {
                 "logline": "落魄青年在雨夜发现被调包的合同，决定当众反击。",
-                "outline": "男主被同事陷害丢掉晋升机会，女主提醒他查看旧邮件。男主在会议上拿出证据，反派计划败露。",
-                "episode_count": 1,
-                "target_duration_seconds": 30,
+                "outline": "林舟被赵启陷害丢掉晋升机会，苏晚提醒他查看旧邮件。林舟逐步发现合同被调包的证据，并在会议上反击。",
+                "episode_count": episode_count,
+                "target_duration_seconds": episode_duration_seconds,
+                "episode_outlines": {
+                    key: f"第{index}集：林舟围绕合同调包事件推进调查与反击，冲突逐步升级。"
+                    for index, key in enumerate(episode_keys, start=1)
+                },
             }
         elif schema is ScriptDetailOutput or node_name == "script_detail":
             data = {
                 "detailed_script": {
-                    "episode_001": "雨夜办公室，林舟发现合同页码被替换。苏晚递来旧邮件截图。第二天会议上，林舟当众展示证据，赵启脸色骤变。"
+                    key: (
+                        f"第{index}集，雨夜办公室，林舟发现合同页码被替换。"
+                        "苏晚递来旧邮件截图，提醒他保存证据。"
+                        "赵启在电话里催他认错，林舟沉默片刻后决定反击。"
+                    )
+                    for index, key in enumerate(episode_keys, start=1)
                 }
             }
         elif schema is ScriptPolishOutput or node_name == "script_polish":
             data = {
                 "final_script": {
-                    "episode_001": "雨夜，公司只剩林舟还在翻合同。他发现关键页的纸张颜色不对，刚要放弃，苏晚把三天前的邮件截图推到他面前。次日会议，赵启正准备宣布林舟失职，林舟投屏原始合同和邮件时间线。会议室安静下来，赵启的笑僵在脸上。"
+                    key: (
+                        f"第{index}集，雨夜，公司只剩林舟还在翻合同。"
+                        "他发现关键页纸张颜色不对，刚要放弃，苏晚把三天前的邮件截图推到他面前。"
+                        "次日会议，赵启正准备宣布林舟失职，林舟投屏原始合同和邮件时间线。"
+                        "会议室安静下来，赵启的笑僵在脸上。"
+                    )
+                    for index, key in enumerate(episode_keys, start=1)
                 },
                 "revision_notes": [
                     "强化了合同被调包的视觉线索。",

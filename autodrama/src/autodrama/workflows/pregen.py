@@ -38,6 +38,35 @@ class PregenWorkflow:
         self.script_service = ScriptService(self.prompts)
         self.role_service = RoleService(self.prompts)
 
+    def _expected_episode_keys(self, state: ProjectState) -> list[str]:
+        return self.script_service.episode_keys(self.script_service.episode_count(state))
+
+    def _validate_episode_keys(self, label: str, payload: dict[str, str], state: ProjectState) -> None:
+        expected_keys = self._expected_episode_keys(state)
+        expected = set(expected_keys)
+        actual = set(payload)
+        if actual != expected:
+            raise ValueError(
+                f"{label} must contain exactly {', '.join(expected_keys)}; "
+                f"got {', '.join(sorted(actual)) or '-'}"
+            )
+
+    def _validate_script_outline(self, output_episode_count: int, output_duration: int, state: ProjectState) -> None:
+        expected_episode_count = self.script_service.episode_count(state)
+        expected_duration = self.script_service.episode_duration_seconds(state)
+        if output_episode_count != expected_episode_count:
+            raise ValueError(
+                f"script_outline episode_count must be {expected_episode_count}; got {output_episode_count}"
+            )
+        if output_duration != expected_duration:
+            raise ValueError(
+                f"script_outline target_duration_seconds must be {expected_duration}; got {output_duration}"
+            )
+
+    def _apply_script_plan_settings(self, state: ProjectState) -> None:
+        state.metadata["episode_count"] = self.repo.settings.project.episode_count
+        state.metadata["episode_duration_seconds"] = self.repo.settings.project.episode_duration_seconds
+
     async def run(
         self,
         project_dir: Path,
@@ -50,6 +79,7 @@ class PregenWorkflow:
 
         logger = setup_logging(project_dir)
         state = self.repo.load_state(project_dir)
+        self._apply_script_plan_settings(state)
         stop_index = PREGEN_NODES.index(until)
         target_nodes = PREGEN_NODES[: stop_index + 1]
         logger.info(
@@ -89,7 +119,10 @@ class PregenWorkflow:
             getattr(provider, "model", "-"),
         )
         output = await self.script_service.script_outline(state, provider)
+        self._validate_script_outline(output.episode_count, output.target_duration_seconds, state)
+        self._validate_episode_keys("script_outline.episode_outlines", output.episode_outlines, state)
         state.script.outline = output.outline
+        state.script.episode_outlines = output.episode_outlines
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, "script_outline", output)
         return state
@@ -102,6 +135,7 @@ class PregenWorkflow:
             getattr(provider, "model", "-"),
         )
         output = await self.script_service.script_detail(state, provider)
+        self._validate_episode_keys("script_detail.detailed_script", output.detailed_script, state)
         state.script.detailed_script = output.detailed_script
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, "script_detail", output)
@@ -115,6 +149,7 @@ class PregenWorkflow:
             getattr(provider, "model", "-"),
         )
         output = await self.script_service.script_polish(state, provider)
+        self._validate_episode_keys("script_polish.final_script", output.final_script, state)
         state.script.final_script = output.final_script
         state.script.revision_notes = output.revision_notes
         state.budget.used_text_calls += 1

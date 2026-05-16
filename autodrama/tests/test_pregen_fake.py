@@ -16,6 +16,8 @@ project:
   id: test_project
   title: 测试短片
   script_outline_file: ./story.md
+  episode_count: 3
+  episode_duration_seconds: 45
 output:
   root_dir: ./outputs
   project_dir_template: "{date}_{slug}"
@@ -47,6 +49,11 @@ def test_pregen_stops_at_role_voice_design(tmp_path: Path) -> None:
         "role_voice_design",
     ]
     assert state.script.final_script
+    assert state.metadata["episode_count"] == 3
+    assert state.metadata["episode_duration_seconds"] == 45
+    assert set(state.script.episode_outlines) == {"episode_001", "episode_002", "episode_003"}
+    assert set(state.script.detailed_script) == {"episode_001", "episode_002", "episode_003"}
+    assert set(state.script.final_script) == {"episode_001", "episode_002", "episode_003"}
     assert "role_林舟".lower() in {key.lower() for key in state.roles}
     assert any(role.audio for role in state.roles.values())
     assert (project_dir / "assets" / "json" / "nodes" / "role_voice_design.json").exists()

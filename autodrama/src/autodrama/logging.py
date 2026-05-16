@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 LOGGER_NAME = "autodrama"
+PREGEN_DETAIL_LOGGER_NAME = "autodrama.pregen_detail"
 BLUE = "\033[34m"
 RESET = "\033[0m"
 
@@ -39,6 +40,16 @@ def get_logger() -> logging.Logger:
     return logging.getLogger(LOGGER_NAME)
 
 
+def get_pregen_detail_logger() -> logging.Logger:
+    return logging.getLogger(PREGEN_DETAIL_LOGGER_NAME)
+
+
+def _clear_handlers(logger: logging.Logger) -> None:
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+
+
 def setup_logging(project_dir: Path | None = None, *, level: int = logging.INFO) -> logging.Logger:
     enable_windows_ansi()
 
@@ -46,9 +57,12 @@ def setup_logging(project_dir: Path | None = None, *, level: int = logging.INFO)
     logger.setLevel(level)
     logger.propagate = False
 
-    for handler in list(logger.handlers):
-        logger.removeHandler(handler)
-        handler.close()
+    detail_logger = get_pregen_detail_logger()
+    detail_logger.setLevel(logging.INFO)
+    detail_logger.propagate = False
+
+    _clear_handlers(logger)
+    _clear_handlers(detail_logger)
 
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
@@ -62,5 +76,10 @@ def setup_logging(project_dir: Path | None = None, *, level: int = logging.INFO)
         file_handler.setLevel(level)
         file_handler.setFormatter(AutoDramaFormatter(color=False))
         logger.addHandler(file_handler)
+
+        detail_handler = logging.FileHandler(log_dir / "pregen_detail.log", encoding="utf-8")
+        detail_handler.setLevel(logging.INFO)
+        detail_handler.setFormatter(logging.Formatter("%(message)s"))
+        detail_logger.addHandler(detail_handler)
 
     return logger
