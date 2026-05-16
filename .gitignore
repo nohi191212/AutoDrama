@@ -1,6 +1,10 @@
 .claude
 .pytest_cache
+__pycache__
 */__pycache__
 
 plan.md
 短剧生成方案.md
+代码规划.md
+config.yaml
+outputs/

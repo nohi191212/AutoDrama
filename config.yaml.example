@@ -1,0 +1,87 @@
+app:
+  env: dev
+  default_quality_preset: cheap
+  enable_human_review: false
+
+output:
+  # All generated assets are saved under this directory.
+  # Relative paths are resolved from the working directory.
+  root_dir: ./outputs
+  project_dir_template: "{date}_{slug}"
+  db_filename: autodrama.sqlite
+  subdirs:
+    logs: logs
+    assets: assets
+    outputs: outputs
+    images: assets/images
+    videos: assets/videos
+    audios: assets/audios
+    json: assets/json
+
+runtime:
+  max_text_retry: 3
+  max_media_retry: 2
+  request_timeout_seconds: 120
+  ffmpeg_path: ffmpeg
+
+budget:
+  max_total_cny: 100
+  max_image_count: 20
+  max_video_seconds: 45
+  max_music_count: 5
+  max_text_calls: 200
+
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    models:
+      text: deepseek-chat
+
+  bailian:
+    base_url: https://dashscope.aliyuncs.com
+    api_key_env: BAILIAN_API_KEY
+    models:
+      text: qwen-max
+      vision: qwen-vl-max
+      omni: qwen-omni-turbo
+
+  minimax:
+    base_url: https://api.minimax.chat
+    api_key_env: MINIMAX_API_KEY
+    group_id_env: MINIMAX_GROUP_ID
+    models:
+      tts: speech-02
+      music: music-01
+
+  volcengine:
+    region: cn-beijing
+    access_key_env: VOLCENGINE_ACCESS_KEY
+    secret_key_env: VOLCENGINE_SECRET_KEY
+    models:
+      image: seedream-lite
+      video: seedance-lite
+      upscale: video-upscale
+
+routing:
+  text:
+    script: deepseek
+    role: deepseek
+    prop: deepseek
+    layout: deepseek
+    storyboard: deepseek
+    edit_plan: bailian
+    bgm_plan: bailian
+  image:
+    role: volcengine
+    prop: volcengine
+    layout: volcengine
+    ref_frame: volcengine
+  video:
+    shot: volcengine
+    upscale: volcengine
+  audio:
+    speech: minimax
+    music: minimax
+  vision:
+    media_review: bailian
