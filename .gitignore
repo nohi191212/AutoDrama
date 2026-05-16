@@ -1,0 +1,6 @@
+.claude
+.pytest_cache
+*/__pycache__
+
+plan.md
+短剧生成方案.md
