@@ -20,7 +20,7 @@ class RightCodeImageProvider:
         self.base_url = (settings.base_url or "https://www.right.codes/draw").rstrip("/")
         self.endpoint = self._resolve_endpoint(self.base_url)
         self.model = settings.models.get("image", "gpt-image-2")
-        self.api_key = settings.secret("api_key_env") or settings.api_key_env
+        self.api_key = settings.secret("api_key_env")
 
     @staticmethod
     def _resolve_endpoint(base_url: str) -> str:

@@ -24,7 +24,7 @@ class DeepSeekTextProvider:
         self.runtime = runtime
         self.base_url = (settings.base_url or "https://api.deepseek.com").rstrip("/")
         self.model = settings.models.get("text", "deepseek-v4-pro")
-        self.api_key = settings.secret("api_key_env") or settings.api_key_env
+        self.api_key = settings.secret("api_key_env")
         self.reasoning_effort = str(settings.options.get("reasoning_effort", "high"))
         self.thinking_enabled = bool(settings.options.get("thinking_enabled", True))
 

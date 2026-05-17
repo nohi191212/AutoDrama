@@ -75,14 +75,19 @@ class ProviderSettings(BaseModel):
     region: str | None = None
     models: dict[str, str] = Field(default_factory=dict)
     options: dict[str, Any] = Field(default_factory=dict)
+    api_keys: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)
 
     def secret(self, field_name: str) -> str | None:
-        env_name = getattr(self, field_name, None)
-        if not env_name:
+        key_ref = getattr(self, field_name, None)
+        if not key_ref:
             return None
-        if isinstance(env_name, str) and env_name.startswith("sk-"):
-            return env_name
-        return os.getenv(env_name)
+        if not isinstance(key_ref, str):
+            return None
+        if key_ref in self.api_keys and self.api_keys[key_ref]:
+            return self.api_keys[key_ref]
+        if isinstance(key_ref, str) and key_ref.startswith("sk-"):
+            return key_ref
+        return os.getenv(key_ref)
 
 
 class Settings(BaseModel):
@@ -93,6 +98,8 @@ class Settings(BaseModel):
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     providers: dict[str, ProviderSettings] = Field(default_factory=dict)
     routing: dict[str, dict[str, str]] = Field(default_factory=dict)
+    apikeys_file: Path | None = Path("./apikeys.yaml")
+    api_keys: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)
     config_path: Path | None = None
 
     def project_dir(self, project_id: str) -> Path:
@@ -108,6 +115,37 @@ class Settings(BaseModel):
             raise KeyError(f"Missing provider routing for {capability}.{purpose}") from exc
 
 
+def _flatten_api_keys(value: Any, *, prefix: str | None = None) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+
+    flattened: dict[str, str] = {}
+    for raw_key, raw_value in value.items():
+        key = str(raw_key)
+        full_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(raw_value, dict):
+            flattened.update(_flatten_api_keys(raw_value, prefix=full_key))
+            continue
+        if raw_value is None:
+            continue
+        flattened[full_key] = str(raw_value)
+        flattened[full_key.replace(".", "_").upper()] = str(raw_value)
+    return flattened
+
+
+def _load_api_keys(settings: Settings, config_path: Path) -> dict[str, str]:
+    apikeys_path = settings.apikeys_file
+    if apikeys_path is None:
+        return {}
+    if not apikeys_path.is_absolute():
+        apikeys_path = (config_path.parent / apikeys_path).resolve()
+    if not apikeys_path.exists():
+        return {}
+
+    data = yaml.safe_load(apikeys_path.read_text(encoding="utf-8")) or {}
+    return _flatten_api_keys(data)
+
+
 def load_settings(config_path: str | Path) -> Settings:
     path = Path(config_path).expanduser().resolve()
     if not path.exists():
@@ -116,6 +154,9 @@ def load_settings(config_path: str | Path) -> Settings:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     settings = Settings.model_validate(data)
     settings.config_path = path
+    settings.api_keys = _load_api_keys(settings, path)
+    for provider in settings.providers.values():
+        provider.api_keys = settings.api_keys
 
     if not settings.output.root_dir.is_absolute():
         settings.output.root_dir = (path.parent / settings.output.root_dir).resolve()
@@ -124,5 +165,7 @@ def load_settings(config_path: str | Path) -> Settings:
 
     if settings.project.script_outline_file and not settings.project.script_outline_file.is_absolute():
         settings.project.script_outline_file = (path.parent / settings.project.script_outline_file).resolve()
+    if settings.apikeys_file and not settings.apikeys_file.is_absolute():
+        settings.apikeys_file = (path.parent / settings.apikeys_file).resolve()
 
     return settings

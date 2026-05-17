@@ -108,6 +108,19 @@ class VoiceSynthesisResult(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
+class SpeechSynthesizer(Protocol):
+    name: str
+
+    async def synthesize_speech(
+        self,
+        *,
+        voice: str,
+        text: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceSynthesisResult:
+        """Synthesize speech using an existing provider voice/speaker."""
+
+
 class VoiceDesigner(Protocol):
     name: str
 

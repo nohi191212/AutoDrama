@@ -20,7 +20,7 @@ class BailianMusicProvider:
         self.base_url = (settings.base_url or "https://dashscope.aliyuncs.com").rstrip("/")
         self.endpoint = self._resolve_endpoint(self.base_url)
         self.model = settings.models.get("music", "fun-music-v1")
-        self.api_key = settings.secret("api_key_env") or settings.api_key_env
+        self.api_key = settings.secret("api_key_env")
         self.audio_format = str(settings.options.get("music_format", settings.options.get("format", "mp3")))
         self.gender = str(settings.options.get("music_gender", settings.options.get("gender", "female")))
         self.enable_watermark = bool(settings.options.get("enable_aigc_watermark", False))

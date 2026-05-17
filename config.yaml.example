@@ -3,6 +3,8 @@ app:
   default_quality_preset: cheap
   enable_human_review: false
 
+apikeys_file: ./apikeys.yaml
+
 project:
   # Stable ID is recommended because resume relies on it.
   id: review_demo
@@ -55,7 +57,7 @@ budget:
 providers:
   aliyun:
     base_url: https://dashscope.aliyuncs.com
-    api_key_env: DASHSCOPE_API_KEY
+    api_key_env: ALIYUN_API_KEY
     models:
       text: qwen-plus
       voice_design: voice-enrollment
@@ -120,6 +122,8 @@ providers:
     access_key_env: VOLCENGINE_ACCESS_KEY
     secret_key_env: VOLCENGINE_SECRET_KEY
     models:
+      speech_synthesis: seed-tts-2.0
+      speech_synthesis_fallback: seed-tts-1.0
       voice_design: voice_design
       voice_clone: voice_clone
       tts: seed-icl-2.0
@@ -132,8 +136,58 @@ providers:
       language: cn
       sample_rate: 24000
       response_format: mp3
-      # Volcengine voice design/clone requires pre-allocated speaker IDs from the console.
-      # Fill this list with enough IDs for each generated role/emotion voice in a run.
+      tts_resource_id: seed-tts-2.0
+      tts_fallback_resource_id: seed-tts-1.0
+      instruction_mode: text_prefix
+      additions_as_json_string: true
+      default_speaker: zh_male_m191_uranus_bigtts
+      default_male_speaker: zh_male_m191_uranus_bigtts
+      default_female_speaker: zh_female_xiaohe_uranus_bigtts
+      role_speakers: {}
+      emotion_instructions:
+        normal:
+          emotion: neutral
+          emotion_scale: 2
+          speech_rate: 0
+          loudness_rate: 0
+          instruction: 自然、克制、口语化，像影视短剧对白，保持角色身份感。
+        tense:
+          emotion: tension
+          emotion_scale: 4
+          speech_rate: 6
+          loudness_rate: -2
+          instruction: 压低声音，呼吸略紧，像强忍情绪，语尾收住，不要夸张表演。
+        angry:
+          emotion: angry
+          emotion_scale: 4
+          speech_rate: 5
+          loudness_rate: 4
+          instruction: 愤怒但不要吼叫，语气锋利，停顿短促，压迫感强。
+        sad:
+          emotion: sad
+          emotion_scale: 4
+          speech_rate: -8
+          loudness_rate: -4
+          instruction: 低落、疲惫，语速稍慢，尾音略沉，带一点忍住不哭的感觉。
+        happy:
+          emotion: happy
+          emotion_scale: 3
+          speech_rate: 4
+          loudness_rate: 2
+          instruction: 轻松、有笑意，节奏明快，但不要广告腔。
+        whisper:
+          emotion: ASMR
+          emotion_scale: 3
+          speech_rate: -10
+          loudness_rate: -8
+          instruction: 贴近耳语，音量较低，气声更明显，但吐字保持清晰。
+        other:
+          emotion: neutral
+          emotion_scale: 2
+          speech_rate: 0
+          loudness_rate: 0
+          instruction: 按角色设定自然表达，根据文本上下文微调情绪。
+      # Only used by the legacy Volcengine voice design/clone provider.
       speaker_id_pool: []
       poll_interval_seconds: 5
       max_polls: 60

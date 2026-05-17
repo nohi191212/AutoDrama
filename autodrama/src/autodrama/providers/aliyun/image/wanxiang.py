@@ -10,7 +10,7 @@ from autodrama.providers.base import AssetRef, ImageGenerationResult
 
 
 def _dashscope_api_key(settings: ProviderSettings) -> str | None:
-    return settings.secret("api_key_env") or settings.api_key_env
+    return settings.secret("api_key_env")
 
 
 class WanxiangImageProvider:

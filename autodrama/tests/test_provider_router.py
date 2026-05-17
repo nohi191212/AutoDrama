@@ -8,7 +8,7 @@ from autodrama.providers.aliyun.text.qwen import QwenTextProvider
 from autodrama.providers.aliyun.video.wanxiang import WanxiangVideoProvider
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
 from autodrama.providers.router import ProviderRouter
-from autodrama.providers.volcengine.audio.seed_icl import VolcengineVoiceProvider
+from autodrama.providers.volcengine.audio.seed_tts import VolcengineSeedTTSProvider
 
 
 def test_router_supports_qwen_wanxiang_and_rightcode(tmp_path: Path) -> None:
@@ -24,7 +24,7 @@ output:
 providers:
   aliyun:
     base_url: https://dashscope.aliyuncs.com
-    api_key_env: DASHSCOPE_API_KEY
+    api_key_env: ALIYUN_API_KEY
     models:
       text: qwen-plus
       voice_design: qwen-voice-design
@@ -43,6 +43,8 @@ providers:
     base_url: https://openspeech.bytedance.com
     api_key_env: VOLCENGINE_API_KEY
     models:
+      speech_synthesis: seed-tts-2.0
+      speech_synthesis_fallback: seed-tts-1.0
       voice_design: voice_design
       voice_clone: voice_clone
       tts: seed-icl-2.0
@@ -70,7 +72,7 @@ routing:
 
     assert isinstance(router.text("script"), QwenTextProvider)
     assert isinstance(router.video("shot"), WanxiangVideoProvider)
-    assert isinstance(router.audio("speech"), VolcengineVoiceProvider)
+    assert isinstance(router.audio("speech"), VolcengineSeedTTSProvider)
     assert isinstance(router.image("role"), RightCodeImageProvider)
     assert isinstance(router.image("prop"), WanxiangImageProvider)
     assert isinstance(router.music("bgm"), BailianMusicProvider)
@@ -89,7 +91,7 @@ output:
 providers:
   aliyun:
     base_url: https://dashscope.aliyuncs.com
-    api_key_env: DASHSCOPE_API_KEY
+    api_key_env: ALIYUN_API_KEY
     models:
       voice_design: qwen-voice-design
       voice_clone: qwen-voice-enrollment

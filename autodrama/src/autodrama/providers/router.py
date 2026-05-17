@@ -6,7 +6,14 @@ from autodrama.providers.aliyun.image.wanxiang import WanxiangImageProvider
 from autodrama.providers.aliyun.music.fun_music import BailianMusicProvider
 from autodrama.providers.aliyun.text.qwen import QwenTextProvider
 from autodrama.providers.aliyun.video.wanxiang import WanxiangVideoProvider
-from autodrama.providers.base import ImageGenerator, MusicGenerator, TextLLM, VideoGenerator, VoiceDesigner
+from autodrama.providers.base import (
+    ImageGenerator,
+    MusicGenerator,
+    SpeechSynthesizer,
+    TextLLM,
+    VideoGenerator,
+    VoiceDesigner,
+)
 from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
 from autodrama.providers.local.mock.fake import (
     FakeImageProvider,
@@ -17,6 +24,7 @@ from autodrama.providers.local.mock.fake import (
 )
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
 from autodrama.providers.volcengine.audio.seed_icl import VolcengineVoiceProvider
+from autodrama.providers.volcengine.audio.seed_tts import VolcengineSeedTTSProvider
 
 
 ALIYUN_TEXT_PROVIDER_NAMES = {"aliyun", "qwen", "bailian"}
@@ -104,11 +112,15 @@ class ProviderRouter:
             return WanxiangVideoProvider(self._dashscope_api_v1_settings(provider_name), self.settings.runtime)
         raise ValueError(f"Unsupported video provider: {provider_name}")
 
-    def audio(self, purpose: str) -> VoiceDesigner:
+    def audio(self, purpose: str) -> VoiceDesigner | SpeechSynthesizer:
         provider_name = self.provider_override or self.settings.provider_for("audio", purpose)
         if provider_name == "fake":
             return self._fake_voice
         if provider_name == "volcengine":
+            if purpose in {"voice_design", "voice_clone", "seed_icl"}:
+                return VolcengineVoiceProvider(self._settings_for(provider_name), self.settings.runtime)
+            return VolcengineSeedTTSProvider(self._settings_for(provider_name), self.settings.runtime)
+        if provider_name == "volcengine_icl":
             return VolcengineVoiceProvider(self._settings_for(provider_name), self.settings.runtime)
         if provider_name in ALIYUN_AUDIO_PROVIDER_NAMES:
             return QwenVoiceDesignProvider(self._dashscope_api_v1_settings(provider_name), self.settings.runtime)

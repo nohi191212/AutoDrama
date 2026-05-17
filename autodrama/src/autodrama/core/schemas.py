@@ -23,6 +23,9 @@ class RoleAudio(BaseModel):
     sample_text: str | None = None
     asset_id: str | None = None
     asset_path: str | None = None
+    voice_type: str | None = None
+    emotion_instruction: str | None = None
+    emotion_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class RoleAppearance(BaseModel):
@@ -197,12 +200,14 @@ class RoleVoiceGenerationItem(BaseModel):
     role_name: str
     emotion: str
     audio_id: str
-    generation_method: Literal["design", "clone", "reuse"]
+    generation_method: Literal["design", "clone", "reuse", "synthesis"]
     voice: str
     source_audio_id: str | None = None
     source_audio_path: str | None = None
     voice_prompt: str
     preview_text: str
+    emotion_instruction: str | None = None
+    emotion_params: dict[str, Any] = Field(default_factory=dict)
     preview_audio_path: str | None = None
     provider: str
     model: str

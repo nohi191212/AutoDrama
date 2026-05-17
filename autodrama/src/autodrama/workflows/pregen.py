@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 import httpx
 
@@ -358,7 +358,8 @@ class PregenWorkflow:
             return None
 
         extension = (response_format or "wav").lower()
-        if extension not in {"wav", "mp3", "pcm", "opus"}:
+        extension = {"ogg_opus": "opus"}.get(extension, extension)
+        if extension not in {"wav", "mp3", "pcm", "opus", "ogg", "m4a", "aac"}:
             extension = "bin"
 
         output_dir = project_dir / "assets" / "audios" / "role_voices"
@@ -626,15 +627,140 @@ class PregenWorkflow:
             raw_response=synthesis_result.raw_response,
         )
 
-    async def _run_role_voice_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.audio("speech")
-        get_logger().info(
-            "node=role_voice_generation provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        self._repair_role_voice_design_if_needed(project_dir, state)
+    def _role_synthesis_voice(self, provider, role: Role) -> str:
+        resolver = getattr(provider, "resolve_role_voice", None)
+        if callable(resolver):
+            return str(
+                resolver(
+                    role_id=role.id,
+                    role_name=role.name,
+                    role_intro=role.intro,
+                    role_voice_summary=role.voice_summary,
+                    role_personality=role.personality,
+                )
+            )
+        normal_audio = role.audio.get("normal")
+        if normal_audio and normal_audio.asset_id:
+            return normal_audio.asset_id
+        raise ValueError(f"Cannot synthesize role voice for {role.name}: provider cannot resolve a voice")
 
+    @staticmethod
+    def _role_emotion_synthesis_plan(provider, audio: RoleAudio) -> tuple[str | None, dict[str, Any]]:
+        resolver = getattr(provider, "resolve_emotion_plan", None)
+        plan = resolver(audio.emotion) if callable(resolver) else {}
+        if not isinstance(plan, dict):
+            plan = {}
+
+        instruction_value = plan.get("instruction")
+        instruction = str(instruction_value).strip() if instruction_value is not None else None
+        if instruction == "":
+            instruction = None
+
+        params_resolver = getattr(provider, "emotion_params_from_plan", None)
+        if callable(params_resolver):
+            params = params_resolver(plan)
+        else:
+            params = {key: value for key, value in plan.items() if key != "instruction"}
+        return instruction, dict(params)
+
+    async def _generate_synthesized_voice(
+        self,
+        *,
+        provider,
+        project_dir: Path,
+        state: ProjectState,
+        role: Role,
+        audio: RoleAudio,
+        voice: str,
+    ) -> RoleVoiceGenerationItem:
+        preview_text = self._preview_text(role, audio)
+        emotion_instruction, emotion_params = self._role_emotion_synthesis_plan(provider, audio)
+        synthesis_result = await provider.synthesize_speech(
+            voice=voice,
+            text=preview_text,
+            metadata={
+                "node_name": "role_voice_generation",
+                "project_id": state.project_id,
+                "role_id": role.id,
+                "role_name": role.name,
+                "audio_id": audio.id,
+                "emotion": audio.emotion,
+                "generation_method": "synthesis",
+                "voice_prompt": audio.desc,
+                "emotion_instruction": emotion_instruction,
+                "emotion_params": emotion_params,
+                "target_model": getattr(provider, "model", None),
+            },
+        )
+        preview_audio_path = self._write_preview_audio(
+            project_dir,
+            audio=audio,
+            data=synthesis_result.audio_data,
+            response_format=synthesis_result.audio_format,
+        )
+        resolved_voice = synthesis_result.voice or voice
+        audio.asset_id = resolved_voice
+        audio.voice_type = resolved_voice
+        audio.asset_path = preview_audio_path
+        audio.emotion_instruction = emotion_instruction
+        audio.emotion_params = emotion_params
+        return RoleVoiceGenerationItem(
+            role_id=role.id,
+            role_name=role.name,
+            emotion=audio.emotion,
+            audio_id=audio.id,
+            generation_method="synthesis",
+            voice=resolved_voice,
+            voice_prompt=audio.desc,
+            preview_text=preview_text,
+            emotion_instruction=emotion_instruction,
+            emotion_params=emotion_params,
+            preview_audio_path=preview_audio_path,
+            provider=synthesis_result.provider,
+            model=synthesis_result.model,
+            target_model=synthesis_result.model,
+            sample_rate=synthesis_result.audio_sample_rate,
+            response_format=synthesis_result.audio_format,
+            request_id=synthesis_result.request_id,
+            usage=synthesis_result.usage,
+            raw_response=synthesis_result.raw_response,
+        )
+
+    async def _run_role_voice_synthesis_generation(
+        self,
+        *,
+        provider,
+        project_dir: Path,
+        state: ProjectState,
+    ) -> ProjectState:
+        generated: list[RoleVoiceGenerationItem] = []
+        for role in state.roles.values():
+            if role.audio.get("normal") is None:
+                raise ValueError(f"Cannot generate role voice for {role.name}: missing normal voice design")
+            role_voice = self._role_synthesis_voice(provider, role)
+            for audio in role.audio.values():
+                generated.append(
+                    await self._generate_synthesized_voice(
+                        provider=provider,
+                        project_dir=project_dir,
+                        state=state,
+                        role=role,
+                        audio=audio,
+                        voice=role_voice,
+                    )
+                )
+
+        output = RoleVoiceGenerationOutput(generated_voices=generated)
+        self.repo.save_node_output(project_dir, "role_voice_generation", output)
+        return state
+
+    async def _run_role_voice_design_clone_generation(
+        self,
+        *,
+        provider,
+        project_dir: Path,
+        state: ProjectState,
+    ) -> ProjectState:
         generated: list[RoleVoiceGenerationItem] = []
         for role in state.roles.values():
             normal_audio = role.audio.get("normal")
@@ -680,6 +806,28 @@ class PregenWorkflow:
         output = RoleVoiceGenerationOutput(generated_voices=generated)
         self.repo.save_node_output(project_dir, "role_voice_generation", output)
         return state
+
+    async def _run_role_voice_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.audio("speech")
+        get_logger().info(
+            "node=role_voice_generation provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        self._repair_role_voice_design_if_needed(project_dir, state)
+
+        if getattr(provider, "supports_direct_emotion_synthesis", False):
+            return await self._run_role_voice_synthesis_generation(
+                provider=provider,
+                project_dir=project_dir,
+                state=state,
+            )
+
+        return await self._run_role_voice_design_clone_generation(
+            provider=provider,
+            project_dir=project_dir,
+            state=state,
+        )
 
     async def _run_role_appearance_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("role")

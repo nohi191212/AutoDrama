@@ -61,6 +61,18 @@ def load_config(path: str | Path) -> dict[str, Any]:
     return yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
 
 
+def load_api_keys(config: dict[str, Any], config_path: str | Path) -> dict[str, str]:
+    apikeys_path = Path(config.get("apikeys_file") or "apikeys.yaml").expanduser()
+    if not apikeys_path.is_absolute():
+        apikeys_path = Path(config_path).expanduser().resolve().parent / apikeys_path
+    if not apikeys_path.exists():
+        return {}
+    data = yaml.safe_load(apikeys_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): str(value) for key, value in data.items() if value is not None}
+
+
 def provider_config(config: dict[str, Any], provider_name: str) -> dict[str, Any]:
     providers = config.get("providers") or {}
     provider = providers.get(provider_name)
@@ -69,16 +81,18 @@ def provider_config(config: dict[str, Any], provider_name: str) -> dict[str, Any
     return provider
 
 
-def resolve_api_key(provider: dict[str, Any], explicit_api_key: str | None) -> str | None:
+def resolve_api_key(provider: dict[str, Any], explicit_api_key: str | None, api_keys: dict[str, str]) -> str | None:
     if explicit_api_key:
         return explicit_api_key
 
     api_key_env = provider.get("api_key_env")
+    if isinstance(api_key_env, str) and api_key_env in api_keys:
+        return api_keys[api_key_env]
     if isinstance(api_key_env, str) and api_key_env.startswith("sk-"):
         return api_key_env
     if isinstance(api_key_env, str) and api_key_env:
         return os.getenv(api_key_env)
-    return os.getenv("DASHSCOPE_API_KEY")
+    return api_keys.get("ALIYUN_API_KEY") or os.getenv("ALIYUN_API_KEY")
 
 
 def resolve_customization_url(provider: dict[str, Any], explicit_url: str | None) -> str:
@@ -315,12 +329,13 @@ def default_output_dir() -> Path:
 def main() -> int:
     args = parse_args()
     config = load_config(args.config)
+    api_keys = load_api_keys(config, args.config)
     provider = provider_config(config, args.provider)
 
     model = target_model(provider, args.target_model)
     customization_url = resolve_customization_url(provider, args.customization_url)
     websocket_url = resolve_websocket_url(provider, args.websocket_url)
-    api_key = resolve_api_key(provider, args.api_key)
+    api_key = resolve_api_key(provider, args.api_key, api_keys)
     output_dir = Path(args.output_dir) if args.output_dir else default_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -344,7 +359,7 @@ def main() -> int:
         return 0
 
     if not api_key:
-        raise RuntimeError("Missing DashScope API key. Set DASHSCOPE_API_KEY or configure provider api_key_env.")
+        raise RuntimeError("Missing DashScope API key. Set ALIYUN_API_KEY in apikeys.yaml or configure provider api_key_env.")
 
     with httpx.Client(timeout=args.timeout_seconds, trust_env=not args.no_proxy_env) as client:
         design_body = post_json(client, customization_url, api_key, design_payload)

@@ -1,0 +1,23 @@
+# Copy this file to apikeys.yaml and fill in real credentials.
+# apikeys.yaml is intentionally ignored by git.
+
+# Alibaba DashScope / Bailian
+ALIYUN_API_KEY: ""
+
+# RightCode image generation
+RIGHTCODE_API_KEY: ""
+
+# DeepSeek text generation
+DEEPSEEK_API_KEY: ""
+
+# MiniMax audio/music, if enabled
+MINIMAX_API_KEY: ""
+MINIMAX_GROUP_ID: ""
+
+# Volcengine Speech new console authentication, preferred for TTS.
+VOLCENGINE_API_KEY: ""
+
+# Volcengine Speech old console authentication, optional fallback.
+VOLCENGINE_APP_ID: ""
+VOLCENGINE_ACCESS_KEY: ""
+VOLCENGINE_SECRET_KEY: ""
