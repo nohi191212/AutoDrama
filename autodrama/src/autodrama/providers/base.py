@@ -29,6 +29,60 @@ class AssetRef(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ImageGenerationResult(BaseModel):
+    provider: str
+    model: str
+    image_urls: list[str] = Field(default_factory=list)
+    image_data: list[str] = Field(default_factory=list)
+    task_id: str | None = None
+    task_status: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class MusicGenerationResult(BaseModel):
+    provider: str
+    model: str
+    audio_id: str | None = None
+    audio_url: str | None = None
+    audio_data: str | None = None
+    audio_format: str | None = None
+    duration_seconds: float | None = None
+    lyrics: str | None = None
+    sample_rate: int | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class ImageGenerator(Protocol):
+    name: str
+
+    async def generate_image(
+        self,
+        prompt: str,
+        refs: list[AssetRef] | None = None,
+        *,
+        size: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ImageGenerationResult:
+        """Generate image assets and return temporary URLs or base64 image data."""
+
+
+class MusicGenerator(Protocol):
+    name: str
+
+    async def generate_music(
+        self,
+        prompt: str,
+        *,
+        lyrics: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> MusicGenerationResult:
+        """Generate a music asset and return a temporary URL or base64 audio data."""
+
+
 class VoiceDesignResult(BaseModel):
     provider: str
     model: str

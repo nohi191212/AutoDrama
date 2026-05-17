@@ -5,14 +5,21 @@ set "ROOT_DIR=%~dp0.."
 pushd "%ROOT_DIR%" >nul
 
 set "CONFIG=config.yaml"
+set "PROJECT="
 set "PROVIDER_ARGS="
-set "UNTIL=role_voice_generation"
+set "UNTIL=storyboard_generation"
 set "FORCE="
 
 :parse
 if "%~1"=="" goto run
 if "%~1"=="--config" (
   set "CONFIG=%~2"
+  shift
+  shift
+  goto parse
+)
+if "%~1"=="--project" (
+  set "PROJECT=%~2"
   shift
   shift
   goto parse
@@ -41,15 +48,18 @@ goto help_error
 
 :help
 echo Usage:
-echo   run\start.cmd [--config FILE] [--fake] [--until NODE] [--force]
+echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--until NODE] [--force]
 echo.
 echo This is the native Windows entry point. It uses runtime.python.windows
 echo from config.yaml when available, otherwise D:\miniforge3\envs\autodrama\python.exe.
+echo.
+echo Default NODE:
+echo   storyboard_generation
 goto end
 
 :help_error
-echo Usage:
-echo   run\start.cmd [--config FILE] [--fake] [--until NODE] [--force] 1>&2
+echo Usage: 1>&2
+echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--until NODE] [--force] 1>&2
 exit /b 2
 
 :run
@@ -66,10 +76,15 @@ if "%AUTODRAMA_PYTHON%"=="" set "AUTODRAMA_PYTHON=D:/miniforge3/envs/autodrama/p
 set "PYTHONPATH=%ROOT_DIR%\autodrama\src;%PYTHONPATH%"
 
 call :log "config: %CONFIG%"
+if not "%PROJECT%"=="" call :log "project: %PROJECT%"
 call :log "python: %AUTODRAMA_PYTHON%"
 call :log "running pregen until %UNTIL%"
 
-"%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" --until "%UNTIL%" %PROVIDER_ARGS% %FORCE%
+if "%PROJECT%"=="" (
+  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" --until "%UNTIL%" %PROVIDER_ARGS% %FORCE%
+) else (
+  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" --project "%PROJECT%" --until "%UNTIL%" %PROVIDER_ARGS% %FORCE%
+)
 set "EXIT_CODE=%ERRORLEVEL%"
 
 popd >nul

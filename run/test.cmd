@@ -1,0 +1,1 @@
+curl -X POST "https://dashscope.aliyuncs.com/api/v1/services/audio/music/generation" -H "Authorization: Bearer sk-2603cad5f6cf44c297d788bfef776f60" -H "Content-Type: application/json" -d "{\"model\": \"fun-music-v1\", \"input\": {\"prompt\": \"夏日清新民谣，木吉他与口琴伴奏，轻快节奏，适合旅行Vlog背景音乐\", \"gender\": \"female\"}}"

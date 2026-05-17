@@ -43,7 +43,7 @@ scripts/init_project.sh --config config.yaml
 This explicitly creates or rewrites the configured project state. For normal
 resume-style execution, prefer `run/start.sh` or `scripts/run_pregen*.sh`.
 
-Run the current MVP with fake provider, stopping at `role_voice_generation`:
+Run the current MVP with fake provider, stopping at `storyboard_generation`:
 
 ```bash
 scripts/run_pregen_fake.sh --config config.yaml

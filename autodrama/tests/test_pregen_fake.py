@@ -50,6 +50,17 @@ def test_pregen_stops_at_role_voice_design(tmp_path: Path) -> None:
         "role_design",
         "role_voice_design",
         "role_voice_generation",
+        "role_appearance_design",
+        "role_appearance_generation",
+        "prop_design",
+        "prop_image_generation",
+        "script_compress",
+        "layout_design",
+        "layout_dedupe_review",
+        "layout_image_generation",
+        "bgm_design",
+        "bgm_generation",
+        "storyboard_generation",
     ]
     assert state.script.final_script
     assert state.metadata["episode_count"] == 3
@@ -63,6 +74,12 @@ def test_pregen_stops_at_role_voice_design(tmp_path: Path) -> None:
     assert all(audio.asset_path for role in state.roles.values() for audio in role.audio.values())
     assert state.roles["role_林舟"].audio["normal"].asset_id.startswith("fake_ad_")
     assert state.roles["role_林舟"].audio["tense"].asset_id.startswith("fake_clone_ad_")
+    assert state.props
+    assert state.layouts
+    assert state.bgms
     assert (project_dir / "assets" / "json" / "nodes" / "role_voice_design.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "role_voice_generation.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "storyboard_generation.json").exists()
+    assert (project_dir / "slots" / "episode_001.json").exists()
+    assert not hasattr(state, "storyboards")
     assert (settings.output.root_dir / "current_project.json").exists()

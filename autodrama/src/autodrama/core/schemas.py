@@ -25,6 +25,20 @@ class RoleAudio(BaseModel):
     asset_path: str | None = None
 
 
+class RoleAppearance(BaseModel):
+    id: str
+    role_id: str
+    name: str = "base"
+    desc: str
+    prompt: str
+    asset_id: str | None = None
+    asset_path: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+
+
 class Role(BaseModel):
     id: str
     name: str
@@ -32,7 +46,52 @@ class Role(BaseModel):
     personality: str | None = None
     voice_summary: str | None = None
     aliases: list[str] = Field(default_factory=list)
+    appearances: dict[str, RoleAppearance] = Field(default_factory=dict)
     audio: dict[str, RoleAudio] = Field(default_factory=dict)
+
+
+class Prop(BaseModel):
+    id: str
+    name: str
+    desc: str
+    prompt: str
+    status: str = "normal"
+    asset_id: str | None = None
+    asset_path: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+
+
+class Layout(BaseModel):
+    id: str
+    name: str
+    desc: str
+    prompt: str
+    episode_keys: list[str] = Field(default_factory=list)
+    asset_id: str | None = None
+    asset_path: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+
+
+class BGM(BaseModel):
+    id: str
+    name: str
+    mood: str
+    prompt: str
+    usage_hint: str | None = None
+    asset_id: str | None = None
+    asset_path: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    request_id: str | None = None
+    duration_seconds: float | None = None
+    lyrics: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class BudgetState(BaseModel):
@@ -53,6 +112,9 @@ class ProjectState(BaseModel):
     completed_nodes: list[str] = Field(default_factory=list)
     script: ScriptBundle
     roles: dict[str, Role] = Field(default_factory=dict)
+    props: dict[str, Prop] = Field(default_factory=dict)
+    layouts: dict[str, Layout] = Field(default_factory=dict)
+    bgms: dict[str, BGM] = Field(default_factory=dict)
     budget: BudgetState = Field(default_factory=BudgetState)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
@@ -101,6 +163,17 @@ class RoleDesignOutput(BaseModel):
     roles: list[RoleDesignItem]
 
 
+class RoleAppearanceDesignItem(BaseModel):
+    role_name: str
+    name: str = "base"
+    desc: str
+    prompt: str
+
+
+class RoleAppearanceDesignOutput(BaseModel):
+    appearances: list[RoleAppearanceDesignItem]
+
+
 class RoleVoiceItem(BaseModel):
     role_name: str
     emotion: Literal["normal", "angry", "sad", "happy", "tense", "whisper", "other"] | str
@@ -143,3 +216,93 @@ class RoleVoiceGenerationItem(BaseModel):
 
 class RoleVoiceGenerationOutput(BaseModel):
     generated_voices: list[RoleVoiceGenerationItem]
+
+
+class PropDesignItem(BaseModel):
+    name: str
+    desc: str
+    prompt: str
+    status: str = "normal"
+
+
+class PropDesignOutput(BaseModel):
+    props: list[PropDesignItem]
+
+
+class ScriptCompressOutput(BaseModel):
+    simple_script: dict[str, str] = Field(default_factory=dict)
+    global_script: str
+
+
+class LayoutDesignItem(BaseModel):
+    name: str
+    desc: str
+    prompt: str
+    episode_keys: list[str] = Field(default_factory=list)
+
+
+class LayoutDesignOutput(BaseModel):
+    layouts: list[LayoutDesignItem]
+
+
+class LayoutDedupeReviewOutput(BaseModel):
+    layouts: list[LayoutDesignItem]
+    merge_notes: list[str] = Field(default_factory=list)
+
+
+class BGMDesignItem(BaseModel):
+    name: str
+    mood: str
+    prompt: str
+    usage_hint: str | None = None
+
+
+class BGMDesignOutput(BaseModel):
+    bgms: list[BGMDesignItem]
+
+
+class StaticAssetGenerationItem(BaseModel):
+    asset_id: str
+    asset_type: Literal["role_appearance", "prop", "layout", "bgm"]
+    owner_id: str
+    name: str
+    prompt: str
+    asset_path: str | None = None
+    provider: str
+    model: str
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class StaticAssetGenerationOutput(BaseModel):
+    generated_assets: list[StaticAssetGenerationItem]
+
+
+class StoryboardShot(BaseModel):
+    shot_id: str
+    index: int
+    layout_id: str
+    title: str
+    content: str
+    camera_shooting_angle: str
+    camera_movement: str
+    focal_length: str | None = None
+    duration_seconds: float
+    dialogue: list[str] = Field(default_factory=list)
+    role_ids: list[str] = Field(default_factory=list)
+    role_appearance_ids: list[str] = Field(default_factory=list)
+    role_audio_ids: list[str] = Field(default_factory=list)
+    prop_ids: list[str] = Field(default_factory=list)
+    bgm_id: str | None = None
+    ref_frame_prompt: str
+    video_prompt: str
+
+
+class StoryboardEpisodeOutput(BaseModel):
+    episode_key: str
+    shots: list[StoryboardShot]
+
+
+class StoryboardGenerationOutput(BaseModel):
+    generated_episodes: list[str]

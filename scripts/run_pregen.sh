@@ -6,25 +6,31 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/run_pregen.sh [--config FILE] [--until NODE] [--force]
+  scripts/run_pregen.sh [--config FILE] [--project ID_OR_DIR] [--until NODE] [--force]
 
 Default NODE:
-  role_voice_generation
+  storyboard_generation
 
 This uses provider routing from config.yaml. For current config.yaml.example,
-script/role text routing points to DeepSeek and audio.speech points to Qwen TTS.
-Project ID and input outline file are read from config.yaml. If project.id is
-omitted, outputs/current_project.json is used.
+Aliyun/DashScope capabilities are configured under providers.aliyun and routed
+per capability; role text still points to DeepSeek by default.
+Project ID and input outline file are read from config.yaml by default. Use
+--project to run a specific existing project or output directory.
 USAGE
 }
 
-until="role_voice_generation"
+until="storyboard_generation"
 force=""
+project=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config)
       AUTODRAMA_CONFIG="${2:-}"
+      shift 2
+      ;;
+    --project)
+      project="${2:-}"
       shift 2
       ;;
     --until)
@@ -49,6 +55,9 @@ done
 
 cd "${AUTODRAMA_ROOT}"
 args=(run pregen --config "${AUTODRAMA_CONFIG}" --until "${until}")
+if [[ -n "${project}" ]]; then
+  args+=(--project "${project}")
+fi
 if [[ -n "${force}" ]]; then
   args+=("${force}")
 fi

@@ -5,7 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 config="${AUTODRAMA_CONFIG:-config.yaml}"
-until="role_voice_generation"
+project=""
+until="storyboard_generation"
 force=""
 provider_script="scripts/run_pregen.sh"
 blue=$'\033[34m'
@@ -18,15 +19,16 @@ log() {
 usage() {
   cat <<'USAGE'
 Usage:
-  bash run/start.sh [--config FILE] [--fake] [--until NODE] [--force]
+  bash run/start.sh [--config FILE] [--project ID_OR_DIR] [--fake] [--until NODE] [--force]
 
 This is the config-driven one-command entry point:
 
   - If the configured project does not exist, create it from config.yaml.
   - If state.json already exists, resume/continue from that state.
-  - Run the current MVP to role_voice_generation.
+  - Run the current MVP to storyboard_generation.
 
-Project ID, title, and script outline file must be configured in config.yaml.
+Project ID, title, and script outline file can be configured in config.yaml.
+Use --project to run a specific existing project or output directory.
 USAGE
 }
 
@@ -34,6 +36,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --config)
       config="${2:-}"
+      shift 2
+      ;;
+    --project)
+      project="${2:-}"
       shift 2
       ;;
     --fake)
@@ -61,8 +67,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 log "config: ${config}"
+if [[ -n "${project}" ]]; then
+  log "project: ${project}"
+fi
 log "running pregen until ${until}"
 args=(--config "${config}" --until "${until}")
+if [[ -n "${project}" ]]; then
+  args+=(--project "${project}")
+fi
 if [[ -n "${force}" ]]; then
   args+=("${force}")
 fi

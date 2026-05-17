@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+import json
+
+from autodrama.core.schemas import (
+    BGMDesignOutput,
+    LayoutDedupeReviewOutput,
+    LayoutDesignOutput,
+    ProjectState,
+    PropDesignOutput,
+    RoleAppearanceDesignOutput,
+    ScriptCompressOutput,
+)
+from autodrama.providers.base import TextLLM
+from autodrama.utils.prompts import PromptStore
+
+
+class AssetService:
+    def __init__(self, prompts: PromptStore) -> None:
+        self.prompts = prompts
+
+    @staticmethod
+    def format_json(value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def visual_style_label(state: ProjectState) -> str:
+        return str(state.metadata.get("visual_style_label", "真人电影质感"))
+
+    @staticmethod
+    def visual_style_prompt(state: ProjectState) -> str:
+        return str(
+            state.metadata.get(
+                "visual_style_prompt",
+                "真人电影质感：真实摄影、自然光或电影布光、真实材质、真实皮肤纹理和电影镜头语言。",
+            )
+        )
+
+    async def role_appearance_design(self, state: ProjectState, provider: TextLLM) -> RoleAppearanceDesignOutput:
+        prompt = self.prompts.render(
+            "role_appearance_design",
+            title=state.title,
+            final_script=self.format_json(state.script.final_script),
+            roles=self.format_json(
+                [
+                    {
+                        "name": role.name,
+                        "intro": role.intro,
+                        "personality": role.personality,
+                        "aliases": role.aliases,
+                        "voice_summary": role.voice_summary,
+                    }
+                    for role in state.roles.values()
+                ]
+            ),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
+        )
+        return await provider.generate_json(
+            prompt,
+            RoleAppearanceDesignOutput,
+            temperature=0.6,
+            metadata={"node_name": "role_appearance_design", "project_id": state.project_id},
+        )
+
+    async def prop_design(self, state: ProjectState, provider: TextLLM) -> PropDesignOutput:
+        prompt = self.prompts.render(
+            "prop_design",
+            title=state.title,
+            final_script=self.format_json(state.script.final_script),
+            roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
+        )
+        return await provider.generate_json(
+            prompt,
+            PropDesignOutput,
+            temperature=0.6,
+            metadata={"node_name": "prop_design", "project_id": state.project_id},
+        )
+
+    async def script_compress(self, state: ProjectState, provider: TextLLM) -> ScriptCompressOutput:
+        episode_keys = list(state.script.final_script)
+        prompt = self.prompts.render(
+            "script_compress",
+            title=state.title,
+            final_script=self.format_json(state.script.final_script),
+            episode_keys=", ".join(episode_keys),
+        )
+        return await provider.generate_json(
+            prompt,
+            ScriptCompressOutput,
+            temperature=0.4,
+            metadata={
+                "node_name": "script_compress",
+                "project_id": state.project_id,
+                "required_mapping_field": "simple_script",
+                "expected_keys": episode_keys,
+            },
+        )
+
+    async def layout_design(self, state: ProjectState, provider: TextLLM) -> LayoutDesignOutput:
+        prompt = self.prompts.render(
+            "layout_design",
+            title=state.title,
+            final_script=self.format_json(state.script.final_script),
+            simple_script=self.format_json(state.metadata.get("simple_script", {})),
+            global_script=state.metadata.get("global_script", ""),
+            roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
+            props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
+        )
+        return await provider.generate_json(
+            prompt,
+            LayoutDesignOutput,
+            temperature=0.6,
+            metadata={"node_name": "layout_design", "project_id": state.project_id},
+        )
+
+    async def layout_dedupe_review(self, state: ProjectState, provider: TextLLM) -> LayoutDedupeReviewOutput:
+        prompt = self.prompts.render(
+            "layout_dedupe_review",
+            title=state.title,
+            layouts=self.format_json({layout_id: layout.model_dump(mode="json") for layout_id, layout in state.layouts.items()}),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
+        )
+        return await provider.generate_json(
+            prompt,
+            LayoutDedupeReviewOutput,
+            temperature=0.3,
+            metadata={"node_name": "layout_dedupe_review", "project_id": state.project_id},
+        )
+
+    async def bgm_design(self, state: ProjectState, provider: TextLLM) -> BGMDesignOutput:
+        prompt = self.prompts.render(
+            "bgm_design",
+            title=state.title,
+            simple_script=self.format_json(state.metadata.get("simple_script", {})),
+            global_script=state.metadata.get("global_script", ""),
+            visual_style_label=self.visual_style_label(state),
+        )
+        return await provider.generate_json(
+            prompt,
+            BGMDesignOutput,
+            temperature=0.6,
+            metadata={"node_name": "bgm_design", "project_id": state.project_id},
+        )

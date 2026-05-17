@@ -53,27 +53,38 @@ budget:
   max_text_calls: 200
 
 providers:
-  qwen:
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  aliyun:
+    base_url: https://dashscope.aliyuncs.com
     api_key_env: DASHSCOPE_API_KEY
     models:
       text: qwen-plus
-    options:
-      response_format: true
-
-  qwen_tts:
-    base_url: https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization
-    api_key_env: DASHSCOPE_API_KEY
-    models:
       voice_design: voice-enrollment
       voice_clone: voice-enrollment
       target_model: cosyvoice-v3.5-plus
       clone_target_model: cosyvoice-v3.5-plus
+      vision: qwen-vl-max
+      omni: qwen-omni-turbo
+      music: fun-music-v1
+      image: wan2.7-image-pro
+      text_to_video: wan2.7-t2v-2026-04-25
     options:
+      text_response_format: true
       language: zh
       sample_rate: 24000
       response_format: wav
       websocket_url: wss://dashscope.aliyuncs.com/api-ws/v1/inference
+      music_format: mp3
+      music_gender: female
+      enable_aigc_watermark: false
+      image_size: 2K
+      n: 1
+      thinking_mode: true
+      resolution: 720P
+      ratio: "16:9"
+      prompt_extend: true
+      watermark: false
+      poll_interval_seconds: 15
+      max_polls: 80
 
   deepseek:
     base_url: https://api.deepseek.com
@@ -83,27 +94,6 @@ providers:
     options:
       reasoning_effort: high
       thinking_enabled: true
-
-  bailian:
-    base_url: https://dashscope.aliyuncs.com
-    api_key_env: BAILIAN_API_KEY
-    models:
-      text: qwen-max
-      vision: qwen-vl-max
-      omni: qwen-omni-turbo
-
-  wanxiang:
-    base_url: https://dashscope.aliyuncs.com/api/v1
-    api_key_env: DASHSCOPE_API_KEY
-    models:
-      text_to_video: wan2.7-t2v-2026-04-25
-    options:
-      resolution: 720P
-      ratio: "16:9"
-      prompt_extend: true
-      watermark: false
-      poll_interval_seconds: 15
-      max_polls: 80
 
   minimax:
     base_url: https://api.minimax.chat
@@ -124,23 +114,25 @@ providers:
 
 routing:
   text:
-    script: qwen
+    script: aliyun
     role: deepseek
     prop: deepseek
     layout: deepseek
     storyboard: deepseek
-    edit_plan: bailian
-    bgm_plan: bailian
+    edit_plan: aliyun
+    bgm_plan: aliyun
   image:
-    role: volcengine
-    prop: volcengine
-    layout: volcengine
-    ref_frame: volcengine
+    role: aliyun
+    prop: aliyun
+    layout: aliyun
+    ref_frame: aliyun
   video:
-    shot: wanxiang
+    shot: aliyun
     upscale: volcengine
   audio:
-    speech: qwen_tts
+    speech: aliyun
     music: minimax
+  music:
+    bgm: aliyun
   vision:
-    media_review: bailian
+    media_review: aliyun

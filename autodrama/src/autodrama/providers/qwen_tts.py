@@ -33,9 +33,7 @@ class QwenVoiceDesignProvider:
             "tts", "qwen3-tts-vd-realtime-2026-01-15"
         )
         self.clone_target_model = settings.models.get("clone_target_model", self.target_model)
-        self.api_key = settings.secret("api_key_env")
-        if not self.api_key and settings.api_key_env and settings.api_key_env.startswith("sk-"):
-            self.api_key = settings.api_key_env
+        self.api_key = settings.secret("api_key_env") or settings.api_key_env
         self.language = str(settings.options.get("language", "zh"))
         self.sample_rate = int(settings.options.get("sample_rate", 24000))
         self.response_format = str(settings.options.get("response_format", "wav"))

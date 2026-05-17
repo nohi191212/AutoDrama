@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
         description="Smoke test CosyVoice voice design and voice cloning via DashScope.",
     )
     parser.add_argument("--config", default="config.yaml", help="Project config file.")
-    parser.add_argument("--provider", default="qwen_tts", help="Provider key in config.yaml.")
+    parser.add_argument("--provider", default="aliyun", help="Provider key in config.yaml.")
     parser.add_argument("--output-dir", default=None, help="Directory for JSON and audio outputs.")
     parser.add_argument("--target-model", default=None, help="CosyVoice synthesis model.")
     parser.add_argument("--customization-url", default=None, help="DashScope customization endpoint.")
@@ -92,7 +92,7 @@ def resolve_customization_url(provider: dict[str, Any], explicit_url: str | None
         return base_url
     if base_url.endswith("/api/v1"):
         return f"{base_url}/services/audio/tts/customization"
-    return base_url
+    return f"{base_url}/api/v1/services/audio/tts/customization"
 
 
 def resolve_websocket_url(provider: dict[str, Any], explicit_url: str | None) -> str:

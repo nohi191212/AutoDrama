@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from autodrama.config import load_settings
+from autodrama.providers.bailian_music import BailianMusicProvider
+from autodrama.providers.wanxiang import WanxiangImageProvider
 from autodrama.providers.qwen import QwenTextProvider
 from autodrama.providers.qwen_tts import QwenVoiceDesignProvider
 from autodrama.providers.router import ProviderRouter
@@ -18,31 +20,29 @@ project:
 output:
   root_dir: ./outputs
 providers:
-  qwen:
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  aliyun:
+    base_url: https://dashscope.aliyuncs.com
     api_key_env: DASHSCOPE_API_KEY
     models:
       text: qwen-plus
-  qwen_tts:
-    base_url: https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization
-    api_key_env: DASHSCOPE_API_KEY
-    models:
       voice_design: qwen-voice-design
       voice_clone: qwen-voice-enrollment
       target_model: qwen3-tts-vc-2026-01-22
       clone_target_model: qwen3-tts-vc-2026-01-22
-  wanxiang:
-    base_url: https://dashscope.aliyuncs.com/api/v1
-    api_key_env: DASHSCOPE_API_KEY
-    models:
+      image: wan2.7-image-pro
       text_to_video: wan2.7-t2v-2026-04-25
+      music: fun-music-v1
 routing:
   text:
-    script: qwen
+    script: aliyun
   video:
-    shot: wanxiang
+    shot: aliyun
   audio:
-    speech: qwen_tts
+    speech: aliyun
+  image:
+    role: aliyun
+  music:
+    bgm: aliyun
 """,
         encoding="utf-8",
     )
@@ -53,3 +53,5 @@ routing:
     assert isinstance(router.text("script"), QwenTextProvider)
     assert isinstance(router.video("shot"), WanxiangVideoProvider)
     assert isinstance(router.audio("speech"), QwenVoiceDesignProvider)
+    assert isinstance(router.image("role"), WanxiangImageProvider)
+    assert isinstance(router.music("bgm"), BailianMusicProvider)

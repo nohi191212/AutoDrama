@@ -5,14 +5,32 @@ import hashlib
 from pathlib import Path
 from typing import Awaitable, Callable
 
+import httpx
+
 from autodrama.core.ids import normalize_id
-from autodrama.core.schemas import ProjectState, Role, RoleAudio, RoleVoiceGenerationItem, RoleVoiceGenerationOutput
+from autodrama.core.schemas import (
+    BGM,
+    Layout,
+    ProjectState,
+    Prop,
+    Role,
+    RoleAppearance,
+    RoleAudio,
+    RoleVoiceDesignOutput,
+    RoleVoiceGenerationItem,
+    RoleVoiceGenerationOutput,
+    StaticAssetGenerationItem,
+    StaticAssetGenerationOutput,
+    StoryboardGenerationOutput,
+)
 from autodrama.core.visual_style import visual_style_metadata
 from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
+from autodrama.services.asset_service import AssetService
 from autodrama.services.role_service import RoleService
 from autodrama.services.script_service import ScriptService
+from autodrama.services.storyboard_service import StoryboardService
 from autodrama.utils.prompts import PromptStore
 
 NodeRunner = Callable[[ProjectState], Awaitable[ProjectState]]
@@ -25,6 +43,17 @@ PREGEN_NODES = [
     "role_design",
     "role_voice_design",
     "role_voice_generation",
+    "role_appearance_design",
+    "role_appearance_generation",
+    "prop_design",
+    "prop_image_generation",
+    "script_compress",
+    "layout_design",
+    "layout_dedupe_review",
+    "layout_image_generation",
+    "bgm_design",
+    "bgm_generation",
+    "storyboard_generation",
 ]
 
 
@@ -41,6 +70,8 @@ class PregenWorkflow:
         self.prompts = prompts or PromptStore()
         self.script_service = ScriptService(self.prompts)
         self.role_service = RoleService(self.prompts)
+        self.asset_service = AssetService(self.prompts)
+        self.storyboard_service = StoryboardService(self.prompts)
 
     def _expected_episode_keys(self, state: ProjectState) -> list[str]:
         return self.script_service.episode_keys(self.script_service.episode_count(state))
@@ -54,6 +85,104 @@ class PregenWorkflow:
                 f"{label} must contain exactly {', '.join(expected_keys)}; "
                 f"got {', '.join(sorted(actual)) or '-'}"
             )
+
+    @staticmethod
+    def _add_role_lookup_key(lookup: dict[str, Role], key: str | None, role: Role) -> None:
+        if not key:
+            return
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            return
+        lookup.setdefault(normalized_key, role)
+        lookup.setdefault(normalized_key.casefold(), role)
+
+    def _role_lookup(self, state: ProjectState) -> dict[str, Role]:
+        lookup: dict[str, Role] = {}
+        for role in state.roles.values():
+            self._add_role_lookup_key(lookup, role.id, role)
+            self._add_role_lookup_key(lookup, role.name, role)
+            self._add_role_lookup_key(lookup, normalize_id("role", role.name), role)
+            for alias in role.aliases:
+                self._add_role_lookup_key(lookup, alias, role)
+                self._add_role_lookup_key(lookup, normalize_id("role", alias), role)
+        return lookup
+
+    @staticmethod
+    def _resolve_role(lookup: dict[str, Role], role_name: str) -> Role | None:
+        key = str(role_name).strip()
+        return lookup.get(key) or lookup.get(key.casefold())
+
+    @staticmethod
+    def _default_voice_sample_text(role: Role) -> str:
+        intro = role.intro.rstrip("。")
+        return f"我是{role.name}。{intro}。面对眼前的问题，我会保持冷静，按照自己的判断继续向前。"
+
+    def _ensure_normal_role_audio(self, role: Role) -> None:
+        if "normal" in role.audio:
+            normal_voice = role.audio["normal"]
+            if not normal_voice.sample_text:
+                normal_voice.sample_text = self._default_voice_sample_text(role)
+            role.voice_summary = normal_voice.desc
+            return
+
+        first_audio = next(iter(role.audio.values()), None)
+        if first_audio is not None:
+            desc = (
+                f"{role.name}的常规音色。参考已有{first_audio.emotion}音色的年龄感、性别感和基础音色，"
+                "但情绪保持平稳自然，语速适中，咬字清晰，适合作为后续情绪音色克隆的基础音色。"
+            )
+        else:
+            desc = (
+                f"{role.name}的常规音色。{role.intro} "
+                "声音自然平稳，语速适中，咬字清晰，情绪克制，适合作为后续 TTS 的基础音色。"
+            )
+        audio_id = normalize_id(f"{role.id}_audio", "normal")
+        role.audio["normal"] = RoleAudio(
+            id=audio_id,
+            role_id=role.id,
+            emotion="normal",
+            desc=desc,
+            sample_text=self._default_voice_sample_text(role),
+        )
+        role.voice_summary = desc
+
+    def _apply_role_voice_design_output(self, state: ProjectState, output: RoleVoiceDesignOutput) -> None:
+        roles_by_key = self._role_lookup(state)
+        unmatched_role_names: list[str] = []
+
+        for item in output.role_voices:
+            role = self._resolve_role(roles_by_key, item.role_name)
+            if role is None:
+                unmatched_role_names.append(item.role_name)
+                continue
+            audio_id = normalize_id(f"{role.id}_audio", str(item.emotion))
+            role.audio[str(item.emotion)] = RoleAudio(
+                id=audio_id,
+                role_id=role.id,
+                emotion=str(item.emotion),
+                desc=item.desc,
+                sample_text=item.sample_text,
+            )
+        if unmatched_role_names:
+            get_logger().warning(
+                "node=role_voice_design ignored unmatched role_name values: %s",
+                ", ".join(unmatched_role_names),
+            )
+        for role in state.roles.values():
+            self._ensure_normal_role_audio(role)
+
+    def _repair_role_voice_design_if_needed(self, project_dir: Path, state: ProjectState) -> None:
+        if all("normal" in role.audio for role in state.roles.values()):
+            return
+
+        path = project_dir / "assets" / "json" / "nodes" / "role_voice_design.json"
+        if path.exists():
+            output = RoleVoiceDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
+            self._apply_role_voice_design_output(state, output)
+            return
+
+        for role in state.roles.values():
+            self._ensure_normal_role_audio(role)
 
     def _validate_script_outline(self, output_episode_count: int, output_duration: int, state: ProjectState) -> None:
         expected_episode_count = self.script_service.episode_count(state)
@@ -192,24 +321,7 @@ class PregenWorkflow:
             getattr(provider, "model", "-"),
         )
         output = await self.role_service.role_voice_design(state, provider)
-        roles_by_name = {role.name: role for role in state.roles.values()}
-
-        for item in output.role_voices:
-            role = roles_by_name.get(item.role_name)
-            if role is None:
-                continue
-            audio_id = normalize_id(f"{role.id}_audio", str(item.emotion))
-            role.audio[str(item.emotion)] = RoleAudio(
-                id=audio_id,
-                role_id=role.id,
-                emotion=str(item.emotion),
-                desc=item.desc,
-                sample_text=item.sample_text,
-            )
-            normal_voice = role.audio.get("normal")
-            if normal_voice:
-                role.voice_summary = normal_voice.desc
-
+        self._apply_role_voice_design_output(state, output)
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, "role_voice_design", output)
         return state
@@ -257,6 +369,69 @@ class PregenWorkflow:
 
     def _absolute_project_path(self, project_dir: Path, relative_path: str) -> str:
         return str(project_dir / relative_path)
+
+    @staticmethod
+    def _project_relative(project_dir: Path, path: Path) -> str:
+        return str(path.relative_to(project_dir)).replace("\\", "/")
+
+    @staticmethod
+    def _image_asset_path(project_dir: Path, asset_type: str, asset_id: str) -> Path:
+        return project_dir / "assets" / "images" / asset_type / f"{asset_id}.png"
+
+    @staticmethod
+    def _music_asset_path(project_dir: Path, asset_id: str, audio_format: str | None) -> Path:
+        extension = (audio_format or "mp3").lower().lstrip(".")
+        if extension not in {"mp3", "wav", "m4a", "aac", "ogg"}:
+            extension = "mp3"
+        return project_dir / "assets" / "audios" / "bgms" / f"{asset_id}.{extension}"
+
+    async def _write_first_generated_image(
+        self,
+        project_dir: Path,
+        output_path: Path,
+        result,
+    ) -> str:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if result.image_data:
+            data = result.image_data[0]
+            if data.startswith("data:") and ";base64," in data:
+                data = data.split(";base64,", 1)[1]
+            output_path.write_bytes(base64.b64decode(data))
+            return self._project_relative(project_dir, output_path)
+
+        if not result.image_urls:
+            raise ValueError("Image generation result has no image data or URL")
+
+        async with httpx.AsyncClient(timeout=self.repo.settings.runtime.request_timeout_seconds) as client:
+            response = await client.get(result.image_urls[0])
+        if response.status_code >= 400:
+            raise RuntimeError(f"Failed to download generated image HTTP {response.status_code}: {response.text[:500]}")
+        output_path.write_bytes(response.content)
+        return self._project_relative(project_dir, output_path)
+
+    async def _write_generated_music(
+        self,
+        project_dir: Path,
+        output_path: Path,
+        result,
+    ) -> str:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if result.audio_data:
+            data = result.audio_data
+            if data.startswith("data:") and ";base64," in data:
+                data = data.split(";base64,", 1)[1]
+            output_path.write_bytes(base64.b64decode(data))
+            return self._project_relative(project_dir, output_path)
+
+        if not result.audio_url:
+            raise ValueError("Music generation result has no audio data or URL")
+
+        async with httpx.AsyncClient(timeout=self.repo.settings.runtime.request_timeout_seconds) as client:
+            response = await client.get(result.audio_url)
+        if response.status_code >= 400:
+            raise RuntimeError(f"Failed to download generated music HTTP {response.status_code}: {response.text[:500]}")
+        output_path.write_bytes(response.content)
+        return self._project_relative(project_dir, output_path)
 
     async def _generate_designed_voice(
         self,
@@ -458,6 +633,7 @@ class PregenWorkflow:
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
+        self._repair_role_voice_design_if_needed(project_dir, state)
 
         generated: list[RoleVoiceGenerationItem] = []
         for role in state.roles.values():
@@ -503,4 +679,356 @@ class PregenWorkflow:
 
         output = RoleVoiceGenerationOutput(generated_voices=generated)
         self.repo.save_node_output(project_dir, "role_voice_generation", output)
+        return state
+
+    async def _run_role_appearance_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("role")
+        get_logger().info(
+            "node=role_appearance_design provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        output = await self.asset_service.role_appearance_design(state, provider)
+        roles_by_key = self._role_lookup(state)
+        unmatched_role_names: list[str] = []
+        for item in output.appearances:
+            role = self._resolve_role(roles_by_key, item.role_name)
+            if role is None:
+                unmatched_role_names.append(item.role_name)
+                continue
+            appearance_id = normalize_id(f"{role.id}_appearance", item.name)
+            role.appearances[item.name] = RoleAppearance(
+                id=appearance_id,
+                role_id=role.id,
+                name=item.name,
+                desc=item.desc,
+                prompt=item.prompt,
+            )
+        if unmatched_role_names:
+            get_logger().warning(
+                "node=role_appearance_design ignored unmatched role_name values: %s",
+                ", ".join(unmatched_role_names),
+            )
+        state.budget.used_text_calls += 1
+        self.repo.save_node_output(project_dir, "role_appearance_design", output)
+        return state
+
+    async def _run_role_appearance_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.image("role")
+        get_logger().info(
+            "node=role_appearance_generation provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        generated: list[StaticAssetGenerationItem] = []
+        for role in state.roles.values():
+            for appearance in role.appearances.values():
+                result = await provider.generate_image(
+                    appearance.prompt,
+                    metadata={
+                        "node_name": "role_appearance_generation",
+                        "project_id": state.project_id,
+                        "role_id": role.id,
+                        "appearance_id": appearance.id,
+                        "asset_id": appearance.id,
+                    },
+                )
+                asset_path = await self._write_first_generated_image(
+                    project_dir,
+                    self._image_asset_path(project_dir, "roles", appearance.id),
+                    result,
+                )
+                appearance.asset_id = appearance.id
+                appearance.asset_path = asset_path
+                appearance.provider = result.provider
+                appearance.model = result.model
+                appearance.request_id = result.request_id
+                appearance.usage = result.usage
+                generated.append(
+                    StaticAssetGenerationItem(
+                        asset_id=appearance.id,
+                        asset_type="role_appearance",
+                        owner_id=role.id,
+                        name=f"{role.name}/{appearance.name}",
+                        prompt=appearance.prompt,
+                        asset_path=asset_path,
+                        provider=result.provider,
+                        model=result.model,
+                        request_id=result.request_id,
+                        usage=result.usage,
+                        raw_response=result.raw_response,
+                    )
+                )
+        self.repo.save_node_output(project_dir, "role_appearance_generation", StaticAssetGenerationOutput(generated_assets=generated))
+        return state
+
+    async def _run_prop_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("prop")
+        get_logger().info(
+            "node=prop_design provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        output = await self.asset_service.prop_design(state, provider)
+        state.props = {
+            normalize_id("prop", item.name): Prop(
+                id=normalize_id("prop", item.name),
+                name=item.name,
+                desc=item.desc,
+                prompt=item.prompt,
+                status=item.status,
+            )
+            for item in output.props
+        }
+        state.budget.used_text_calls += 1
+        self.repo.save_node_output(project_dir, "prop_design", output)
+        return state
+
+    async def _run_prop_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.image("prop")
+        get_logger().info(
+            "node=prop_image_generation provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        generated: list[StaticAssetGenerationItem] = []
+        for prop in state.props.values():
+            result = await provider.generate_image(
+                prop.prompt,
+                metadata={
+                    "node_name": "prop_image_generation",
+                    "project_id": state.project_id,
+                    "prop_id": prop.id,
+                    "asset_id": prop.id,
+                },
+            )
+            asset_path = await self._write_first_generated_image(
+                project_dir,
+                self._image_asset_path(project_dir, "props", prop.id),
+                result,
+            )
+            prop.asset_id = prop.id
+            prop.asset_path = asset_path
+            prop.provider = result.provider
+            prop.model = result.model
+            prop.request_id = result.request_id
+            prop.usage = result.usage
+            generated.append(
+                StaticAssetGenerationItem(
+                    asset_id=prop.id,
+                    asset_type="prop",
+                    owner_id=prop.id,
+                    name=prop.name,
+                    prompt=prop.prompt,
+                    asset_path=asset_path,
+                    provider=result.provider,
+                    model=result.model,
+                    request_id=result.request_id,
+                    usage=result.usage,
+                    raw_response=result.raw_response,
+                )
+            )
+        self.repo.save_node_output(project_dir, "prop_image_generation", StaticAssetGenerationOutput(generated_assets=generated))
+        return state
+
+    async def _run_script_compress(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("script")
+        get_logger().info(
+            "node=script_compress provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        output = await self.asset_service.script_compress(state, provider)
+        self._validate_episode_keys("script_compress.simple_script", output.simple_script, state)
+        state.metadata["simple_script"] = output.simple_script
+        state.metadata["global_script"] = output.global_script
+        state.budget.used_text_calls += 1
+        self.repo.save_node_output(project_dir, "script_compress", output)
+        return state
+
+    async def _run_layout_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("layout")
+        get_logger().info(
+            "node=layout_design provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        output = await self.asset_service.layout_design(state, provider)
+        state.layouts = {
+            normalize_id("layout", item.name): Layout(
+                id=normalize_id("layout", item.name),
+                name=item.name,
+                desc=item.desc,
+                prompt=item.prompt,
+                episode_keys=item.episode_keys,
+            )
+            for item in output.layouts
+        }
+        state.budget.used_text_calls += 1
+        self.repo.save_node_output(project_dir, "layout_design", output)
+        return state
+
+    async def _run_layout_dedupe_review(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("layout")
+        get_logger().info(
+            "node=layout_dedupe_review provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        output = await self.asset_service.layout_dedupe_review(state, provider)
+        state.layouts = {
+            normalize_id("layout", item.name): Layout(
+                id=normalize_id("layout", item.name),
+                name=item.name,
+                desc=item.desc,
+                prompt=item.prompt,
+                episode_keys=item.episode_keys,
+            )
+            for item in output.layouts
+        }
+        state.budget.used_text_calls += 1
+        self.repo.save_node_output(project_dir, "layout_dedupe_review", output)
+        return state
+
+    async def _run_layout_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.image("layout")
+        get_logger().info(
+            "node=layout_image_generation provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        generated: list[StaticAssetGenerationItem] = []
+        for layout in state.layouts.values():
+            result = await provider.generate_image(
+                layout.prompt,
+                metadata={
+                    "node_name": "layout_image_generation",
+                    "project_id": state.project_id,
+                    "layout_id": layout.id,
+                    "asset_id": layout.id,
+                },
+            )
+            asset_path = await self._write_first_generated_image(
+                project_dir,
+                self._image_asset_path(project_dir, "layouts", layout.id),
+                result,
+            )
+            layout.asset_id = layout.id
+            layout.asset_path = asset_path
+            layout.provider = result.provider
+            layout.model = result.model
+            layout.request_id = result.request_id
+            layout.usage = result.usage
+            generated.append(
+                StaticAssetGenerationItem(
+                    asset_id=layout.id,
+                    asset_type="layout",
+                    owner_id=layout.id,
+                    name=layout.name,
+                    prompt=layout.prompt,
+                    asset_path=asset_path,
+                    provider=result.provider,
+                    model=result.model,
+                    request_id=result.request_id,
+                    usage=result.usage,
+                    raw_response=result.raw_response,
+                )
+            )
+        self.repo.save_node_output(project_dir, "layout_image_generation", StaticAssetGenerationOutput(generated_assets=generated))
+        return state
+
+    async def _run_bgm_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("bgm_plan")
+        get_logger().info(
+            "node=bgm_design provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        output = await self.asset_service.bgm_design(state, provider)
+        state.bgms = {
+            normalize_id("bgm", item.name): BGM(
+                id=normalize_id("bgm", item.name),
+                name=item.name,
+                mood=item.mood,
+                prompt=item.prompt,
+                usage_hint=item.usage_hint,
+            )
+            for item in output.bgms
+        }
+        state.budget.used_text_calls += 1
+        self.repo.save_node_output(project_dir, "bgm_design", output)
+        return state
+
+    async def _run_bgm_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.music("bgm")
+        get_logger().info(
+            "node=bgm_generation provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        generated: list[StaticAssetGenerationItem] = []
+        for bgm in state.bgms.values():
+            result = await provider.generate_music(
+                bgm.prompt,
+                metadata={
+                    "node_name": "bgm_generation",
+                    "project_id": state.project_id,
+                    "bgm_id": bgm.id,
+                    "asset_id": bgm.id,
+                },
+            )
+            asset_path = await self._write_generated_music(
+                project_dir,
+                self._music_asset_path(project_dir, bgm.id, result.audio_format),
+                result,
+            )
+            bgm.asset_id = result.audio_id or bgm.id
+            bgm.asset_path = asset_path
+            bgm.provider = result.provider
+            bgm.model = result.model
+            bgm.request_id = result.request_id
+            bgm.duration_seconds = result.duration_seconds
+            bgm.lyrics = result.lyrics
+            bgm.usage = result.usage
+            generated.append(
+                StaticAssetGenerationItem(
+                    asset_id=bgm.id,
+                    asset_type="bgm",
+                    owner_id=bgm.id,
+                    name=bgm.name,
+                    prompt=bgm.prompt,
+                    asset_path=asset_path,
+                    provider=result.provider,
+                    model=result.model,
+                    request_id=result.request_id,
+                    usage=result.usage,
+                    raw_response=result.raw_response,
+                )
+            )
+        self.repo.save_node_output(project_dir, "bgm_generation", StaticAssetGenerationOutput(generated_assets=generated))
+        return state
+
+    async def _run_storyboard_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("storyboard")
+        get_logger().info(
+            "node=storyboard_generation provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        slots_dir = project_dir / "slots"
+        slots_dir.mkdir(parents=True, exist_ok=True)
+        generated_episode_keys: list[str] = []
+        for episode_key in self._expected_episode_keys(state):
+            output = await self.storyboard_service.storyboard_episode(state, provider, episode_key=episode_key)
+            if output.episode_key != episode_key:
+                raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")
+            self.repo.write_json(slots_dir / f"{episode_key}.json", output)
+            generated_episode_keys.append(episode_key)
+
+        state.budget.used_text_calls += len(generated_episode_keys)
+        self.repo.save_node_output(
+            project_dir,
+            "storyboard_generation",
+            StoryboardGenerationOutput(generated_episodes=generated_episode_keys),
+        )
         return state

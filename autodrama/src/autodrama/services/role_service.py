@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from autodrama.core.schemas import ProjectState, RoleDesignOutput, RoleVoiceDesignOutput
 from autodrama.providers.base import TextLLM
 from autodrama.utils.prompts import PromptStore
@@ -9,11 +11,16 @@ class RoleService:
     def __init__(self, prompts: PromptStore) -> None:
         self.prompts = prompts
 
+    @staticmethod
+    def format_json(value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, indent=2)
+
     async def role_design(self, state: ProjectState, provider: TextLLM) -> RoleDesignOutput:
         prompt = self.prompts.render(
             "role_design",
             title=state.title,
-            final_script=state.script.final_script,
+            raw_script=state.raw_script,
+            final_script=self.format_json(state.script.final_script),
             visual_style_label=state.metadata.get("visual_style_label", "真人电影质感"),
             visual_style_prompt=state.metadata.get(
                 "visual_style_prompt",
@@ -31,8 +38,18 @@ class RoleService:
         prompt = self.prompts.render(
             "role_voice_design",
             title=state.title,
-            final_script=state.script.final_script,
-            roles={role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()},
+            final_script=self.format_json(state.script.final_script),
+            roles=self.format_json(
+                [
+                    {
+                        "name": role.name,
+                        "intro": role.intro,
+                        "personality": role.personality,
+                        "aliases": role.aliases,
+                    }
+                    for role in state.roles.values()
+                ]
+            ),
         )
         return await provider.generate_json(
             prompt,

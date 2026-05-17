@@ -110,6 +110,11 @@ class ProjectRepository:
         (project_dir / "assets" / "json" / "nodes").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "json" / "scripts").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "json" / "roles").mkdir(parents=True, exist_ok=True)
+        (project_dir / "assets" / "images" / "roles").mkdir(parents=True, exist_ok=True)
+        (project_dir / "assets" / "images" / "props").mkdir(parents=True, exist_ok=True)
+        (project_dir / "assets" / "images" / "layouts").mkdir(parents=True, exist_ok=True)
+        (project_dir / "assets" / "audios" / "bgms").mkdir(parents=True, exist_ok=True)
+        (project_dir / "slots").mkdir(parents=True, exist_ok=True)
 
     def load_state(self, project_dir: Path) -> ProjectState:
         path = project_dir / "state.json"

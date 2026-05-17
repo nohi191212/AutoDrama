@@ -23,8 +23,8 @@ class QwenTextProvider:
         self.runtime = runtime
         self.base_url = (settings.base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1").rstrip("/")
         self.model = settings.models.get("text", "qwen-plus")
-        self.api_key = settings.secret("api_key_env")
-        self.use_response_format = bool(settings.options.get("response_format", True))
+        self.api_key = settings.secret("api_key_env") or settings.api_key_env
+        self.use_response_format = bool(settings.options.get("text_response_format", settings.options.get("response_format", True)))
 
     async def generate_json(
         self,

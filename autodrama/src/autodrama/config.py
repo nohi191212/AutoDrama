@@ -78,6 +78,8 @@ class ProviderSettings(BaseModel):
         env_name = getattr(self, field_name, None)
         if not env_name:
             return None
+        if isinstance(env_name, str) and env_name.startswith("sk-"):
+            return env_name
         return os.getenv(env_name)
 
 
