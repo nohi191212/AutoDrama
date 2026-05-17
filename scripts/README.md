@@ -103,3 +103,9 @@ Run non-pytest verification:
 ```bash
 scripts/test.sh
 ```
+
+Smoke test RightCode image generation:
+
+```bash
+D:/miniforge3/envs/autodrama/python.exe scripts/rightcode_image_smoke.py --config config.yaml
+```

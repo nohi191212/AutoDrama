@@ -67,6 +67,8 @@ class BudgetSettings(BaseModel):
 class ProviderSettings(BaseModel):
     base_url: str | None = None
     api_key_env: str | None = None
+    app_id_env: str | None = None
+    app_key_env: str | None = None
     group_id_env: str | None = None
     access_key_env: str | None = None
     secret_key_env: str | None = None

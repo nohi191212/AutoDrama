@@ -11,6 +11,7 @@ config.yaml
 outputs/
 .tmp/
 intpus/
+provider_docs/
 
 run/cmd.txt
 qwen_tts_sample.py

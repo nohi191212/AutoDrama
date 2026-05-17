@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 from autodrama.config import Settings
-from autodrama.providers.bailian_music import BailianMusicProvider
+from autodrama.providers.aliyun.audio.qwen_tts import QwenVoiceDesignProvider
+from autodrama.providers.aliyun.image.wanxiang import WanxiangImageProvider
+from autodrama.providers.aliyun.music.fun_music import BailianMusicProvider
+from autodrama.providers.aliyun.text.qwen import QwenTextProvider
+from autodrama.providers.aliyun.video.wanxiang import WanxiangVideoProvider
 from autodrama.providers.base import ImageGenerator, MusicGenerator, TextLLM, VideoGenerator, VoiceDesigner
-from autodrama.providers.deepseek import DeepSeekTextProvider
-from autodrama.providers.fake import (
+from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
+from autodrama.providers.local.mock.fake import (
     FakeImageProvider,
     FakeMusicProvider,
     FakeTextProvider,
     FakeVideoProvider,
     FakeVoiceDesignProvider,
 )
-from autodrama.providers.qwen import QwenTextProvider
-from autodrama.providers.qwen_tts import QwenVoiceDesignProvider
-from autodrama.providers.wanxiang import WanxiangImageProvider, WanxiangVideoProvider
+from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
+from autodrama.providers.volcengine.audio.seed_icl import VolcengineVoiceProvider
 
 
 ALIYUN_TEXT_PROVIDER_NAMES = {"aliyun", "qwen", "bailian"}
@@ -87,6 +90,8 @@ class ProviderRouter:
         provider_name = self.provider_override or self.settings.provider_for("image", purpose)
         if provider_name == "fake":
             return self._fake_image
+        if provider_name == "rightcode":
+            return RightCodeImageProvider(self._settings_for(provider_name), self.settings.runtime)
         if provider_name in ALIYUN_IMAGE_PROVIDER_NAMES:
             return WanxiangImageProvider(self._dashscope_api_v1_settings(provider_name), self.settings.runtime)
         raise ValueError(f"Unsupported image provider: {provider_name}")
@@ -103,6 +108,8 @@ class ProviderRouter:
         provider_name = self.provider_override or self.settings.provider_for("audio", purpose)
         if provider_name == "fake":
             return self._fake_voice
+        if provider_name == "volcengine":
+            return VolcengineVoiceProvider(self._settings_for(provider_name), self.settings.runtime)
         if provider_name in ALIYUN_AUDIO_PROVIDER_NAMES:
             return QwenVoiceDesignProvider(self._dashscope_api_v1_settings(provider_name), self.settings.runtime)
         raise ValueError(f"Unsupported audio provider: {provider_name}")

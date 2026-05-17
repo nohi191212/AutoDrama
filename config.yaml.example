@@ -60,8 +60,8 @@ providers:
       text: qwen-plus
       voice_design: voice-enrollment
       voice_clone: voice-enrollment
-      target_model: cosyvoice-v3.5-plus
-      clone_target_model: cosyvoice-v3.5-plus
+      target_model: qwen3-tts-vd-2026-01-26
+      clone_target_model: qwen3-tts-vc-2026-01-22
       vision: qwen-vl-max
       omni: qwen-omni-turbo
       music: fun-music-v1
@@ -86,6 +86,15 @@ providers:
       poll_interval_seconds: 15
       max_polls: 80
 
+  rightcode:
+    base_url: https://www.right.codes/draw
+    api_key_env: RIGHTCODE_API_KEY
+    models:
+      image: gpt-image-2
+    options:
+      size: 1024x1024
+      n: 1
+
   deepseek:
     base_url: https://api.deepseek.com
     api_key_env: DEEPSEEK_API_KEY
@@ -104,13 +113,33 @@ providers:
       music: music-01
 
   volcengine:
+    base_url: https://openspeech.bytedance.com
     region: cn-beijing
+    api_key_env: VOLCENGINE_API_KEY
+    app_id_env: VOLCENGINE_APP_ID
     access_key_env: VOLCENGINE_ACCESS_KEY
     secret_key_env: VOLCENGINE_SECRET_KEY
     models:
+      voice_design: voice_design
+      voice_clone: voice_clone
+      tts: seed-icl-2.0
+      target_model: seed-icl-2.0
+      clone_target_model: seed-icl-2.0
       image: seedream-lite
       video: seedance-lite
       upscale: video-upscale
+    options:
+      language: cn
+      sample_rate: 24000
+      response_format: mp3
+      # Volcengine voice design/clone requires pre-allocated speaker IDs from the console.
+      # Fill this list with enough IDs for each generated role/emotion voice in a run.
+      speaker_id_pool: []
+      poll_interval_seconds: 5
+      max_polls: 60
+      voice_clone_extra_params:
+        voice_clone_denoise_model_id: ""
+        enable_audio_denoise: false
 
 routing:
   text:
@@ -122,15 +151,15 @@ routing:
     edit_plan: aliyun
     bgm_plan: aliyun
   image:
-    role: aliyun
-    prop: aliyun
-    layout: aliyun
-    ref_frame: aliyun
+    role: rightcode
+    prop: rightcode
+    layout: rightcode
+    ref_frame: rightcode
   video:
     shot: aliyun
     upscale: volcengine
   audio:
-    speech: aliyun
+    speech: volcengine
     music: minimax
   music:
     bgm: aliyun

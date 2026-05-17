@@ -3,7 +3,7 @@ import asyncio
 from autodrama.config import ProviderSettings, RuntimeSettings
 from autodrama.core.schemas import RoleDesignOutput, ScriptPolishOutput
 from autodrama.logging import setup_logging
-from autodrama.providers.deepseek import DeepSeekTextProvider
+from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
 
 
 def test_deepseek_reads_api_key_from_env(monkeypatch) -> None:
@@ -60,7 +60,7 @@ def test_deepseek_writes_prompt_and_output_detail_log(tmp_path, monkeypatch) -> 
             captured_request["client"] = kwargs
             self.chat = FakeChat()
 
-    monkeypatch.setattr("autodrama.providers.deepseek.AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr("autodrama.providers.deepseek.text.deepseek.AsyncOpenAI", FakeAsyncOpenAI)
     setup_logging(tmp_path)
     provider = DeepSeekTextProvider(
         ProviderSettings(
@@ -125,7 +125,7 @@ def test_deepseek_repairs_invalid_json_response(tmp_path, monkeypatch) -> None:
         def __init__(self, **kwargs):
             self.chat = FakeChat()
 
-    monkeypatch.setattr("autodrama.providers.deepseek.AsyncOpenAI", FakeAsyncOpenAI)
+    monkeypatch.setattr("autodrama.providers.deepseek.text.deepseek.AsyncOpenAI", FakeAsyncOpenAI)
     setup_logging(tmp_path)
     provider = DeepSeekTextProvider(
         ProviderSettings(
