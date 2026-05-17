@@ -23,7 +23,10 @@ class RoleAudio(BaseModel):
     sample_text: str | None = None
     asset_id: str | None = None
     asset_path: str | None = None
+    voice_name: str | None = None
     voice_type: str | None = None
+    voice_resource_id: str | None = None
+    voice_model_family: str | None = None
     emotion_instruction: str | None = None
     emotion_params: dict[str, Any] = Field(default_factory=dict)
 
@@ -48,6 +51,11 @@ class Role(BaseModel):
     intro: str
     personality: str | None = None
     voice_summary: str | None = None
+    voice_name: str | None = None
+    voice_type: str | None = None
+    voice_resource_id: str | None = None
+    voice_model_family: str | None = None
+    voice_selection_reason: str | None = None
     aliases: list[str] = Field(default_factory=list)
     appearances: dict[str, RoleAppearance] = Field(default_factory=dict)
     audio: dict[str, RoleAudio] = Field(default_factory=dict)
@@ -180,6 +188,22 @@ class RoleAppearanceDesignOutput(BaseModel):
 class RoleVoiceItem(BaseModel):
     role_name: str
     emotion: Literal["normal", "angry", "sad", "happy", "tense", "whisper", "other"] | str
+    voice_name: str | None = Field(
+        default=None,
+        description="The display name of the selected provider voice, copied from the available voice list.",
+    )
+    voice_type: str | None = Field(
+        default=None,
+        description="The exact provider voice_type selected for this role. It must be copied from the available voice list.",
+    )
+    voice_resource_id: str | None = Field(
+        default=None,
+        description="The resource_id/model resource for the selected voice_type, copied from the available voice list.",
+    )
+    voice_selection_reason: str | None = Field(
+        default=None,
+        description="Short reason why this voice fits the role identity, age, gender, personality, and dramatic tone.",
+    )
     desc: str
     sample_text: str | None = Field(
         default=None,
@@ -202,6 +226,10 @@ class RoleVoiceGenerationItem(BaseModel):
     audio_id: str
     generation_method: Literal["design", "clone", "reuse", "synthesis"]
     voice: str
+    voice_name: str | None = None
+    voice_resource_id: str | None = None
+    voice_model_family: str | None = None
+    voice_selection_reason: str | None = None
     source_audio_id: str | None = None
     source_audio_path: str | None = None
     voice_prompt: str

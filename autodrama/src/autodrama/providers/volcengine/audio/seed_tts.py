@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -18,6 +19,8 @@ class VolcengineSeedTTSProvider:
     name = "volcengine"
     supports_direct_emotion_synthesis = True
     supports_local_voice_clone = False
+    _SPEAKER_CATALOG_PATH = Path(__file__).with_name("seed_tts_speakers.json")
+    _speaker_catalog_cache: list[dict[str, Any]] | None = None
 
     _AUDIO_PARAM_KEYS = {
         "emotion",
@@ -130,6 +133,61 @@ class VolcengineSeedTTSProvider:
         self.additions_as_json_string = bool(settings.options.get("additions_as_json_string", True))
         self.max_text_chars = int(settings.options.get("max_text_chars", 1024))
 
+    @classmethod
+    def available_speakers(cls) -> list[dict[str, Any]]:
+        if cls._speaker_catalog_cache is None:
+            payload = json.loads(cls._SPEAKER_CATALOG_PATH.read_text(encoding="utf-8"))
+            speakers = payload.get("speakers") if isinstance(payload, dict) else None
+            if not isinstance(speakers, list):
+                raise ValueError(f"Invalid Volcengine speaker catalog: {cls._SPEAKER_CATALOG_PATH}")
+            cls._speaker_catalog_cache = [
+                speaker
+                for speaker in speakers
+                if isinstance(speaker, dict) and speaker.get("voice_type")
+            ]
+        return [dict(speaker) for speaker in cls._speaker_catalog_cache]
+
+    @classmethod
+    def speaker_by_voice_type(cls, voice_type: str | None) -> dict[str, Any] | None:
+        key = str(voice_type or "").strip()
+        if not key:
+            return None
+        for speaker in cls.available_speakers():
+            if speaker.get("voice_type") == key:
+                return speaker
+        return None
+
+    @classmethod
+    def available_speakers_for_prompt(cls) -> list[dict[str, Any]]:
+        prompt_speakers: list[dict[str, Any]] = []
+        for speaker in cls.available_speakers():
+            base_fields = {
+                "name": speaker.get("name"),
+                "voice_type": speaker.get("voice_type"),
+                "resource_id": speaker.get("resource_id"),
+                "model_family": speaker.get("model_family"),
+                "scene": speaker.get("scene"),
+                "language": speaker.get("language"),
+                "gender": speaker.get("gender"),
+            }
+            prompt_speaker: dict[str, Any] = {
+                key: value
+                for key, value in base_fields.items()
+                if value is not None and value != ""
+            }
+            for key in ("abilities", "supported_emotions", "tags"):
+                value = speaker.get(key)
+                if value:
+                    prompt_speaker[key] = value
+            if speaker.get("emotion_capable"):
+                prompt_speaker["emotion_capable"] = True
+            if speaker.get("corresponding_2_0_voice"):
+                prompt_speaker["corresponding_2_0_voice"] = speaker["corresponding_2_0_voice"]
+            if speaker.get("supports_mix") is not None:
+                prompt_speaker["supports_mix"] = speaker["supports_mix"]
+            prompt_speakers.append(prompt_speaker)
+        return prompt_speakers
+
     def _endpoint(self, operation: str) -> str:
         if self.base_url.endswith(f"/api/v3/tts/{operation}"):
             return self.base_url
@@ -182,6 +240,12 @@ class VolcengineSeedTTSProvider:
         if gender_hint == "male":
             return self.default_male_speaker
         return self.default_speaker
+
+    def resolve_voice_resource_id(self, voice_type: str | None) -> str:
+        speaker = self.speaker_by_voice_type(voice_type)
+        if speaker and speaker.get("resource_id"):
+            return str(speaker["resource_id"])
+        return self.resource_id
 
     def resolve_emotion_plan(self, emotion: str) -> dict[str, Any]:
         key = self._normalize_emotion_key(emotion)

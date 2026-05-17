@@ -23,8 +23,16 @@ class DummySpeechProvider:
     model = "dummy-seed-tts"
     supports_direct_emotion_synthesis = True
 
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
     def resolve_role_voice(self, **kwargs) -> str:
         return "dummy_speaker"
+
+    def resolve_voice_resource_id(self, voice_type: str | None) -> str:
+        if voice_type == "role_selected_speaker":
+            return "role-selected-resource"
+        return "dummy-resource"
 
     def resolve_emotion_plan(self, emotion: str) -> dict[str, object]:
         return {
@@ -45,9 +53,10 @@ class DummySpeechProvider:
         text: str,
         metadata: dict[str, object] | None = None,
     ) -> VoiceSynthesisResult:
+        self.calls.append({"voice": voice, "text": text, "metadata": metadata or {}})
         return VoiceSynthesisResult(
             provider=self.name,
-            model=self.model,
+            model=str((metadata or {}).get("resource_id") or self.model),
             voice=voice,
             audio_data=base64.b64encode(f"{voice}:{text}".encode("utf-8")).decode("ascii"),
             audio_sample_rate=24000,
@@ -84,6 +93,11 @@ async def main_async() -> int:
                 id="role_a",
                 name="林舟",
                 intro="男主角，语气克制。",
+                voice_name="Role Selected Voice",
+                voice_type="role_selected_speaker",
+                voice_resource_id="role-selected-resource",
+                voice_model_family="Dummy Seed",
+                voice_selection_reason="Smoke selected role voice.",
                 audio={
                     "normal": RoleAudio(
                         id="role_a_audio_normal",
@@ -109,13 +123,20 @@ async def main_async() -> int:
     angry = state.roles["role_a"].audio["angry"]
     output_path = project_dir / "assets" / "json" / "nodes" / "role_voice_generation.json"
 
-    assert normal.asset_id == "dummy_speaker"
-    assert angry.asset_id == "dummy_speaker"
+    assert normal.asset_id == "role_selected_speaker"
+    assert normal.voice_type == "role_selected_speaker"
+    assert normal.voice_resource_id == "role-selected-resource"
+    assert angry.asset_id == "role_selected_speaker"
+    assert angry.voice_type == "role_selected_speaker"
+    assert angry.voice_resource_id == "role-selected-resource"
     assert normal.asset_path and (project_dir / normal.asset_path).exists()
     assert angry.asset_path and (project_dir / angry.asset_path).exists()
     assert angry.emotion_instruction == "angry instruction"
+    assert workflow.router.provider.calls[0]["voice"] == "role_selected_speaker"
+    assert workflow.router.provider.calls[0]["metadata"]["resource_id"] == "role-selected-resource"
     assert output_path.exists()
     assert '"generation_method": "synthesis"' in output_path.read_text(encoding="utf-8")
+    assert '"voice_resource_id": "role-selected-resource"' in output_path.read_text(encoding="utf-8")
 
     print("workflow_synthesis_smoke=ok")
     print(f"project_dir={project_dir}")
