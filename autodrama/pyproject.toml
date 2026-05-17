@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
   "pydantic>=2",
   "PyYAML>=6",
+  "dashscope>=1.20",
   "httpx>=0.25",
   "openai>=1.0",
 ]

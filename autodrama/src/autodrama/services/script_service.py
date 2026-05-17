@@ -25,6 +25,19 @@ class ScriptService:
         return int(state.metadata.get("episode_duration_seconds", 30))
 
     @staticmethod
+    def visual_style_label(state: ProjectState) -> str:
+        return str(state.metadata.get("visual_style_label", "真人电影质感"))
+
+    @staticmethod
+    def visual_style_prompt(state: ProjectState) -> str:
+        return str(
+            state.metadata.get(
+                "visual_style_prompt",
+                "真人电影质感：真实摄影、自然光或电影布光、真实材质、真实皮肤纹理和电影镜头语言。",
+            )
+        )
+
+    @staticmethod
     def episode_keys(episode_count: int) -> list[str]:
         return [f"episode_{index:03d}" for index in range(1, episode_count + 1)]
 
@@ -42,12 +55,19 @@ class ScriptService:
             episode_count=episode_count,
             episode_duration_seconds=episode_duration_seconds,
             episode_keys=", ".join(self.episode_keys(episode_count)),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,
             ScriptOutlineOutput,
             temperature=0.7,
-            metadata={"node_name": "script_outline", "project_id": state.project_id},
+            metadata={
+                "node_name": "script_outline",
+                "project_id": state.project_id,
+                "required_mapping_field": "episode_outlines",
+                "expected_keys": self.episode_keys(episode_count),
+            },
         )
 
     async def script_detail(self, state: ProjectState, provider: TextLLM) -> ScriptDetailOutput:
@@ -62,12 +82,19 @@ class ScriptService:
             episode_count=episode_count,
             episode_duration_seconds=episode_duration_seconds,
             episode_keys=", ".join(self.episode_keys(episode_count)),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,
             ScriptDetailOutput,
             temperature=0.7,
-            metadata={"node_name": "script_detail", "project_id": state.project_id},
+            metadata={
+                "node_name": "script_detail",
+                "project_id": state.project_id,
+                "required_mapping_field": "detailed_script",
+                "expected_keys": self.episode_keys(episode_count),
+            },
         )
 
     async def script_polish(self, state: ProjectState, provider: TextLLM) -> ScriptPolishOutput:
@@ -80,10 +107,17 @@ class ScriptService:
             episode_count=episode_count,
             episode_duration_seconds=episode_duration_seconds,
             episode_keys=", ".join(self.episode_keys(episode_count)),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,
             ScriptPolishOutput,
             temperature=0.7,
-            metadata={"node_name": "script_polish", "project_id": state.project_id},
+            metadata={
+                "node_name": "script_polish",
+                "project_id": state.project_id,
+                "required_mapping_field": "final_script",
+                "expected_keys": self.episode_keys(episode_count),
+            },
         )

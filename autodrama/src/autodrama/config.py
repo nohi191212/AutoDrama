@@ -6,7 +6,9 @@ from typing import Any
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from autodrama.core.visual_style import VisualStyle, normalize_visual_style
 
 
 class AppSettings(BaseModel):
@@ -21,6 +23,12 @@ class ProjectSettings(BaseModel):
     script_outline_file: Path | None = None
     episode_count: int = Field(default=1, ge=1)
     episode_duration_seconds: int = Field(default=30, ge=1)
+    visual_style: VisualStyle = "live_action"
+
+    @field_validator("visual_style", mode="before")
+    @classmethod
+    def normalize_visual_style_value(cls, value: object) -> VisualStyle:
+        return normalize_visual_style(value)
 
 
 class OutputSettings(BaseModel):

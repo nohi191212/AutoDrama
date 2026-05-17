@@ -124,7 +124,7 @@ class RoleVoiceGenerationItem(BaseModel):
     role_name: str
     emotion: str
     audio_id: str
-    generation_method: Literal["design", "clone"]
+    generation_method: Literal["design", "clone", "reuse"]
     voice: str
     source_audio_id: str | None = None
     source_audio_path: str | None = None

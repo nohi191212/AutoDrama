@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from autodrama.config import Settings
 from autodrama.core.ids import make_project_id
 from autodrama.core.schemas import BudgetState, ProjectState, ScriptBundle
+from autodrama.core.visual_style import visual_style_metadata
 
 
 class ProjectRepository:
@@ -94,6 +95,7 @@ class ProjectRepository:
                 "config_path": str(self.settings.config_path) if self.settings.config_path else None,
                 "episode_count": resolved_episode_count,
                 "episode_duration_seconds": resolved_episode_duration_seconds,
+                **visual_style_metadata(self.settings.project.visual_style),
             },
         )
         self.save_state(project_dir, state)

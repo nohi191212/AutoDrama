@@ -12,6 +12,10 @@ project:
   episode_count: 1
   # Target duration for each episode, in seconds.
   episode_duration_seconds: 30
+  # Visual style for character images, scene images, and downstream video prompts.
+  # Supported values: live_action, anime_2d, anime_3d
+  # Chinese aliases are also accepted: 真人电影质感, 2D动漫, 3D动漫
+  visual_style: live_action
 
 output:
   # All generated assets are saved under this directory.
@@ -61,14 +65,15 @@ providers:
     base_url: https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization
     api_key_env: DASHSCOPE_API_KEY
     models:
-      voice_design: qwen-voice-design
-      voice_clone: qwen-voice-enrollment
-      target_model: qwen3-tts-vc-2026-01-22
-      clone_target_model: qwen3-tts-vc-2026-01-22
+      voice_design: voice-enrollment
+      voice_clone: voice-enrollment
+      target_model: cosyvoice-v3.5-plus
+      clone_target_model: cosyvoice-v3.5-plus
     options:
       language: zh
       sample_rate: 24000
       response_format: wav
+      websocket_url: wss://dashscope.aliyuncs.com/api-ws/v1/inference
 
   deepseek:
     base_url: https://api.deepseek.com

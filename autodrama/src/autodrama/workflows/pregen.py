@@ -7,6 +7,7 @@ from typing import Awaitable, Callable
 
 from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import ProjectState, Role, RoleAudio, RoleVoiceGenerationItem, RoleVoiceGenerationOutput
+from autodrama.core.visual_style import visual_style_metadata
 from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
@@ -69,6 +70,7 @@ class PregenWorkflow:
     def _apply_script_plan_settings(self, state: ProjectState) -> None:
         state.metadata["episode_count"] = self.repo.settings.project.episode_count
         state.metadata["episode_duration_seconds"] = self.repo.settings.project.episode_duration_seconds
+        state.metadata.update(visual_style_metadata(self.repo.settings.project.visual_style))
 
     async def run(
         self,
@@ -218,6 +220,19 @@ class PregenWorkflow:
 
     def _preview_text(self, role: Role, audio: RoleAudio) -> str:
         return (audio.sample_text or f"我是{role.name}。")[:1024]
+
+    def _synthesis_text(self, provider, audio: RoleAudio, preview_text: str) -> str:
+        if not getattr(provider, "is_cosyvoice", False):
+            return preview_text
+
+        emotion_tags = {
+            "angry": "<|ANGRY|>",
+            "sad": "<|SAD|>",
+            "happy": "<|HAPPY|>",
+            "tense": "<|NEUTRAL|><|1.10|>",
+            "whisper": "<|CALM|><|0.80|>",
+        }
+        return f"{emotion_tags.get(audio.emotion, '')}{preview_text}"
 
     def _write_preview_audio(
         self,
@@ -376,6 +391,66 @@ class PregenWorkflow:
             },
         )
 
+    async def _generate_reused_voice(
+        self,
+        *,
+        provider,
+        project_dir: Path,
+        state: ProjectState,
+        role: Role,
+        audio: RoleAudio,
+        normal_audio: RoleAudio,
+    ) -> RoleVoiceGenerationItem:
+        if not normal_audio.asset_id:
+            raise ValueError(f"Cannot reuse {role.name}/{audio.emotion}: normal voice id is missing")
+
+        preview_text = self._preview_text(role, audio)
+        synthesis_result = await provider.synthesize_speech(
+            voice=normal_audio.asset_id,
+            text=self._synthesis_text(provider, audio, preview_text),
+            metadata={
+                "node_name": "role_voice_generation",
+                "project_id": state.project_id,
+                "role_id": role.id,
+                "role_name": role.name,
+                "audio_id": audio.id,
+                "emotion": audio.emotion,
+                "generation_method": "reuse",
+                "source_audio_id": normal_audio.id,
+                "source_audio_path": normal_audio.asset_path,
+                "target_model": getattr(provider, "target_model", None),
+            },
+        )
+        preview_audio_path = self._write_preview_audio(
+            project_dir,
+            audio=audio,
+            data=synthesis_result.audio_data,
+            response_format=synthesis_result.audio_format,
+        )
+        audio.asset_id = normal_audio.asset_id
+        audio.asset_path = preview_audio_path
+        return RoleVoiceGenerationItem(
+            role_id=role.id,
+            role_name=role.name,
+            emotion=audio.emotion,
+            audio_id=audio.id,
+            generation_method="reuse",
+            voice=normal_audio.asset_id,
+            source_audio_id=normal_audio.id,
+            source_audio_path=normal_audio.asset_path,
+            voice_prompt=audio.desc,
+            preview_text=preview_text,
+            preview_audio_path=preview_audio_path,
+            provider=synthesis_result.provider,
+            model=synthesis_result.model,
+            target_model=synthesis_result.model,
+            sample_rate=synthesis_result.audio_sample_rate,
+            response_format=synthesis_result.audio_format,
+            request_id=synthesis_result.request_id,
+            usage=synthesis_result.usage,
+            raw_response=synthesis_result.raw_response,
+        )
+
     async def _run_role_voice_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.audio("speech")
         get_logger().info(
@@ -402,6 +477,18 @@ class PregenWorkflow:
 
             for emotion, audio in role.audio.items():
                 if emotion == "normal":
+                    continue
+                if not getattr(provider, "supports_local_voice_clone", True):
+                    generated.append(
+                        await self._generate_reused_voice(
+                            provider=provider,
+                            project_dir=project_dir,
+                            state=state,
+                            role=role,
+                            audio=audio,
+                            normal_audio=normal_audio,
+                        )
+                    )
                     continue
                 generated.append(
                     await self._generate_cloned_voice(

@@ -14,6 +14,11 @@ class RoleService:
             "role_design",
             title=state.title,
             final_script=state.script.final_script,
+            visual_style_label=state.metadata.get("visual_style_label", "真人电影质感"),
+            visual_style_prompt=state.metadata.get(
+                "visual_style_prompt",
+                "真人电影质感：真实摄影、自然光或电影布光、真实材质、真实皮肤纹理和电影镜头语言。",
+            ),
         )
         return await provider.generate_json(
             prompt,

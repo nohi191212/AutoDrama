@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import mimetypes
 from pathlib import Path
@@ -13,7 +14,7 @@ from autodrama.providers.base import VoiceDesignResult, VoiceSynthesisResult
 
 
 class QwenVoiceDesignProvider:
-    """Qwen voice design provider via DashScope TTS customization API."""
+    """DashScope TTS voice design provider for Qwen-TTS and CosyVoice."""
 
     name = "qwen_tts"
 
@@ -22,6 +23,10 @@ class QwenVoiceDesignProvider:
         self.runtime = runtime
         self.endpoint = self._resolve_endpoint(settings.base_url)
         self.generation_endpoint = self._resolve_generation_endpoint(settings.base_url)
+        self.websocket_endpoint = self._resolve_websocket_endpoint(
+            settings.base_url,
+            settings.options.get("websocket_url"),
+        )
         self.model = settings.models.get("voice_design", "qwen-voice-design")
         self.clone_model = settings.models.get("voice_clone", "qwen-voice-enrollment")
         self.target_model = settings.models.get("target_model") or settings.models.get(
@@ -34,6 +39,14 @@ class QwenVoiceDesignProvider:
         self.language = str(settings.options.get("language", "zh"))
         self.sample_rate = int(settings.options.get("sample_rate", 24000))
         self.response_format = str(settings.options.get("response_format", "wav"))
+
+    @property
+    def is_cosyvoice(self) -> bool:
+        return self.target_model.startswith("cosyvoice-") or self.model == "voice-enrollment"
+
+    @property
+    def supports_local_voice_clone(self) -> bool:
+        return not self.is_cosyvoice
 
     @staticmethod
     def _resolve_endpoint(base_url: str | None) -> str:
@@ -66,6 +79,14 @@ class QwenVoiceDesignProvider:
             return f"{normalized}/services/aigc/multimodal-generation/generation"
         return default_endpoint
 
+    @staticmethod
+    def _resolve_websocket_endpoint(base_url: str | None, configured_url: Any) -> str:
+        if configured_url:
+            return str(configured_url).rstrip("/")
+        if base_url and "dashscope-intl.aliyuncs.com" in base_url:
+            return "wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference"
+        return "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+
     async def create_voice(
         self,
         *,
@@ -86,43 +107,32 @@ class QwenVoiceDesignProvider:
         }
         parameters.update(metadata.get("parameters", {}))
 
-        payload = {
-            "model": metadata.get("model", self.model),
-            "input": {
-                "action": "create",
-                "target_model": target_model,
-                "preferred_name": preferred_name[:16],
-                "voice_prompt": voice_prompt[:2048],
-                "preview_text": preview_text[:1024],
-                "language": language,
-            },
-            "parameters": parameters,
-        }
+        payload = self._voice_design_payload(
+            model=str(metadata.get("model", self.model)),
+            target_model=target_model,
+            preferred_name=preferred_name,
+            voice_prompt=voice_prompt,
+            preview_text=preview_text,
+            language=language,
+            parameters=parameters,
+        )
 
-        async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
-            response = await client.post(
-                self.endpoint,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+        response = await self._post_json(self.endpoint, payload)
 
         if response.status_code >= 400:
             raise ProviderBadResponseError(
-                f"Qwen voice design failed with HTTP {response.status_code}: {response.text[:500]}"
+                f"DashScope voice design failed with HTTP {response.status_code}: {response.text[:500]}"
             )
 
         try:
             body = response.json()
         except ValueError as exc:
-            raise ProviderBadResponseError(f"Qwen voice design returned non-JSON response: {exc}") from exc
+            raise ProviderBadResponseError(f"DashScope voice design returned non-JSON response: {exc}") from exc
 
         output = body.get("output") or {}
         voice = output.get("voice") or output.get("voice_id")
         if not voice:
-            raise ProviderBadResponseError(f"Qwen voice design response missing output.voice: {body}")
+            raise ProviderBadResponseError(f"DashScope voice design response missing output.voice/voice_id: {body}")
 
         preview_audio = output.get("preview_audio") or {}
         return VoiceDesignResult(
@@ -147,6 +157,10 @@ class QwenVoiceDesignProvider:
     ) -> VoiceDesignResult:
         if not self.api_key:
             raise ProviderAuthError("Missing Qwen/DashScope API key environment variable")
+        if not self.supports_local_voice_clone:
+            raise ProviderBadResponseError(
+                "CosyVoice voice cloning requires a public audio URL; local preview files cannot be reused as clone sources."
+            )
 
         metadata = metadata or {}
         target_model = str(metadata.get("target_model", self.clone_target_model))
@@ -166,15 +180,7 @@ class QwenVoiceDesignProvider:
             },
         }
 
-        async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
-            response = await client.post(
-                self.endpoint,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+        response = await self._post_json(self.endpoint, payload)
 
         if response.status_code >= 400:
             raise ProviderBadResponseError(
@@ -213,6 +219,9 @@ class QwenVoiceDesignProvider:
 
         metadata = metadata or {}
         model = str(metadata.get("model") or metadata.get("target_model") or self.clone_target_model)
+        if model.startswith("cosyvoice-"):
+            return await self._synthesize_cosyvoice(voice=voice, text=text, model=model)
+
         response_format = str(metadata.get("response_format", self.response_format))
         payload: dict[str, Any] = {
             "model": model,
@@ -224,15 +233,7 @@ class QwenVoiceDesignProvider:
         if parameters := metadata.get("parameters"):
             payload["parameters"] = parameters
 
-        async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
-            response = await client.post(
-                self.generation_endpoint,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+        response = await self._post_json(self.generation_endpoint, payload)
 
         if response.status_code >= 400:
             raise ProviderBadResponseError(
@@ -257,6 +258,119 @@ class QwenVoiceDesignProvider:
             usage=body.get("usage") or {},
             raw_response=self._without_audio_data(body),
         )
+
+    async def _synthesize_cosyvoice(self, *, voice: str, text: str, model: str) -> VoiceSynthesisResult:
+        try:
+            import dashscope
+            from dashscope.audio.tts_v2 import SpeechSynthesizer
+        except ImportError as exc:
+            raise ProviderBadResponseError(
+                "CosyVoice synthesis requires the DashScope Python SDK. "
+                "Install project dependencies so the 'dashscope' package is available."
+            ) from exc
+
+        def call_sdk() -> tuple[bytes, str | None, dict[str, Any]]:
+            dashscope.api_key = self.api_key
+            dashscope.base_websocket_api_url = self.websocket_endpoint
+            synthesizer = SpeechSynthesizer(model=model, voice=voice)
+            audio = synthesizer.call(text)
+            if not isinstance(audio, (bytes, bytearray)):
+                raise ProviderBadResponseError(f"CosyVoice synthesis returned unexpected audio type: {type(audio)}")
+
+            request_id = None
+            if get_request_id := getattr(synthesizer, "get_last_request_id", None):
+                request_id = get_request_id()
+
+            usage: dict[str, Any] = {}
+            if get_delay := getattr(synthesizer, "get_first_package_delay", None):
+                usage["first_package_delay_ms"] = get_delay()
+
+            return bytes(audio), request_id, usage
+
+        try:
+            audio_bytes, request_id, usage = await asyncio.to_thread(call_sdk)
+        except ProviderBadResponseError:
+            raise
+        except Exception as exc:
+            raise ProviderBadResponseError(f"CosyVoice synthesis failed via DashScope SDK: {exc}") from exc
+
+        return VoiceSynthesisResult(
+            provider=self.name,
+            model=model,
+            voice=voice,
+            audio_data=base64.b64encode(audio_bytes).decode("ascii"),
+            audio_format="mp3",
+            request_id=request_id,
+            usage=usage,
+            raw_response={
+                "output": {"audio": "<binary audio omitted>"},
+                "websocket_endpoint": self.websocket_endpoint,
+            },
+        )
+
+    async def _post_json(self, url: str, payload: dict[str, Any]) -> httpx.Response:
+        try:
+            async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
+                return await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+        except httpx.ConnectError as exc:
+            raise ProviderBadResponseError(
+                f"DashScope connection failed before receiving an HTTP response. "
+                f"Check network/proxy/TLS settings for {url}: {exc}"
+            ) from exc
+
+    def _voice_design_payload(
+        self,
+        *,
+        model: str,
+        target_model: str,
+        preferred_name: str,
+        voice_prompt: str,
+        preview_text: str,
+        language: str,
+        parameters: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self._is_cosyvoice_design(model, target_model):
+            return {
+                "model": "voice-enrollment",
+                "input": {
+                    "action": "create_voice",
+                    "target_model": target_model,
+                    "prefix": self._cosyvoice_prefix(preferred_name),
+                    "voice_prompt": voice_prompt[:500],
+                    "preview_text": preview_text[:200],
+                    "language_hints": [language],
+                },
+                "parameters": parameters,
+            }
+
+        return {
+            "model": model,
+            "input": {
+                "action": "create",
+                "target_model": target_model,
+                "preferred_name": preferred_name[:16],
+                "voice_prompt": voice_prompt[:2048],
+                "preview_text": preview_text[:1024],
+                "language": language,
+            },
+            "parameters": parameters,
+        }
+
+    @staticmethod
+    def _is_cosyvoice_design(model: str, target_model: str) -> bool:
+        return model == "voice-enrollment" or target_model.startswith("cosyvoice-")
+
+    @staticmethod
+    def _cosyvoice_prefix(preferred_name: str) -> str:
+        prefix = "".join(ch for ch in preferred_name if ch.isascii() and ch.isalnum())
+        return (prefix or "voice")[:10]
 
     @staticmethod
     def _without_preview_audio_data(body: dict[str, Any]) -> dict[str, Any]:
