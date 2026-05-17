@@ -134,16 +134,18 @@ class AssetService:
         )
 
     async def bgm_design(self, state: ProjectState, provider: TextLLM) -> BGMDesignOutput:
+        bgm_count = int(state.metadata.get("bgm_count", 3))
         prompt = self.prompts.render(
             "bgm_design",
             title=state.title,
             simple_script=self.format_json(state.metadata.get("simple_script", {})),
             global_script=state.metadata.get("global_script", ""),
             visual_style_label=self.visual_style_label(state),
+            bgm_count=bgm_count,
         )
         return await provider.generate_json(
             prompt,
             BGMDesignOutput,
             temperature=0.6,
-            metadata={"node_name": "bgm_design", "project_id": state.project_id},
+            metadata={"node_name": "bgm_design", "project_id": state.project_id, "bgm_count": bgm_count},
         )

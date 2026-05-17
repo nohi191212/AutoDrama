@@ -199,6 +199,7 @@ class PregenWorkflow:
     def _apply_script_plan_settings(self, state: ProjectState) -> None:
         state.metadata["episode_count"] = self.repo.settings.project.episode_count
         state.metadata["episode_duration_seconds"] = self.repo.settings.project.episode_duration_seconds
+        state.metadata["bgm_count"] = self.repo.settings.project.bgm_count
         state.metadata.update(visual_style_metadata(self.repo.settings.project.visual_style))
 
     async def run(
@@ -1093,15 +1094,21 @@ class PregenWorkflow:
             getattr(provider, "model", "-"),
         )
         output = await self.asset_service.bgm_design(state, provider)
+        expected_bgm_count = self.repo.settings.project.bgm_count
+        if len(output.bgms) != expected_bgm_count:
+            raise ValueError(f"bgm_design must generate exactly {expected_bgm_count} BGM items; got {len(output.bgms)}")
+        bgm_ids = [normalize_id("bgm", item.name) for item in output.bgms]
+        if len(set(bgm_ids)) != expected_bgm_count:
+            raise ValueError("bgm_design generated duplicate BGM names after id normalization")
         state.bgms = {
-            normalize_id("bgm", item.name): BGM(
-                id=normalize_id("bgm", item.name),
+            bgm_id: BGM(
+                id=bgm_id,
                 name=item.name,
                 mood=item.mood,
                 prompt=item.prompt,
                 usage_hint=item.usage_hint,
             )
-            for item in output.bgms
+            for bgm_id, item in zip(bgm_ids, output.bgms, strict=True)
         }
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, "bgm_design", output)

@@ -242,21 +242,50 @@ class FakeTextProvider:
                 "merge_notes": ["未发现需要合并的重复场景。"],
             }
         elif schema is BGMDesignOutput or node_name == "bgm_design":
+            bgm_count = int(metadata.get("bgm_count") or _extract_prompt_int(prompt, "BGM数量", 3))
+            bgm_templates = [
+                {
+                    "name": "暗线推进",
+                    "mood": "紧张、克制、悬疑",
+                    "prompt": "紧张克制的悬疑影视配乐，低频脉冲、轻微电子氛围、节奏逐步推进，适合办公室调查和证据发现。",
+                    "usage_hint": "调查、发现线索、反击前铺垫。",
+                },
+                {
+                    "name": "公开反击",
+                    "mood": "压迫、爆发、胜负揭晓",
+                    "prompt": "短剧高潮反击配乐，弦乐和电子鼓逐步增强，节奏果断，适合会议室投屏证据和反派失控。",
+                    "usage_hint": "会议对峙和反击高潮。",
+                },
+                {
+                    "name": "低谷独白",
+                    "mood": "低落、克制、内心挣扎",
+                    "prompt": "克制的情绪低谷影视配乐，柔和钢琴、稀疏弦乐和低频氛围，适合人物独白和信念动摇。",
+                    "usage_hint": "角色独处、失落、犹豫。",
+                },
+                {
+                    "name": "真相逼近",
+                    "mood": "紧迫、疑云、逐步揭露",
+                    "prompt": "紧迫的调查推进配乐，重复钢琴音型、轻电子节拍和悬疑弦乐，适合证据逐步串联。",
+                    "usage_hint": "线索拼接、真相揭露前。",
+                },
+                {
+                    "name": "余温收束",
+                    "mood": "释然、温暖、收束",
+                    "prompt": "温暖克制的结尾配乐，柔和钢琴与轻弦乐，节奏舒缓，适合冲突结束后的情绪回落。",
+                    "usage_hint": "结尾、关系缓和、情绪收束。",
+                },
+            ]
+            bgms = [
+                bgm_templates[index] if index < len(bgm_templates) else {
+                    "name": f"情绪铺底{index + 1}",
+                    "mood": "补充情绪、氛围铺垫",
+                    "prompt": "可复用的短剧氛围配乐，中速节奏、轻电子和弦乐铺底，适合补充转场和情绪延续。",
+                    "usage_hint": "转场、补充铺垫。",
+                }
+                for index in range(bgm_count)
+            ]
             data = {
-                "bgms": [
-                    {
-                        "name": "暗线推进",
-                        "mood": "紧张、克制、悬疑",
-                        "prompt": "紧张克制的悬疑影视配乐，低频脉冲、轻微电子氛围、节奏逐步推进，适合办公室调查和证据发现。",
-                        "usage_hint": "调查、发现线索、反击前铺垫。",
-                    },
-                    {
-                        "name": "公开反击",
-                        "mood": "压迫、爆发、胜负揭晓",
-                        "prompt": "短剧高潮反击配乐，弦乐和电子鼓逐步增强，节奏果断，适合会议室投屏证据和反派失控。",
-                        "usage_hint": "会议对峙和反击高潮。",
-                    },
-                ]
+                "bgms": bgms
             }
         elif schema is StoryboardEpisodeOutput or node_name == "storyboard_generation":
             episode_key = str(metadata.get("episode_key") or episode_keys[0])

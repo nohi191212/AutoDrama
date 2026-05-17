@@ -95,6 +95,7 @@ class ProjectRepository:
                 "config_path": str(self.settings.config_path) if self.settings.config_path else None,
                 "episode_count": resolved_episode_count,
                 "episode_duration_seconds": resolved_episode_duration_seconds,
+                "bgm_count": self.settings.project.bgm_count,
                 **visual_style_metadata(self.settings.project.visual_style),
             },
         )

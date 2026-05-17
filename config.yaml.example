@@ -14,6 +14,8 @@ project:
   episode_count: 1
   # Target duration for each episode, in seconds.
   episode_duration_seconds: 30
+  # Exact number of reusable BGM tracks that bgm_design should ask the LLM to describe.
+  bgm_count: 3
   # Visual style for character images, scene images, and downstream video prompts.
   # Supported values: live_action, anime_2d, anime_3d
   # Chinese aliases are also accepted: 真人电影质感, 2D动漫, 3D动漫
@@ -107,12 +109,20 @@ providers:
       thinking_enabled: true
 
   minimax:
-    base_url: https://api.minimax.chat
+    base_url: https://api.minimaxi.com
     api_key_env: MINIMAX_API_KEY
     group_id_env: MINIMAX_GROUP_ID
     models:
       tts: speech-02
-      music: music-01
+      music: music-2.6
+    options:
+      music_format: mp3
+      music_sample_rate: 44100
+      music_bitrate: 256000
+      output_format: url
+      is_instrumental: true
+      lyrics_optimizer: false
+      aigc_watermark: false
 
   volcengine:
     base_url: https://openspeech.bytedance.com
@@ -216,6 +226,6 @@ routing:
     speech: volcengine
     music: minimax
   music:
-    bgm: aliyun
+    bgm: minimax
   vision:
     media_review: aliyun

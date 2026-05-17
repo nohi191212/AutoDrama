@@ -22,6 +22,7 @@ from autodrama.providers.local.mock.fake import (
     FakeVideoProvider,
     FakeVoiceDesignProvider,
 )
+from autodrama.providers.minimax.music.music_26 import MiniMaxMusicProvider
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
 from autodrama.providers.volcengine.audio.seed_icl import VolcengineVoiceProvider
 from autodrama.providers.volcengine.audio.seed_tts import VolcengineSeedTTSProvider
@@ -32,6 +33,7 @@ ALIYUN_IMAGE_PROVIDER_NAMES = {"aliyun", "wanxiang"}
 ALIYUN_VIDEO_PROVIDER_NAMES = {"aliyun", "wanxiang"}
 ALIYUN_AUDIO_PROVIDER_NAMES = {"aliyun", "qwen_tts"}
 ALIYUN_MUSIC_PROVIDER_NAMES = {"aliyun", "bailian"}
+MINIMAX_MUSIC_PROVIDER_NAMES = {"minimax", "minimax_music"}
 
 
 class ProviderRouter:
@@ -136,6 +138,8 @@ class ProviderRouter:
 
         if provider_name == "fake":
             return self._fake_music
+        if provider_name in MINIMAX_MUSIC_PROVIDER_NAMES:
+            return MiniMaxMusicProvider(self._settings_for("minimax"), self.settings.runtime)
         if provider_name in ALIYUN_MUSIC_PROVIDER_NAMES:
             return BailianMusicProvider(self._dashscope_root_settings(provider_name), self.settings.runtime)
         raise ValueError(f"Unsupported music provider: {provider_name}")

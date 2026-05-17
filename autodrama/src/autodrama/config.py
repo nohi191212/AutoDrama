@@ -23,6 +23,7 @@ class ProjectSettings(BaseModel):
     script_outline_file: Path | None = None
     episode_count: int = Field(default=1, ge=1)
     episode_duration_seconds: int = Field(default=30, ge=1)
+    bgm_count: int = Field(default=3, ge=1)
     visual_style: VisualStyle = "live_action"
 
     @field_validator("visual_style", mode="before")
