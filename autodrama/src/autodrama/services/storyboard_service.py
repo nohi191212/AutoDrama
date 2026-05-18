@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from autodrama.core.schemas import ProjectState, StoryboardEpisodeOutput
 from autodrama.providers.base import TextLLM
@@ -21,12 +22,14 @@ class StoryboardService:
         provider: TextLLM,
         *,
         episode_key: str,
+        previous_storyboard_history: dict[str, Any] | None = None,
     ) -> StoryboardEpisodeOutput:
         prompt = self.prompts.render(
             "storyboard_generate",
             title=state.title,
             episode_key=episode_key,
             episode_script=state.script.final_script.get(episode_key, ""),
+            previous_storyboard_history=self.format_json(previous_storyboard_history or {"episodes": []}),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
             props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),
             layouts=self.format_json({layout_id: layout.model_dump(mode="json") for layout_id, layout in state.layouts.items()}),

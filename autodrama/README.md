@@ -31,7 +31,7 @@ Dynamic shot-level assets now live in a separate workflow:
 4. `shot_video_generation`
 5. `dynamic_asset_solidification`
 
-`run generation` starts by writing storyboard slots to `slots/{episode_key}.json`, then writes dialogue audio, reference frames, shot videos, and solidified dynamic asset metadata back into those slots. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
+`run generation` processes selected episodes in episode order. For each episode it writes the storyboard slot to `slots/{episode_key}.json`, generates dialogue audio, reference frames, shot videos, and solidified dynamic asset metadata back into that slot before moving to the next episode. Completed storyboard summaries are stored in `assets/json/storyboard_history.json` and injected into later storyboard prompts so following episodes can preserve continuity. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
 
 ## Provider routing
 
@@ -54,9 +54,10 @@ Use the requested conda environment:
 Do not use pytest in this repository. Use focused smoke scripts and compile checks instead.
 
 ```powershell
-D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama scripts/smoke/dynamic_assets_fake_smoke.py scripts/smoke/only_node_episode_smoke.py scripts/smoke/minimax_music_payload_smoke.py
+D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama scripts/smoke/dynamic_assets_fake_smoke.py scripts/smoke/only_node_episode_smoke.py scripts/smoke/episode_serial_generation_smoke.py scripts/smoke/minimax_music_payload_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/only_node_episode_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/episode_serial_generation_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/minimax_music_payload_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_payload_smoke.py --config config.yaml.example
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_router_smoke.py
