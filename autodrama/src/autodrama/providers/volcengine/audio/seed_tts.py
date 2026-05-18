@@ -111,7 +111,7 @@ class VolcengineSeedTTSProvider:
         )
         self.resource_id = str(settings.options.get("tts_resource_id") or self.model)
         self.fallback_resource_id = str(settings.options.get("tts_fallback_resource_id") or self.fallback_model)
-        self.api_key = settings.secret("api_key_env")
+        self.api_key = self._seed_tts_api_key(settings)
         self.app_key = settings.secret("app_key_env") or settings.secret("app_id_env")
         self.access_key = settings.secret("access_key_env") or settings.secret("secret_key_env")
         self.sample_rate = int(settings.options.get("sample_rate", 24000))
@@ -195,6 +195,14 @@ class VolcengineSeedTTSProvider:
             return f"{self.base_url}/{operation}"
         return f"{self.base_url}/api/v3/tts/{operation}"
 
+    @staticmethod
+    def _seed_tts_api_key(settings: ProviderSettings) -> str | None:
+        api_key_ref = settings.options.get("seed_tts_api_key_env")
+        if api_key_ref:
+            copied_settings = settings.model_copy(update={"api_key_env": str(api_key_ref)})
+            return copied_settings.secret("api_key_env")
+        return settings.secret("api_key_env")
+
     def _auth_headers(self, *, resource_id: str | None = None) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
@@ -208,7 +216,8 @@ class VolcengineSeedTTSProvider:
             headers["X-Api-Access-Key"] = self.access_key
         else:
             raise ProviderAuthError(
-                "Missing Volcengine Speech credentials. Set api_key_env, or app_id_env/app_key_env plus access_key_env."
+                "Missing Volcengine Seed TTS credentials. Set providers.volcengine.options.seed_tts_api_key_env "
+                "or api_key_env, or app_id_env/app_key_env plus access_key_env."
             )
         if resource_id:
             headers["X-Api-Resource-Id"] = resource_id
@@ -366,7 +375,8 @@ class VolcengineSeedTTSProvider:
                         body = await response.aread()
                         raise ProviderBadResponseError(
                             f"Volcengine speech synthesis failed with HTTP {response.status_code}: "
-                            f"{body.decode('utf-8', errors='replace')[:500]}"
+                            f"{body.decode('utf-8', errors='replace')[:500]}\n"
+                            f"Raw Headers: {headers}"
                         )
                     content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
                     if content_type.startswith("audio/") or content_type == "application/octet-stream":

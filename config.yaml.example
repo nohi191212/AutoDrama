@@ -146,6 +146,7 @@ providers:
       language: cn
       sample_rate: 24000
       response_format: mp3
+      seed_tts_api_key_env: SEED_TTS_API_KEY
       tts_resource_id: seed-tts-2.0
       tts_fallback_resource_id: seed-tts-1.0
       instruction_mode: text_prefix
