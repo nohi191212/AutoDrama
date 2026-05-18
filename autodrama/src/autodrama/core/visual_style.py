@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal, TypedDict
 
 
-VisualStyle = Literal["live_action", "anime_2d", "anime_3d"]
+VisualStyle = Literal["live_action", "anime_2d", "anime_3d", "cg_animation"]
 
 
 class VisualStylePreset(TypedDict):
@@ -31,6 +31,14 @@ VISUAL_STYLE_PRESETS: dict[VisualStyle, VisualStylePreset] = {
         "prompt": (
             "3D动漫：高质量三维动画质感、风格化3D角色、体积光、动画电影式材质和镜头运动；"
             "避免真人摄影质感和2D线稿手绘质感。"
+        ),
+    },
+    "cg_animation": {
+        "label": "CG动画电影风",
+        "prompt": (
+            "CG动画电影风：高质量CG动画电影质感、电影级三维角色、精致材质、全局光照、"
+            "风格化但可信的表演、动画电影镜头语言和细腻表情；"
+            "避免真人摄影质感、2D线稿、低质游戏渲染和廉价卡通质感。"
         ),
     },
 }
@@ -63,6 +71,17 @@ _VISUAL_STYLE_ALIASES: dict[str, VisualStyle] = {
     "3d动漫": "anime_3d",
     "三维动漫": "anime_3d",
     "三维动画": "anime_3d",
+    "cg_animation": "cg_animation",
+    "cg-animation": "cg_animation",
+    "cg animation": "cg_animation",
+    "cg": "cg_animation",
+    "cg animated film": "cg_animation",
+    "cg动画电影风": "cg_animation",
+    "CG动画电影风": "cg_animation",
+    "cg动画": "cg_animation",
+    "CG动画": "cg_animation",
+    "动画电影": "cg_animation",
+    "动画电影风": "cg_animation",
 }
 
 

@@ -36,6 +36,16 @@ class AssetService:
             )
         )
 
+    @staticmethod
+    def role_appearance_view_requirement(state: ProjectState) -> str:
+        visual_style = str(state.metadata.get("visual_style", "live_action"))
+        if visual_style == "live_action":
+            return "半身或全身真人电影感角色设定图；干净背景；无其他人物；不要做三视图拼版。"
+        return (
+            "三视图角色设定图 / character turnaround sheet：同一角色正面、侧面、背面三视图并排，"
+            "统一身高比例和服装细节，干净背景，无其他人物；不要做单张半身照或只有一个角度的角色图。"
+        )
+
     async def role_appearance_design(self, state: ProjectState, provider: TextLLM) -> RoleAppearanceDesignOutput:
         prompt = self.prompts.render(
             "role_appearance_design",
@@ -55,6 +65,7 @@ class AssetService:
             ),
             visual_style_label=self.visual_style_label(state),
             visual_style_prompt=self.visual_style_prompt(state),
+            role_appearance_view_requirement=self.role_appearance_view_requirement(state),
         )
         return await provider.generate_json(
             prompt,

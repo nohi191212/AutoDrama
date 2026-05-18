@@ -61,6 +61,10 @@ class FakeTextProvider:
         episode_count = _extract_prompt_int(prompt, "目标集数", 1)
         episode_duration_seconds = _extract_prompt_int(prompt, "单集目标时长", 30)
         episode_keys = _episode_keys(episode_count)
+        expected_keys = metadata.get("expected_keys")
+        if isinstance(expected_keys, list) and expected_keys:
+            episode_keys = [str(key) for key in expected_keys]
+            episode_count = len(episode_keys)
 
         if schema is ScriptOutlineOutput or node_name == "script_outline":
             data = {
@@ -124,25 +128,38 @@ class FakeTextProvider:
                 ]
             }
         elif schema is RoleAppearanceDesignOutput or node_name == "role_appearance_design":
+            if "CG动画电影风" in prompt:
+                appearance_style = "CG动画电影风"
+            elif "3D动漫" in prompt:
+                appearance_style = "3D动漫"
+            elif "2D动漫" in prompt:
+                appearance_style = "2D动漫"
+            else:
+                appearance_style = "真人电影质感"
+            view_requirement = (
+                "正面、侧面、背面三视图角色设定图，character turnaround sheet，同一角色并排，统一身高比例和服装细节，干净背景，无其他人物"
+                if "三视图" in prompt
+                else "半身角色设定图，干净背景，无其他人物"
+            )
             data = {
                 "appearances": [
                     {
                         "role_name": "林舟",
                         "name": "base",
                         "desc": "二十八岁职场青年，身形偏瘦，短发，眼下有轻微疲惫感，五官清秀但神情克制。",
-                        "prompt": "真人电影质感，二十八岁中国职场青年男性，短发，身形偏瘦，五官清秀，眼神疲惫但冷静，半身角色设定图，干净背景，自然电影布光。",
+                        "prompt": f"{appearance_style}，二十八岁中国职场青年男性，短发，身形偏瘦，五官清秀，眼神疲惫但冷静，{view_requirement}。",
                     },
                     {
                         "role_name": "苏晚",
                         "name": "base",
                         "desc": "二十六岁数据分析师，身形修长，眉眼清冷，气质理性克制。",
-                        "prompt": "真人电影质感，二十六岁中国女性数据分析师，身形修长，眉眼清冷，气质理性克制，半身角色设定图，干净背景，自然电影布光。",
+                        "prompt": f"{appearance_style}，二十六岁中国女性数据分析师，身形修长，眉眼清冷，气质理性克制，{view_requirement}。",
                     },
                     {
                         "role_name": "赵启",
                         "name": "base",
                         "desc": "三十五岁部门主管，体型中等偏壮，五官锐利，神情自负，压迫感强。",
-                        "prompt": "真人电影质感，三十五岁中国男性部门主管，体型中等偏壮，五官锐利，神情自负，半身角色设定图，干净背景，自然电影布光。",
+                        "prompt": f"{appearance_style}，三十五岁中国男性部门主管，体型中等偏壮，五官锐利，神情自负，{view_requirement}。",
                     },
                 ]
             }

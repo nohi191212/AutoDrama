@@ -8,6 +8,7 @@ from autodrama.config import load_settings
 from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
+from autodrama.workflows.generation import GENERATION_NODES, GenerationWorkflow
 from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow
 
 
@@ -26,9 +27,20 @@ def build_parser() -> argparse.ArgumentParser:
     pregen_parser = run_subparsers.add_parser("pregen", help="Run pre-generation nodes")
     pregen_parser.add_argument("--config", required=True)
     pregen_parser.add_argument("--project")
-    pregen_parser.add_argument("--until", choices=PREGEN_NODES, default=PREGEN_NODES[-1])
+    pregen_parser.add_argument("--until", choices=PREGEN_NODES, default="storyboard_generation")
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     pregen_parser.add_argument("--force", action="store_true")
+
+    generation_parser = run_subparsers.add_parser("generation", help="Run dynamic shot-level asset generation")
+    generation_parser.add_argument("--config", required=True)
+    generation_parser.add_argument("--project")
+    generation_parser.add_argument("--until", choices=GENERATION_NODES, default=GENERATION_NODES[-1])
+    generation_parser.add_argument(
+        "--episodes",
+        help="Comma-separated episode keys to generate, overriding generation_checklist.json.",
+    )
+    generation_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
+    generation_parser.add_argument("--force", action="store_true")
 
     inspect_parser = subparsers.add_parser("inspect", help="Inspect a project")
     inspect_subparsers = inspect_parser.add_subparsers(dest="target", required=True)
@@ -95,6 +107,45 @@ async def cmd_run_pregen(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_run_generation(args: argparse.Namespace) -> int:
+    settings = load_settings(args.config)
+    repo = ProjectRepository(settings)
+    project_dir = repo.resolve_active_project_dir(args.project)
+    episode_keys = None
+    if args.episodes:
+        episode_keys = [item.strip() for item in args.episodes.split(",") if item.strip()]
+
+    provider_override = "fake" if args.provider == "fake" else None
+    router = ProviderRouter(settings, provider_override=provider_override)
+    workflow = GenerationWorkflow(repo=repo, router=router)
+    state = await workflow.run(
+        project_dir,
+        until=args.until,
+        force=args.force,
+        episode_keys=episode_keys,
+    )
+    get_logger().info(
+        "run summary workflow=generation project_id=%s current_node=%s project_dir=%s",
+        state.project_id,
+        state.current_node,
+        project_dir,
+    )
+    print(
+        json.dumps(
+            {
+                "project_id": state.project_id,
+                "current_node": state.current_node,
+                "completed_nodes": state.completed_nodes,
+                "project_dir": str(project_dir),
+                "generation_checklist": str(project_dir / "generation_checklist.json"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def cmd_inspect_state(args: argparse.Namespace) -> int:
     settings = load_settings(args.config)
     repo = ProjectRepository(settings)
@@ -148,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_init(args)
     if args.command == "run" and args.workflow == "pregen":
         return asyncio.run(cmd_run_pregen(args))
+    if args.command == "run" and args.workflow == "generation":
+        return asyncio.run(cmd_run_generation(args))
     if args.command == "inspect" and args.target == "state":
         return cmd_inspect_state(args)
     if args.command == "inspect" and args.target == "nodes":

@@ -43,6 +43,7 @@ from autodrama.services.role_service import RoleService
 from autodrama.services.script_service import ScriptService
 from autodrama.services.storyboard_service import StoryboardService
 from autodrama.utils.prompts import PromptStore
+from autodrama.workflows.generation_checklist import update_checklist_from_state
 
 NodeRunner = Callable[[ProjectState], Awaitable[ProjectState]]
 
@@ -65,10 +66,6 @@ PREGEN_NODES = [
     "bgm_design",
     "bgm_generation",
     "storyboard_generation",
-    "shot_dialogue_audio_generation",
-    "ref_frame_generation",
-    "shot_video_generation",
-    "dynamic_asset_solidification",
 ]
 
 
@@ -330,7 +327,7 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         *,
-        until: str = "dynamic_asset_solidification",
+        until: str = "storyboard_generation",
         force: bool = False,
     ) -> ProjectState:
         if until not in PREGEN_NODES:
@@ -357,6 +354,8 @@ class PregenWorkflow:
                 state = await getattr(self, f"_run_{node_name}")(project_dir, state)
                 state.mark_completed(node_name)
                 self.repo.save_state(project_dir, state)
+                if node_name == "storyboard_generation":
+                    update_checklist_from_state(self.repo, project_dir, state, default_generate=True)
             except Exception:
                 logger.exception("node %d/%d %s failed", index, len(target_nodes), node_name)
                 raise
@@ -367,6 +366,8 @@ class PregenWorkflow:
                 node_name,
                 state.current_node,
             )
+        if "storyboard_generation" in state.completed_nodes:
+            update_checklist_from_state(self.repo, project_dir, state, default_generate=True)
         logger.info("workflow=pregen completed project_id=%s current_node=%s", state.project_id, state.current_node)
         return state
 
@@ -530,9 +531,14 @@ class PregenWorkflow:
         project_dir: Path,
         state: ProjectState,
     ) -> list[StoryboardEpisodeOutput]:
+        active_episode_keys = getattr(self, "_active_episode_keys", None)
+        if active_episode_keys is not None:
+            episode_keys = [episode_key for episode_key in self._expected_episode_keys(state) if episode_key in active_episode_keys]
+        else:
+            episode_keys = self._expected_episode_keys(state)
         return [
             self._load_storyboard_episode(project_dir, episode_key)
-            for episode_key in self._expected_episode_keys(state)
+            for episode_key in episode_keys
         ]
 
     @staticmethod

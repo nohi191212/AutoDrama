@@ -17,8 +17,9 @@ project:
   # Exact number of reusable BGM tracks that bgm_design should ask the LLM to describe.
   bgm_count: 3
   # Visual style for character images, scene images, and downstream video prompts.
-  # Supported values: live_action, anime_2d, anime_3d
-  # Chinese aliases are also accepted: 真人电影质感, 2D动漫, 3D动漫
+  # Supported values: live_action, anime_2d, anime_3d, cg_animation
+  # Chinese aliases are also accepted: 真人电影质感, 2D动漫, 3D动漫, CG动画电影风
+  # anime_2d, anime_3d, and cg_animation use character turnaround sheets for role appearance images.
   visual_style: live_action
 
 output:
