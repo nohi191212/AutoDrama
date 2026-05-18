@@ -9,15 +9,15 @@ Usage:
   scripts/run_pregen_fake.sh [--config FILE] [--project ID_OR_DIR] [--until NODE] [--force]
 
 Default NODE:
-  dynamic_asset_solidification
+  bgm_generation
 
-This runs the current MVP only with fake provider through dynamic asset solidification.
+This runs the pre-generation workflow only with fake providers.
 Project ID and input outline file are read from config.yaml by default. Use
 --project to run a specific existing project or output directory.
 USAGE
 }
 
-until="dynamic_asset_solidification"
+until="bgm_generation"
 force=""
 project=""
 

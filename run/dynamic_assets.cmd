@@ -7,8 +7,9 @@ pushd "%ROOT_DIR%" >nul
 set "CONFIG=config.yaml"
 set "PROJECT="
 set "PROVIDER_ARGS="
-set "PREGEN_UNTIL=storyboard_generation"
+set "PREGEN_UNTIL=bgm_generation"
 set "GENERATION_UNTIL=dynamic_asset_solidification"
+set "GENERATION_ONLY="
 set "EPISODES="
 set "FORCE="
 set "SKIP_PREGEN="
@@ -65,6 +66,21 @@ if "%~1"=="--generation-until" (
   shift
   goto parse
 )
+if "%~1"=="--generation-only" (
+  if "%~2"=="" goto missing_value
+  set "GENERATION_ONLY=%~2"
+  shift
+  shift
+  goto parse
+)
+if "%~1"=="--only" (
+  if "%~2"=="" goto missing_value
+  set "GENERATION_ONLY=%~2"
+  set "SKIP_PREGEN=1"
+  shift
+  shift
+  goto parse
+)
 if "%~1"=="-h" goto help
 if "%~1"=="--help" goto help
 
@@ -79,10 +95,11 @@ goto help_error
 echo Usage:
 echo   run\dynamic_assets.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
 echo   run\dynamic_assets.cmd [--episodes episode_001,episode_003] [--skip-pregen]
+echo   run\dynamic_assets.cmd --only ref_frame_generation --episodes 1,3
 echo.
 echo This advances a project through:
-echo   1. pregen until storyboard_generation
-echo   2. generation until dynamic_asset_solidification
+echo   1. pregen until bgm_generation
+echo   2. generation from storyboard_generation to dynamic_asset_solidification
 echo.
 echo Options:
 echo   --config FILE           Config file. Default: config.yaml
@@ -91,8 +108,10 @@ echo   --episodes LIST         Comma-separated episode keys for dynamic generati
 echo   --fake                  Use fake providers for local smoke runs.
 echo   --force                 Re-run workflow nodes even if already completed.
 echo   --skip-pregen           Run only dynamic generation.
-echo   --pregen-until NODE     Override pregen stop node. Default: storyboard_generation
+echo   --pregen-until NODE     Override pregen stop node. Default: bgm_generation
 echo   --generation-until NODE Override generation stop node. Default: dynamic_asset_solidification
+echo   --generation-only NODE  Run one dynamic generation node.
+echo   --only NODE             Alias for --skip-pregen --generation-only NODE.
 goto end
 
 :help_error
@@ -124,6 +143,9 @@ if not "%PROJECT%"=="" set "PROJECT_ARGS=--project "%PROJECT%""
 set "EPISODE_ARGS="
 if not "%EPISODES%"=="" set "EPISODE_ARGS=--episodes "%EPISODES%""
 
+set "GENERATION_ONLY_ARGS="
+if not "%GENERATION_ONLY%"=="" set "GENERATION_ONLY_ARGS=--only "%GENERATION_ONLY%""
+
 call :log "config: %CONFIG%"
 if not "%PROJECT%"=="" call :log "project: %PROJECT%"
 call :log "python: %AUTODRAMA_PYTHON%"
@@ -139,7 +161,8 @@ if "%SKIP_PREGEN%"=="1" (
 
 call :log "generation until: %GENERATION_UNTIL%"
 if not "%EPISODES%"=="" call :log "episodes: %EPISODES%"
-"%AUTODRAMA_PYTHON%" -m autodrama.cli run generation --config "%CONFIG%" %PROJECT_ARGS% --until "%GENERATION_UNTIL%" %EPISODE_ARGS% %PROVIDER_ARGS% %FORCE%
+if not "%GENERATION_ONLY%"=="" call :log "generation only: %GENERATION_ONLY%"
+"%AUTODRAMA_PYTHON%" -m autodrama.cli run generation --config "%CONFIG%" %PROJECT_ARGS% --until "%GENERATION_UNTIL%" %GENERATION_ONLY_ARGS% %EPISODE_ARGS% %PROVIDER_ARGS% %FORCE%
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" goto fail
 

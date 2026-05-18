@@ -43,7 +43,6 @@ from autodrama.services.role_service import RoleService
 from autodrama.services.script_service import ScriptService
 from autodrama.services.storyboard_service import StoryboardService
 from autodrama.utils.prompts import PromptStore
-from autodrama.workflows.generation_checklist import update_checklist_from_state
 
 NodeRunner = Callable[[ProjectState], Awaitable[ProjectState]]
 
@@ -65,8 +64,9 @@ PREGEN_NODES = [
     "layout_image_generation",
     "bgm_design",
     "bgm_generation",
-    "storyboard_generation",
 ]
+
+PREGEN_EPISODE_SCOPED_NODES: set[str] = set()
 
 
 class PregenWorkflow:
@@ -327,49 +327,80 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         *,
-        until: str = "storyboard_generation",
+        until: str = "bgm_generation",
         force: bool = False,
+        only: str | None = None,
+        episode_keys: list[str] | None = None,
     ) -> ProjectState:
         if until not in PREGEN_NODES:
             raise ValueError(f"Unsupported pregen stop node: {until}")
+        if only is not None and only not in PREGEN_NODES:
+            raise ValueError(f"Unsupported pregen only node: {only}")
 
         logger = setup_logging(project_dir)
         state = self.repo.load_state(project_dir)
         self._apply_script_plan_settings(state)
-        stop_index = PREGEN_NODES.index(until)
-        target_nodes = PREGEN_NODES[: stop_index + 1]
+        target_nodes = [only] if only else PREGEN_NODES[: PREGEN_NODES.index(until) + 1]
+        selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
+        if selected_episode_keys and not PREGEN_EPISODE_SCOPED_NODES.intersection(target_nodes):
+            raise ValueError(
+                "--episodes is not supported for pregen nodes. storyboard_generation now belongs to "
+                "the generation workflow; run generation --only storyboard_generation --episodes ..."
+            )
         logger.info(
-            "workflow=pregen project_id=%s until=%s force=%s completed=%s",
+            "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s completed=%s",
             state.project_id,
             until,
+            only or "-",
             force,
+            ",".join(selected_episode_keys or []) or "-",
             ",".join(state.completed_nodes) or "-",
         )
-        for index, node_name in enumerate(target_nodes, start=1):
-            if not force and node_name in state.completed_nodes:
-                logger.info("node %d/%d %s skipped", index, len(target_nodes), node_name)
-                continue
-            logger.info("node %d/%d %s started", index, len(target_nodes), node_name)
-            try:
-                state = await getattr(self, f"_run_{node_name}")(project_dir, state)
-                state.mark_completed(node_name)
-                self.repo.save_state(project_dir, state)
-                if node_name == "storyboard_generation":
-                    update_checklist_from_state(self.repo, project_dir, state, default_generate=True)
-            except Exception:
-                logger.exception("node %d/%d %s failed", index, len(target_nodes), node_name)
-                raise
-            logger.info(
-                "node %d/%d %s completed current_node=%s",
-                index,
-                len(target_nodes),
-                node_name,
-                state.current_node,
-            )
-        if "storyboard_generation" in state.completed_nodes:
-            update_checklist_from_state(self.repo, project_dir, state, default_generate=True)
+
+        previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
+        if selected_episode_keys is not None:
+            self._active_episode_keys = set(selected_episode_keys)
+        try:
+            for index, node_name in enumerate(target_nodes, start=1):
+                if not only and not force and node_name in state.completed_nodes:
+                    logger.info("node %d/%d %s skipped", index, len(target_nodes), node_name)
+                    continue
+                logger.info("node %d/%d %s started", index, len(target_nodes), node_name)
+                try:
+                    state = await getattr(self, f"_run_{node_name}")(project_dir, state)
+                    state.mark_completed(node_name)
+                    self.repo.save_state(project_dir, state)
+                except Exception:
+                    logger.exception("node %d/%d %s failed", index, len(target_nodes), node_name)
+                    raise
+                logger.info(
+                    "node %d/%d %s completed current_node=%s",
+                    index,
+                    len(target_nodes),
+                    node_name,
+                    state.current_node,
+                )
+        finally:
+            if selected_episode_keys is not None:
+                if previous_active_episode_keys is None:
+                    delattr(self, "_active_episode_keys")
+                else:
+                    self._active_episode_keys = previous_active_episode_keys
+
         logger.info("workflow=pregen completed project_id=%s current_node=%s", state.project_id, state.current_node)
         return state
+
+    def _select_episode_keys(self, state: ProjectState, episode_keys: list[str] | None) -> list[str]:
+        expected_episode_keys = self._expected_episode_keys(state)
+        if not episode_keys:
+            return expected_episode_keys
+
+        requested = [key for key in episode_keys if key]
+        unknown = sorted(set(requested).difference(expected_episode_keys))
+        if unknown:
+            raise ValueError(f"Unknown episode keys: {', '.join(unknown)}")
+        requested_set = set(requested)
+        return [key for key in expected_episode_keys if key in requested_set]
 
     async def _run_script_outline(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("script")
@@ -531,15 +562,20 @@ class PregenWorkflow:
         project_dir: Path,
         state: ProjectState,
     ) -> list[StoryboardEpisodeOutput]:
-        active_episode_keys = getattr(self, "_active_episode_keys", None)
-        if active_episode_keys is not None:
-            episode_keys = [episode_key for episode_key in self._expected_episode_keys(state) if episode_key in active_episode_keys]
-        else:
-            episode_keys = self._expected_episode_keys(state)
         return [
             self._load_storyboard_episode(project_dir, episode_key)
-            for episode_key in episode_keys
+            for episode_key in self._active_episode_keys_in_order(state)
         ]
+
+    def _active_episode_keys_in_order(self, state: ProjectState) -> list[str]:
+        active_episode_keys = getattr(self, "_active_episode_keys", None)
+        if active_episode_keys is not None:
+            return [
+                episode_key
+                for episode_key in self._expected_episode_keys(state)
+                if episode_key in active_episode_keys
+            ]
+        return self._expected_episode_keys(state)
 
     @staticmethod
     def _image_asset_path(project_dir: Path, asset_type: str, asset_id: str) -> Path:
@@ -1712,7 +1748,7 @@ class PregenWorkflow:
         slots_dir = project_dir / "slots"
         slots_dir.mkdir(parents=True, exist_ok=True)
         generated_episode_keys: list[str] = []
-        for episode_key in self._expected_episode_keys(state):
+        for episode_key in self._active_episode_keys_in_order(state):
             output = await self.storyboard_service.storyboard_episode(state, provider, episode_key=episode_key)
             if output.episode_key != episode_key:
                 raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")

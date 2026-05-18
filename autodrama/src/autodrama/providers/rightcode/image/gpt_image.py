@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 import httpx
@@ -10,7 +12,7 @@ from autodrama.providers.base import AssetRef, ImageGenerationResult
 
 
 class RightCodeImageProvider:
-    """RightCode image provider via the OpenAI-compatible images API."""
+    """RightCode image provider via the OpenAI-compatible chat completions API."""
 
     name = "rightcode"
 
@@ -24,11 +26,18 @@ class RightCodeImageProvider:
 
     @staticmethod
     def _resolve_endpoint(base_url: str) -> str:
-        if base_url.endswith("/v1/images/generations"):
-            return base_url
+        for suffix in (
+            "/v1/chat/completions",
+            "/chat/completions",
+            "/v1/images/generations",
+            "/images/generations",
+        ):
+            if base_url.endswith(suffix):
+                base_url = base_url[: -len(suffix)].rstrip("/")
+                break
         if base_url.endswith("/v1"):
-            return f"{base_url}/images/generations"
-        return f"{base_url}/v1/images/generations"
+            return f"{base_url}/chat/completions"
+        return f"{base_url}/v1/chat/completions"
 
     async def generate_image(
         self,
@@ -43,43 +52,11 @@ class RightCodeImageProvider:
 
         if refs:
             raise ProviderBadResponseError(
-                "RightCode image generation uses /v1/images/generations and does not support reference images"
+                "RightCode image generation uses /v1/chat/completions and does not support reference images"
             )
 
         metadata = metadata or {}
-        payload: dict[str, Any] = {
-            "model": str(metadata.get("model", self.model)),
-            "prompt": prompt,
-        }
-
-        resolved_size = size or metadata.get("size") or self.settings.options.get("size")
-        if resolved_size is None:
-            resolved_size = self.settings.options.get("image_size")
-        if resolved_size is not None:
-            payload["size"] = str(resolved_size)
-
-        n = metadata.get("n", self.settings.options.get("n"))
-        if n is not None:
-            payload["n"] = int(n)
-
-        for key in (
-            "quality",
-            "style",
-            "background",
-            "moderation",
-            "output_format",
-            "output_compression",
-            "response_format",
-            "user",
-        ):
-            if key in self.settings.options:
-                payload[key] = self.settings.options[key]
-            if key in metadata:
-                payload[key] = metadata[key]
-
-        extra_parameters = metadata.get("parameters")
-        if isinstance(extra_parameters, dict):
-            payload.update(extra_parameters)
+        payload = self._build_chat_payload(prompt, size=size, metadata=metadata)
 
         async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
             response = await client.post(
@@ -115,6 +92,54 @@ class RightCodeImageProvider:
             raw_response=body,
         )
 
+    def _build_chat_payload(
+        self,
+        prompt: str,
+        *,
+        size: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        metadata = metadata or {}
+        payload: dict[str, Any] = {
+            "model": str(metadata.get("model", self.model)),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+        }
+
+        resolved_size = size or metadata.get("size") or self.settings.options.get("size")
+        if resolved_size is None:
+            resolved_size = self.settings.options.get("image_size")
+        if resolved_size is not None:
+            payload["size"] = str(resolved_size)
+
+        n = metadata.get("n", self.settings.options.get("n"))
+        if n is not None:
+            payload["n"] = int(n)
+
+        for key in (
+            "quality",
+            "style",
+            "background",
+            "moderation",
+            "output_format",
+            "output_compression",
+            "response_format",
+            "user",
+        ):
+            if key in self.settings.options:
+                payload[key] = self.settings.options[key]
+            if key in metadata:
+                payload[key] = metadata[key]
+
+        extra_parameters = metadata.get("parameters")
+        if isinstance(extra_parameters, dict):
+            payload.update(extra_parameters)
+        return payload
+
     @staticmethod
     def _request_id(body: dict[str, Any], response: httpx.Response) -> str | None:
         request_id = body.get("request_id") or body.get("requestId") or body.get("id")
@@ -132,15 +157,28 @@ class RightCodeImageProvider:
             for item in data:
                 cls._extract_image_item(item, image_urls, image_data)
 
+        choices = body.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                cls._extract_image_item(choice, image_urls, image_data)
+
         output = body.get("output")
         if isinstance(output, dict):
             for item in output.get("data") or []:
                 cls._extract_image_item(item, image_urls, image_data)
+            cls._extract_image_item(output, image_urls, image_data)
 
         return image_urls, image_data
 
     @classmethod
     def _extract_image_item(cls, item: object, image_urls: list[str], image_data: list[str]) -> None:
+        if isinstance(item, list):
+            for nested in item:
+                cls._extract_image_item(nested, image_urls, image_data)
+            return
+        if isinstance(item, str):
+            cls._extract_image_text(item, image_urls, image_data)
+            return
         if not isinstance(item, dict):
             return
 
@@ -148,6 +186,7 @@ class RightCodeImageProvider:
         cls._append_image_value(item.get("b64_json"), image_urls, image_data)
         cls._append_image_value(item.get("image"), image_urls, image_data)
         cls._append_image_value(item.get("image_base64"), image_urls, image_data)
+        cls._append_image_value(item.get("text"), image_urls, image_data)
 
         image_url = item.get("image_url")
         if isinstance(image_url, dict):
@@ -155,6 +194,41 @@ class RightCodeImageProvider:
             cls._append_image_value(image_url.get("b64_json"), image_urls, image_data)
         else:
             cls._append_image_value(image_url, image_urls, image_data)
+
+        for key in ("message", "content", "images", "data", "choices", "output"):
+            if key in item:
+                cls._extract_image_item(item[key], image_urls, image_data)
+
+    @classmethod
+    def _extract_image_text(cls, value: str, image_urls: list[str], image_data: list[str]) -> None:
+        text = value.strip()
+        if not text:
+            return
+        if text.startswith(("data:image/", "http://", "https://")):
+            cls._append_image_value(text, image_urls, image_data)
+            return
+
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            cls._extract_image_item(parsed, image_urls, image_data)
+            return
+
+        for image_value in cls._iter_image_like_strings(text):
+            cls._append_image_value(image_value, image_urls, image_data)
+
+    @staticmethod
+    def _iter_image_like_strings(text: str) -> list[str]:
+        patterns = [
+            r"data:image/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+",
+            r"https?://[^\s)\"']+",
+        ]
+        matches: list[str] = []
+        for pattern in patterns:
+            matches.extend(match.group(0).strip() for match in re.finditer(pattern, text))
+        return matches
 
     @staticmethod
     def _append_image_value(value: object, image_urls: list[str], image_data: list[str]) -> None:

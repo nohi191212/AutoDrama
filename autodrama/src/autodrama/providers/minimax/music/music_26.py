@@ -35,6 +35,12 @@ class MiniMaxMusicProvider:
         self.aigc_watermark = self._bool_option(
             settings.options.get("aigc_watermark", settings.options.get("enable_aigc_watermark", False))
         )
+        self.timeout_seconds = float(
+            settings.options.get(
+                "music_timeout_seconds",
+                settings.options.get("timeout_seconds", max(runtime.request_timeout_seconds, 600)),
+            )
+        )
 
     @staticmethod
     def _resolve_endpoint(base_url: str) -> str:
@@ -118,7 +124,7 @@ class MiniMaxMusicProvider:
         metadata = metadata or {}
         payload = self.build_generation_payload(prompt, lyrics=lyrics, metadata=metadata)
 
-        async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
             try:
                 response = await client.post(
                     self.endpoint,
@@ -132,6 +138,18 @@ class MiniMaxMusicProvider:
                 raise ProviderBadResponseError(
                     f"MiniMax music generation connection failed before receiving an HTTP response. "
                     f"Check network/proxy/TLS settings for {self.endpoint}: {exc}"
+                ) from exc
+            except httpx.TimeoutException as exc:
+                raise ProviderBadResponseError(
+                    f"MiniMax music generation timed out after {self.timeout_seconds:g}s before receiving "
+                    f"a complete HTTP response from {self.endpoint}. This is a request/generation timeout, "
+                    "not a balance response from MiniMax. Increase providers.minimax.options.music_timeout_seconds "
+                    "or retry later if the service is slow."
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise ProviderBadResponseError(
+                    f"MiniMax music generation request failed before receiving a usable response from "
+                    f"{self.endpoint}: {exc}"
                 ) from exc
 
         if response.status_code >= 400:
@@ -163,6 +181,16 @@ class MiniMaxMusicProvider:
             request_id=self._extract_request_id(body, response),
             usage=self._extract_usage(body),
             raw_response=self._without_audio_payload(body),
+        )
+
+    def _http_timeout(self) -> httpx.Timeout:
+        connect_timeout = min(30.0, max(5.0, self.timeout_seconds))
+        return httpx.Timeout(
+            timeout=self.timeout_seconds,
+            connect=connect_timeout,
+            read=self.timeout_seconds,
+            write=connect_timeout,
+            pool=connect_timeout,
         )
 
     @staticmethod

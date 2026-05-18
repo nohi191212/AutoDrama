@@ -180,13 +180,7 @@ async def main_async(args: argparse.Namespace) -> int:
         return 1
 
     if args.dry_run:
-        payload = {
-            "model": metadata.get("model", provider.model),
-            "prompt": args.prompt,
-            "size": args.size or provider.settings.options.get("size") or provider.settings.options.get("image_size"),
-            "n": metadata.get("n", provider.settings.options.get("n")),
-            **{key: value for key, value in metadata.items() if key not in {"model", "n"}},
-        }
+        payload = provider._build_chat_payload(args.prompt, size=args.size, metadata=metadata)
         payload = {key: value for key, value in payload.items() if value is not None}
         print("dry_run=true")
         print(json.dumps(payload, ensure_ascii=False, indent=2))

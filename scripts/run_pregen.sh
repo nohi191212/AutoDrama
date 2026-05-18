@@ -6,10 +6,10 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/run_pregen.sh [--config FILE] [--project ID_OR_DIR] [--until NODE] [--force]
+  scripts/run_pregen.sh [--config FILE] [--project ID_OR_DIR] [--until NODE] [--only NODE] [--episodes 1,3] [--force]
 
 Default NODE:
-  storyboard_generation
+  bgm_generation
 
 This uses provider routing from config.yaml. For current config.yaml.example,
 Aliyun/DashScope capabilities are configured under providers.aliyun and routed
@@ -19,9 +19,11 @@ Project ID and input outline file are read from config.yaml by default. Use
 USAGE
 }
 
-until="storyboard_generation"
+until="bgm_generation"
 force=""
 project=""
+only=""
+episodes=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -35,6 +37,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --until)
       until="${2:-}"
+      shift 2
+      ;;
+    --only|--node)
+      only="${2:-}"
+      shift 2
+      ;;
+    --episodes)
+      episodes="${2:-}"
       shift 2
       ;;
     --force)
@@ -57,6 +67,12 @@ cd "${AUTODRAMA_ROOT}"
 args=(run pregen --config "${AUTODRAMA_CONFIG}" --until "${until}")
 if [[ -n "${project}" ]]; then
   args+=(--project "${project}")
+fi
+if [[ -n "${only}" ]]; then
+  args+=(--only "${only}")
+fi
+if [[ -n "${episodes}" ]]; then
+  args+=(--episodes "${episodes}")
 fi
 if [[ -n "${force}" ]]; then
   args+=("${force}")

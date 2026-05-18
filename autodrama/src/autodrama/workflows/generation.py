@@ -11,6 +11,7 @@ from autodrama.workflows.generation_checklist import (
 from autodrama.workflows.pregen import PregenWorkflow
 
 GENERATION_NODES = [
+    "storyboard_generation",
     "shot_dialogue_audio_generation",
     "ref_frame_generation",
     "shot_video_generation",
@@ -26,9 +27,12 @@ class GenerationWorkflow(PregenWorkflow):
         until: str = "dynamic_asset_solidification",
         force: bool = False,
         episode_keys: list[str] | None = None,
+        only: str | None = None,
     ) -> ProjectState:
         if until not in GENERATION_NODES:
             raise ValueError(f"Unsupported generation stop node: {until}")
+        if only is not None and only not in GENERATION_NODES:
+            raise ValueError(f"Unsupported generation only node: {only}")
 
         logger = setup_logging(project_dir)
         state = self.repo.load_state(project_dir)
@@ -39,7 +43,7 @@ class GenerationWorkflow(PregenWorkflow):
             state,
             episode_keys=episode_keys,
         )
-        if force:
+        if force and not episode_keys:
             selected_episode_keys = self._expected_episode_keys(state)
 
         if not selected_episode_keys:
@@ -53,12 +57,12 @@ class GenerationWorkflow(PregenWorkflow):
         if unknown_episode_keys:
             raise ValueError(f"Unknown episode keys: {', '.join(unknown_episode_keys)}")
 
-        stop_index = GENERATION_NODES.index(until)
-        target_nodes = GENERATION_NODES[: stop_index + 1]
+        target_nodes = [only] if only else GENERATION_NODES[: GENERATION_NODES.index(until) + 1]
         logger.info(
-            "workflow=generation project_id=%s until=%s force=%s episodes=%s",
+            "workflow=generation project_id=%s until=%s only=%s force=%s episodes=%s",
             state.project_id,
             until,
+            only or "-",
             force,
             ",".join(selected_episode_keys),
         )
@@ -95,7 +99,7 @@ class GenerationWorkflow(PregenWorkflow):
             else:
                 self._active_episode_keys = previous_active_episode_keys
 
-        processed_episode_keys = selected_set if until == GENERATION_NODES[-1] else None
+        processed_episode_keys = selected_set if target_nodes[-1] == GENERATION_NODES[-1] else None
         update_checklist_from_state(
             self.repo,
             project_dir,

@@ -20,18 +20,18 @@ Implemented scope:
 14. `layout_image_generation`
 15. `bgm_design`
 16. `bgm_generation`
-17. `storyboard_generation`
 
-`run pregen` covers script, reusable static assets, BGM, and storyboard slots. After storyboard generation it writes `generation_checklist.json` in the project directory. Edit each episode's `generate` boolean to decide which episodes the next dynamic generation run should process.
+`run pregen` covers script, reusable static assets, and BGM.
 
 Dynamic shot-level assets now live in a separate workflow:
 
-1. `shot_dialogue_audio_generation`
-2. `ref_frame_generation`
-3. `shot_video_generation`
-4. `dynamic_asset_solidification`
+1. `storyboard_generation`
+2. `shot_dialogue_audio_generation`
+3. `ref_frame_generation`
+4. `shot_video_generation`
+5. `dynamic_asset_solidification`
 
-`run generation` reads `generation_checklist.json`, writes dialogue audio, reference frames, shot videos, and solidified dynamic asset metadata back into `slots/{episode_key}.json`, then resets successfully processed episodes to `"generate": false`. It does not generate final edit plans or composed final videos yet.
+`run generation` starts by writing storyboard slots to `slots/{episode_key}.json`, then writes dialogue audio, reference frames, shot videos, and solidified dynamic asset metadata back into those slots. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
 
 ## Local commands
 
@@ -52,13 +52,18 @@ For ad-hoc CLI usage without installing:
 $env:PYTHONPATH="src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli init --config ../config.yaml.example --title "30秒逆袭短片" --script-file ../input/story.txt
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config ../config.yaml.example --project <project_id> --provider fake
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config ../config.yaml.example --project <project_id> --only role_voice_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config ../config.yaml.example --project <project_id> --provider fake
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config ../config.yaml.example --project <project_id> --only ref_frame_generation --episodes 1,3
 ```
 
 Windows shortcut:
 
 ```powershell
 run\start.cmd --config config.yaml --project <project_id>
+run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation
+run\start.cmd --generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1
 run\start.cmd --generation --config config.yaml --project <project_id>
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_dialogue_audio_generation --episodes 1
 ```

@@ -124,6 +124,7 @@ providers:
       is_instrumental: true
       lyrics_optimizer: false
       aigc_watermark: false
+      music_timeout_seconds: 600
 
   volcengine:
     base_url: https://openspeech.bytedance.com
@@ -158,7 +159,7 @@ providers:
       video_max_duration_seconds: 15
       tts_resource_id: seed-tts-2.0
       tts_fallback_resource_id: seed-tts-1.0
-      instruction_mode: text_prefix
+      instruction_mode: none
       additions_as_json_string: true
       default_speaker: zh_male_m191_uranus_bigtts
       default_male_speaker: zh_male_m191_uranus_bigtts

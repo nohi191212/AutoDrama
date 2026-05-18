@@ -36,7 +36,7 @@ async def main_async() -> int:
 
     router = ProviderRouter(settings, provider_override="fake")
     pregen_workflow = PregenWorkflow(repo=repo, router=router)
-    state = await pregen_workflow.run(project_dir, until="storyboard_generation", force=True)
+    state = await pregen_workflow.run(project_dir, until="bgm_generation", force=True)
 
     generation_workflow = GenerationWorkflow(repo=repo, router=router)
     state = await generation_workflow.run(project_dir, until="dynamic_asset_solidification")

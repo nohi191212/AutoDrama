@@ -37,17 +37,19 @@ async def main_async() -> int:
 
     router = ProviderRouter(settings, provider_override="fake")
     pregen_workflow = PregenWorkflow(repo=repo, router=router)
-    state = await pregen_workflow.run(project_dir, until="storyboard_generation", force=True)
+    state = await pregen_workflow.run(project_dir, until="bgm_generation", force=True)
+
+    generation_workflow = GenerationWorkflow(repo=repo, router=router)
+    state = await generation_workflow.run(project_dir, until="storyboard_generation", only="storyboard_generation")
     checklist_path = project_dir / "generation_checklist.json"
     if not checklist_path.exists():
-        raise AssertionError("generation_checklist.json was not created after pregen")
+        raise AssertionError("generation_checklist.json was not created after storyboard generation")
 
     checklist = json.loads(checklist_path.read_text(encoding="utf-8"))
     for episode in checklist["episodes"]:
         episode["generate"] = episode["episode_key"] == "episode_001"
     checklist_path.write_text(json.dumps(checklist, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    generation_workflow = GenerationWorkflow(repo=repo, router=router)
     state = await generation_workflow.run(project_dir, until="dynamic_asset_solidification")
     episode_001_slot_path = project_dir / "slots" / "episode_001.json"
     episode_002_slot_path = project_dir / "slots" / "episode_002.json"
@@ -55,6 +57,7 @@ async def main_async() -> int:
     episode_002_slot_text = episode_002_slot_path.read_text(encoding="utf-8")
 
     expected_nodes = {
+        "storyboard_generation",
         "shot_dialogue_audio_generation",
         "ref_frame_generation",
         "shot_video_generation",

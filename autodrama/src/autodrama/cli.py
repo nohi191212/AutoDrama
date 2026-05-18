@@ -12,6 +12,36 @@ from autodrama.workflows.generation import GENERATION_NODES, GenerationWorkflow
 from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow
 
 
+def parse_episode_keys(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+
+    episode_keys: list[str] = []
+    for raw_item in value.replace("，", ",").split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        range_parts = [part.strip() for part in item.split("-", 1)]
+        if len(range_parts) == 2 and range_parts[0].isdigit() and range_parts[1].isdigit():
+            start = int(range_parts[0])
+            end = int(range_parts[1])
+            step = 1 if end >= start else -1
+            for index in range(start, end + step, step):
+                episode_keys.append(f"episode_{index:03d}")
+            continue
+        normalized = item.lower().replace("-", "_")
+        if normalized.isdigit():
+            episode_keys.append(f"episode_{int(normalized):03d}")
+            continue
+        if normalized.startswith("episode_"):
+            suffix = normalized.rsplit("_", 1)[-1]
+            if suffix.isdigit():
+                episode_keys.append(f"episode_{int(suffix):03d}")
+                continue
+        episode_keys.append(item)
+    return episode_keys or None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autodrama")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -27,7 +57,18 @@ def build_parser() -> argparse.ArgumentParser:
     pregen_parser = run_subparsers.add_parser("pregen", help="Run pre-generation nodes")
     pregen_parser.add_argument("--config", required=True)
     pregen_parser.add_argument("--project")
-    pregen_parser.add_argument("--until", choices=PREGEN_NODES, default="storyboard_generation")
+    pregen_parser.add_argument("--until", choices=PREGEN_NODES, default=PREGEN_NODES[-1])
+    pregen_parser.add_argument(
+        "--only",
+        "--node",
+        dest="only",
+        choices=PREGEN_NODES,
+        help="Run exactly one pre-generation node, even if it is already completed.",
+    )
+    pregen_parser.add_argument(
+        "--episodes",
+        help="Reserved for pregen episode-scoped nodes. Use run generation --only storyboard_generation --episodes ... for storyboard slots.",
+    )
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     pregen_parser.add_argument("--force", action="store_true")
 
@@ -36,8 +77,15 @@ def build_parser() -> argparse.ArgumentParser:
     generation_parser.add_argument("--project")
     generation_parser.add_argument("--until", choices=GENERATION_NODES, default=GENERATION_NODES[-1])
     generation_parser.add_argument(
+        "--only",
+        "--node",
+        dest="only",
+        choices=GENERATION_NODES,
+        help="Run exactly one dynamic generation node.",
+    )
+    generation_parser.add_argument(
         "--episodes",
-        help="Comma-separated episode keys to generate, overriding generation_checklist.json.",
+        help="Comma-separated episode keys or numbers to generate, overriding generation_checklist.json.",
     )
     generation_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     generation_parser.add_argument("--force", action="store_true")
@@ -83,7 +131,13 @@ async def cmd_run_pregen(args: argparse.Namespace) -> int:
     provider_override = "fake" if args.provider == "fake" else None
     router = ProviderRouter(settings, provider_override=provider_override)
     workflow = PregenWorkflow(repo=repo, router=router)
-    state = await workflow.run(project_dir, until=args.until, force=args.force)
+    state = await workflow.run(
+        project_dir,
+        until=args.until,
+        force=args.force,
+        only=args.only,
+        episode_keys=parse_episode_keys(args.episodes),
+    )
     get_logger().info(
         "run summary project_id=%s current_node=%s role_count=%d project_dir=%s",
         state.project_id,
@@ -111,9 +165,7 @@ async def cmd_run_generation(args: argparse.Namespace) -> int:
     settings = load_settings(args.config)
     repo = ProjectRepository(settings)
     project_dir = repo.resolve_active_project_dir(args.project)
-    episode_keys = None
-    if args.episodes:
-        episode_keys = [item.strip() for item in args.episodes.split(",") if item.strip()]
+    episode_keys = parse_episode_keys(args.episodes)
 
     provider_override = "fake" if args.provider == "fake" else None
     router = ProviderRouter(settings, provider_override=provider_override)
@@ -123,6 +175,7 @@ async def cmd_run_generation(args: argparse.Namespace) -> int:
         until=args.until,
         force=args.force,
         episode_keys=episode_keys,
+        only=args.only,
     )
     get_logger().info(
         "run summary workflow=generation project_id=%s current_node=%s project_dir=%s",

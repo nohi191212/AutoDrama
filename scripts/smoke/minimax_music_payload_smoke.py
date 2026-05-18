@@ -50,6 +50,7 @@ def main() -> int:
     assert payload["audio_setting"]["format"] == "mp3"
     assert payload["audio_setting"]["sample_rate"] == 44100
     assert payload["audio_setting"]["bitrate"] == 256000
+    assert provider.timeout_seconds >= 600
 
     url, data = provider._extract_audio({"data": {"audio": "https://example.com/generated.mp3"}})
     assert url == "https://example.com/generated.mp3"

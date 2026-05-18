@@ -8,7 +8,8 @@ set "CONFIG=config.yaml"
 set "PROJECT="
 set "WORKFLOW=pregen"
 set "PROVIDER_ARGS="
-set "UNTIL=storyboard_generation"
+set "UNTIL=bgm_generation"
+set "ONLY="
 set "EPISODES="
 set "FORCE="
 
@@ -34,7 +35,7 @@ if "%~1"=="--workflow" (
 )
 if "%~1"=="--generation" (
   set "WORKFLOW=generation"
-  if "%UNTIL%"=="storyboard_generation" set "UNTIL=dynamic_asset_solidification"
+  if "%UNTIL%"=="bgm_generation" set "UNTIL=dynamic_asset_solidification"
   shift
   goto parse
 )
@@ -50,6 +51,18 @@ if "%~1"=="--fake" (
 )
 if "%~1"=="--until" (
   set "UNTIL=%~2"
+  shift
+  shift
+  goto parse
+)
+if "%~1"=="--only" (
+  set "ONLY=%~2"
+  shift
+  shift
+  goto parse
+)
+if "%~1"=="--node" (
+  set "ONLY=%~2"
   shift
   shift
   goto parse
@@ -74,7 +87,8 @@ goto help_error
 :help
 echo Usage:
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
-echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--fake] [--force]
+echo   run\start.cmd [--only NODE] [--episodes 1,3]
+echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--only NODE] [--fake] [--force]
 echo   run\start.cmd --workflow pregen^|generation [options]
 echo.
 echo This is the native Windows entry point. It uses runtime.python.windows
@@ -82,17 +96,17 @@ echo from config.yaml when available, otherwise D:\miniforge3\envs\autodrama\pyt
 echo.
 echo Defaults:
 echo   workflow: pregen
-echo   storyboard_generation
+echo   bgm_generation
 echo.
 echo Notes:
-echo   pregen writes generation_checklist.json after storyboard_generation.
-echo   generation reads generation_checklist.json and only processes episodes with generate=true.
+echo   pregen writes reusable/static assets through bgm_generation.
+echo   generation starts with storyboard_generation, then processes selected episodes.
 goto end
 
 :help_error
 echo Usage: 1>&2
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force] 1>&2
-echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--fake] [--force] 1>&2
+echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--only NODE] [--fake] [--force] 1>&2
 exit /b 2
 
 :run
@@ -104,7 +118,7 @@ exit /b 2
 
 :workflow_ok
 if /I "%WORKFLOW%"=="generation" (
-  if "%UNTIL%"=="storyboard_generation" set "UNTIL=dynamic_asset_solidification"
+  if "%UNTIL%"=="bgm_generation" set "UNTIL=dynamic_asset_solidification"
 )
 
 for /f "tokens=1,* delims=:" %%A in ('findstr /R /C:"^[ ][ ]*windows:" "%CONFIG%" 2^>nul') do (
@@ -125,16 +139,18 @@ call :log "python: %AUTODRAMA_PYTHON%"
 call :log "workflow: %WORKFLOW%"
 call :log "until: %UNTIL%"
 if not "%EPISODES%"=="" call :log "episodes: %EPISODES%"
+if not "%ONLY%"=="" call :log "only: %ONLY%"
 
 set "PROJECT_ARGS="
 if not "%PROJECT%"=="" set "PROJECT_ARGS=--project "%PROJECT%""
 
 set "EPISODE_ARGS="
-if /I "%WORKFLOW%"=="generation" (
-  if not "%EPISODES%"=="" set "EPISODE_ARGS=--episodes "%EPISODES%""
-)
+if not "%EPISODES%"=="" set "EPISODE_ARGS=--episodes "%EPISODES%""
 
-"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %EPISODE_ARGS% %PROVIDER_ARGS% %FORCE%
+set "ONLY_ARGS="
+if not "%ONLY%"=="" set "ONLY_ARGS=--only "%ONLY%""
+
+"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %PROVIDER_ARGS% %FORCE%
 set "EXIT_CODE=%ERRORLEVEL%"
 
 popd >nul
