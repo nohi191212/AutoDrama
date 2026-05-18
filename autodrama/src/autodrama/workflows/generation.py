@@ -13,7 +13,7 @@ from autodrama.core.schemas import (
     ShotVideoGenerationOutput,
     StoryboardGenerationOutput,
 )
-from autodrama.logging import get_logger, setup_logging
+from autodrama.logging import get_logger, log_context, setup_logging
 from autodrama.workflows.generation_checklist import (
     selected_episode_keys_from_checklist,
     update_checklist_from_state,
@@ -180,51 +180,52 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
                 )
                 try:
                     for node_index, node_name in enumerate(target_nodes, start=1):
-                        logger.info(
-                            "episode %s node %d/%d %s started",
-                            episode_key,
-                            node_index,
-                            len(target_nodes),
-                            node_name,
-                        )
-                        output = await self._run_generation_node_for_episode(
-                            project_dir,
-                            state,
-                            node_name,
-                            episode_key,
-                        )
-                        self._merge_run_output(run_outputs, node_name, output)
-                        if node_name == "storyboard_generation":
-                            update_storyboard_history_from_episode(
-                                self.repo,
+                        with log_context(node_name=node_name, episode_key=episode_key):
+                            logger.info(
+                                "episode %s node %d/%d %s started",
+                                episode_key,
+                                node_index,
+                                len(target_nodes),
+                                node_name,
+                            )
+                            output = await self._run_generation_node_for_episode(
                                 project_dir,
                                 state,
-                                self._load_storyboard_episode(project_dir, episode_key),
+                                node_name,
+                                episode_key,
                             )
-                        if node_name == "dynamic_asset_solidification":
-                            existing_dynamic_assets = [
-                                item
-                                for item in state.metadata.get("dynamic_assets", [])
-                                if str(item.get("episode_key")) != episode_key
-                            ]
-                            if not isinstance(output, DynamicAssetSolidificationOutput):
-                                raise TypeError("dynamic_asset_solidification output type mismatch")
-                            output = cast(DynamicAssetSolidificationOutput, output)
-                            state.metadata["dynamic_assets"] = existing_dynamic_assets + [
-                                item.model_dump(mode="json")
-                                for item in output.solidified_assets
-                            ]
-                        state.mark_completed(node_name)
-                        self.repo.save_state(project_dir, state)
-                        self._save_run_outputs(project_dir, run_outputs)
-                        logger.info(
-                            "episode %s node %d/%d %s completed current_node=%s",
-                            episode_key,
-                            node_index,
-                            len(target_nodes),
-                            node_name,
-                            state.current_node,
-                        )
+                            self._merge_run_output(run_outputs, node_name, output)
+                            if node_name == "storyboard_generation":
+                                update_storyboard_history_from_episode(
+                                    self.repo,
+                                    project_dir,
+                                    state,
+                                    self._load_storyboard_episode(project_dir, episode_key),
+                                )
+                            if node_name == "dynamic_asset_solidification":
+                                existing_dynamic_assets = [
+                                    item
+                                    for item in state.metadata.get("dynamic_assets", [])
+                                    if str(item.get("episode_key")) != episode_key
+                                ]
+                                if not isinstance(output, DynamicAssetSolidificationOutput):
+                                    raise TypeError("dynamic_asset_solidification output type mismatch")
+                                output = cast(DynamicAssetSolidificationOutput, output)
+                                state.metadata["dynamic_assets"] = existing_dynamic_assets + [
+                                    item.model_dump(mode="json")
+                                    for item in output.solidified_assets
+                                ]
+                            state.mark_completed(node_name)
+                            self.repo.save_state(project_dir, state)
+                            self._save_run_outputs(project_dir, run_outputs)
+                            logger.info(
+                                "episode %s node %d/%d %s completed current_node=%s",
+                                episode_key,
+                                node_index,
+                                len(target_nodes),
+                                node_name,
+                                state.current_node,
+                            )
                 except Exception:
                     update_checklist_from_state(
                         self.repo,

@@ -26,7 +26,7 @@ from autodrama.core.schemas import (
     StoryboardShot,
 )
 from autodrama.core.visual_style import visual_style_metadata
-from autodrama.logging import get_logger, setup_logging
+from autodrama.logging import get_logger, log_context, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.services.asset_service import AssetService
@@ -354,23 +354,25 @@ class PregenWorkflow:
         try:
             for index, node_name in enumerate(target_nodes, start=1):
                 if not only and not force and node_name in state.completed_nodes:
-                    logger.info("node %d/%d %s skipped", index, len(target_nodes), node_name)
+                    with log_context(node_name=node_name):
+                        logger.info("node %d/%d %s skipped", index, len(target_nodes), node_name)
                     continue
-                logger.info("node %d/%d %s started", index, len(target_nodes), node_name)
-                try:
-                    state = await getattr(self, f"_run_{node_name}")(project_dir, state)
-                    state.mark_completed(node_name)
-                    self.repo.save_state(project_dir, state)
-                except Exception:
-                    logger.exception("node %d/%d %s failed", index, len(target_nodes), node_name)
-                    raise
-                logger.info(
-                    "node %d/%d %s completed current_node=%s",
-                    index,
-                    len(target_nodes),
-                    node_name,
-                    state.current_node,
-                )
+                with log_context(node_name=node_name):
+                    logger.info("node %d/%d %s started", index, len(target_nodes), node_name)
+                    try:
+                        state = await getattr(self, f"_run_{node_name}")(project_dir, state)
+                        state.mark_completed(node_name)
+                        self.repo.save_state(project_dir, state)
+                    except Exception:
+                        logger.exception("node %d/%d %s failed", index, len(target_nodes), node_name)
+                        raise
+                    logger.info(
+                        "node %d/%d %s completed current_node=%s",
+                        index,
+                        len(target_nodes),
+                        node_name,
+                        state.current_node,
+                    )
         finally:
             if selected_episode_keys is not None:
                 if previous_active_episode_keys is None:

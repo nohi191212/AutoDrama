@@ -65,7 +65,15 @@ class DeepSeekTextProvider:
         lines.append("=" * 100)
 
         try:
-            detail_logger.info("%s", "\n".join(lines))
+            detail_logger.info(
+                "%s",
+                "\n".join(lines),
+                extra={
+                    "node_name": metadata.get("node_name"),
+                    "episode_key": metadata.get("episode_key"),
+                    "shot_id": metadata.get("shot_id"),
+                },
+            )
         except Exception:
             return
 

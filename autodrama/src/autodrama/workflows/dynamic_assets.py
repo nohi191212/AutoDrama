@@ -20,7 +20,7 @@ from autodrama.core.schemas import (
     StoryboardGenerationOutput,
     StoryboardShot,
 )
-from autodrama.logging import get_logger
+from autodrama.logging import get_logger, log_context
 from autodrama.providers.base import VideoGenerationResult
 from autodrama.workflows.generation_tasks import (
     find_generation_task,
@@ -137,33 +137,34 @@ class DynamicAssetNodeMixin:
         episode = self._load_storyboard_episode(project_dir, episode_key)
         changed = False
         for shot in self._active_shots_for_episode(episode):
-            if shot.dialogue_audio_assets:
-                changed = True
-            shot.dialogue_audio_assets = []
-            for line_index, line in enumerate(shot.dialogue, start=1):
-                asset, skip = await self._generate_shot_dialogue_audio(
-                    provider=provider,
-                    project_dir=project_dir,
-                    state=state,
-                    episode_key=episode.episode_key,
-                    shot=shot,
-                    line_index=line_index,
-                    line=line,
-                )
-                if skip is not None:
-                    skipped.append(skip)
-                    continue
-                if asset is None:
-                    continue
-                shot.dialogue_audio_assets.append(asset)
-                generated.append(
-                    ShotDialogueAudioGenerationItem(
+            with log_context(episode_key=episode.episode_key, shot_id=shot.shot_id):
+                if shot.dialogue_audio_assets:
+                    changed = True
+                shot.dialogue_audio_assets = []
+                for line_index, line in enumerate(shot.dialogue, start=1):
+                    asset, skip = await self._generate_shot_dialogue_audio(
+                        provider=provider,
+                        project_dir=project_dir,
+                        state=state,
                         episode_key=episode.episode_key,
-                        shot_id=shot.shot_id,
-                        asset=asset,
+                        shot=shot,
+                        line_index=line_index,
+                        line=line,
                     )
-                )
-                changed = True
+                    if skip is not None:
+                        skipped.append(skip)
+                        continue
+                    if asset is None:
+                        continue
+                    shot.dialogue_audio_assets.append(asset)
+                    generated.append(
+                        ShotDialogueAudioGenerationItem(
+                            episode_key=episode.episode_key,
+                            shot_id=shot.shot_id,
+                            asset=asset,
+                        )
+                    )
+                    changed = True
         if changed:
             self._save_storyboard_episode(project_dir, episode)
 
@@ -211,49 +212,50 @@ class DynamicAssetNodeMixin:
             len(shots),
         )
         for shot in shots:
-            asset_id = normalize_id(f"{shot.shot_id}", "ref_frame")
-            prompt = self._shot_ref_frame_prompt(state, episode, shot)
-            refs = None
-            if getattr(provider, "supports_reference_images", False):
-                refs = self._shot_ref_asset_refs(project_dir, state, shot)
-            result = await provider.generate_image(
-                prompt,
-                refs=refs,
-                metadata={
-                    "node_name": "ref_frame_generation",
-                    "project_id": state.project_id,
-                    "episode_key": episode.episode_key,
-                    "shot_id": shot.shot_id,
-                    "asset_id": asset_id,
-                },
-            )
-            asset_path = await self._write_first_generated_image(
-                project_dir,
-                self._image_asset_path(project_dir, "ref_frames", asset_id),
-                result,
-            )
-            shot.ref_frame_asset_id = asset_id
-            shot.ref_frame_asset_path = asset_path
-            shot.ref_frame_provider = result.provider
-            shot.ref_frame_model = result.model
-            shot.ref_frame_request_id = result.request_id
-            shot.ref_frame_usage = result.usage
-            shot.ref_frame_raw_response = result.raw_response
-            generated.append(
-                RefFrameGenerationItem(
-                    episode_key=episode.episode_key,
-                    shot_id=shot.shot_id,
-                    asset_id=asset_id,
-                    prompt=prompt,
-                    asset_path=asset_path,
-                    provider=result.provider,
-                    model=result.model,
-                    request_id=result.request_id,
-                    usage=result.usage,
-                    raw_response=result.raw_response,
+            with log_context(episode_key=episode.episode_key, shot_id=shot.shot_id):
+                asset_id = normalize_id(f"{shot.shot_id}", "ref_frame")
+                prompt = self._shot_ref_frame_prompt(state, episode, shot)
+                refs = None
+                if getattr(provider, "supports_reference_images", False):
+                    refs = self._shot_ref_asset_refs(project_dir, state, shot)
+                result = await provider.generate_image(
+                    prompt,
+                    refs=refs,
+                    metadata={
+                        "node_name": "ref_frame_generation",
+                        "project_id": state.project_id,
+                        "episode_key": episode.episode_key,
+                        "shot_id": shot.shot_id,
+                        "asset_id": asset_id,
+                    },
                 )
-            )
-            get_logger().info("%s generated successfully, saved in %s", asset_id, asset_path)
+                asset_path = await self._write_first_generated_image(
+                    project_dir,
+                    self._image_asset_path(project_dir, "ref_frames", asset_id),
+                    result,
+                )
+                shot.ref_frame_asset_id = asset_id
+                shot.ref_frame_asset_path = asset_path
+                shot.ref_frame_provider = result.provider
+                shot.ref_frame_model = result.model
+                shot.ref_frame_request_id = result.request_id
+                shot.ref_frame_usage = result.usage
+                shot.ref_frame_raw_response = result.raw_response
+                generated.append(
+                    RefFrameGenerationItem(
+                        episode_key=episode.episode_key,
+                        shot_id=shot.shot_id,
+                        asset_id=asset_id,
+                        prompt=prompt,
+                        asset_path=asset_path,
+                        provider=result.provider,
+                        model=result.model,
+                        request_id=result.request_id,
+                        usage=result.usage,
+                        raw_response=result.raw_response,
+                    )
+                )
+                get_logger().info("%s generated successfully, saved in %s", asset_id, asset_path)
         self._save_storyboard_episode(project_dir, episode)
 
         return RefFrameGenerationOutput(generated_ref_frames=generated)
@@ -465,7 +467,12 @@ class DynamicAssetNodeMixin:
                         provider=provider,
                     )
                 )
-                get_logger().info("%s already generated, saved in %s", shot.shot_id, saved_asset_path)
+                get_logger().info(
+                    "%s already generated, saved in %s",
+                    shot.shot_id,
+                    saved_asset_path,
+                    extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
+                )
                 continue
 
             if existing_task and existing_task.get("task_id") and existing_status not in failure_statuses:
@@ -484,6 +491,7 @@ class DynamicAssetNodeMixin:
                     existing_task.get("task_id"),
                     existing_status or "-",
                     self._project_relative(project_dir, task_file),
+                    extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                 )
                 continue
 
@@ -493,6 +501,7 @@ class DynamicAssetNodeMixin:
                     shot.shot_id,
                     existing_task.get("task_id"),
                     existing_status,
+                    extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                 )
 
             result = await provider.submit_video(
@@ -540,6 +549,7 @@ class DynamicAssetNodeMixin:
                 shot.shot_id,
                 result.task_id,
                 self._project_relative(project_dir, task_file),
+                extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
             )
 
         max_polls = int(getattr(provider, "max_polls", 120))
@@ -588,6 +598,7 @@ class DynamicAssetNodeMixin:
                         status or "-",
                         poll_index,
                         max_polls,
+                        extra={"episode_key": episode.episode_key, "shot_id": item["shot"].shot_id},
                     )
                     item["last_logged_status"] = status
 
@@ -636,7 +647,12 @@ class DynamicAssetNodeMixin:
                             provider=provider,
                         )
                     )
-                    get_logger().info("%s generated successfully, saved in %s", item["shot"].shot_id, asset_path)
+                    get_logger().info(
+                        "%s generated successfully, saved in %s",
+                        item["shot"].shot_id,
+                        asset_path,
+                        extra={"episode_key": episode.episode_key, "shot_id": item["shot"].shot_id},
+                    )
                     completed_task_keys.append(task_key)
                     continue
 
@@ -651,6 +667,14 @@ class DynamicAssetNodeMixin:
                     )
                     item["task"] = task
                     save_generation_tasks(self.repo, project_dir, registry)
+                    get_logger().error(
+                        "%s video task %s failed with status=%s queue=%s",
+                        item["shot"].shot_id,
+                        task_id,
+                        result.task_status,
+                        self._project_relative(project_dir, task_file),
+                        extra={"episode_key": episode.episode_key, "shot_id": item["shot"].shot_id},
+                    )
                     raise ProviderError(f"Video task {task_id} ended with status {result.task_status}; queue={task_file}")
 
             for task_key in completed_task_keys:
@@ -674,6 +698,15 @@ class DynamicAssetNodeMixin:
                 item["task"] = task
             save_generation_tasks(self.repo, project_dir, registry)
             task_ids = ", ".join(str(item["task"].get("task_id")) for item in pending.values())
+            for item in pending.values():
+                get_logger().error(
+                    "%s video task %s timed out after %d polls; queue=%s",
+                    item["shot"].shot_id,
+                    item["task"].get("task_id"),
+                    max_polls,
+                    self._project_relative(project_dir, task_file),
+                    extra={"episode_key": episode.episode_key, "shot_id": item["shot"].shot_id},
+                )
             raise ProviderError(
                 f"Video task(s) {task_ids} did not finish after {max_polls} polls; "
                 f"saved in {task_file}. Rerun shot_video_generation to resume."
