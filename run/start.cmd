@@ -11,6 +11,7 @@ set "PROVIDER_ARGS="
 set "UNTIL=bgm_generation"
 set "ONLY="
 set "EPISODES="
+set "SHOTS="
 set "FORCE="
 
 :parse
@@ -73,6 +74,12 @@ if "%~1"=="--episodes" (
   shift
   goto parse
 )
+if "%~1"=="--shots" (
+  set "SHOTS=%~2"
+  shift
+  shift
+  goto parse
+)
 if "%~1"=="--force" (
   set "FORCE=--force"
   shift
@@ -87,8 +94,8 @@ goto help_error
 :help
 echo Usage:
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
-echo   run\start.cmd [--only NODE] [--episodes 1,3]
-echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--only NODE] [--fake] [--force]
+echo   run\start.cmd [--only NODE] [--episodes 1,3] [--shots 1-3]
+echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force]
 echo   run\start.cmd --workflow pregen^|generation [options]
 echo.
 echo This is the native Windows entry point. It uses runtime.python.windows
@@ -106,7 +113,7 @@ goto end
 :help_error
 echo Usage: 1>&2
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force] 1>&2
-echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--only NODE] [--fake] [--force] 1>&2
+echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force] 1>&2
 exit /b 2
 
 :run
@@ -139,6 +146,7 @@ call :log "python: %AUTODRAMA_PYTHON%"
 call :log "workflow: %WORKFLOW%"
 call :log "until: %UNTIL%"
 if not "%EPISODES%"=="" call :log "episodes: %EPISODES%"
+if not "%SHOTS%"=="" call :log "shots: %SHOTS%"
 if not "%ONLY%"=="" call :log "only: %ONLY%"
 
 set "PROJECT_ARGS="
@@ -147,10 +155,13 @@ if not "%PROJECT%"=="" set "PROJECT_ARGS=--project "%PROJECT%""
 set "EPISODE_ARGS="
 if not "%EPISODES%"=="" set "EPISODE_ARGS=--episodes "%EPISODES%""
 
+set "SHOT_ARGS="
+if /I "%WORKFLOW%"=="generation" if not "%SHOTS%"=="" set "SHOT_ARGS=--shots "%SHOTS%""
+
 set "ONLY_ARGS="
 if not "%ONLY%"=="" set "ONLY_ARGS=--only "%ONLY%""
 
-"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %PROVIDER_ARGS% %FORCE%
+"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
 set "EXIT_CODE=%ERRORLEVEL%"
 
 popd >nul

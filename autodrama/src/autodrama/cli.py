@@ -42,6 +42,27 @@ def parse_episode_keys(value: str | None) -> list[str] | None:
     return episode_keys or None
 
 
+def parse_shot_selectors(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+
+    selectors: list[str] = []
+    for raw_item in value.replace("，", ",").split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        range_parts = [part.strip() for part in item.split("-", 1)]
+        if len(range_parts) == 2 and range_parts[0].isdigit() and range_parts[1].isdigit():
+            start = int(range_parts[0])
+            end = int(range_parts[1])
+            step = 1 if end >= start else -1
+            for index in range(start, end + step, step):
+                selectors.append(str(index))
+            continue
+        selectors.append(item.lower().replace("-", "_"))
+    return selectors or None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autodrama")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -86,6 +107,10 @@ def build_parser() -> argparse.ArgumentParser:
     generation_parser.add_argument(
         "--episodes",
         help="Comma-separated episode keys or numbers to generate, overriding generation_checklist.json.",
+    )
+    generation_parser.add_argument(
+        "--shots",
+        help="Comma-separated shot indexes or ids to generate inside selected episodes, for example 1-3 or episode_001_shot_1.",
     )
     generation_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     generation_parser.add_argument("--force", action="store_true")
@@ -176,6 +201,7 @@ async def cmd_run_generation(args: argparse.Namespace) -> int:
         force=args.force,
         episode_keys=episode_keys,
         only=args.only,
+        shot_selectors=parse_shot_selectors(args.shots),
     )
     get_logger().info(
         "run summary workflow=generation project_id=%s current_node=%s project_dir=%s",

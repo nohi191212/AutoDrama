@@ -55,12 +55,13 @@ Use the requested conda environment:
 Do not use pytest in this repository. Use focused smoke scripts and compile checks instead.
 
 ```powershell
-D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama scripts/smoke/dynamic_assets_fake_smoke.py scripts/smoke/only_node_episode_smoke.py scripts/smoke/episode_serial_generation_smoke.py scripts/smoke/minimax_music_payload_smoke.py scripts/smoke/seedream_payload_smoke.py
+D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama scripts/smoke/dynamic_assets_fake_smoke.py scripts/smoke/only_node_episode_smoke.py scripts/smoke/episode_serial_generation_smoke.py scripts/smoke/minimax_music_payload_smoke.py scripts/smoke/seedream_payload_smoke.py scripts/smoke/shot_selector_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/only_node_episode_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/episode_serial_generation_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/minimax_music_payload_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedream_payload_smoke.py --config config.yaml.example
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/shot_selector_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_payload_smoke.py --config config.yaml.example
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_router_smoke.py
 ```
@@ -76,6 +77,7 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml.example --project <project_id> --episodes 1,3
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml.example --project <project_id> --only storyboard_generation --episodes 1
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml.example --project <project_id> --only ref_frame_generation --episodes 1,3
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml.example --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
 ```
 
 Windows shortcut:
@@ -87,9 +89,12 @@ run\start.cmd --generation --config config.yaml --project <project_id> --only st
 run\start.cmd --generation --config config.yaml --project <project_id>
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_dialogue_audio_generation --episodes 1
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
 ```
 
 `--episodes` accepts comma lists, ranges, and episode keys, for example `1,3`, `1-3`, and `episode_001,episode_003`. It is only used by the generation workflow.
+
+`--shots` accepts comma lists, ranges, shot indexes, and shot ids inside the selected episodes, for example `1-3`, `1,3`, `shot_003`, and `episode_001_shot_1`. Use it with generation nodes after `storyboard_generation`, such as `ref_frame_generation` or `shot_video_generation`.
 
 `--only` can target one node in either workflow. Common examples:
 

@@ -14,13 +14,55 @@ from autodrama.core.schemas import (
     ShotDialogueAudioGenerationOutput,
     ShotVideoGenerationItem,
     ShotVideoGenerationOutput,
+    StoryboardEpisodeOutput,
     StoryboardGenerationOutput,
+    StoryboardShot,
 )
 from autodrama.logging import get_logger
 from autodrama.workflows.storyboard_history import history_before_episode
 
 
 class DynamicAssetNodeMixin:
+    def _active_shots_for_episode(self, episode: StoryboardEpisodeOutput) -> list[StoryboardShot]:
+        selectors = getattr(self, "_active_shot_selectors", None)
+        if not selectors:
+            return list(episode.shots)
+
+        normalized_selectors = {
+            str(selector).strip().lower().replace("-", "_")
+            for selector in selectors
+            if str(selector).strip()
+        }
+        selected = [
+            shot
+            for shot in episode.shots
+            if self._shot_matches_selectors(episode, shot, normalized_selectors)
+        ]
+        if not selected:
+            raise ValueError(
+                f"No shots matched selectors {', '.join(sorted(normalized_selectors))} "
+                f"for {episode.episode_key}"
+            )
+        return selected
+
+    @staticmethod
+    def _shot_matches_selectors(
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        selectors: set[str],
+    ) -> bool:
+        shot_id = str(shot.shot_id).lower().replace("-", "_")
+        keys = {
+            shot_id,
+            str(shot.index),
+            f"{shot.index:03d}",
+            f"shot_{shot.index}",
+            f"shot_{shot.index:03d}",
+            f"{episode.episode_key}_shot_{shot.index}",
+            f"{episode.episode_key}_shot_{shot.index:03d}",
+        }
+        return bool(keys.intersection(selectors))
+
     @staticmethod
     def _clear_storyboard_bgm_assignments(output) -> None:
         for shot in output.shots:
@@ -82,7 +124,7 @@ class DynamicAssetNodeMixin:
         skipped: list[dict[str, Any]] = []
         episode = self._load_storyboard_episode(project_dir, episode_key)
         changed = False
-        for shot in episode.shots:
+        for shot in self._active_shots_for_episode(episode):
             if shot.dialogue_audio_assets:
                 changed = True
             shot.dialogue_audio_assets = []
@@ -150,7 +192,7 @@ class DynamicAssetNodeMixin:
         )
         generated: list[RefFrameGenerationItem] = []
         episode = self._load_storyboard_episode(project_dir, episode_key)
-        for shot in episode.shots:
+        for shot in self._active_shots_for_episode(episode):
             asset_id = normalize_id(f"{shot.shot_id}", "ref_frame")
             prompt = self._shot_ref_frame_prompt(state, episode, shot)
             refs = None
@@ -224,7 +266,7 @@ class DynamicAssetNodeMixin:
         )
         generated: list[ShotVideoGenerationItem] = []
         episode = self._load_storyboard_episode(project_dir, episode_key)
-        for shot in episode.shots:
+        for shot in self._active_shots_for_episode(episode):
             asset_id = normalize_id(f"{shot.shot_id}", "video")
             prompt = self._shot_video_prompt(state, episode, shot)
             result = await provider.generate_video(
@@ -297,7 +339,7 @@ class DynamicAssetNodeMixin:
         get_logger().info("node=dynamic_asset_solidification provider=local model=-")
         solidified: list[DynamicAssetSolidificationItem] = []
         episode = self._load_storyboard_episode(project_dir, episode_key)
-        for shot in episode.shots:
+        for shot in self._active_shots_for_episode(episode):
             shot.solidified_asset_ids = []
             for audio in shot.dialogue_audio_assets:
                 shot.solidified_asset_ids.append(audio.asset_id)

@@ -11,6 +11,7 @@ set "PREGEN_UNTIL=bgm_generation"
 set "GENERATION_UNTIL=dynamic_asset_solidification"
 set "GENERATION_ONLY="
 set "EPISODES="
+set "SHOTS="
 set "FORCE="
 set "SKIP_PREGEN="
 
@@ -33,6 +34,13 @@ if "%~1"=="--project" (
 if "%~1"=="--episodes" (
   if "%~2"=="" goto missing_value
   set "EPISODES=%~2"
+  shift
+  shift
+  goto parse
+)
+if "%~1"=="--shots" (
+  if "%~2"=="" goto missing_value
+  set "SHOTS=%~2"
   shift
   shift
   goto parse
@@ -95,7 +103,7 @@ goto help_error
 echo Usage:
 echo   run\dynamic_assets.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
 echo   run\dynamic_assets.cmd [--episodes episode_001,episode_003] [--skip-pregen]
-echo   run\dynamic_assets.cmd --only ref_frame_generation --episodes 1,3
+echo   run\dynamic_assets.cmd --only ref_frame_generation --episodes 1,3 [--shots 1-3]
 echo.
 echo This advances a project through:
 echo   1. pregen until bgm_generation
@@ -105,6 +113,7 @@ echo Options:
 echo   --config FILE           Config file. Default: config.yaml
 echo   --project ID_OR_DIR     Project id or project directory.
 echo   --episodes LIST         Comma-separated episode keys for dynamic generation.
+echo   --shots LIST            Comma-separated shot indexes or ids inside selected episodes.
 echo   --fake                  Use fake providers for local smoke runs.
 echo   --force                 Re-run workflow nodes even if already completed.
 echo   --skip-pregen           Run only dynamic generation.
@@ -116,7 +125,7 @@ goto end
 
 :help_error
 echo Usage: 1>&2
-echo   run\dynamic_assets.cmd [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--fake] [--force] [--skip-pregen] 1>&2
+echo   run\dynamic_assets.cmd [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--fake] [--force] [--skip-pregen] 1>&2
 exit /b 2
 
 :run
@@ -143,6 +152,9 @@ if not "%PROJECT%"=="" set "PROJECT_ARGS=--project "%PROJECT%""
 set "EPISODE_ARGS="
 if not "%EPISODES%"=="" set "EPISODE_ARGS=--episodes "%EPISODES%""
 
+set "SHOT_ARGS="
+if not "%SHOTS%"=="" set "SHOT_ARGS=--shots "%SHOTS%""
+
 set "GENERATION_ONLY_ARGS="
 if not "%GENERATION_ONLY%"=="" set "GENERATION_ONLY_ARGS=--only "%GENERATION_ONLY%""
 
@@ -161,8 +173,9 @@ if "%SKIP_PREGEN%"=="1" (
 
 call :log "generation until: %GENERATION_UNTIL%"
 if not "%EPISODES%"=="" call :log "episodes: %EPISODES%"
+if not "%SHOTS%"=="" call :log "shots: %SHOTS%"
 if not "%GENERATION_ONLY%"=="" call :log "generation only: %GENERATION_ONLY%"
-"%AUTODRAMA_PYTHON%" -m autodrama.cli run generation --config "%CONFIG%" %PROJECT_ARGS% --until "%GENERATION_UNTIL%" %GENERATION_ONLY_ARGS% %EPISODE_ARGS% %PROVIDER_ARGS% %FORCE%
+"%AUTODRAMA_PYTHON%" -m autodrama.cli run generation --config "%CONFIG%" %PROJECT_ARGS% --until "%GENERATION_UNTIL%" %GENERATION_ONLY_ARGS% %EPISODE_ARGS% %SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" goto fail
 

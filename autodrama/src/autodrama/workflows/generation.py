@@ -116,6 +116,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         force: bool = False,
         episode_keys: list[str] | None = None,
         only: str | None = None,
+        shot_selectors: list[str] | None = None,
     ) -> ProjectState:
         if until not in GENERATION_NODES:
             raise ValueError(f"Unsupported generation stop node: {until}")
@@ -148,17 +149,25 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         selected_set = set(selected_episode_keys)
 
         target_nodes = [only] if only else GENERATION_NODES[: GENERATION_NODES.index(until) + 1]
+        if shot_selectors and "storyboard_generation" in target_nodes:
+            raise ValueError("--shots can only be used with generation nodes after storyboard_generation")
         run_outputs = self._empty_run_outputs(target_nodes)
         logger.info(
-            "workflow=generation project_id=%s until=%s only=%s force=%s episodes=%s",
+            "workflow=generation project_id=%s until=%s only=%s force=%s episodes=%s shots=%s",
             state.project_id,
             until,
             only or "-",
             force,
             ",".join(selected_episode_keys),
+            ",".join(shot_selectors or []) or "-",
         )
 
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
+        previous_active_shot_selectors = getattr(self, "_active_shot_selectors", None)
+        if shot_selectors:
+            self._active_shot_selectors = {str(selector).strip().lower() for selector in shot_selectors if str(selector).strip()}
+        elif hasattr(self, "_active_shot_selectors"):
+            delattr(self, "_active_shot_selectors")
         try:
             for episode_index, episode_key in enumerate(selected_episode_keys, start=1):
                 self._active_episode_keys = {episode_key}
@@ -241,6 +250,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
                     delattr(self, "_active_episode_keys")
             else:
                 self._active_episode_keys = previous_active_episode_keys
+            if previous_active_shot_selectors is None:
+                if hasattr(self, "_active_shot_selectors"):
+                    delattr(self, "_active_shot_selectors")
+            else:
+                self._active_shot_selectors = previous_active_shot_selectors
 
         processed_episode_keys = selected_set if target_nodes[-1] == GENERATION_NODES[-1] else None
         update_checklist_from_state(
