@@ -54,3 +54,11 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli init --config ../config
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config ../config.yaml.example --project <project_id> --provider fake
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config ../config.yaml.example --project <project_id> --provider fake
 ```
+
+Windows shortcut:
+
+```powershell
+run\start.cmd --config config.yaml --project <project_id>
+run\start.cmd --generation --config config.yaml --project <project_id>
+run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
+```
