@@ -21,6 +21,11 @@ from autodrama.workflows.storyboard_history import history_before_episode
 
 
 class DynamicAssetNodeMixin:
+    @staticmethod
+    def _clear_storyboard_bgm_assignments(output) -> None:
+        for shot in output.shots:
+            shot.bgm_id = None
+
     async def _run_storyboard_generation_for_episode(
         self,
         project_dir: Path,
@@ -43,6 +48,7 @@ class DynamicAssetNodeMixin:
         )
         if output.episode_key != episode_key:
             raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")
+        self._clear_storyboard_bgm_assignments(output)
         self.repo.write_json(slots_dir / f"{episode_key}.json", output)
         state.budget.used_text_calls += 1
         return StoryboardGenerationOutput(generated_episodes=[episode_key])

@@ -57,7 +57,6 @@ def _shot_history_item(shot: StoryboardShot) -> dict[str, Any]:
         "layout_id": shot.layout_id,
         "role_ids": shot.role_ids,
         "prop_ids": shot.prop_ids,
-        "bgm_id": shot.bgm_id,
         "camera": "，".join(
             item
             for item in (
@@ -83,7 +82,6 @@ def build_episode_storyboard_history_item(episode: StoryboardEpisodeOutput) -> d
         "layouts": _ordered_unique([shot.layout_id for shot in episode.shots]),
         "roles": _ordered_unique([role_id for shot in episode.shots for role_id in shot.role_ids]),
         "props": _ordered_unique([prop_id for shot in episode.shots for prop_id in shot.prop_ids]),
-        "bgms": _ordered_unique([shot.bgm_id for shot in episode.shots]),
         "shots": [_shot_history_item(shot) for shot in episode.shots],
     }
 

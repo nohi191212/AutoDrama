@@ -33,7 +33,6 @@ class StoryboardService:
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
             props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),
             layouts=self.format_json({layout_id: layout.model_dump(mode="json") for layout_id, layout in state.layouts.items()}),
-            bgms=self.format_json({bgm_id: bgm.model_dump(mode="json") for bgm_id, bgm in state.bgms.items()}),
             visual_style_label=state.metadata.get("visual_style_label", "真人电影质感"),
             visual_style_prompt=state.metadata.get(
                 "visual_style_prompt",
