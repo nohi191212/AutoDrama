@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
+from autodrama.core.errors import ProviderError
 from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import (
     DynamicAssetSolidificationItem,
@@ -19,6 +21,16 @@ from autodrama.core.schemas import (
     StoryboardShot,
 )
 from autodrama.logging import get_logger
+from autodrama.providers.base import VideoGenerationResult
+from autodrama.workflows.generation_tasks import (
+    find_generation_task,
+    generation_tasks_path,
+    load_generation_tasks,
+    now_iso,
+    save_generation_tasks,
+    task_status,
+    upsert_generation_task,
+)
 from autodrama.workflows.storyboard_history import history_before_episode
 
 
@@ -192,7 +204,13 @@ class DynamicAssetNodeMixin:
         )
         generated: list[RefFrameGenerationItem] = []
         episode = self._load_storyboard_episode(project_dir, episode_key)
-        for shot in self._active_shots_for_episode(episode):
+        shots = self._active_shots_for_episode(episode)
+        get_logger().info(
+            "node=ref_frame_generation episode=%s total_images=%d",
+            episode.episode_key,
+            len(shots),
+        )
+        for shot in shots:
             asset_id = normalize_id(f"{shot.shot_id}", "ref_frame")
             prompt = self._shot_ref_frame_prompt(state, episode, shot)
             refs = None
@@ -235,6 +253,7 @@ class DynamicAssetNodeMixin:
                     raw_response=result.raw_response,
                 )
             )
+            get_logger().info("%s generated successfully, saved in %s", asset_id, asset_path)
         self._save_storyboard_episode(project_dir, episode)
 
         return RefFrameGenerationOutput(generated_ref_frames=generated)
@@ -252,6 +271,127 @@ class DynamicAssetNodeMixin:
         )
         return state
 
+    @staticmethod
+    def _video_success_statuses(provider) -> set[str]:
+        statuses = getattr(provider, "_TERMINAL_SUCCESS", {"succeeded", "success", "completed", "done"})
+        return {str(status).strip().lower() for status in statuses}
+
+    @staticmethod
+    def _video_failure_statuses(provider) -> set[str]:
+        statuses = getattr(
+            provider,
+            "_TERMINAL_FAILURE",
+            {"failed", "fail", "error", "expired", "cancelled", "canceled"},
+        )
+        return {str(status).strip().lower() for status in statuses}
+
+    @staticmethod
+    def _shot_video_task_key(episode_key: str, shot_id: str) -> str:
+        return f"shot_video_generation:{episode_key}:{shot_id}"
+
+    @staticmethod
+    def _path_exists(project_dir: Path, path_value: str | None) -> bool:
+        if not path_value:
+            return False
+        path = Path(path_value)
+        if not path.is_absolute():
+            path = project_dir / path
+        return path.exists() and path.is_file()
+
+    @staticmethod
+    def _apply_shot_video_result(
+        shot: StoryboardShot,
+        *,
+        asset_id: str,
+        result: VideoGenerationResult,
+        provider,
+        asset_path: str | None = None,
+    ) -> None:
+        shot.video_asset_id = asset_id
+        if asset_path is not None:
+            shot.video_asset_path = asset_path
+        shot.video_provider = result.provider or getattr(provider, "name", None)
+        shot.video_model = result.model or getattr(provider, "model", None)
+        shot.video_task_id = result.task_id
+        shot.video_task_status = result.task_status
+        shot.video_request_id = result.request_id
+        shot.video_usage = result.usage
+        shot.video_raw_response = result.raw_response
+
+    @staticmethod
+    def _shot_video_item(
+        *,
+        episode_key: str,
+        shot: StoryboardShot,
+        asset_id: str,
+        prompt: str,
+        duration_seconds: float | None,
+        asset_path: str | None,
+        result: VideoGenerationResult,
+        provider,
+    ) -> ShotVideoGenerationItem:
+        return ShotVideoGenerationItem(
+            episode_key=episode_key,
+            shot_id=shot.shot_id,
+            asset_id=asset_id,
+            prompt=prompt,
+            duration_seconds=duration_seconds,
+            asset_path=asset_path,
+            provider=result.provider or getattr(provider, "name", "unknown"),
+            model=result.model or getattr(provider, "model", ""),
+            task_id=result.task_id,
+            task_status=result.task_status,
+            request_id=result.request_id,
+            usage=result.usage,
+            raw_response=result.raw_response,
+        )
+
+    @staticmethod
+    def _shot_video_task_item(
+        *,
+        task_key: str,
+        state: ProjectState,
+        episode_key: str,
+        shot: StoryboardShot,
+        asset_id: str,
+        asset_path: str,
+        prompt: str,
+        result: VideoGenerationResult | None,
+        provider,
+        task_status_value: str | None = None,
+        completed: bool = False,
+    ) -> dict[str, Any]:
+        item: dict[str, Any] = {
+            "task_key": task_key,
+            "node_name": "shot_video_generation",
+            "project_id": state.project_id,
+            "provider": getattr(provider, "name", "unknown"),
+            "model": getattr(provider, "model", ""),
+            "episode_key": episode_key,
+            "shot_id": shot.shot_id,
+            "asset_id": asset_id,
+            "asset_path": asset_path,
+            "duration_seconds": shot.duration_seconds,
+            "prompt": prompt,
+        }
+        if result is not None:
+            item.update(
+                {
+                    "provider": result.provider or item["provider"],
+                    "model": result.model or item["model"],
+                    "task_id": result.task_id,
+                    "task_status": task_status_value or result.task_status,
+                    "request_id": result.request_id,
+                    "usage": result.usage,
+                    "raw_response": result.raw_response,
+                }
+            )
+        elif task_status_value is not None:
+            item["task_status"] = task_status_value
+        if completed:
+            item["completed_at"] = now_iso()
+        return item
+
     async def _run_shot_video_generation_for_episode(
         self,
         project_dir: Path,
@@ -266,14 +406,99 @@ class DynamicAssetNodeMixin:
         )
         generated: list[ShotVideoGenerationItem] = []
         episode = self._load_storyboard_episode(project_dir, episode_key)
-        for shot in self._active_shots_for_episode(episode):
+        shots = self._active_shots_for_episode(episode)
+        get_logger().info(
+            "node=shot_video_generation episode=%s total_videos=%d",
+            episode.episode_key,
+            len(shots),
+        )
+        registry = load_generation_tasks(project_dir, project_id=state.project_id)
+        task_file = generation_tasks_path(project_dir)
+        success_statuses = self._video_success_statuses(provider)
+        failure_statuses = self._video_failure_statuses(provider)
+        pending: dict[str, dict[str, Any]] = {}
+
+        for shot in shots:
             asset_id = normalize_id(f"{shot.shot_id}", "video")
             prompt = self._shot_video_prompt(state, episode, shot)
-            result = await provider.generate_video(
+            task_key = self._shot_video_task_key(episode.episode_key, shot.shot_id)
+            output_path = self._video_asset_path(project_dir, "shots", asset_id)
+            planned_asset_path = self._project_relative(project_dir, output_path)
+            existing_task = find_generation_task(registry, task_key)
+            existing_status = task_status(existing_task)
+            saved_asset_path = (
+                str((existing_task or {}).get("asset_path") or shot.video_asset_path or "")
+                if existing_task or shot.video_asset_path
+                else ""
+            )
+
+            if existing_status in success_statuses and self._path_exists(project_dir, saved_asset_path):
+                result = VideoGenerationResult(
+                    provider=str(
+                        (existing_task or {}).get("provider")
+                        or shot.video_provider
+                        or getattr(provider, "name", "unknown")
+                    ),
+                    model=str((existing_task or {}).get("model") or shot.video_model or getattr(provider, "model", "")),
+                    task_id=str((existing_task or {}).get("task_id") or shot.video_task_id or "") or None,
+                    task_status=str((existing_task or {}).get("task_status") or shot.video_task_status or "succeeded"),
+                    request_id=str((existing_task or {}).get("request_id") or shot.video_request_id or "") or None,
+                    usage=dict((existing_task or {}).get("usage") or shot.video_usage or {}),
+                    raw_response=dict((existing_task or {}).get("raw_response") or shot.video_raw_response or {}),
+                )
+                self._apply_shot_video_result(
+                    shot,
+                    asset_id=asset_id,
+                    result=result,
+                    provider=provider,
+                    asset_path=saved_asset_path,
+                )
+                generated.append(
+                    self._shot_video_item(
+                        episode_key=episode.episode_key,
+                        shot=shot,
+                        asset_id=asset_id,
+                        prompt=prompt,
+                        duration_seconds=shot.duration_seconds,
+                        asset_path=saved_asset_path,
+                        result=result,
+                        provider=provider,
+                    )
+                )
+                get_logger().info("%s already generated, saved in %s", shot.shot_id, saved_asset_path)
+                continue
+
+            if existing_task and existing_task.get("task_id") and existing_status not in failure_statuses:
+                pending[task_key] = {
+                    "shot": shot,
+                    "asset_id": asset_id,
+                    "prompt": prompt,
+                    "output_path": output_path,
+                    "planned_asset_path": planned_asset_path,
+                    "task": existing_task,
+                    "last_logged_status": existing_status,
+                }
+                get_logger().info(
+                    "%s video task resumed: %s status=%s queue=%s",
+                    shot.shot_id,
+                    existing_task.get("task_id"),
+                    existing_status or "-",
+                    self._project_relative(project_dir, task_file),
+                )
+                continue
+
+            if existing_task and existing_status in failure_statuses:
+                get_logger().info(
+                    "%s previous video task %s ended with status=%s; submitting a new task",
+                    shot.shot_id,
+                    existing_task.get("task_id"),
+                    existing_status,
+                )
+
+            result = await provider.submit_video(
                 prompt,
                 refs=self._shot_video_refs(project_dir, state, shot),
                 duration=shot.duration_seconds,
-                wait=True,
                 metadata={
                     "node_name": "shot_video_generation",
                     "project_id": state.project_id,
@@ -282,37 +507,178 @@ class DynamicAssetNodeMixin:
                     "asset_id": asset_id,
                 },
             )
-            asset_path = await self._write_generated_video(
-                project_dir,
-                self._video_asset_path(project_dir, "shots", asset_id),
-                result,
-            )
-            shot.video_asset_id = asset_id
-            shot.video_asset_path = asset_path
-            shot.video_provider = result.provider
-            shot.video_model = result.model
-            shot.video_task_id = result.task_id
-            shot.video_task_status = result.task_status
-            shot.video_request_id = result.request_id
-            shot.video_usage = result.usage
-            shot.video_raw_response = result.raw_response
-            generated.append(
-                ShotVideoGenerationItem(
+            if not result.task_id:
+                raise ProviderError(f"Video provider submit result has no task_id for {shot.shot_id}")
+            task = upsert_generation_task(
+                registry,
+                self._shot_video_task_item(
+                    task_key=task_key,
+                    state=state,
                     episode_key=episode.episode_key,
-                    shot_id=shot.shot_id,
+                    shot=shot,
                     asset_id=asset_id,
+                    asset_path=planned_asset_path,
                     prompt=prompt,
-                    duration_seconds=shot.duration_seconds,
-                    asset_path=asset_path,
-                    provider=result.provider,
-                    model=result.model,
-                    task_id=result.task_id,
-                    task_status=result.task_status,
-                    request_id=result.request_id,
-                    usage=result.usage,
-                    raw_response=result.raw_response,
-                )
+                    result=result,
+                    provider=provider,
+                ),
             )
+            save_generation_tasks(self.repo, project_dir, registry)
+            self._apply_shot_video_result(shot, asset_id=asset_id, result=result, provider=provider)
+            self._save_storyboard_episode(project_dir, episode)
+            pending[task_key] = {
+                "shot": shot,
+                "asset_id": asset_id,
+                "prompt": prompt,
+                "output_path": output_path,
+                "planned_asset_path": planned_asset_path,
+                "task": task,
+                "last_logged_status": task_status(task),
+            }
+            get_logger().info(
+                "%s video task submitted: %s queue=%s",
+                shot.shot_id,
+                result.task_id,
+                self._project_relative(project_dir, task_file),
+            )
+
+        max_polls = int(getattr(provider, "max_polls", 120))
+        poll_interval_seconds = float(getattr(provider, "poll_interval_seconds", 5))
+        status_log_interval_polls = max(1, int(getattr(provider, "status_log_interval_polls", 6)))
+        for poll_index in range(1, max_polls + 1):
+            if not pending:
+                break
+            completed_task_keys: list[str] = []
+            for task_key, item in list(pending.items()):
+                task = item["task"]
+                task_id = str(task.get("task_id") or "")
+                if not task_id:
+                    raise ProviderError(f"Missing video task_id for {item['shot'].shot_id}; queue={task_file}")
+
+                result = await provider.query_video_task(task_id)
+                status = (result.task_status or "").strip().lower()
+                task = upsert_generation_task(
+                    registry,
+                    self._shot_video_task_item(
+                        task_key=task_key,
+                        state=state,
+                        episode_key=episode.episode_key,
+                        shot=item["shot"],
+                        asset_id=item["asset_id"],
+                        asset_path=item["planned_asset_path"],
+                        prompt=item["prompt"],
+                        result=result,
+                        provider=provider,
+                    ),
+                )
+                item["task"] = task
+                save_generation_tasks(self.repo, project_dir, registry)
+                self._apply_shot_video_result(item["shot"], asset_id=item["asset_id"], result=result, provider=provider)
+                self._save_storyboard_episode(project_dir, episode)
+
+                if (
+                    status != item.get("last_logged_status")
+                    or poll_index == 1
+                    or poll_index % status_log_interval_polls == 0
+                ):
+                    get_logger().info(
+                        "%s video task %s status=%s poll=%d/%d",
+                        item["shot"].shot_id,
+                        task_id,
+                        status or "-",
+                        poll_index,
+                        max_polls,
+                    )
+                    item["last_logged_status"] = status
+
+                if status in success_statuses:
+                    asset_path = await self._write_generated_video(
+                        project_dir,
+                        item["output_path"],
+                        result,
+                    )
+                    if not asset_path:
+                        raise ProviderError(f"Video task {task_id} succeeded but returned no video URL or data")
+                    self._apply_shot_video_result(
+                        item["shot"],
+                        asset_id=item["asset_id"],
+                        result=result,
+                        provider=provider,
+                        asset_path=asset_path,
+                    )
+                    self._save_storyboard_episode(project_dir, episode)
+                    task = upsert_generation_task(
+                        registry,
+                        self._shot_video_task_item(
+                            task_key=task_key,
+                            state=state,
+                            episode_key=episode.episode_key,
+                            shot=item["shot"],
+                            asset_id=item["asset_id"],
+                            asset_path=asset_path,
+                            prompt=item["prompt"],
+                            result=result,
+                            provider=provider,
+                            completed=True,
+                        ),
+                    )
+                    item["task"] = task
+                    save_generation_tasks(self.repo, project_dir, registry)
+                    generated.append(
+                        self._shot_video_item(
+                            episode_key=episode.episode_key,
+                            shot=item["shot"],
+                            asset_id=item["asset_id"],
+                            prompt=item["prompt"],
+                            duration_seconds=item["shot"].duration_seconds,
+                            asset_path=asset_path,
+                            result=result,
+                            provider=provider,
+                        )
+                    )
+                    get_logger().info("%s generated successfully, saved in %s", item["shot"].shot_id, asset_path)
+                    completed_task_keys.append(task_key)
+                    continue
+
+                if status in failure_statuses:
+                    task = upsert_generation_task(
+                        registry,
+                        {
+                            "task_key": task_key,
+                            "task_status": result.task_status,
+                            "failed_at": now_iso(),
+                        },
+                    )
+                    item["task"] = task
+                    save_generation_tasks(self.repo, project_dir, registry)
+                    raise ProviderError(f"Video task {task_id} ended with status {result.task_status}; queue={task_file}")
+
+            for task_key in completed_task_keys:
+                pending.pop(task_key, None)
+
+            if pending and poll_index < max_polls:
+                await asyncio.sleep(poll_interval_seconds)
+
+        if pending:
+            for task_key, item in pending.items():
+                last_status = task_status(item["task"]) or "timeout"
+                task = upsert_generation_task(
+                    registry,
+                    {
+                        "task_key": task_key,
+                        "task_status": "timeout",
+                        "previous_task_status": last_status,
+                        "timed_out_at": now_iso(),
+                    },
+                )
+                item["task"] = task
+            save_generation_tasks(self.repo, project_dir, registry)
+            task_ids = ", ".join(str(item["task"].get("task_id")) for item in pending.values())
+            raise ProviderError(
+                f"Video task(s) {task_ids} did not finish after {max_polls} polls; "
+                f"saved in {task_file}. Rerun shot_video_generation to resume."
+            )
+
         self._save_storyboard_episode(project_dir, episode)
 
         return ShotVideoGenerationOutput(generated_videos=generated)

@@ -1474,44 +1474,53 @@ class PregenWorkflow:
             getattr(provider, "model", "-"),
         )
         generated: list[StaticAssetGenerationItem] = []
-        for role in state.roles.values():
-            for appearance in role.appearances.values():
-                result = await provider.generate_image(
-                    appearance.prompt,
-                    metadata={
-                        "node_name": "role_appearance_generation",
-                        "project_id": state.project_id,
-                        "role_id": role.id,
-                        "appearance_id": appearance.id,
-                        "asset_id": appearance.id,
-                    },
+        appearances = [
+            (role, appearance)
+            for role in state.roles.values()
+            for appearance in role.appearances.values()
+        ]
+        get_logger().info(
+            "node=role_appearance_generation total_images=%d",
+            len(appearances),
+        )
+        for role, appearance in appearances:
+            result = await provider.generate_image(
+                appearance.prompt,
+                metadata={
+                    "node_name": "role_appearance_generation",
+                    "project_id": state.project_id,
+                    "role_id": role.id,
+                    "appearance_id": appearance.id,
+                    "asset_id": appearance.id,
+                },
+            )
+            asset_path = await self._write_first_generated_image(
+                project_dir,
+                self._image_asset_path(project_dir, "roles", appearance.id),
+                result,
+            )
+            appearance.asset_id = appearance.id
+            appearance.asset_path = asset_path
+            appearance.provider = result.provider
+            appearance.model = result.model
+            appearance.request_id = result.request_id
+            appearance.usage = result.usage
+            generated.append(
+                StaticAssetGenerationItem(
+                    asset_id=appearance.id,
+                    asset_type="role_appearance",
+                    owner_id=role.id,
+                    name=f"{role.name}/{appearance.name}",
+                    prompt=appearance.prompt,
+                    asset_path=asset_path,
+                    provider=result.provider,
+                    model=result.model,
+                    request_id=result.request_id,
+                    usage=result.usage,
+                    raw_response=result.raw_response,
                 )
-                asset_path = await self._write_first_generated_image(
-                    project_dir,
-                    self._image_asset_path(project_dir, "roles", appearance.id),
-                    result,
-                )
-                appearance.asset_id = appearance.id
-                appearance.asset_path = asset_path
-                appearance.provider = result.provider
-                appearance.model = result.model
-                appearance.request_id = result.request_id
-                appearance.usage = result.usage
-                generated.append(
-                    StaticAssetGenerationItem(
-                        asset_id=appearance.id,
-                        asset_type="role_appearance",
-                        owner_id=role.id,
-                        name=f"{role.name}/{appearance.name}",
-                        prompt=appearance.prompt,
-                        asset_path=asset_path,
-                        provider=result.provider,
-                        model=result.model,
-                        request_id=result.request_id,
-                        usage=result.usage,
-                        raw_response=result.raw_response,
-                    )
-                )
+            )
+            get_logger().info("%s generated successfully, saved in %s", appearance.id, asset_path)
         self.repo.save_node_output(project_dir, "role_appearance_generation", StaticAssetGenerationOutput(generated_assets=generated))
         return state
 
@@ -1545,7 +1554,12 @@ class PregenWorkflow:
             getattr(provider, "model", "-"),
         )
         generated: list[StaticAssetGenerationItem] = []
-        for prop in state.props.values():
+        props = list(state.props.values())
+        get_logger().info(
+            "node=prop_image_generation total_images=%d",
+            len(props),
+        )
+        for prop in props:
             result = await provider.generate_image(
                 prop.prompt,
                 metadata={
@@ -1581,6 +1595,7 @@ class PregenWorkflow:
                     raw_response=result.raw_response,
                 )
             )
+            get_logger().info("%s generated successfully, saved in %s", prop.id, asset_path)
         self.repo.save_node_output(project_dir, "prop_image_generation", StaticAssetGenerationOutput(generated_assets=generated))
         return state
 
@@ -1651,7 +1666,12 @@ class PregenWorkflow:
             getattr(provider, "model", "-"),
         )
         generated: list[StaticAssetGenerationItem] = []
-        for layout in state.layouts.values():
+        layouts = list(state.layouts.values())
+        get_logger().info(
+            "node=layout_image_generation total_images=%d",
+            len(layouts),
+        )
+        for layout in layouts:
             result = await provider.generate_image(
                 layout.prompt,
                 metadata={
@@ -1687,6 +1707,7 @@ class PregenWorkflow:
                     raw_response=result.raw_response,
                 )
             )
+            get_logger().info("%s generated successfully, saved in %s", layout.id, asset_path)
         self.repo.save_node_output(project_dir, "layout_image_generation", StaticAssetGenerationOutput(generated_assets=generated))
         return state
 
