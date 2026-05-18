@@ -40,7 +40,8 @@ The default production routing in `config.yaml` is:
 - `text.bgm_plan: aliyun` for `bgm_design`.
 - `music.bgm: minimax` for `bgm_generation` with MiniMax `music-2.6`.
 - `audio.speech: volcengine` for role and shot dialogue TTS.
-- `image.ref_frame: rightcode` for reference frames.
+- `image.role`, `image.prop`, and `image.layout`: `rightcode` for reusable global/static image assets.
+- `image.ref_frame: volcengine` for shot-level storyboard/reference frames with Seedream 5.0 lite, reference images, and 9:16 2K output.
 - `video.shot: volcengine` for shot videos.
 
 Volcengine TTS should keep `instruction_mode: none` unless a provider-level instruction carrier is verified. This prevents instruction-prefix text from being synthesized as speech.
@@ -54,11 +55,12 @@ Use the requested conda environment:
 Do not use pytest in this repository. Use focused smoke scripts and compile checks instead.
 
 ```powershell
-D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama scripts/smoke/dynamic_assets_fake_smoke.py scripts/smoke/only_node_episode_smoke.py scripts/smoke/episode_serial_generation_smoke.py scripts/smoke/minimax_music_payload_smoke.py
+D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama scripts/smoke/dynamic_assets_fake_smoke.py scripts/smoke/only_node_episode_smoke.py scripts/smoke/episode_serial_generation_smoke.py scripts/smoke/minimax_music_payload_smoke.py scripts/smoke/seedream_payload_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/only_node_episode_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/episode_serial_generation_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/minimax_music_payload_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedream_payload_smoke.py --config config.yaml.example
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_payload_smoke.py --config config.yaml.example
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_router_smoke.py
 ```

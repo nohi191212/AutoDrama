@@ -26,6 +26,7 @@ from autodrama.providers.minimax.music.music_26 import MiniMaxMusicProvider
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
 from autodrama.providers.volcengine.audio.seed_icl import VolcengineVoiceProvider
 from autodrama.providers.volcengine.audio.seed_tts import VolcengineSeedTTSProvider
+from autodrama.providers.volcengine.image.seedream import VolcengineSeedreamImageProvider
 from autodrama.providers.volcengine.video.seedance import VolcengineSeedanceVideoProvider
 
 
@@ -35,6 +36,7 @@ ALIYUN_VIDEO_PROVIDER_NAMES = {"aliyun", "wanxiang"}
 ALIYUN_AUDIO_PROVIDER_NAMES = {"aliyun", "qwen_tts"}
 ALIYUN_MUSIC_PROVIDER_NAMES = {"aliyun", "bailian"}
 MINIMAX_MUSIC_PROVIDER_NAMES = {"minimax", "minimax_music"}
+VOLCENGINE_IMAGE_PROVIDER_NAMES = {"volcengine", "seedream", "volcengine_seedream"}
 
 
 class ProviderRouter:
@@ -103,6 +105,8 @@ class ProviderRouter:
             return self._fake_image
         if provider_name == "rightcode":
             return RightCodeImageProvider(self._settings_for(provider_name), self.settings.runtime)
+        if provider_name in VOLCENGINE_IMAGE_PROVIDER_NAMES:
+            return VolcengineSeedreamImageProvider(self._settings_for("volcengine"), self.settings.runtime)
         if provider_name in ALIYUN_IMAGE_PROVIDER_NAMES:
             return WanxiangImageProvider(self._dashscope_api_v1_settings(provider_name), self.settings.runtime)
         raise ValueError(f"Unsupported image provider: {provider_name}")

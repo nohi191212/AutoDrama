@@ -141,7 +141,8 @@ providers:
       tts: seed-icl-2.0
       target_model: seed-icl-2.0
       clone_target_model: seed-icl-2.0
-      image: seedream-lite
+      image: doubao-seedream-5-0-lite-260128
+      seedream_5_lite: doubao-seedream-5-0-lite-260128
       video: doubao-seedance-2-0-260128
       seedance_2: doubao-seedance-2-0-260128
       upscale: video-upscale
@@ -150,9 +151,17 @@ providers:
       sample_rate: 24000
       response_format: mp3
       seed_tts_api_key_env: SEED_TTS_API_KEY
+      seedream_base_url: https://ark.cn-beijing.volces.com
+      seedream_api_key_env: VOLCENGINE_API_KEY
+      seedream_image_size: 1600x2848
+      seedream_output_format: png
+      seedream_response_format: url
+      seedream_watermark: false
+      seedream_sequential_image_generation: disabled
+      seedream_max_reference_images: 14
       seedance_base_url: https://ark.cn-beijing.volces.com
       seedance_api_key_env: VOLCENGINE_API_KEY
-      video_ratio: "16:9"
+      video_ratio: "9:16"
       video_resolution: 720p
       generate_audio: false
       video_min_duration_seconds: 4
@@ -226,10 +235,12 @@ routing:
     edit_plan: aliyun
     bgm_plan: aliyun
   image:
+    # Reusable global assets: role turnarounds, props, and layouts.
     role: rightcode
     prop: rightcode
     layout: rightcode
-    ref_frame: rightcode
+    # Shot-level storyboard/reference frames with multi-reference image support.
+    ref_frame: volcengine
   video:
     shot: volcengine
     upscale: volcengine

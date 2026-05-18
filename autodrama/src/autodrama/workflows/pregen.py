@@ -1020,7 +1020,18 @@ class PregenWorkflow:
                 )
             )
 
-        for appearance_id in shot.role_appearance_ids:
+        appearance_ids = list(shot.role_appearance_ids)
+        seen_appearance_ids = set(appearance_ids)
+        for role_id in shot.role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            base_appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
+            if base_appearance and base_appearance.id not in seen_appearance_ids:
+                appearance_ids.append(base_appearance.id)
+                seen_appearance_ids.add(base_appearance.id)
+
+        for appearance_id in appearance_ids:
             for role in state.roles.values():
                 appearance = next(
                     (
@@ -1096,6 +1107,30 @@ class PregenWorkflow:
             role = state.roles.get(role_id)
             if role:
                 role_lines.append(f"{role.name}: {role.intro}")
+        appearance_lines = []
+        appearance_ids = list(shot.role_appearance_ids)
+        seen_appearance_ids = set(appearance_ids)
+        for role_id in shot.role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            base_appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
+            if base_appearance and base_appearance.id not in seen_appearance_ids:
+                appearance_ids.append(base_appearance.id)
+                seen_appearance_ids.add(base_appearance.id)
+        for appearance_id in appearance_ids:
+            for role in state.roles.values():
+                appearance = next(
+                    (
+                        item
+                        for item in role.appearances.values()
+                        if item.id == appearance_id or item.name == appearance_id
+                    ),
+                    None,
+                )
+                if appearance:
+                    appearance_lines.append(f"{role.name}外观锁定: {appearance.desc}")
+                    break
         prop_lines = []
         for prop_id in shot.prop_ids:
             prop = state.props.get(prop_id)
@@ -1107,6 +1142,7 @@ class PregenWorkflow:
             f"剧集: {episode.episode_key}",
             f"镜头: {shot.title}",
             f"画面内容: {shot.content}",
+            "输出规格: 9:16竖屏单帧剧照，适配手机短剧画幅；主体完整，避免横版构图或左右大面积留白。",
             f"镜头角度: {shot.camera_shooting_angle}",
             f"运镜: {shot.camera_movement}",
             f"焦段: {shot.focal_length or '按分镜自然选择'}",
@@ -1116,6 +1152,8 @@ class PregenWorkflow:
             parts.append(f"场景设定: {layout.name} - {layout.desc}")
         if role_lines:
             parts.append("出场角色: " + "；".join(role_lines))
+        if appearance_lines:
+            parts.append("人物一致性要求: " + "；".join(appearance_lines))
         if prop_lines:
             parts.append("关键道具: " + "；".join(prop_lines))
         if shot.dialogue:
