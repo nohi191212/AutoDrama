@@ -141,6 +141,7 @@ class WanxiangVideoProvider:
             task_id=output.get("task_id"),
             task_status=output.get("task_status"),
             video_url=output.get("video_url"),
+            request_id=body.get("request_id") or body.get("requestId"),
             usage=body.get("usage") or {},
             raw_response=body,
         )

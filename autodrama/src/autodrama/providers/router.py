@@ -26,6 +26,7 @@ from autodrama.providers.minimax.music.music_26 import MiniMaxMusicProvider
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
 from autodrama.providers.volcengine.audio.seed_icl import VolcengineVoiceProvider
 from autodrama.providers.volcengine.audio.seed_tts import VolcengineSeedTTSProvider
+from autodrama.providers.volcengine.video.seedance import VolcengineSeedanceVideoProvider
 
 
 ALIYUN_TEXT_PROVIDER_NAMES = {"aliyun", "qwen", "bailian"}
@@ -110,6 +111,8 @@ class ProviderRouter:
         provider_name = self.provider_override or self.settings.provider_for("video", purpose)
         if provider_name == "fake":
             return self._fake_video
+        if provider_name in {"volcengine", "seedance", "volcengine_seedance"}:
+            return VolcengineSeedanceVideoProvider(self._settings_for("volcengine"), self.settings.runtime)
         if provider_name in ALIYUN_VIDEO_PROVIDER_NAMES:
             return WanxiangVideoProvider(self._dashscope_api_v1_settings(provider_name), self.settings.runtime)
         raise ValueError(f"Unsupported video provider: {provider_name}")

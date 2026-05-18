@@ -17,6 +17,7 @@ class WanxiangImageProvider:
     """Tongyi Wanxiang image provider via DashScope multimodal generation API."""
 
     name = "wanxiang"
+    supports_reference_images = True
 
     def __init__(self, settings: ProviderSettings, runtime: RuntimeSettings) -> None:
         self.settings = settings

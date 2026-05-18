@@ -159,6 +159,8 @@ class VideoGenerationResult(BaseModel):
     task_id: str | None = None
     task_status: str | None = None
     video_url: str | None = None
+    video_data: str | None = None
+    request_id: str | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
     raw_response: dict[str, Any] = Field(default_factory=dict)
 

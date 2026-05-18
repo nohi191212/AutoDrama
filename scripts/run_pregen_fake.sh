@@ -9,15 +9,15 @@ Usage:
   scripts/run_pregen_fake.sh [--config FILE] [--project ID_OR_DIR] [--until NODE] [--force]
 
 Default NODE:
-  storyboard_generation
+  dynamic_asset_solidification
 
-This runs the current MVP only with fake provider and stops at storyboard_generation.
+This runs the current MVP only with fake provider through dynamic asset solidification.
 Project ID and input outline file are read from config.yaml by default. Use
 --project to run a specific existing project or output directory.
 USAGE
 }
 
-until="storyboard_generation"
+until="dynamic_asset_solidification"
 force=""
 project=""
 

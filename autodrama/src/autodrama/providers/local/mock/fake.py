@@ -418,6 +418,7 @@ class FakeMusicProvider:
 
 class FakeVideoProvider:
     name = "fake"
+    model = "fake-video"
 
     async def submit_video(
         self,
@@ -427,28 +428,39 @@ class FakeVideoProvider:
         duration: float | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> VideoGenerationResult:
-        del prompt, refs, metadata
+        metadata = metadata or {}
+        task_id = f"fake-video-task-{metadata.get('asset_id', 'shot')}"
         return VideoGenerationResult(
             provider=self.name,
-            model="fake-video",
-            task_id="fake_video_task",
+            model=self.model,
+            task_id=task_id,
             task_status="PENDING",
+            request_id=f"fake-video-request-{metadata.get('asset_id', 'shot')}",
             usage={"duration": duration or 5},
-            raw_response={"output": {"task_id": "fake_video_task", "task_status": "PENDING"}},
+            raw_response={
+                "output": {
+                    "task_id": task_id,
+                    "task_status": "PENDING",
+                    "ref_count": len(refs or []),
+                    "prompt": prompt,
+                }
+            },
         )
 
     async def query_video_task(self, task_id: str) -> VideoGenerationResult:
+        video_bytes = f"fake video: {task_id}".encode("utf-8")
         return VideoGenerationResult(
             provider=self.name,
-            model="fake-video",
+            model=self.model,
             task_id=task_id,
             task_status="SUCCEEDED",
-            video_url="https://example.invalid/fake.mp4",
+            video_data=base64.b64encode(video_bytes).decode("ascii"),
+            request_id=f"fake-video-request-{task_id}",
             raw_response={
                 "output": {
                     "task_id": task_id,
                     "task_status": "SUCCEEDED",
-                    "video_url": "https://example.invalid/fake.mp4",
+                    "video": "<base64 video omitted>",
                 }
             },
         )

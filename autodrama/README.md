@@ -21,15 +21,24 @@ Implemented scope:
 15. `bgm_design`
 16. `bgm_generation`
 17. `storyboard_generation`
+18. `shot_dialogue_audio_generation`
+19. `ref_frame_generation`
+20. `shot_video_generation`
+21. `dynamic_asset_solidification`
 
-The pre-generation pipeline stops after storyboard generation. It generates static role/prop/layout/BGM assets and stores per-episode storyboard JSON files under `slots/`. It does not generate reference frames, shot videos, or final edits yet.
+The pre-generation pipeline now covers static assets and dynamic shot-level assets. It stores per-episode storyboard JSON files under `slots/`, then writes generated dialogue audio, reference frames, shot videos, and solidified dynamic asset metadata back into those slot files. It does not generate final edit plans or composed final videos yet.
 
 ## Local commands
 
 Use the requested conda environment:
 
+Do not use pytest in this repository. Use focused smoke scripts and compile checks instead.
+
 ```powershell
-D:/miniforge3/envs/autodrama/python.exe -m pytest
+D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama scripts/smoke/dynamic_assets_fake_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_payload_smoke.py --config ../config.yaml.example
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_router_smoke.py
 ```
 
 For ad-hoc CLI usage without installing:

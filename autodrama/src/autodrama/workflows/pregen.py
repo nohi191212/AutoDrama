@@ -10,18 +10,29 @@ import httpx
 from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import (
     BGM,
+    DynamicAssetSolidificationItem,
+    DynamicAssetSolidificationOutput,
     Layout,
     ProjectState,
     Prop,
+    RefFrameGenerationItem,
+    RefFrameGenerationOutput,
     Role,
     RoleAppearance,
     RoleAudio,
     RoleVoiceDesignOutput,
     RoleVoiceGenerationItem,
     RoleVoiceGenerationOutput,
+    ShotDialogueAudioAsset,
+    ShotDialogueAudioGenerationItem,
+    ShotDialogueAudioGenerationOutput,
+    ShotVideoGenerationItem,
+    ShotVideoGenerationOutput,
     StaticAssetGenerationItem,
     StaticAssetGenerationOutput,
+    StoryboardEpisodeOutput,
     StoryboardGenerationOutput,
+    StoryboardShot,
 )
 from autodrama.core.visual_style import visual_style_metadata
 from autodrama.logging import get_logger, setup_logging
@@ -54,6 +65,10 @@ PREGEN_NODES = [
     "bgm_design",
     "bgm_generation",
     "storyboard_generation",
+    "shot_dialogue_audio_generation",
+    "ref_frame_generation",
+    "shot_video_generation",
+    "dynamic_asset_solidification",
 ]
 
 
@@ -315,7 +330,7 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         *,
-        until: str = "role_voice_generation",
+        until: str = "dynamic_asset_solidification",
         force: bool = False,
     ) -> ProjectState:
         if until not in PREGEN_NODES:
@@ -498,6 +513,29 @@ class PregenWorkflow:
         return str(path.relative_to(project_dir)).replace("\\", "/")
 
     @staticmethod
+    def _slot_path(project_dir: Path, episode_key: str) -> Path:
+        return project_dir / "slots" / f"{episode_key}.json"
+
+    def _load_storyboard_episode(self, project_dir: Path, episode_key: str) -> StoryboardEpisodeOutput:
+        path = self._slot_path(project_dir, episode_key)
+        if not path.exists():
+            raise FileNotFoundError(f"Storyboard slot file not found: {path}")
+        return StoryboardEpisodeOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def _save_storyboard_episode(self, project_dir: Path, episode: StoryboardEpisodeOutput) -> None:
+        self.repo.write_json(self._slot_path(project_dir, episode.episode_key), episode)
+
+    def _iter_storyboard_episodes(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+    ) -> list[StoryboardEpisodeOutput]:
+        return [
+            self._load_storyboard_episode(project_dir, episode_key)
+            for episode_key in self._expected_episode_keys(state)
+        ]
+
+    @staticmethod
     def _image_asset_path(project_dir: Path, asset_type: str, asset_id: str) -> Path:
         return project_dir / "assets" / "images" / asset_type / f"{asset_id}.png"
 
@@ -507,6 +545,18 @@ class PregenWorkflow:
         if extension not in {"mp3", "wav", "m4a", "aac", "ogg"}:
             extension = "mp3"
         return project_dir / "assets" / "audios" / "bgms" / f"{asset_id}.{extension}"
+
+    @staticmethod
+    def _audio_asset_path(project_dir: Path, asset_type: str, asset_id: str, audio_format: str | None) -> Path:
+        extension = (audio_format or "mp3").lower().lstrip(".")
+        extension = {"ogg_opus": "opus"}.get(extension, extension)
+        if extension not in {"wav", "mp3", "pcm", "opus", "ogg", "m4a", "aac"}:
+            extension = "bin"
+        return project_dir / "assets" / "audios" / asset_type / f"{asset_id}.{extension}"
+
+    @staticmethod
+    def _video_asset_path(project_dir: Path, asset_type: str, asset_id: str) -> Path:
+        return project_dir / "assets" / "videos" / asset_type / f"{asset_id}.mp4"
 
     async def _write_first_generated_image(
         self,
@@ -553,6 +603,56 @@ class PregenWorkflow:
             response = await client.get(result.audio_url)
         if response.status_code >= 400:
             raise RuntimeError(f"Failed to download generated music HTTP {response.status_code}: {response.text[:500]}")
+        output_path.write_bytes(response.content)
+        return self._project_relative(project_dir, output_path)
+
+    async def _write_generated_audio(
+        self,
+        project_dir: Path,
+        output_path: Path,
+        *,
+        audio_data: str | None = None,
+        audio_url: str | None = None,
+    ) -> str | None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if audio_data:
+            data = audio_data
+            if data.startswith("data:") and ";base64," in data:
+                data = data.split(";base64,", 1)[1]
+            output_path.write_bytes(base64.b64decode(data))
+            return self._project_relative(project_dir, output_path)
+
+        if not audio_url:
+            return None
+
+        async with httpx.AsyncClient(timeout=self.repo.settings.runtime.request_timeout_seconds) as client:
+            response = await client.get(audio_url)
+        if response.status_code >= 400:
+            raise RuntimeError(f"Failed to download generated audio HTTP {response.status_code}: {response.text[:500]}")
+        output_path.write_bytes(response.content)
+        return self._project_relative(project_dir, output_path)
+
+    async def _write_generated_video(
+        self,
+        project_dir: Path,
+        output_path: Path,
+        result,
+    ) -> str | None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if getattr(result, "video_data", None):
+            data = result.video_data
+            if data.startswith("data:") and ";base64," in data:
+                data = data.split(";base64,", 1)[1]
+            output_path.write_bytes(base64.b64decode(data))
+            return self._project_relative(project_dir, output_path)
+
+        if not result.video_url:
+            return None
+
+        async with httpx.AsyncClient(timeout=self.repo.settings.runtime.request_timeout_seconds) as client:
+            response = await client.get(result.video_url)
+        if response.status_code >= 400:
+            raise RuntimeError(f"Failed to download generated video HTTP {response.status_code}: {response.text[:500]}")
         output_path.write_bytes(response.content)
         return self._project_relative(project_dir, output_path)
 
@@ -870,6 +970,287 @@ class PregenWorkflow:
             request_id=synthesis_result.request_id,
             usage=synthesis_result.usage,
             raw_response=synthesis_result.raw_response,
+        )
+
+    def _shot_ref_asset_refs(self, project_dir: Path, state: ProjectState, shot: StoryboardShot) -> list:
+        from autodrama.providers.base import AssetRef
+
+        refs: list[AssetRef] = []
+        layout = state.layouts.get(shot.layout_id)
+        if layout and layout.asset_path:
+            refs.append(
+                AssetRef(
+                    id=layout.id,
+                    type="image",
+                    path=str(project_dir / layout.asset_path),
+                    metadata={"asset_type": "layout", "name": layout.name},
+                )
+            )
+
+        for appearance_id in shot.role_appearance_ids:
+            for role in state.roles.values():
+                appearance = next(
+                    (
+                        item
+                        for item in role.appearances.values()
+                        if item.id == appearance_id or item.name == appearance_id
+                    ),
+                    None,
+                )
+                if appearance and appearance.asset_path:
+                    refs.append(
+                        AssetRef(
+                            id=appearance.id,
+                            type="image",
+                            path=str(project_dir / appearance.asset_path),
+                            metadata={
+                                "asset_type": "role_appearance",
+                                "role_id": role.id,
+                                "role_name": role.name,
+                                "name": appearance.name,
+                            },
+                        )
+                    )
+                    break
+
+        for prop_id in shot.prop_ids:
+            prop = state.props.get(prop_id)
+            if prop and prop.asset_path:
+                refs.append(
+                    AssetRef(
+                        id=prop.id,
+                        type="image",
+                        path=str(project_dir / prop.asset_path),
+                        metadata={"asset_type": "prop", "name": prop.name},
+                    )
+                )
+        return refs
+
+    def _shot_video_refs(self, project_dir: Path, state: ProjectState, shot: StoryboardShot) -> list:
+        from autodrama.providers.base import AssetRef
+
+        refs: list[AssetRef] = []
+        if shot.ref_frame_asset_path:
+            refs.append(
+                AssetRef(
+                    id=shot.ref_frame_asset_id,
+                    type="image",
+                    path=str(project_dir / shot.ref_frame_asset_path),
+                    metadata={"asset_type": "ref_frame"},
+                )
+            )
+        refs.extend(self._shot_ref_asset_refs(project_dir, state, shot))
+        for audio in shot.dialogue_audio_assets:
+            if audio.asset_path:
+                refs.append(
+                    AssetRef(
+                        id=audio.asset_id,
+                        type="audio",
+                        path=str(project_dir / audio.asset_path),
+                        metadata={
+                            "asset_type": "shot_dialogue_audio",
+                            "role_id": audio.role_id,
+                            "line_index": audio.line_index,
+                        },
+                    )
+                )
+        return refs
+
+    def _shot_ref_frame_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
+        layout = state.layouts.get(shot.layout_id)
+        role_lines = []
+        for role_id in shot.role_ids:
+            role = state.roles.get(role_id)
+            if role:
+                role_lines.append(f"{role.name}: {role.intro}")
+        prop_lines = []
+        for prop_id in shot.prop_ids:
+            prop = state.props.get(prop_id)
+            if prop:
+                prop_lines.append(f"{prop.name}: {prop.desc}")
+
+        parts = [
+            str(state.metadata.get("visual_style_prompt", "")),
+            f"剧集: {episode.episode_key}",
+            f"镜头: {shot.title}",
+            f"画面内容: {shot.content}",
+            f"镜头角度: {shot.camera_shooting_angle}",
+            f"运镜: {shot.camera_movement}",
+            f"焦段: {shot.focal_length or '按分镜自然选择'}",
+            f"分镜参考帧要求: {shot.ref_frame_prompt}",
+        ]
+        if layout:
+            parts.append(f"场景设定: {layout.name} - {layout.desc}")
+        if role_lines:
+            parts.append("出场角色: " + "；".join(role_lines))
+        if prop_lines:
+            parts.append("关键道具: " + "；".join(prop_lines))
+        if shot.dialogue:
+            parts.append("画面对白气氛: " + " / ".join(shot.dialogue))
+        parts.append("生成单帧剧照，必须是同一个镜头里的关键帧；不要添加字幕、水印、文字标识或分镜编号。")
+        return "\n".join(item for item in parts if item)
+
+    def _shot_video_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
+        layout = state.layouts.get(shot.layout_id)
+        bgm = state.bgms.get(shot.bgm_id) if shot.bgm_id else None
+        parts = [
+            str(state.metadata.get("visual_style_prompt", "")),
+            f"剧集: {episode.episode_key}",
+            f"镜头标题: {shot.title}",
+            f"镜头内容: {shot.content}",
+            f"视频动作: {shot.video_prompt}",
+            f"镜头角度: {shot.camera_shooting_angle}",
+            f"运镜: {shot.camera_movement}",
+            f"焦段: {shot.focal_length or '自然电影焦段'}",
+            f"时长: {shot.duration_seconds:.2f} 秒",
+        ]
+        if layout:
+            parts.append(f"场景: {layout.name} - {layout.desc}")
+        if shot.dialogue:
+            parts.append("对白节奏: " + " / ".join(shot.dialogue))
+        if bgm:
+            parts.append(f"BGM情绪参考: {bgm.name} - {bgm.mood}")
+        parts.append("保持人物、场景和道具与参考帧一致；画面自然连续；不要生成字幕、水印、片头片尾或额外文字。")
+        return "\n".join(item for item in parts if item)
+
+    def _role_for_dialogue_line(
+        self,
+        state: ProjectState,
+        shot: StoryboardShot,
+        line: str,
+    ) -> tuple[Role | None, str, str | None]:
+        text = str(line).strip()
+        speaker_name: str | None = None
+        dialogue_text = text
+        for separator in ("：", ":"):
+            if separator in text:
+                prefix, suffix = text.split(separator, 1)
+                candidate = prefix.strip()
+                if 0 < len(candidate) <= 20:
+                    speaker_name = candidate
+                    dialogue_text = suffix.strip()
+                    break
+
+        lookup = self._role_lookup(state)
+        role = self._resolve_role(lookup, speaker_name) if speaker_name else None
+        if role is None and len(shot.role_ids) == 1:
+            role = state.roles.get(shot.role_ids[0])
+        if role is None and speaker_name:
+            normalized = normalize_id("role", speaker_name)
+            role = state.roles.get(normalized)
+        return role, dialogue_text or text, speaker_name
+
+    @staticmethod
+    def _shot_dialogue_emotion(role: Role | None, shot: StoryboardShot) -> str:
+        if role is None:
+            return "normal"
+        available = list(role.audio)
+        content = f"{shot.title} {shot.content} {' '.join(shot.dialogue)}"
+        keyword_map = [
+            ("angry", ("怒", "吼", "质问", "逼问", "爆发", "愤")),
+            ("sad", ("哭", "低落", "崩溃", "难过", "哽咽", "失落")),
+            ("happy", ("笑", "开心", "轻松", "高兴")),
+            ("tense", ("紧张", "压低", "慌", "僵", "冷", "对峙", "沉默", "证据")),
+            ("whisper", ("耳语", "低声", "悄声")),
+        ]
+        for emotion, keywords in keyword_map:
+            if emotion in available and any(keyword in content for keyword in keywords):
+                return emotion
+        return "normal" if "normal" in available else (available[0] if available else "normal")
+
+    def _shot_dialogue_role_audio(self, role: Role | None, emotion: str) -> RoleAudio | None:
+        if role is None:
+            return None
+        return role.audio.get(emotion) or role.audio.get("normal") or next(iter(role.audio.values()), None)
+
+    async def _generate_shot_dialogue_audio(
+        self,
+        *,
+        provider,
+        project_dir: Path,
+        state: ProjectState,
+        episode_key: str,
+        shot: StoryboardShot,
+        line_index: int,
+        line: str,
+    ) -> tuple[ShotDialogueAudioAsset | None, dict[str, Any] | None]:
+        role, dialogue_text, speaker_name = self._role_for_dialogue_line(state, shot, line)
+        if role is None:
+            return None, {
+                "episode_key": episode_key,
+                "shot_id": shot.shot_id,
+                "line_index": line_index,
+                "text": line,
+                "reason": "Could not resolve dialogue speaker",
+                "speaker_name": speaker_name,
+            }
+
+        emotion = self._shot_dialogue_emotion(role, shot)
+        role_audio = self._shot_dialogue_role_audio(role, emotion)
+        if role_audio is None:
+            return None, {
+                "episode_key": episode_key,
+                "shot_id": shot.shot_id,
+                "line_index": line_index,
+                "text": line,
+                "role_id": role.id,
+                "reason": "Resolved role has no audio design",
+            }
+
+        voice = self._role_synthesis_voice(provider, role)
+        voice_resource_id = self._role_synthesis_resource_id(provider, role, voice)
+        emotion_instruction, emotion_params = self._role_emotion_synthesis_plan(provider, role_audio)
+        asset_id = normalize_id(f"{shot.shot_id}_dialogue", f"{line_index:03d}_{role.name}")
+        result = await provider.synthesize_speech(
+            voice=voice,
+            text=dialogue_text[:1024],
+            metadata={
+                "node_name": "shot_dialogue_audio_generation",
+                "project_id": state.project_id,
+                "episode_key": episode_key,
+                "shot_id": shot.shot_id,
+                "line_index": line_index,
+                "role_id": role.id,
+                "role_name": role.name,
+                "audio_id": role_audio.id,
+                "asset_id": asset_id,
+                "emotion": role_audio.emotion,
+                "voice_prompt": role_audio.desc,
+                "emotion_instruction": emotion_instruction,
+                "emotion_params": emotion_params,
+                "resource_id": voice_resource_id,
+                "target_model": voice_resource_id or getattr(provider, "model", None),
+            },
+        )
+        asset_path = await self._write_generated_audio(
+            project_dir,
+            self._audio_asset_path(project_dir, "shot_dialogues", asset_id, result.audio_format),
+            audio_data=result.audio_data,
+        )
+        return (
+            ShotDialogueAudioAsset(
+                asset_id=asset_id,
+                role_id=role.id,
+                role_name=role.name,
+                line_index=line_index,
+                text=dialogue_text,
+                emotion=role_audio.emotion,
+                voice=result.voice or voice,
+                voice_name=role.voice_name,
+                voice_resource_id=voice_resource_id,
+                voice_model_family=role.voice_model_family,
+                emotion_instruction=emotion_instruction,
+                emotion_params=emotion_params,
+                asset_path=asset_path,
+                provider=result.provider,
+                model=result.model,
+                sample_rate=result.audio_sample_rate,
+                response_format=result.audio_format,
+                request_id=result.request_id,
+                usage=result.usage,
+                raw_response=result.raw_response,
+            ),
+            None,
         )
 
     async def _run_role_voice_synthesis_generation(
@@ -1337,5 +1718,255 @@ class PregenWorkflow:
             project_dir,
             "storyboard_generation",
             StoryboardGenerationOutput(generated_episodes=generated_episode_keys),
+        )
+        return state
+
+    async def _run_shot_dialogue_audio_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.audio("speech")
+        get_logger().info(
+            "node=shot_dialogue_audio_generation provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        generated: list[ShotDialogueAudioGenerationItem] = []
+        skipped: list[dict[str, Any]] = []
+        for episode in self._iter_storyboard_episodes(project_dir, state):
+            changed = False
+            for shot in episode.shots:
+                if shot.dialogue_audio_assets:
+                    changed = True
+                shot.dialogue_audio_assets = []
+                for line_index, line in enumerate(shot.dialogue, start=1):
+                    asset, skip = await self._generate_shot_dialogue_audio(
+                        provider=provider,
+                        project_dir=project_dir,
+                        state=state,
+                        episode_key=episode.episode_key,
+                        shot=shot,
+                        line_index=line_index,
+                        line=line,
+                    )
+                    if skip is not None:
+                        skipped.append(skip)
+                        continue
+                    if asset is None:
+                        continue
+                    shot.dialogue_audio_assets.append(asset)
+                    generated.append(
+                        ShotDialogueAudioGenerationItem(
+                            episode_key=episode.episode_key,
+                            shot_id=shot.shot_id,
+                            asset=asset,
+                        )
+                    )
+                    changed = True
+            if changed:
+                self._save_storyboard_episode(project_dir, episode)
+
+        self.repo.save_node_output(
+            project_dir,
+            "shot_dialogue_audio_generation",
+            ShotDialogueAudioGenerationOutput(
+                generated_dialogue_audios=generated,
+                skipped_dialogue_lines=skipped,
+            ),
+        )
+        return state
+
+    async def _run_ref_frame_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.image("ref_frame")
+        get_logger().info(
+            "node=ref_frame_generation provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        generated: list[RefFrameGenerationItem] = []
+        for episode in self._iter_storyboard_episodes(project_dir, state):
+            for shot in episode.shots:
+                asset_id = normalize_id(f"{shot.shot_id}", "ref_frame")
+                prompt = self._shot_ref_frame_prompt(state, episode, shot)
+                refs = None
+                if getattr(provider, "supports_reference_images", False):
+                    refs = self._shot_ref_asset_refs(project_dir, state, shot)
+                result = await provider.generate_image(
+                    prompt,
+                    refs=refs,
+                    metadata={
+                        "node_name": "ref_frame_generation",
+                        "project_id": state.project_id,
+                        "episode_key": episode.episode_key,
+                        "shot_id": shot.shot_id,
+                        "asset_id": asset_id,
+                    },
+                )
+                asset_path = await self._write_first_generated_image(
+                    project_dir,
+                    self._image_asset_path(project_dir, "ref_frames", asset_id),
+                    result,
+                )
+                shot.ref_frame_asset_id = asset_id
+                shot.ref_frame_asset_path = asset_path
+                shot.ref_frame_provider = result.provider
+                shot.ref_frame_model = result.model
+                shot.ref_frame_request_id = result.request_id
+                shot.ref_frame_usage = result.usage
+                shot.ref_frame_raw_response = result.raw_response
+                generated.append(
+                    RefFrameGenerationItem(
+                        episode_key=episode.episode_key,
+                        shot_id=shot.shot_id,
+                        asset_id=asset_id,
+                        prompt=prompt,
+                        asset_path=asset_path,
+                        provider=result.provider,
+                        model=result.model,
+                        request_id=result.request_id,
+                        usage=result.usage,
+                        raw_response=result.raw_response,
+                    )
+                )
+            self._save_storyboard_episode(project_dir, episode)
+
+        self.repo.save_node_output(
+            project_dir,
+            "ref_frame_generation",
+            RefFrameGenerationOutput(generated_ref_frames=generated),
+        )
+        return state
+
+    async def _run_shot_video_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.video("shot")
+        get_logger().info(
+            "node=shot_video_generation provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        generated: list[ShotVideoGenerationItem] = []
+        for episode in self._iter_storyboard_episodes(project_dir, state):
+            for shot in episode.shots:
+                asset_id = normalize_id(f"{shot.shot_id}", "video")
+                prompt = self._shot_video_prompt(state, episode, shot)
+                result = await provider.generate_video(
+                    prompt,
+                    refs=self._shot_video_refs(project_dir, state, shot),
+                    duration=shot.duration_seconds,
+                    wait=True,
+                    metadata={
+                        "node_name": "shot_video_generation",
+                        "project_id": state.project_id,
+                        "episode_key": episode.episode_key,
+                        "shot_id": shot.shot_id,
+                        "asset_id": asset_id,
+                    },
+                )
+                asset_path = await self._write_generated_video(
+                    project_dir,
+                    self._video_asset_path(project_dir, "shots", asset_id),
+                    result,
+                )
+                shot.video_asset_id = asset_id
+                shot.video_asset_path = asset_path
+                shot.video_provider = result.provider
+                shot.video_model = result.model
+                shot.video_task_id = result.task_id
+                shot.video_task_status = result.task_status
+                shot.video_request_id = result.request_id
+                shot.video_usage = result.usage
+                shot.video_raw_response = result.raw_response
+                generated.append(
+                    ShotVideoGenerationItem(
+                        episode_key=episode.episode_key,
+                        shot_id=shot.shot_id,
+                        asset_id=asset_id,
+                        prompt=prompt,
+                        duration_seconds=shot.duration_seconds,
+                        asset_path=asset_path,
+                        provider=result.provider,
+                        model=result.model,
+                        task_id=result.task_id,
+                        task_status=result.task_status,
+                        request_id=result.request_id,
+                        usage=result.usage,
+                        raw_response=result.raw_response,
+                    )
+                )
+            self._save_storyboard_episode(project_dir, episode)
+
+        self.repo.save_node_output(
+            project_dir,
+            "shot_video_generation",
+            ShotVideoGenerationOutput(generated_videos=generated),
+        )
+        return state
+
+    async def _run_dynamic_asset_solidification(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        get_logger().info("node=dynamic_asset_solidification provider=local model=-")
+        solidified: list[DynamicAssetSolidificationItem] = []
+        for episode in self._iter_storyboard_episodes(project_dir, state):
+            for shot in episode.shots:
+                shot.solidified_asset_ids = []
+                for audio in shot.dialogue_audio_assets:
+                    shot.solidified_asset_ids.append(audio.asset_id)
+                    solidified.append(
+                        DynamicAssetSolidificationItem(
+                            asset_id=audio.asset_id,
+                            asset_type="shot_dialogue_audio",
+                            episode_key=episode.episode_key,
+                            shot_id=shot.shot_id,
+                            asset_path=audio.asset_path,
+                            source_node="shot_dialogue_audio_generation",
+                            metadata={
+                                "role_id": audio.role_id,
+                                "role_name": audio.role_name,
+                                "line_index": audio.line_index,
+                                "text": audio.text,
+                                "emotion": audio.emotion,
+                            },
+                        )
+                    )
+                if shot.ref_frame_asset_id:
+                    shot.solidified_asset_ids.append(shot.ref_frame_asset_id)
+                    solidified.append(
+                        DynamicAssetSolidificationItem(
+                            asset_id=shot.ref_frame_asset_id,
+                            asset_type="ref_frame",
+                            episode_key=episode.episode_key,
+                            shot_id=shot.shot_id,
+                            asset_path=shot.ref_frame_asset_path,
+                            source_node="ref_frame_generation",
+                            metadata={
+                                "prompt": shot.ref_frame_prompt,
+                                "provider": shot.ref_frame_provider,
+                                "model": shot.ref_frame_model,
+                            },
+                        )
+                    )
+                if shot.video_asset_id:
+                    shot.solidified_asset_ids.append(shot.video_asset_id)
+                    solidified.append(
+                        DynamicAssetSolidificationItem(
+                            asset_id=shot.video_asset_id,
+                            asset_type="shot_video",
+                            episode_key=episode.episode_key,
+                            shot_id=shot.shot_id,
+                            asset_path=shot.video_asset_path,
+                            source_node="shot_video_generation",
+                            metadata={
+                                "prompt": shot.video_prompt,
+                                "provider": shot.video_provider,
+                                "model": shot.video_model,
+                                "task_id": shot.video_task_id,
+                                "task_status": shot.video_task_status,
+                                "duration_seconds": shot.duration_seconds,
+                            },
+                        )
+                    )
+            self._save_storyboard_episode(project_dir, episode)
+
+        state.metadata["dynamic_assets"] = [item.model_dump(mode="json") for item in solidified]
+        self.repo.save_node_output(
+            project_dir,
+            "dynamic_asset_solidification",
+            DynamicAssetSolidificationOutput(solidified_assets=solidified),
         )
         return state

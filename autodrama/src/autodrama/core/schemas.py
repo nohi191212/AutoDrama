@@ -312,6 +312,29 @@ class StaticAssetGenerationOutput(BaseModel):
     generated_assets: list[StaticAssetGenerationItem]
 
 
+class ShotDialogueAudioAsset(BaseModel):
+    asset_id: str
+    role_id: str | None = None
+    role_name: str | None = None
+    line_index: int
+    text: str
+    emotion: str | None = None
+    voice: str | None = None
+    voice_name: str | None = None
+    voice_resource_id: str | None = None
+    voice_model_family: str | None = None
+    emotion_instruction: str | None = None
+    emotion_params: dict[str, Any] = Field(default_factory=dict)
+    asset_path: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    sample_rate: int | None = None
+    response_format: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
 class StoryboardShot(BaseModel):
     shot_id: str
     index: int
@@ -330,6 +353,24 @@ class StoryboardShot(BaseModel):
     bgm_id: str | None = None
     ref_frame_prompt: str
     video_prompt: str
+    dialogue_audio_assets: list[ShotDialogueAudioAsset] = Field(default_factory=list)
+    ref_frame_asset_id: str | None = None
+    ref_frame_asset_path: str | None = None
+    ref_frame_provider: str | None = None
+    ref_frame_model: str | None = None
+    ref_frame_request_id: str | None = None
+    ref_frame_usage: dict[str, Any] = Field(default_factory=dict)
+    ref_frame_raw_response: dict[str, Any] = Field(default_factory=dict)
+    video_asset_id: str | None = None
+    video_asset_path: str | None = None
+    video_provider: str | None = None
+    video_model: str | None = None
+    video_task_id: str | None = None
+    video_task_status: str | None = None
+    video_request_id: str | None = None
+    video_usage: dict[str, Any] = Field(default_factory=dict)
+    video_raw_response: dict[str, Any] = Field(default_factory=dict)
+    solidified_asset_ids: list[str] = Field(default_factory=list)
 
 
 class StoryboardEpisodeOutput(BaseModel):
@@ -339,3 +380,66 @@ class StoryboardEpisodeOutput(BaseModel):
 
 class StoryboardGenerationOutput(BaseModel):
     generated_episodes: list[str]
+
+
+class ShotDialogueAudioGenerationItem(BaseModel):
+    episode_key: str
+    shot_id: str
+    asset: ShotDialogueAudioAsset
+
+
+class ShotDialogueAudioGenerationOutput(BaseModel):
+    generated_dialogue_audios: list[ShotDialogueAudioGenerationItem]
+    skipped_dialogue_lines: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RefFrameGenerationItem(BaseModel):
+    episode_key: str
+    shot_id: str
+    asset_id: str
+    prompt: str
+    asset_path: str | None = None
+    provider: str
+    model: str
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class RefFrameGenerationOutput(BaseModel):
+    generated_ref_frames: list[RefFrameGenerationItem]
+
+
+class ShotVideoGenerationItem(BaseModel):
+    episode_key: str
+    shot_id: str
+    asset_id: str
+    prompt: str
+    duration_seconds: float | None = None
+    asset_path: str | None = None
+    provider: str
+    model: str
+    task_id: str | None = None
+    task_status: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShotVideoGenerationOutput(BaseModel):
+    generated_videos: list[ShotVideoGenerationItem]
+
+
+class DynamicAssetSolidificationItem(BaseModel):
+    asset_id: str
+    asset_type: Literal["shot_dialogue_audio", "ref_frame", "shot_video"]
+    episode_key: str
+    shot_id: str
+    asset_path: str | None = None
+    source_node: str
+    reuse_scope: str = "shot"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class DynamicAssetSolidificationOutput(BaseModel):
+    solidified_assets: list[DynamicAssetSolidificationItem]
