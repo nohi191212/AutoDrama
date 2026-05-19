@@ -340,13 +340,13 @@ class StoryboardShot(BaseModel):
     index: int
     layout_id: str
     title: str
-    content: str
+    content: str | None = None
     scene_description: str | None = None
     composition: str | None = None
     lighting: str | None = None
     sound_design: str | None = None
-    camera_shooting_angle: str
-    camera_movement: str
+    camera_shooting_angle: str | None = None
+    camera_movement: str | None = None
     focal_length: str | None = None
     duration_seconds: float
     transition: str | None = None

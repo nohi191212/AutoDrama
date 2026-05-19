@@ -34,6 +34,13 @@ GENERATION_NODES = [
 
 
 class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
+    @staticmethod
+    def _visual_style_prompt(state: ProjectState) -> str:
+        prompt = str(state.metadata.get("visual_style_prompt", "")).strip()
+        if not prompt:
+            return ""
+        return f"画面风格要求: {prompt}"
+
     def _shot_ref_frame_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
         layout = state.layouts.get(shot.layout_id)
         role_lines = []
@@ -72,26 +79,12 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
                 prop_lines.append(f"{prop.name}: {prop.desc}")
 
         parts = [
-            str(state.metadata.get("visual_style_prompt", "")),
+            self._visual_style_prompt(state),
             f"剧集: {episode.episode_key}",
-            f"镜头: {shot.title}",
-            f"画面内容: {shot.content}",
+            "参考帧生成要求:",
+            shot.ref_frame_prompt,
             "输出规格: 9:16竖屏单帧剧照，适配手机短剧画幅；主体完整，避免横版构图或左右大面积留白。",
-            f"镜头角度: {shot.camera_shooting_angle}",
-            f"运镜: {shot.camera_movement}",
-            f"焦段: {shot.focal_length or '按分镜自然选择'}",
-            f"分镜参考帧要求: {shot.ref_frame_prompt}",
         ]
-        if shot.scene_description:
-            parts.append(f"场景细节: {shot.scene_description}")
-        if shot.composition:
-            parts.append(f"构图要求: {shot.composition}")
-        if shot.lighting:
-            parts.append(f"光线要求: {shot.lighting}")
-        if shot.sound_design:
-            parts.append(f"声音气氛参考: {shot.sound_design}")
-        if shot.transition:
-            parts.append(f"转场: {shot.transition}")
         if layout:
             parts.append(f"场景设定: {layout.name} - {layout.desc}")
         if role_lines:
@@ -102,44 +95,29 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
             parts.append("关键道具: " + "；".join(prop_lines))
         if shot.dialogue:
             parts.append("画面对白气氛: " + " / ".join(shot.dialogue))
-        parts.append("生成单帧剧照，必须是同一个镜头里的关键帧；不要添加字幕、水印、文字标识或分镜编号。")
+        parts.append("生成单帧剧照，必须是同一个视频片段里的关键帧；不要添加字幕、水印、文字标识或片段编号。")
         return "\n".join(item for item in parts if item)
 
     def _shot_video_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
-        layout = state.layouts.get(shot.layout_id)
         parts = [
-            str(state.metadata.get("visual_style_prompt", "")),
+            self._visual_style_prompt(state),
             f"剧集: {episode.episode_key}",
-            f"镜头标题: {shot.title}",
-            f"镜头内容: {shot.content}",
-            f"视频动作: {shot.video_prompt}",
-            f"镜头角度: {shot.camera_shooting_angle}",
-            f"运镜: {shot.camera_movement}",
-            f"焦段: {shot.focal_length or '自然电影焦段'}",
-            f"时长: {shot.duration_seconds:.2f} 秒",
+            "视频片段生成要求:",
+            shot.video_prompt,
+            f"目标时长: {shot.duration_seconds:.2f} 秒。",
         ]
-        if shot.scene_description:
-            parts.append(f"场景细节: {shot.scene_description}")
-        if shot.composition:
-            parts.append(f"构图: {shot.composition}")
-        if shot.lighting:
-            parts.append(f"光线: {shot.lighting}")
-        if shot.sound_design:
-            parts.append(f"声音设计: {shot.sound_design}")
-        if shot.transition:
-            parts.append(f"转场: {shot.transition}")
         if shot.start_frame_source == "previous_shot_last_frame":
             parts.append(
-                "开头继承: 本镜头起始画面参考上一镜头末尾帧，保持上一镜头的人物姿态、空间方向、"
-                "能量位置和环境粒子连续，再从该状态进入本镜头动作。"
+                "首帧继承: 本片段起始画面严格参考上一片段末尾帧，保持人物姿态、空间方向、"
+                "道具位置、能量位置和环境粒子连续，再从该状态进入本片段动作。"
             )
             if shot.start_frame_inheritance_reason:
                 parts.append(f"继承理由: {shot.start_frame_inheritance_reason}")
-        if layout:
-            parts.append(f"场景: {layout.name} - {layout.desc}")
+        else:
+            parts.append("起始参考: 以本片段参考帧为首帧视觉基准，保持人物、场景和道具一致。")
         if shot.dialogue:
             parts.append("对白节奏: " + " / ".join(shot.dialogue))
-        parts.append("保持人物、场景和道具与参考帧一致；画面自然连续；不要生成字幕、水印、片头片尾或额外文字。")
+        parts.append("生成一个连续视频片段，不要做多镜头混剪；不要生成字幕、水印、片头片尾、额外文字或无关角色。")
         return "\n".join(item for item in parts if item)
 
     async def _run_generation_node_for_episode(

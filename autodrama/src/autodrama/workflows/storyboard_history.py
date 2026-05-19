@@ -41,41 +41,34 @@ def _ordered_unique(values: list[str | None]) -> list[str]:
     return result
 
 
-def _truncate(text: str, limit: int) -> str:
-    cleaned = " ".join(str(text).split())
+def _truncate(text: str | None, limit: int) -> str:
+    cleaned = " ".join(str(text or "").split())
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[: limit - 1].rstrip() + "..."
 
 
 def _shot_history_item(shot: StoryboardShot) -> dict[str, Any]:
-    return {
+    item: dict[str, Any] = {
         "shot_id": shot.shot_id,
         "index": shot.index,
         "title": shot.title,
-        "content": _truncate(shot.content, 180),
-        "scene_description": _truncate(shot.scene_description or "", 120),
-        "composition": _truncate(shot.composition or "", 120),
+        "ref_frame_summary": _truncate(shot.ref_frame_prompt, 220),
+        "video_summary": _truncate(shot.video_prompt, 260),
         "layout_id": shot.layout_id,
         "role_ids": shot.role_ids,
         "prop_ids": shot.prop_ids,
         "transition": shot.transition,
         "start_frame_source": shot.start_frame_source,
-        "camera": "，".join(
-            item
-            for item in (
-                shot.camera_shooting_angle,
-                shot.camera_movement,
-                shot.focal_length,
-            )
-            if item
-        ),
     }
+    if shot.start_frame_inheritance_reason:
+        item["start_frame_inheritance_reason"] = shot.start_frame_inheritance_reason
+    return item
 
 
 def build_episode_storyboard_history_item(episode: StoryboardEpisodeOutput) -> dict[str, Any]:
     summary_parts = [
-        f"{shot.index}.{shot.title}: {_truncate(shot.content, 80)}"
+        f"{shot.index}.{shot.title}: {_truncate(shot.video_prompt or shot.ref_frame_prompt, 120)}"
         for shot in episode.shots[:5]
     ]
     return {

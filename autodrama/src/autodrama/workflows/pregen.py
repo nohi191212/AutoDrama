@@ -548,7 +548,10 @@ class PregenWorkflow:
         return StoryboardEpisodeOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
     def _save_storyboard_episode(self, project_dir: Path, episode: StoryboardEpisodeOutput) -> None:
-        self.repo.write_json(self._slot_path(project_dir, episode.episode_key), episode)
+        self.repo.write_json(
+            self._slot_path(project_dir, episode.episode_key),
+            episode.model_dump(mode="json", exclude_none=True),
+        )
 
     def _iter_storyboard_episodes(
         self,
@@ -1197,7 +1200,7 @@ class PregenWorkflow:
         if role is None:
             return "normal"
         available = list(role.audio)
-        content = f"{shot.title} {shot.content} {' '.join(shot.dialogue)}"
+        content = f"{shot.title} {shot.video_prompt} {' '.join(shot.dialogue)}"
         keyword_map = [
             ("angry", ("怒", "吼", "质问", "逼问", "爆发", "愤")),
             ("sad", ("哭", "低落", "崩溃", "难过", "哽咽", "失落")),

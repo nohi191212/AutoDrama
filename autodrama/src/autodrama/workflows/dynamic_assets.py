@@ -97,7 +97,7 @@ class DynamicAssetNodeMixin:
         )
         if output.episode_key != episode_key:
             raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")
-        self.repo.write_json(slots_dir / f"{episode_key}.json", output)
+        self.repo.write_json(slots_dir / f"{episode_key}.json", output.model_dump(mode="json", exclude_none=True))
         state.budget.used_text_calls += 1
         return StoryboardGenerationOutput(generated_episodes=[episode_key])
 
@@ -865,6 +865,7 @@ class DynamicAssetNodeMixin:
                     )
                 )
             if shot.ref_frame_asset_id:
+                ref_frame_generation_prompt = self._shot_ref_frame_prompt(state, episode, shot)
                 shot.solidified_asset_ids.append(shot.ref_frame_asset_id)
                 solidified.append(
                     DynamicAssetSolidificationItem(
@@ -875,13 +876,16 @@ class DynamicAssetNodeMixin:
                         asset_path=shot.ref_frame_asset_path,
                         source_node="ref_frame_generation",
                         metadata={
-                            "prompt": shot.ref_frame_prompt,
+                            "prompt": ref_frame_generation_prompt,
+                            "source_prompt": shot.ref_frame_prompt,
+                            "generation_prompt": ref_frame_generation_prompt,
                             "provider": shot.ref_frame_provider,
                             "model": shot.ref_frame_model,
                         },
                     )
                 )
             if shot.video_asset_id:
+                video_generation_prompt = self._shot_video_prompt(state, episode, shot)
                 shot.solidified_asset_ids.append(shot.video_asset_id)
                 solidified.append(
                     DynamicAssetSolidificationItem(
@@ -892,7 +896,9 @@ class DynamicAssetNodeMixin:
                         asset_path=shot.video_asset_path,
                         source_node="shot_video_generation",
                         metadata={
-                            "prompt": shot.video_prompt,
+                            "prompt": video_generation_prompt,
+                            "source_prompt": shot.video_prompt,
+                            "generation_prompt": video_generation_prompt,
                             "provider": shot.video_provider,
                             "model": shot.video_model,
                             "task_id": shot.video_task_id,
