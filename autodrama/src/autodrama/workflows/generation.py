@@ -95,11 +95,19 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         if layout:
             parts.append(f"场景设定: {layout.name} - {layout.desc}")
         if role_lines:
-            parts.append("出场角色: " + "；".join(role_lines))
+            parts.append(
+                "角色资产参考: "
+                "仅当主体 prompt 明确该角色在这一帧可见时绘制；否则只作为本片段后续一致性锚点，不要擅自加入画面。参考列表: "
+                + "；".join(role_lines)
+            )
         if appearance_lines:
             parts.append("人物一致性要求: " + "；".join(appearance_lines))
         if prop_lines:
-            parts.append("关键道具: " + "；".join(prop_lines))
+            parts.append(
+                "道具资产参考: "
+                "仅当主体 prompt 明确该道具在这一帧可见时绘制；否则只作为本片段后续一致性锚点，不要擅自加入画面。参考列表: "
+                + "；".join(prop_lines)
+            )
         if shot.dialogue:
             parts.append("画面对白气氛: " + " / ".join(shot.dialogue))
         parts.append("生成单帧剧照，必须是同一个视频片段里的关键帧；不要添加字幕、水印、文字标识或片段编号。")

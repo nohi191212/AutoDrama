@@ -385,6 +385,13 @@ class StoryboardEpisodeOutput(BaseModel):
     shots: list[StoryboardShot]
 
 
+class StoryboardShotGenerationOutput(BaseModel):
+    episode_key: str
+    shot: StoryboardShot
+    is_episode_complete: bool = False
+    completion_reason: str | None = None
+
+
 class StoryboardGenerationOutput(BaseModel):
     generated_episodes: list[str]
 

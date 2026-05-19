@@ -106,11 +106,11 @@ class RightCodeImageProvider:
     ) -> dict[str, Any]:
         metadata = metadata or {}
         payload: dict[str, Any] = {
-            "model": str(metadata.get("model", self.model)),
+            "model": str(metadata.get("model") or self._purpose_model(metadata) or self.model),
             "prompt": prompt,
         }
 
-        resolved_size = size or metadata.get("size") or self.settings.options.get("size")
+        resolved_size = size or metadata.get("size") or self._purpose_size(metadata) or self.settings.options.get("size")
         if resolved_size is None:
             resolved_size = self.settings.options.get("image_size")
         if resolved_size is not None:
@@ -143,6 +143,16 @@ class RightCodeImageProvider:
         if isinstance(extra_parameters, dict):
             payload.update(extra_parameters)
         return payload
+
+    def _purpose_model(self, metadata: dict[str, Any]) -> str | None:
+        if str(metadata.get("node_name") or "") == "ref_frame_generation":
+            return self.settings.models.get("rightcode_ref_frame") or self.settings.models.get("ref_frame")
+        return None
+
+    def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
+        if str(metadata.get("node_name") or "") == "ref_frame_generation":
+            return self.settings.options.get("rightcode_ref_frame_size") or self.settings.options.get("ref_frame_size")
+        return None
 
     def _build_chat_payload(
         self,

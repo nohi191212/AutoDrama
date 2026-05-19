@@ -14,8 +14,6 @@ if str(SRC_DIR) not in sys.path:
 
 from autodrama.config import load_settings  # noqa: E402
 from autodrama.providers.base import AssetRef  # noqa: E402
-from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider  # noqa: E402
-from autodrama.providers.router import ProviderRouter  # noqa: E402
 from autodrama.providers.volcengine.image.seedream import VolcengineSeedreamImageProvider  # noqa: E402
 
 
@@ -28,15 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = load_settings(args.config)
-    router = ProviderRouter(settings)
-    global_role_provider = router.image("role")
-    ref_frame_provider = router.image("ref_frame")
+    provider = VolcengineSeedreamImageProvider(settings.providers["volcengine"], settings.runtime)
 
-    if not isinstance(global_role_provider, RightCodeImageProvider):
-        raise AssertionError(f"Expected global role images to use RightCode; got {type(global_role_provider)}")
-    if not isinstance(ref_frame_provider, VolcengineSeedreamImageProvider):
-        raise AssertionError(f"Expected ref frames to use Seedream; got {type(ref_frame_provider)}")
-    if not getattr(ref_frame_provider, "supports_reference_images", False):
+    if not getattr(provider, "supports_reference_images", False):
         raise AssertionError("Seedream provider should support reference images")
 
     tmp_dir = ROOT_DIR / ".tmp" / "smoke" / "seedream_payload"
@@ -48,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
 
-    payload = ref_frame_provider.build_payload(
+    payload = provider.build_payload(
         "生成 9:16 竖屏短剧分镜参考帧，保持角色与参考图一致。",
         refs=[AssetRef(id="reference", type="image", path=str(image_path))],
     )
@@ -71,8 +63,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("seedream_payload_smoke=ok")
     print(f"payload_path={output_path}")
-    print(f"global_role_provider={global_role_provider.name}")
-    print(f"ref_frame_provider={ref_frame_provider.name} model={payload['model']} size={payload['size']}")
+    print(f"provider={provider.name} model={payload['model']} size={payload['size']}")
     return 0
 
 

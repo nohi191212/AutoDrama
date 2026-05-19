@@ -98,7 +98,7 @@ class DynamicAssetNodeMixin:
         if output.episode_key != episode_key:
             raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")
         self.repo.write_json(slots_dir / f"{episode_key}.json", output.model_dump(mode="json", exclude_none=True))
-        state.budget.used_text_calls += 1
+        state.budget.used_text_calls += max(1, int(getattr(self.storyboard_service, "last_text_call_count", 1)))
         return StoryboardGenerationOutput(generated_episodes=[episode_key])
 
     async def _run_storyboard_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:

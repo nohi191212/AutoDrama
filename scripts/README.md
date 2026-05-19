@@ -110,6 +110,12 @@ Smoke test RightCode image generation:
 D:/miniforge3/envs/autodrama/python.exe scripts/rightcode_image_smoke.py --config config.yaml
 ```
 
+Verify reference-frame image routing supports both RightCode GPT Image 2 and Seedream payloads:
+
+```bash
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/ref_frame_image_provider_payload_smoke.py --config config.yaml.example
+```
+
 Preview the final shot video prompt without submitting a video task:
 
 ```bash

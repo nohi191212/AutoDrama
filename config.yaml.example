@@ -98,6 +98,8 @@ providers:
       image: gpt-image-2
     options:
       size: 1024x1024
+      # Used when routing.image.ref_frame is rightcode.
+      ref_frame_size: 1024x1536
       n: 1
 
   deepseek:
@@ -242,8 +244,9 @@ routing:
     role: rightcode
     prop: rightcode
     layout: rightcode
-    # Shot-level storyboard/reference frames with multi-reference image support.
-    ref_frame: volcengine
+    # Shot-level storyboard/reference frames. Use rightcode for GPT Image 2;
+    # switch to volcengine for Seedream.
+    ref_frame: rightcode
   video:
     shot: volcengine
     upscale: volcengine

@@ -19,6 +19,7 @@ from autodrama.core.schemas import (
     ScriptOutlineOutput,
     ScriptPolishOutput,
     StoryboardEpisodeOutput,
+    StoryboardShotGenerationOutput,
 )
 from autodrama.providers.base import (
     AssetRef,
@@ -323,6 +324,104 @@ class FakeTextProvider:
             ]
             data = {
                 "bgms": bgms
+            }
+        elif schema is StoryboardShotGenerationOutput:
+            episode_key = str(metadata.get("episode_key") or episode_keys[0])
+            try:
+                shot_index = int(metadata.get("shot_index") or 1)
+            except (TypeError, ValueError):
+                shot_index = 1
+            shot_templates = [
+                {
+                    "layout_id": "layout_雨夜办公室",
+                    "title": "发现异常合同",
+                    "duration_seconds": 6,
+                    "transition": "结尾停在可硬切状态",
+                    "start_frame_source": "new_reference_frame",
+                    "start_frame_inheritance_reason": "本片段重新建立雨夜办公室调查空间，不继承前序片段尾帧。",
+                    "dialogue": [],
+                    "role_ids": ["role_林舟"],
+                    "role_appearance_ids": ["role_林舟_appearance_base"],
+                    "role_audio_ids": [],
+                    "prop_ids": ["prop_被调包的合同"],
+                    "ref_frame_prompt": (
+                        "真人电影质感，雨夜现代办公室，9:16 竖屏近景，50mm 镜头从办公桌斜侧拍向林舟。"
+                        "林舟穿深灰衬衫坐在桌前，肩背微弯，右手停在被调包的合同关键页边缘，目光落在纸张色差处。"
+                        "桌面前景有合同装订线、浅色关键页、黑色签字笔和半杯冷咖啡，背景电脑屏幕发出冷蓝光，"
+                        "窗外雨痕和城市霓虹反射在玻璃上。冷白顶灯压低环境，屏幕光打亮林舟疲惫侧脸，纸张纹理清楚；"
+                        "单帧剧照，无字幕、水印、文字标识和无关人物。"
+                    ),
+                    "video_prompt": (
+                        "从参考帧开始，6 秒连续竖屏视频片段。相机保持桌面斜侧 50mm 近景，先缓慢推近合同关键页，"
+                        "让浅色纸张、错位页码和装订孔依次进入焦点；林舟的右手指尖沿纸边停住，呼吸变轻，"
+                        "视线从合同页码移到电脑屏幕邮件附件时间，再回到纸面。窗外雨痕持续下滑，电脑冷蓝光在桌面反射轻微闪动，"
+                        "冷掉的咖啡表面几乎不动。片段节奏从深夜疲惫转为警觉确认，最后停在林舟抬眼看向屏幕的半侧脸和合同色差同框位置，"
+                        "结尾保持可硬切状态。"
+                    ),
+                },
+                {
+                    "layout_id": "layout_雨夜办公室",
+                    "title": "邮件截图确认",
+                    "duration_seconds": 6,
+                    "transition": "硬切到证据近景",
+                    "start_frame_source": "new_reference_frame",
+                    "start_frame_inheritance_reason": "本片段转入电脑屏幕与证据细节，需要重新建立近景画面。",
+                    "dialogue": [],
+                    "role_ids": ["role_林舟", "role_苏晚"],
+                    "role_appearance_ids": ["role_林舟_appearance_base", "role_苏晚_appearance_base"],
+                    "role_audio_ids": [],
+                    "prop_ids": ["prop_邮件截图", "prop_被调包的合同"],
+                    "ref_frame_prompt": (
+                        "真人电影质感，雨夜办公室电脑屏幕近景，9:16 竖屏，70mm 镜头压缩空间。"
+                        "屏幕上旧邮件截图以冷蓝光显示，附件记录和时间线处于画面中心但不过曝，林舟的手停在键盘旁，"
+                        "苏晚的手从画面右侧递来一份打印合同。桌面有散乱纸张、浅色合同关键页和低反光金属笔，"
+                        "背景办公区虚化成冷白灯点与雨夜玻璃反射；单帧剧照，无字幕、水印、文字标识和无关人物。"
+                    ),
+                    "video_prompt": (
+                        "从参考帧开始，6 秒连续竖屏视频片段。70mm 近景锁在电脑屏幕与桌面证据之间，"
+                        "镜头先极慢推近邮件附件时间线，随后轻微向右平移，让苏晚递来的打印合同进入前景。"
+                        "林舟的手没有立刻接过，只是指尖在键盘旁停顿半秒，随后用拇指压住合同边角，眼神从屏幕冷光中抬起。"
+                        "电脑屏幕亮度轻微脉动，雨水在远处玻璃上形成竖向光痕，纸张纤维和合同页色差保持清楚。"
+                        "声音是空办公室低频电流声、雨声和纸张摩擦声，结尾停在邮件截图时间线与浅色合同页同框的位置。"
+                    ),
+                },
+                {
+                    "layout_id": "layout_会议室",
+                    "title": "会议室反击",
+                    "duration_seconds": 8,
+                    "transition": "硬切到公开对峙",
+                    "start_frame_source": "new_reference_frame",
+                    "start_frame_inheritance_reason": "本片段从办公室调查跳到会议室反击，需要重新建立空间和人物站位。",
+                    "dialogue": ["林舟：这份合同被换过，时间线就在这里。"],
+                    "role_ids": ["role_林舟", "role_赵启"],
+                    "role_appearance_ids": ["role_林舟_appearance_base", "role_赵启_appearance_base"],
+                    "role_audio_ids": ["role_林舟_audio_normal"],
+                    "prop_ids": ["prop_邮件截图"],
+                    "ref_frame_prompt": (
+                        "真人电影质感，雨夜玻璃会议室，9:16 竖屏中景，35mm 镜头从会议桌短边朝投影屏拍摄。"
+                        "林舟站在投影屏左侧三分之一处，深灰衬衫袖口微皱，右手停在触控板旁，"
+                        "赵启穿深色西装坐在长桌右侧阴影里，身体前倾但笑容僵住。投影屏上是邮件时间线和附件记录的冷白光块，"
+                        "桌面前景有被调包的合同、会议水杯和几只沉默的手，落地玻璃上有雨痕和霓虹反射。"
+                        "投影冷光打亮林舟侧脸，窗外蓝色雨光勾出赵启轮廓；单帧剧照，无字幕、水印、文字标识和无关人物。"
+                    ),
+                    "video_prompt": (
+                        "从参考帧开始，8 秒连续竖屏视频片段。相机位于会议桌短边，35mm 中广角，先贴着桌面低位横移，"
+                        "扫过被调包的合同、会议水杯和几只停住的手，投影冷光在纸面轻微频闪。林舟站在投影屏左侧，"
+                        "说出“这份合同被换过，时间线就在这里”时没有夸张手势，只把邮件时间线拖到最大，目光压向赵启。"
+                        "赵启坐在右侧阴影里，身体从前倾慢慢后撤，喉结轻动，手指扣紧椅子扶手，原本维持的笑意逐渐僵住。"
+                        "窗外雨痕持续滑落，桌面反光随相机移动拉长；片段节奏从压抑沉默进入短促揭露，最后相机缓慢抬升停在赵启僵硬的眼神上，"
+                        "结尾保持可硬切状态。"
+                    ),
+                },
+            ]
+            shot = dict(shot_templates[min(max(shot_index, 1), len(shot_templates)) - 1])
+            shot["shot_id"] = f"{episode_key}_shot_{shot_index:03d}"
+            shot["index"] = shot_index
+            data = {
+                "episode_key": episode_key,
+                "shot": shot,
+                "is_episode_complete": shot_index >= len(shot_templates),
+                "completion_reason": "fake provider generated three storyboard shots.",
             }
         elif schema is StoryboardEpisodeOutput or node_name == "storyboard_generation":
             episode_key = str(metadata.get("episode_key") or episode_keys[0])
