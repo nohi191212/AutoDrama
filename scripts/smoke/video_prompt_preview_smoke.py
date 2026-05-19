@@ -57,10 +57,10 @@ def default_output_dir(project_id: str) -> Path:
 
 
 def load_episode(project_dir: Path, key: str) -> StoryboardEpisodeOutput:
-    slot_path = project_dir / "slots" / f"{key}.json"
-    if not slot_path.exists():
-        raise FileNotFoundError(f"Storyboard slot not found: {slot_path}")
-    return StoryboardEpisodeOutput.model_validate_json(slot_path.read_text(encoding="utf-8"))
+    shot_path = project_dir / "shots" / f"{key}.json"
+    if not shot_path.exists():
+        raise FileNotFoundError(f"Storyboard shot not found: {shot_path}")
+    return StoryboardEpisodeOutput.model_validate_json(shot_path.read_text(encoding="utf-8"))
 
 
 def shot_keys(episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> set[str]:

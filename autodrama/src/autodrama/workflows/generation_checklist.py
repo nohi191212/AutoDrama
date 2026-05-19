@@ -9,7 +9,7 @@ from autodrama.repositories.project_repo import ProjectRepository
 
 CHECKLIST_FILENAME = "generation_checklist.json"
 
-EpisodeGenerationStatus = Literal["pending", "completed", "skipped", "failed", "missing_slot"]
+EpisodeGenerationStatus = Literal["pending", "completed", "skipped", "failed", "missing_shot"]
 
 DYNAMIC_STATUS_FIELDS = (
     "dialogue_audio",
@@ -40,17 +40,17 @@ def _expected_episode_keys(state: ProjectState) -> list[str]:
     return [f"episode_{index:03d}" for index in range(1, count + 1)]
 
 
-def _load_slot(project_dir: Path, episode_key: str) -> StoryboardEpisodeOutput | None:
-    path = project_dir / "slots" / f"{episode_key}.json"
+def _load_shot(project_dir: Path, episode_key: str) -> StoryboardEpisodeOutput | None:
+    path = project_dir / "shots" / f"{episode_key}.json"
     if not path.exists():
         return None
     return StoryboardEpisodeOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
 
 def _episode_status(project_dir: Path, episode_key: str) -> dict[str, EpisodeGenerationStatus]:
-    episode = _load_slot(project_dir, episode_key)
+    episode = _load_shot(project_dir, episode_key)
     if episode is None:
-        return {field: "missing_slot" for field in DYNAMIC_STATUS_FIELDS}
+        return {field: "missing_shot" for field in DYNAMIC_STATUS_FIELDS}
     if not episode.shots:
         return {field: "pending" for field in DYNAMIC_STATUS_FIELDS}
 
@@ -71,7 +71,7 @@ def _episode_status(project_dir: Path, episode_key: str) -> dict[str, EpisodeGen
 
 
 def _generated_counts(project_dir: Path, episode_key: str) -> dict[str, int]:
-    episode = _load_slot(project_dir, episode_key)
+    episode = _load_shot(project_dir, episode_key)
     if episode is None:
         return {
             "shots": 0,
@@ -152,7 +152,7 @@ def update_checklist_from_state(
                 "episode_id": episode_key,
                 "episode_index": index,
                 "name": _episode_display_name(state, episode_key),
-                "slot_path": f"slots/{episode_key}.json",
+                "shot_path": f"shots/{episode_key}.json",
                 "generate": generate,
                 "generation_status": node_status,
                 "node_status": status,

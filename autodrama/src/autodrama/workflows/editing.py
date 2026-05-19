@@ -343,7 +343,7 @@ class EditingWorkflow(PregenWorkflow):
             metadata={
                 "project_id": state.project_id,
                 "title": state.title,
-                "source_slot_path": f"slots/{episode.episode_key}.json",
+                "source_shot_path": f"shots/{episode.episode_key}.json",
             },
         )
 
@@ -457,7 +457,7 @@ class EditingWorkflow(PregenWorkflow):
                 )
             return layers, missing
 
-        slot = shot_duration / max(len(assets), 1)
+        shot = shot_duration / max(len(assets), 1)
         for index, asset in enumerate(assets):
             if not self._project_path_exists(project_dir, asset.asset_path):
                 missing.append(
@@ -477,7 +477,7 @@ class EditingWorkflow(PregenWorkflow):
                     layer_id=f"{shot.shot_id}_dialogue_{asset.line_index:02d}",
                     layer_type="dialogue",
                     source_path=asset.asset_path or "",
-                    start_time=round(shot_start + slot * index + min(0.25, slot * 0.2), 3),
+                    start_time=round(shot_start + shot * index + min(0.25, shot * 0.2), 3),
                     volume=1.0,
                     metadata={
                         "shot_id": shot.shot_id,
@@ -501,10 +501,10 @@ class EditingWorkflow(PregenWorkflow):
             return []
 
         cues: list[EditSubtitleCue] = []
-        slot = shot_duration / max(len(shot.dialogue), 1)
+        shot = shot_duration / max(len(shot.dialogue), 1)
         for index, raw_line in enumerate(shot.dialogue):
-            start = shot_start + slot * index + min(0.2, slot * 0.2)
-            end = min(shot_start + shot_duration, start + max(1.0, slot * 0.75))
+            start = shot_start + shot * index + min(0.2, shot * 0.2)
+            end = min(shot_start + shot_duration, start + max(1.0, shot * 0.75))
             role_name, text = self._parse_dialogue_line(raw_line)
             cues.append(
                 EditSubtitleCue(

@@ -15,7 +15,7 @@ def test_deepseek_reads_api_key_from_env(monkeypatch) -> None:
 
     assert provider.api_key == "sk-from-env"
     assert provider.model == "deepseek-v4-pro"
-    assert provider.reasoning_effort == "high"
+    assert provider.reasoning_effort == "max"
     assert provider.thinking_enabled is True
 
 

@@ -88,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pregen_parser.add_argument(
         "--episodes",
-        help="Reserved for pregen episode-scoped nodes. Use run generation --only storyboard_generation --episodes ... for storyboard slots.",
+        help="Reserved for pregen episode-scoped nodes. Use run generation --only storyboard_generation --episodes ... for storyboard shots.",
     )
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     pregen_parser.add_argument("--force", action="store_true")

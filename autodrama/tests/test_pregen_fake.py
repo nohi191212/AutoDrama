@@ -80,6 +80,6 @@ def test_pregen_stops_at_role_voice_design(tmp_path: Path) -> None:
     assert (project_dir / "assets" / "json" / "nodes" / "role_voice_design.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "role_voice_generation.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "storyboard_generation.json").exists()
-    assert (project_dir / "slots" / "episode_001.json").exists()
+    assert (project_dir / "shots" / "episode_001.json").exists()
     assert not hasattr(state, "storyboards")
     assert (settings.output.root_dir / "current_project.json").exists()

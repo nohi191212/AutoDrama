@@ -108,7 +108,7 @@ providers:
     models:
       text: deepseek-v4-pro
     options:
-      reasoning_effort: high
+      reasoning_effort: max
       thinking_enabled: true
 
   minimax:

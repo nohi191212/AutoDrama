@@ -25,8 +25,8 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def slot_text(project_dir: Path, episode_key: str) -> str:
-    return (project_dir / "slots" / f"{episode_key}.json").read_text(encoding="utf-8")
+def shot_text(project_dir: Path, episode_key: str) -> str:
+    return (project_dir / "shots" / f"{episode_key}.json").read_text(encoding="utf-8")
 
 
 async def main_async() -> int:
@@ -64,14 +64,14 @@ async def main_async() -> int:
     generation_workflow = GenerationWorkflow(repo=repo, router=router)
     await generation_workflow.run(project_dir, until="storyboard_generation", only="storyboard_generation")
 
-    episode_002_before = slot_text(project_dir, "episode_002")
+    episode_002_before = shot_text(project_dir, "episode_002")
     await generation_workflow.run(
         project_dir,
         until="storyboard_generation",
         only="storyboard_generation",
         episode_keys=["episode_001"],
     )
-    episode_002_after = slot_text(project_dir, "episode_002")
+    episode_002_after = shot_text(project_dir, "episode_002")
     require(episode_002_after == episode_002_before, "episode_002 storyboard changed during episode_001-only pregen")
 
     storyboard_output = json.loads(
@@ -89,11 +89,11 @@ async def main_async() -> int:
         episode_keys=parse_episode_keys("2"),
     )
     require(
-        '"assets/audios/shot_dialogues/' not in slot_text(project_dir, "episode_001"),
+        '"assets/audios/shot_dialogues/' not in shot_text(project_dir, "episode_001"),
         "episode_001 got dialogue audio during episode_002-only generation",
     )
     require(
-        '"assets/audios/shot_dialogues/' in slot_text(project_dir, "episode_002"),
+        '"assets/audios/shot_dialogues/' in shot_text(project_dir, "episode_002"),
         "episode_002 did not get dialogue audio",
     )
 
@@ -104,15 +104,15 @@ async def main_async() -> int:
         episode_keys=["episode_002"],
     )
     require(
-        '"assets/images/ref_frames/' not in slot_text(project_dir, "episode_001"),
+        '"assets/images/ref_frames/' not in shot_text(project_dir, "episode_001"),
         "episode_001 got a ref frame during episode_002-only generation",
     )
     require(
-        '"assets/images/ref_frames/' in slot_text(project_dir, "episode_002"),
+        '"assets/images/ref_frames/' in shot_text(project_dir, "episode_002"),
         "episode_002 did not get a ref frame",
     )
     require(
-        '"assets/videos/shots/' not in slot_text(project_dir, "episode_002"),
+        '"assets/videos/shots/' not in shot_text(project_dir, "episode_002"),
         "shot_video_generation ran during ref_frame_generation-only run",
     )
 

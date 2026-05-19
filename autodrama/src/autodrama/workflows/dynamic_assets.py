@@ -87,17 +87,30 @@ class DynamicAssetNodeMixin:
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        slots_dir = project_dir / "slots"
-        slots_dir.mkdir(parents=True, exist_ok=True)
+        shots_dir = project_dir / "shots"
+        shots_dir.mkdir(parents=True, exist_ok=True)
+        shot_path = shots_dir / f"{episode_key}.json"
+
+        def save_storyboard_progress(episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> None:
+            self.repo.write_json(shot_path, episode.model_dump(mode="json", exclude_none=True))
+            get_logger().info(
+                "episode %s shot %s generated, saved in %s",
+                episode.episode_key,
+                shot.shot_id,
+                self._project_relative(project_dir, shot_path),
+                extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
+            )
+
         output = await self.storyboard_service.storyboard_episode(
             state,
             provider,
             episode_key=episode_key,
             previous_storyboard_history=history_before_episode(project_dir, state, episode_key),
+            on_shot_generated=save_storyboard_progress,
         )
         if output.episode_key != episode_key:
             raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")
-        self.repo.write_json(slots_dir / f"{episode_key}.json", output.model_dump(mode="json", exclude_none=True))
+        self.repo.write_json(shot_path, output.model_dump(mode="json", exclude_none=True))
         state.budget.used_text_calls += max(1, int(getattr(self.storyboard_service, "last_text_call_count", 1)))
         return StoryboardGenerationOutput(generated_episodes=[episode_key])
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 from autodrama.core.schemas import (
     ProjectState,
@@ -90,6 +90,7 @@ class StoryboardService:
         *,
         episode_key: str,
         previous_storyboard_history: dict[str, Any] | None = None,
+        on_shot_generated: Callable[[StoryboardEpisodeOutput, StoryboardShot], None] | None = None,
     ) -> StoryboardEpisodeOutput:
         shots: list[StoryboardShot] = []
         self.last_text_call_count = 0
@@ -139,7 +140,10 @@ class StoryboardService:
             if output.episode_key != episode_key:
                 raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")
 
-            shots.append(self._normalize_generated_shot(output.shot, episode_key=episode_key, shot_index=shot_index))
+            shot = self._normalize_generated_shot(output.shot, episode_key=episode_key, shot_index=shot_index)
+            shots.append(shot)
+            if on_shot_generated is not None:
+                on_shot_generated(StoryboardEpisodeOutput(episode_key=episode_key, shots=list(shots)), shot)
             if output.is_episode_complete and len(shots) >= self.MIN_SHOTS_PER_EPISODE:
                 break
 

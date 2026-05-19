@@ -161,7 +161,7 @@ async def main_async() -> int:
             )
         ],
     )
-    repo.write_json(project_dir / "slots" / "episode_001.json", episode)
+    repo.write_json(project_dir / "shots" / "episode_001.json", episode)
 
     router = ProviderRouter(settings, provider_override="fake")
     workflow = EditingWorkflow(repo=repo, router=router)

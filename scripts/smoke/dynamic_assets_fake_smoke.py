@@ -51,10 +51,10 @@ async def main_async() -> int:
     checklist_path.write_text(json.dumps(checklist, ensure_ascii=False, indent=2), encoding="utf-8")
 
     state = await generation_workflow.run(project_dir, until="dynamic_asset_solidification")
-    episode_001_slot_path = project_dir / "slots" / "episode_001.json"
-    episode_002_slot_path = project_dir / "slots" / "episode_002.json"
-    episode_001_slot_text = episode_001_slot_path.read_text(encoding="utf-8")
-    episode_002_slot_text = episode_002_slot_path.read_text(encoding="utf-8")
+    episode_001_shot_path = project_dir / "shots" / "episode_001.json"
+    episode_002_shot_path = project_dir / "shots" / "episode_002.json"
+    episode_001_shot_text = episode_001_shot_path.read_text(encoding="utf-8")
+    episode_002_shot_text = episode_002_shot_path.read_text(encoding="utf-8")
 
     expected_nodes = {
         "storyboard_generation",
@@ -65,15 +65,15 @@ async def main_async() -> int:
     missing_nodes = expected_nodes.difference(state.completed_nodes)
     if missing_nodes:
         raise AssertionError(f"Missing completed nodes: {sorted(missing_nodes)}")
-    if '"ref_frame_asset_path"' not in episode_001_slot_text:
-        raise AssertionError("episode_001 slot missing ref_frame_asset_path")
-    if '"video_asset_path"' not in episode_001_slot_text:
-        raise AssertionError("episode_001 slot missing video_asset_path")
-    if '"assets/audios/shot_dialogues/' in episode_001_slot_text:
+    if '"ref_frame_asset_path"' not in episode_001_shot_text:
+        raise AssertionError("episode_001 shot missing ref_frame_asset_path")
+    if '"video_asset_path"' not in episode_001_shot_text:
+        raise AssertionError("episode_001 shot missing video_asset_path")
+    if '"assets/audios/shot_dialogues/' in episode_001_shot_text:
         raise AssertionError("episode_001 generated dialogue audio in the default generation flow")
-    if '"assets/images/ref_frames/' in episode_002_slot_text:
+    if '"assets/images/ref_frames/' in episode_002_shot_text:
         raise AssertionError("episode_002 was generated despite generate=false")
-    if '"assets/videos/shots/' in episode_002_slot_text:
+    if '"assets/videos/shots/' in episode_002_shot_text:
         raise AssertionError("episode_002 video was generated despite generate=false")
 
     required_paths = [

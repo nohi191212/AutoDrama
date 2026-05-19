@@ -165,11 +165,17 @@ def build_state() -> ProjectState:
 async def main_async() -> int:
     provider = RecordingFakeTextProvider()
     service = StoryboardService(PromptStore())
+    progress_snapshots: list[tuple[str, str, int]] = []
+
+    def record_progress(episode, shot) -> None:
+        progress_snapshots.append((episode.episode_key, shot.shot_id, len(episode.shots)))
+
     output = await service.storyboard_episode(
         build_state(),
         provider,
         episode_key="episode_001",
         previous_storyboard_history={"episodes": []},
+        on_shot_generated=record_progress,
     )
 
     require(output.episode_key == "episode_001", f"Unexpected episode_key: {output.episode_key}")
@@ -179,6 +185,14 @@ async def main_async() -> int:
     for index, shot in enumerate(output.shots, start=1):
         require(shot.index == index, f"Shot index was not normalized: {shot.index}")
         require(shot.shot_id == f"episode_001_shot_{index:03d}", f"Unexpected shot_id: {shot.shot_id}")
+    require(
+        progress_snapshots == [
+            ("episode_001", "episode_001_shot_001", 1),
+            ("episode_001", "episode_001_shot_002", 2),
+            ("episode_001", "episode_001_shot_003", 3),
+        ],
+        f"Unexpected progress snapshots: {progress_snapshots}",
+    )
 
     schema_names = {call["schema"] for call in provider.calls}
     require(schema_names == {StoryboardShotGenerationOutput.__name__}, f"Unexpected schemas: {schema_names}")

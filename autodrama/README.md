@@ -32,7 +32,7 @@ Dynamic shot-level assets now live in a separate workflow:
 
 `shot_dialogue_audio_generation` is implemented but skipped by the default generation flow. Run it explicitly with `--only shot_dialogue_audio_generation` when dialogue audio assets are needed.
 
-`run generation` processes selected episodes in episode order. For each episode it writes the storyboard slot to `slots/{episode_key}.json`, generates reference frames, shot videos, and solidified dynamic asset metadata back into that slot before moving to the next episode. Completed storyboard summaries are stored in `assets/json/storyboard_history.json` and injected into later storyboard prompts so following episodes can preserve continuity. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
+`run generation` processes selected episodes in episode order. For each episode it writes the storyboard shot to `shots/{episode_key}.json`, generates reference frames, shot videos, and solidified dynamic asset metadata back into that shot before moving to the next episode. Completed storyboard summaries are stored in `assets/json/storyboard_history.json` and injected into later storyboard prompts so following episodes can preserve continuity. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
 
 ## Provider routing
 

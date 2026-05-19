@@ -146,19 +146,19 @@ async def main_async() -> int:
     )
 
     for episode_key in ("episode_001", "episode_002", "episode_003"):
-        slot = json.loads((project_dir / "slots" / f"{episode_key}.json").read_text(encoding="utf-8"))
-        slot_text = json.dumps(slot, ensure_ascii=False)
+        shot = json.loads((project_dir / "shots" / f"{episode_key}.json").read_text(encoding="utf-8"))
+        shot_text = json.dumps(shot, ensure_ascii=False)
         require(
-            all("bgm_id" not in shot for shot in slot["shots"]),
+            all("bgm_id" not in shot for shot in shot["shots"]),
             f"{episode_key} should not include shot-level bgm_id",
         )
         require(
-            '"assets/audios/shot_dialogues/' not in slot_text,
+            '"assets/audios/shot_dialogues/' not in shot_text,
             f"{episode_key} generated dialogue audio in the default generation flow",
         )
-        require('"assets/images/ref_frames/' in slot_text, f"{episode_key} missing ref frame")
-        require('"assets/videos/shots/' in slot_text, f"{episode_key} missing shot video")
-        require('"solidified_asset_ids"' in slot_text, f"{episode_key} missing solidified asset ids")
+        require('"assets/images/ref_frames/' in shot_text, f"{episode_key} missing ref frame")
+        require('"assets/videos/shots/' in shot_text, f"{episode_key} missing shot video")
+        require('"solidified_asset_ids"' in shot_text, f"{episode_key} missing solidified asset ids")
 
     checklist = json.loads((project_dir / "generation_checklist.json").read_text(encoding="utf-8"))
     items = {item["episode_key"]: item for item in checklist["episodes"]}

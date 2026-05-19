@@ -538,18 +538,18 @@ class PregenWorkflow:
         return str(path.relative_to(project_dir)).replace("\\", "/")
 
     @staticmethod
-    def _slot_path(project_dir: Path, episode_key: str) -> Path:
-        return project_dir / "slots" / f"{episode_key}.json"
+    def _shot_path(project_dir: Path, episode_key: str) -> Path:
+        return project_dir / "shots" / f"{episode_key}.json"
 
     def _load_storyboard_episode(self, project_dir: Path, episode_key: str) -> StoryboardEpisodeOutput:
-        path = self._slot_path(project_dir, episode_key)
+        path = self._shot_path(project_dir, episode_key)
         if not path.exists():
-            raise FileNotFoundError(f"Storyboard slot file not found: {path}")
+            raise FileNotFoundError(f"Storyboard shot file not found: {path}")
         return StoryboardEpisodeOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
     def _save_storyboard_episode(self, project_dir: Path, episode: StoryboardEpisodeOutput) -> None:
         self.repo.write_json(
-            self._slot_path(project_dir, episode.episode_key),
+            self._shot_path(project_dir, episode.episode_key),
             episode.model_dump(mode="json", exclude_none=True),
         )
 

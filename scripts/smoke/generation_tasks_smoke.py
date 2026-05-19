@@ -160,8 +160,8 @@ async def main_async() -> int:
     require(task.get("completed_at"), "Completed task missing completed_at")
     require((project_dir / task["asset_path"]).exists(), f"Generated video missing: {task['asset_path']}")
 
-    slot = json.loads((project_dir / "slots" / "episode_001.json").read_text(encoding="utf-8"))
-    require(slot["shots"][0]["video_asset_path"] == task["asset_path"], "Slot video path was not updated")
+    shot = json.loads((project_dir / "shots" / "episode_001.json").read_text(encoding="utf-8"))
+    require(shot["shots"][0]["video_asset_path"] == task["asset_path"], "shot video path was not updated")
 
     print("generation_tasks_smoke=ok")
     print(f"project_dir={project_dir}")
