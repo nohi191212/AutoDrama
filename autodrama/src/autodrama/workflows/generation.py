@@ -11,7 +11,9 @@ from autodrama.core.schemas import (
     RefFrameGenerationOutput,
     ShotDialogueAudioGenerationOutput,
     ShotVideoGenerationOutput,
+    StoryboardEpisodeOutput,
     StoryboardGenerationOutput,
+    StoryboardShot,
 )
 from autodrama.logging import get_logger, log_context, setup_logging
 from autodrama.workflows.generation_checklist import (
@@ -32,6 +34,114 @@ GENERATION_NODES = [
 
 
 class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
+    def _shot_ref_frame_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
+        layout = state.layouts.get(shot.layout_id)
+        role_lines = []
+        for role_id in shot.role_ids:
+            role = state.roles.get(role_id)
+            if role:
+                role_lines.append(f"{role.name}: {role.intro}")
+        appearance_lines = []
+        appearance_ids = list(shot.role_appearance_ids)
+        seen_appearance_ids = set(appearance_ids)
+        for role_id in shot.role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            base_appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
+            if base_appearance and base_appearance.id not in seen_appearance_ids:
+                appearance_ids.append(base_appearance.id)
+                seen_appearance_ids.add(base_appearance.id)
+        for appearance_id in appearance_ids:
+            for role in state.roles.values():
+                appearance = next(
+                    (
+                        item
+                        for item in role.appearances.values()
+                        if item.id == appearance_id or item.name == appearance_id
+                    ),
+                    None,
+                )
+                if appearance:
+                    appearance_lines.append(f"{role.name}外观锁定: {appearance.desc}")
+                    break
+        prop_lines = []
+        for prop_id in shot.prop_ids:
+            prop = state.props.get(prop_id)
+            if prop:
+                prop_lines.append(f"{prop.name}: {prop.desc}")
+
+        parts = [
+            str(state.metadata.get("visual_style_prompt", "")),
+            f"剧集: {episode.episode_key}",
+            f"镜头: {shot.title}",
+            f"画面内容: {shot.content}",
+            "输出规格: 9:16竖屏单帧剧照，适配手机短剧画幅；主体完整，避免横版构图或左右大面积留白。",
+            f"镜头角度: {shot.camera_shooting_angle}",
+            f"运镜: {shot.camera_movement}",
+            f"焦段: {shot.focal_length or '按分镜自然选择'}",
+            f"分镜参考帧要求: {shot.ref_frame_prompt}",
+        ]
+        if shot.scene_description:
+            parts.append(f"场景细节: {shot.scene_description}")
+        if shot.composition:
+            parts.append(f"构图要求: {shot.composition}")
+        if shot.lighting:
+            parts.append(f"光线要求: {shot.lighting}")
+        if shot.sound_design:
+            parts.append(f"声音气氛参考: {shot.sound_design}")
+        if shot.transition:
+            parts.append(f"转场: {shot.transition}")
+        if layout:
+            parts.append(f"场景设定: {layout.name} - {layout.desc}")
+        if role_lines:
+            parts.append("出场角色: " + "；".join(role_lines))
+        if appearance_lines:
+            parts.append("人物一致性要求: " + "；".join(appearance_lines))
+        if prop_lines:
+            parts.append("关键道具: " + "；".join(prop_lines))
+        if shot.dialogue:
+            parts.append("画面对白气氛: " + " / ".join(shot.dialogue))
+        parts.append("生成单帧剧照，必须是同一个镜头里的关键帧；不要添加字幕、水印、文字标识或分镜编号。")
+        return "\n".join(item for item in parts if item)
+
+    def _shot_video_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
+        layout = state.layouts.get(shot.layout_id)
+        parts = [
+            str(state.metadata.get("visual_style_prompt", "")),
+            f"剧集: {episode.episode_key}",
+            f"镜头标题: {shot.title}",
+            f"镜头内容: {shot.content}",
+            f"视频动作: {shot.video_prompt}",
+            f"镜头角度: {shot.camera_shooting_angle}",
+            f"运镜: {shot.camera_movement}",
+            f"焦段: {shot.focal_length or '自然电影焦段'}",
+            f"时长: {shot.duration_seconds:.2f} 秒",
+        ]
+        if shot.scene_description:
+            parts.append(f"场景细节: {shot.scene_description}")
+        if shot.composition:
+            parts.append(f"构图: {shot.composition}")
+        if shot.lighting:
+            parts.append(f"光线: {shot.lighting}")
+        if shot.sound_design:
+            parts.append(f"声音设计: {shot.sound_design}")
+        if shot.transition:
+            parts.append(f"转场: {shot.transition}")
+        if shot.start_frame_source == "previous_shot_last_frame":
+            parts.append(
+                "开头继承: 本镜头起始画面参考上一镜头末尾帧，保持上一镜头的人物姿态、空间方向、"
+                "能量位置和环境粒子连续，再从该状态进入本镜头动作。"
+            )
+            if shot.start_frame_inheritance_reason:
+                parts.append(f"继承理由: {shot.start_frame_inheritance_reason}")
+        if layout:
+            parts.append(f"场景: {layout.name} - {layout.desc}")
+        if shot.dialogue:
+            parts.append("对白节奏: " + " / ".join(shot.dialogue))
+        parts.append("保持人物、场景和道具与参考帧一致；画面自然连续；不要生成字幕、水印、片头片尾或额外文字。")
+        return "\n".join(item for item in parts if item)
+
     async def _run_generation_node_for_episode(
         self,
         project_dir: Path,
