@@ -20,6 +20,8 @@ class VolcengineSeedanceVideoProvider:
 
     _TERMINAL_SUCCESS = {"succeeded", "success", "completed", "done"}
     _TERMINAL_FAILURE = {"failed", "fail", "error", "expired", "cancelled", "canceled"}
+    _IMAGE_ROLES = {"reference_image", "first_frame", "last_frame"}
+    _FRAME_IMAGE_ROLES = {"first_frame", "last_frame"}
 
     def __init__(self, settings: ProviderSettings, runtime: RuntimeSettings) -> None:
         self.settings = settings
@@ -131,19 +133,39 @@ class VolcengineSeedanceVideoProvider:
 
     def _content(self, prompt: str, refs: list[AssetRef]) -> list[dict[str, Any]]:
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt[:5000]}]
+        image_refs: list[tuple[str, str]] = []
+        other_refs: list[AssetRef] = []
+
+        for ref in refs:
+            if ref.type != "image":
+                other_refs.append(ref)
+                continue
+            url = self._ref_url_or_data(ref, expected_type="image")
+            if not url:
+                continue
+            image_refs.append((url, self._image_role(ref)))
+
+        if any(role in self._FRAME_IMAGE_ROLES for _, role in image_refs):
+            frame_counts = {"first_frame": 0, "last_frame": 0}
+            for url, role in image_refs:
+                if role not in self._FRAME_IMAGE_ROLES:
+                    continue
+                if frame_counts[role] >= 1:
+                    continue
+                content.append({"type": "image_url", "image_url": {"url": url}, "role": role})
+                frame_counts[role] += 1
+            return content
+
         image_count = 0
         audio_count = 0
         video_count = 0
 
-        for ref in refs:
-            if ref.type == "image" and image_count < self.max_reference_images:
-                url = self._ref_url_or_data(ref, expected_type="image")
-                if not url:
-                    continue
+        for url, _role in image_refs:
+            if image_count < self.max_reference_images:
                 content.append({"type": "image_url", "image_url": {"url": url}, "role": "reference_image"})
                 image_count += 1
-                continue
 
+        for ref in other_refs:
             if ref.type == "audio" and audio_count < self.max_reference_audio:
                 url = self._ref_url_or_data(ref, expected_type="audio")
                 if not url:
@@ -160,6 +182,11 @@ class VolcengineSeedanceVideoProvider:
                 video_count += 1
 
         return content
+
+    def _image_role(self, ref: AssetRef) -> str:
+        role = ref.metadata.get("seedance_role") or ref.metadata.get("role") or "reference_image"
+        role_text = str(role).strip().lower()
+        return role_text if role_text in self._IMAGE_ROLES else "reference_image"
 
     def _ref_url_or_data(self, ref: AssetRef, *, expected_type: str) -> str | None:
         if ref.url:
@@ -276,6 +303,7 @@ class VolcengineSeedanceVideoProvider:
             task_id=cls._task_id(body) or fallback_task_id,
             task_status=cls._status(body),
             video_url=cls._video_url(body),
+            last_frame_url=cls._last_frame_url(body),
             request_id=request_id,
             usage=cls._usage(body),
             raw_response=body,
@@ -319,6 +347,18 @@ class VolcengineSeedanceVideoProvider:
                     if isinstance(nested, str):
                         return nested
 
+        return None
+
+    @classmethod
+    def _last_frame_url(cls, body: dict[str, Any]) -> str | None:
+        value = cls._first(body, "last_frame_url", "lastFrameUrl")
+        if isinstance(value, str) and value:
+            return value
+        content = body.get("content")
+        if isinstance(content, dict):
+            value = cls._first(content, "last_frame_url", "lastFrameUrl")
+            if isinstance(value, str) and value:
+                return value
         return None
 
     @classmethod

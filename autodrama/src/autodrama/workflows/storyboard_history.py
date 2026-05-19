@@ -54,9 +54,13 @@ def _shot_history_item(shot: StoryboardShot) -> dict[str, Any]:
         "index": shot.index,
         "title": shot.title,
         "content": _truncate(shot.content, 180),
+        "scene_description": _truncate(shot.scene_description or "", 120),
+        "composition": _truncate(shot.composition or "", 120),
         "layout_id": shot.layout_id,
         "role_ids": shot.role_ids,
         "prop_ids": shot.prop_ids,
+        "transition": shot.transition,
+        "start_frame_source": shot.start_frame_source,
         "camera": "，".join(
             item
             for item in (

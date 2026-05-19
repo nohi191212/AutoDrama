@@ -163,6 +163,9 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
+      video_reference_mode: ref_frame_only
+      video_poll_interval_seconds: 30
+      return_last_frame: true
       generate_audio: false
       video_min_duration_seconds: 4
       video_max_duration_seconds: 15

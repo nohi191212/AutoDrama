@@ -52,6 +52,25 @@ def main(argv: list[str] | None = None) -> int:
     assert payload["content"][1]["role"] == "reference_image"
     assert payload["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
 
+    first_frame_payload = provider.build_payload(
+        "测试 Seedance 2.0 首帧模式。以上一镜头尾帧作为本镜头第一帧，从既有姿态继续动作。",
+        refs=[
+            AssetRef(
+                id="previous_last_frame",
+                type="image",
+                path=str(image_path),
+                metadata={"seedance_role": "first_frame"},
+            ),
+            AssetRef(id="unused_reference", type="image", path=str(image_path)),
+        ],
+        duration=args.duration,
+        metadata=metadata,
+    )
+    image_items = [item for item in first_frame_payload["content"] if item["type"] == "image_url"]
+    assert len(image_items) == 1
+    assert image_items[0]["role"] == "first_frame"
+    assert image_items[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
     print("seedance_payload_smoke=ok")
     print(f"payload_path={output_path}")
     print(f"model={payload['model']} ratio={payload['ratio']} duration={payload['duration']}")

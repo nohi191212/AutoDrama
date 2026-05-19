@@ -341,10 +341,17 @@ class StoryboardShot(BaseModel):
     layout_id: str
     title: str
     content: str
+    scene_description: str | None = None
+    composition: str | None = None
+    lighting: str | None = None
+    sound_design: str | None = None
     camera_shooting_angle: str
     camera_movement: str
     focal_length: str | None = None
     duration_seconds: float
+    transition: str | None = None
+    start_frame_source: Literal["new_reference_frame", "previous_shot_last_frame"] = "new_reference_frame"
+    start_frame_inheritance_reason: str | None = None
     dialogue: list[str] = Field(default_factory=list)
     role_ids: list[str] = Field(default_factory=list)
     role_appearance_ids: list[str] = Field(default_factory=list)
@@ -368,6 +375,7 @@ class StoryboardShot(BaseModel):
     video_task_id: str | None = None
     video_task_status: str | None = None
     video_request_id: str | None = None
+    video_last_frame_asset_path: str | None = None
     video_usage: dict[str, Any] = Field(default_factory=dict)
     video_raw_response: dict[str, Any] = Field(default_factory=dict)
     solidified_asset_ids: list[str] = Field(default_factory=list)
@@ -417,6 +425,7 @@ class ShotVideoGenerationItem(BaseModel):
     prompt: str
     duration_seconds: float | None = None
     asset_path: str | None = None
+    last_frame_asset_path: str | None = None
     provider: str
     model: str
     task_id: str | None = None

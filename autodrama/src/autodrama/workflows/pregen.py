@@ -1072,10 +1072,72 @@ class PregenWorkflow:
                 )
         return refs
 
-    def _shot_video_refs(self, project_dir: Path, state: ProjectState, shot: StoryboardShot) -> list:
+    @staticmethod
+    def _video_reference_mode(provider=None) -> str:
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        mode = (
+            options.get("video_reference_mode")
+            or options.get("seedance_video_reference_mode")
+            or options.get("video_refs_mode")
+            or "full"
+        )
+        return str(mode).strip().lower().replace("-", "_")
+
+    @staticmethod
+    def _previous_shot(episode: StoryboardEpisodeOutput | None, shot: StoryboardShot) -> StoryboardShot | None:
+        if episode is None:
+            return None
+        previous = [
+            item
+            for item in episode.shots
+            if int(item.index) < int(shot.index)
+        ]
+        if not previous:
+            return None
+        return sorted(previous, key=lambda item: int(item.index))[-1]
+
+    def _shot_video_refs(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        shot: StoryboardShot,
+        provider=None,
+        episode: StoryboardEpisodeOutput | None = None,
+    ) -> list:
         from autodrama.providers.base import AssetRef
 
         refs: list[AssetRef] = []
+        previous_shot = self._previous_shot(episode, shot)
+        if shot.start_frame_source == "previous_shot_last_frame":
+            if previous_shot is None:
+                raise ValueError(
+                    f"{shot.shot_id} start_frame_source=previous_shot_last_frame but no previous shot exists"
+                )
+            if not previous_shot.video_last_frame_asset_path:
+                raise ValueError(
+                    f"{shot.shot_id} start_frame_source=previous_shot_last_frame but "
+                    f"{previous_shot.shot_id} has no saved last frame; generate the previous shot video first"
+                )
+            last_frame_path = project_dir / previous_shot.video_last_frame_asset_path
+            if not last_frame_path.exists() or not last_frame_path.is_file():
+                raise ValueError(
+                    f"{shot.shot_id} start_frame_source=previous_shot_last_frame but "
+                    f"{previous_shot.shot_id} last frame is missing: {previous_shot.video_last_frame_asset_path}"
+                )
+            refs.append(
+                AssetRef(
+                    id=f"{previous_shot.video_asset_id or previous_shot.shot_id}_last_frame",
+                    type="image",
+                    path=str(last_frame_path),
+                    metadata={
+                        "asset_type": "previous_shot_last_frame",
+                        "previous_shot_id": previous_shot.shot_id,
+                        "seedance_role": "first_frame",
+                    },
+                )
+            )
+            return refs
         if shot.ref_frame_asset_path:
             refs.append(
                 AssetRef(
@@ -1085,7 +1147,8 @@ class PregenWorkflow:
                     metadata={"asset_type": "ref_frame"},
                 )
             )
-        refs.extend(self._shot_ref_asset_refs(project_dir, state, shot))
+        if self._video_reference_mode(provider) not in {"ref_frame_only", "ref_frame"}:
+            refs.extend(self._shot_ref_asset_refs(project_dir, state, shot))
         for audio in shot.dialogue_audio_assets:
             if audio.asset_path:
                 refs.append(
@@ -1150,6 +1213,16 @@ class PregenWorkflow:
             f"焦段: {shot.focal_length or '按分镜自然选择'}",
             f"分镜参考帧要求: {shot.ref_frame_prompt}",
         ]
+        if shot.scene_description:
+            parts.append(f"场景细节: {shot.scene_description}")
+        if shot.composition:
+            parts.append(f"构图要求: {shot.composition}")
+        if shot.lighting:
+            parts.append(f"光线要求: {shot.lighting}")
+        if shot.sound_design:
+            parts.append(f"声音气氛参考: {shot.sound_design}")
+        if shot.transition:
+            parts.append(f"转场: {shot.transition}")
         if layout:
             parts.append(f"场景设定: {layout.name} - {layout.desc}")
         if role_lines:
@@ -1177,6 +1250,23 @@ class PregenWorkflow:
             f"焦段: {shot.focal_length or '自然电影焦段'}",
             f"时长: {shot.duration_seconds:.2f} 秒",
         ]
+        if shot.scene_description:
+            parts.append(f"场景细节: {shot.scene_description}")
+        if shot.composition:
+            parts.append(f"构图: {shot.composition}")
+        if shot.lighting:
+            parts.append(f"光线: {shot.lighting}")
+        if shot.sound_design:
+            parts.append(f"声音设计: {shot.sound_design}")
+        if shot.transition:
+            parts.append(f"转场: {shot.transition}")
+        if shot.start_frame_source == "previous_shot_last_frame":
+            parts.append(
+                "开头继承: 本镜头起始画面参考上一镜头末尾帧，保持上一镜头的人物姿态、空间方向、"
+                "能量位置和环境粒子连续，再从该状态进入本镜头动作。"
+            )
+            if shot.start_frame_inheritance_reason:
+                parts.append(f"继承理由: {shot.start_frame_inheritance_reason}")
         if layout:
             parts.append(f"场景: {layout.name} - {layout.desc}")
         if shot.dialogue:
