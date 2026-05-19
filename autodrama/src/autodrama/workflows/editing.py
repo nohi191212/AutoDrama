@@ -44,7 +44,6 @@ class EditClip(BaseModel):
     layout_id: str
     role_ids: list[str] = Field(default_factory=list)
     prop_ids: list[str] = Field(default_factory=list)
-    bgm_id: str | None = None
     dialogue_lines: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
@@ -428,7 +427,6 @@ class EditingWorkflow(PregenWorkflow):
                 layout_id=shot.layout_id,
                 role_ids=shot.role_ids,
                 prop_ids=shot.prop_ids,
-                bgm_id=shot.bgm_id,
                 dialogue_lines=shot.dialogue,
                 notes=notes,
             ),
@@ -548,7 +546,7 @@ class EditingWorkflow(PregenWorkflow):
 
         bgm_id = self._select_bgm_id(state, episode)
         if not bgm_id:
-            warnings.append("No BGM is assigned in storyboard or state.")
+            warnings.append("No BGM asset is available in state.")
             return None, missing, warnings
 
         bgm = state.bgms.get(bgm_id)
@@ -559,7 +557,7 @@ class EditingWorkflow(PregenWorkflow):
                     episode_key=episode.episode_key,
                     asset_id=bgm_id,
                     required=False,
-                    reason="Storyboard references a BGM id that is not present in state.bgms.",
+                    reason="Selected BGM id is not present in state.bgms.",
                 )
             )
             return None, missing, warnings
@@ -595,9 +593,7 @@ class EditingWorkflow(PregenWorkflow):
 
     @staticmethod
     def _select_bgm_id(state: ProjectState, episode: StoryboardEpisodeOutput) -> str | None:
-        for shot in sorted(episode.shots, key=lambda item: item.index):
-            if shot.bgm_id:
-                return shot.bgm_id
+        del episode
         return next(iter(state.bgms), None)
 
     async def _run_final_video_composition(self, project_dir: Path, state: ProjectState) -> ProjectState:

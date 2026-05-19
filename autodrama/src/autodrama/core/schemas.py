@@ -357,7 +357,6 @@ class StoryboardShot(BaseModel):
     role_appearance_ids: list[str] = Field(default_factory=list)
     role_audio_ids: list[str] = Field(default_factory=list)
     prop_ids: list[str] = Field(default_factory=list)
-    bgm_id: str | None = None
     ref_frame_prompt: str
     video_prompt: str
     dialogue_audio_assets: list[ShotDialogueAudioAsset] = Field(default_factory=list)

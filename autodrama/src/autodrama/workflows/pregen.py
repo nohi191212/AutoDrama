@@ -1238,7 +1238,6 @@ class PregenWorkflow:
 
     def _shot_video_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
         layout = state.layouts.get(shot.layout_id)
-        bgm = state.bgms.get(shot.bgm_id) if shot.bgm_id else None
         parts = [
             str(state.metadata.get("visual_style_prompt", "")),
             f"剧集: {episode.episode_key}",
@@ -1271,8 +1270,6 @@ class PregenWorkflow:
             parts.append(f"场景: {layout.name} - {layout.desc}")
         if shot.dialogue:
             parts.append("对白节奏: " + " / ".join(shot.dialogue))
-        if bgm:
-            parts.append(f"BGM情绪参考: {bgm.name} - {bgm.mood}")
         parts.append("保持人物、场景和道具与参考帧一致；画面自然连续；不要生成字幕、水印、片头片尾或额外文字。")
         return "\n".join(item for item in parts if item)
 

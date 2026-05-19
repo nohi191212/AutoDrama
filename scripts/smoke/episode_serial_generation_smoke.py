@@ -149,8 +149,8 @@ async def main_async() -> int:
         slot = json.loads((project_dir / "slots" / f"{episode_key}.json").read_text(encoding="utf-8"))
         slot_text = json.dumps(slot, ensure_ascii=False)
         require(
-            all(shot.get("bgm_id") is None for shot in slot["shots"]),
-            f"{episode_key} should not assign bgm_id during dynamic generation",
+            all("bgm_id" not in shot for shot in slot["shots"]),
+            f"{episode_key} should not include shot-level bgm_id",
         )
         require('"dialogue_audio_assets"' in slot_text, f"{episode_key} missing dialogue audio assets")
         require('"assets/images/ref_frames/' in slot_text, f"{episode_key} missing ref frame")
