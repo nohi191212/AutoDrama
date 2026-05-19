@@ -48,11 +48,264 @@ Volcengine TTS should keep `instruction_mode: none` unless a provider-level inst
 
 MiniMax music generation uses its own long timeout option, `providers.minimax.options.music_timeout_seconds`, because BGM generation can take longer than normal text or image calls.
 
-## Local commands
+## Start commands
 
-Use the requested conda environment:
+Run commands from the repository root. The expected Windows Python is:
 
-Do not use pytest in this repository. Use focused smoke scripts and compile checks instead.
+```powershell
+D:/miniforge3/envs/autodrama/python.exe
+```
+
+`run\start.cmd` and `run\dynamic_assets.cmd` set `PYTHONPATH` automatically and read `runtime.python.windows` from `config.yaml` when present. Direct `python -m autodrama.cli ...` commands need `PYTHONPATH` set first.
+
+### 0. Prepare config
+
+```powershell
+Copy-Item config.yaml.example config.yaml
+```
+
+Edit `config.yaml` before production runs:
+
+- `project.id`: stable project id, recommended for resume.
+- `project.title`: project title.
+- `project.script_outline_file`: input story outline file, default `./inputs/story_outline.md`.
+- `project.episode_count` and `project.episode_duration_seconds`.
+- provider API keys via `apikeys.yaml` or environment variables.
+
+### 1. Initialize or inspect a project
+
+Explicitly create or rewrite the configured project state:
+
+```powershell
+$env:PYTHONPATH="autodrama/src"
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli init --config config.yaml
+```
+
+Override title, input script, or project id from CLI:
+
+```powershell
+$env:PYTHONPATH="autodrama/src"
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli init --config config.yaml --title "30秒逆袭短片" --script-file inputs/story_outline.md --project-id review_demo
+```
+
+Inspect current state and generated node outputs:
+
+```powershell
+$env:PYTHONPATH="autodrama/src"
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli inspect state --config config.yaml --project <project_id>
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli inspect nodes --config config.yaml --project <project_id>
+```
+
+If `--project` is omitted, the CLI uses `project.id` from `config.yaml` or `outputs/current_project.json`.
+
+### 2. Recommended Windows shortcuts
+
+Run pre-generation only. This creates/resumes the project and runs through `bgm_generation`:
+
+```powershell
+run\start.cmd --config config.yaml
+run\start.cmd --config config.yaml --project <project_id>
+```
+
+Run dynamic generation only. This starts at `storyboard_generation` and runs through `dynamic_asset_solidification`:
+
+```powershell
+run\start.cmd --generation --config config.yaml --project <project_id>
+run\start.cmd --workflow generation --config config.yaml --project <project_id>
+```
+
+Run pre-generation and dynamic generation in one command:
+
+```powershell
+run\dynamic_assets.cmd --config config.yaml --project <project_id>
+```
+
+Run everything with fake providers for a local smoke/demo pass:
+
+```powershell
+run\dynamic_assets.cmd --config config.yaml --project <project_id> --fake --force
+```
+
+Skip pre-generation and only run dynamic assets:
+
+```powershell
+run\dynamic_assets.cmd --config config.yaml --project <project_id> --skip-pregen
+```
+
+Stop the combined `dynamic_assets.cmd` flow at custom nodes:
+
+```powershell
+run\dynamic_assets.cmd --config config.yaml --project <project_id> --pregen-until layout_image_generation --generation-until ref_frame_generation --episodes 1
+```
+
+Run one dynamic generation node through `dynamic_assets.cmd`:
+
+```powershell
+run\dynamic_assets.cmd --config config.yaml --project <project_id> --generation-only ref_frame_generation --episodes 1 --skip-pregen
+run\dynamic_assets.cmd --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
+```
+
+`run\dynamic_assets.cmd --only NODE` is an alias for `--skip-pregen --generation-only NODE`.
+
+### 3. Direct CLI commands
+
+Use direct CLI commands when you want the most explicit form:
+
+```powershell
+$env:PYTHONPATH="autodrama/src"
+```
+
+Pre-generation with configured providers:
+
+```powershell
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id>
+```
+
+Pre-generation with fake providers:
+
+```powershell
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --provider fake --force
+```
+
+Dynamic generation with configured providers:
+
+```powershell
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id>
+```
+
+Dynamic generation with fake providers:
+
+```powershell
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --provider fake --force
+```
+
+Stop a workflow at a node:
+
+```powershell
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --until layout_image_generation
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --until ref_frame_generation --episodes 1
+```
+
+Run exactly one node:
+
+```powershell
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only role_voice_generation
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only bgm_generation
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only shot_dialogue_audio_generation --episodes 1
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1,3
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only dynamic_asset_solidification --episodes episode_001
+```
+
+### 4. Episode and shot selection
+
+`--episodes` accepts comma lists, ranges, numbers, and episode keys:
+
+```powershell
+run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1
+run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1,3
+run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1-3
+run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
+```
+
+`--episodes` is only meaningful for generation. Pregen currently rejects episode-scoped runs because static assets are project-level.
+
+`--shots` accepts shot indexes, ranges, and shot ids inside selected episodes:
+
+```powershell
+run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1 --shots 1
+run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1 --shots 1-3
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1,3
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes episode_001 --shots shot_003
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes episode_001 --shots episode_001_shot_1
+```
+
+`--shots` can only be used with generation nodes after `storyboard_generation`, such as `shot_dialogue_audio_generation`, `ref_frame_generation`, `shot_video_generation`, and `dynamic_asset_solidification`.
+
+### 5. Common resume and rerun cases
+
+Resume generation from the checklist or current project state:
+
+```powershell
+run\start.cmd --generation --config config.yaml --project <project_id>
+```
+
+Force rerun a workflow or node:
+
+```powershell
+run\start.cmd --config config.yaml --project <project_id> --force
+run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1 --force
+```
+
+Regenerate only storyboard for one episode:
+
+```powershell
+run\start.cmd --generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1 --force
+```
+
+Regenerate dialogue audio after editing storyboard dialogue:
+
+```powershell
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_dialogue_audio_generation --episodes 1 --force
+```
+
+Regenerate reference frames for selected shots:
+
+```powershell
+run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1 --shots 1-3 --force
+```
+
+Resume or rerun shot videos for selected shots:
+
+```powershell
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3 --force
+```
+
+Solidify dynamic asset metadata after videos/reference frames are ready:
+
+```powershell
+run\start.cmd --generation --config config.yaml --project <project_id> --only dynamic_asset_solidification --episodes 1
+```
+
+Adopt an existing Seedance video task into a shot:
+
+```powershell
+D:/miniforge3/envs/autodrama/python.exe scripts/adopt_seedance_task.py --config config.yaml --project <project_id> --episode 1 --shot 1 --task-id <seedance_task_id>
+```
+
+### 6. Bash helper scripts
+
+These scripts are useful on macOS/Linux or Git Bash. They source `scripts/env.sh`, choose Python from `runtime.python.<platform>`, and set `PYTHONPATH`.
+
+```bash
+scripts/init_project.sh --config config.yaml
+scripts/run_pregen.sh --config config.yaml --project <project_id>
+scripts/run_pregen.sh --config config.yaml --project <project_id> --until layout_image_generation
+scripts/run_pregen.sh --config config.yaml --project <project_id> --only bgm_generation --force
+scripts/run_pregen_fake.sh --config config.yaml --project <project_id> --force
+scripts/inspect_state.sh --config config.yaml
+scripts/inspect_nodes.sh --config config.yaml
+```
+
+There is no Bash wrapper for `run generation`; use direct CLI for generation on Bash:
+
+```bash
+export PYTHONPATH="autodrama/src${PYTHONPATH:+:$PYTHONPATH}"
+python3 -m autodrama.cli run generation --config config.yaml --project <project_id> --episodes 1-2
+python3 -m autodrama.cli run generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
+```
+
+Override Python for Bash helpers:
+
+```bash
+AUTODRAMA_PYTHON=/path/to/python scripts/run_pregen.sh --config config.yaml
+```
+
+### 7. Validation commands
+
+Do not use pytest in this repository. Use compile checks and focused smoke scripts.
 
 ```powershell
 D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama scripts/smoke/dynamic_assets_fake_smoke.py scripts/smoke/only_node_episode_smoke.py scripts/smoke/episode_serial_generation_smoke.py scripts/smoke/minimax_music_payload_smoke.py scripts/smoke/seedream_payload_smoke.py scripts/smoke/shot_selector_smoke.py
@@ -64,44 +317,4 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedream_payload_smoke.py 
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/shot_selector_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_payload_smoke.py --config config.yaml.example
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_router_smoke.py
-```
-
-For ad-hoc CLI usage from the repository root without installing:
-
-```powershell
-$env:PYTHONPATH="autodrama/src"
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli init --config config.yaml.example --title "30秒逆袭短片" --script-file input/story.txt
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml.example --project <project_id> --provider fake
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml.example --project <project_id> --only role_voice_generation
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml.example --project <project_id> --provider fake
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml.example --project <project_id> --episodes 1,3
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml.example --project <project_id> --only storyboard_generation --episodes 1
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml.example --project <project_id> --only ref_frame_generation --episodes 1,3
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml.example --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
-```
-
-Windows shortcut:
-
-```powershell
-run\start.cmd --config config.yaml --project <project_id>
-run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation
-run\start.cmd --generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1
-run\start.cmd --generation --config config.yaml --project <project_id>
-run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_dialogue_audio_generation --episodes 1
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
-```
-
-`--episodes` accepts comma lists, ranges, and episode keys, for example `1,3`, `1-3`, and `episode_001,episode_003`. It is only used by the generation workflow.
-
-`--shots` accepts comma lists, ranges, shot indexes, and shot ids inside the selected episodes, for example `1-3`, `1,3`, `shot_003`, and `episode_001_shot_1`. Use it with generation nodes after `storyboard_generation`, such as `ref_frame_generation` or `shot_video_generation`.
-
-`--only` can target one node in either workflow. Common examples:
-
-```powershell
-run\start.cmd --config config.yaml --project <project_id> --only bgm_generation
-run\start.cmd --generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_dialogue_audio_generation --episodes 1
-run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1-2
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes episode_001
 ```
