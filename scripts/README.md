@@ -109,3 +109,11 @@ Smoke test RightCode image generation:
 ```bash
 D:/miniforge3/envs/autodrama/python.exe scripts/rightcode_image_smoke.py --config config.yaml
 ```
+
+Preview the final shot video prompt without submitting a video task:
+
+```bash
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/video_prompt_preview_smoke.py --config config.yaml --project <project_id> --episode 1 --shot 1
+```
+
+If `--project` is omitted, the script creates a temporary fake project under `.tmp/smoke/` and previews that fake storyboard prompt.

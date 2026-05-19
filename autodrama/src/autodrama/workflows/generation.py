@@ -108,10 +108,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
     def _shot_video_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
         parts = [
             self._visual_style_prompt(state),
-            f"剧集: {episode.episode_key}",
             "视频片段生成要求:",
             shot.video_prompt,
-            f"目标时长: {shot.duration_seconds:.2f} 秒。",
         ]
         if shot.start_frame_source == "previous_shot_last_frame":
             parts.append(
@@ -122,9 +120,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
                 parts.append(f"继承理由: {shot.start_frame_inheritance_reason}")
         else:
             parts.append("起始参考: 以本片段参考帧为首帧视觉基准，保持人物、场景和道具一致。")
-        if shot.dialogue:
-            parts.append("对白节奏: " + " / ".join(shot.dialogue))
-        parts.append("生成一个连续视频片段，不要做多镜头混剪；不要生成字幕、水印、片头片尾、额外文字或无关角色。")
         return "\n".join(item for item in parts if item)
 
     async def _run_generation_node_for_episode(
