@@ -7,7 +7,7 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
-from autodrama.core.ids import normalize_id
+from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
     BGM,
     Layout,
@@ -1517,8 +1517,8 @@ class PregenWorkflow:
         )
         output = await self.asset_service.prop_design(state, provider)
         state.props = {
-            normalize_id("prop", item.name): Prop(
-                id=normalize_id("prop", item.name),
+            self._prop_asset_id(item.name, item.status): Prop(
+                id=self._prop_asset_id(item.name, item.status),
                 name=item.name,
                 desc=item.desc,
                 prompt=item.prompt,
@@ -1530,6 +1530,100 @@ class PregenWorkflow:
         self.repo.save_node_output(project_dir, "prop_design", output)
         return state
 
+    @staticmethod
+    def _prop_status_key(value: object) -> str:
+        status = str(value or "normal").strip().lower()
+        return slugify(status, fallback="normal").lower() or "normal"
+
+    @classmethod
+    def _prop_asset_id(cls, name: str, status: object) -> str:
+        prop_id = normalize_id("prop", name)
+        status_key = cls._prop_status_key(status)
+        if status_key != "normal" and not prop_id.endswith(f"_{status_key}"):
+            prop_id = f"{prop_id}_{status_key}"
+        return prop_id
+
+    @classmethod
+    def _prop_variant_base_name(cls, prop: Prop) -> str:
+        name = str(prop.name).strip()
+        status_key = cls._prop_status_key(prop.status)
+        suffixes = [status_key]
+        if status_key != "normal":
+            suffixes.append("normal")
+        for suffix in suffixes:
+            for separator in ("_", "-"):
+                marker = f"{separator}{suffix}"
+                if name.lower().endswith(marker) and len(name) > len(marker):
+                    return name[: -len(marker)].strip() or name
+        return name
+
+    @classmethod
+    def _prop_variant_base_key(cls, prop: Prop) -> str:
+        return normalize_id("prop", cls._prop_variant_base_name(prop))
+
+    @classmethod
+    def _ordered_props_for_generation(cls, props: list[Prop]) -> list[Prop]:
+        normal_base_keys = {
+            cls._prop_variant_base_key(prop)
+            for prop in props
+            if cls._prop_status_key(prop.status) == "normal"
+        }
+        indexed = list(enumerate(props))
+        ordered = sorted(
+            indexed,
+            key=lambda item: (
+                1
+                if cls._prop_status_key(item[1].status) != "normal"
+                and cls._prop_variant_base_key(item[1]) in normal_base_keys
+                else 0,
+                item[0],
+            ),
+        )
+        return [prop for _, prop in ordered]
+
+    @classmethod
+    def _normal_props_by_variant_base(cls, props: list[Prop]) -> dict[str, Prop]:
+        normal_props: dict[str, Prop] = {}
+        for prop in props:
+            if cls._prop_status_key(prop.status) != "normal":
+                continue
+            normal_props.setdefault(cls._prop_variant_base_key(prop), prop)
+        return normal_props
+
+    @classmethod
+    def _prop_reference_refs(
+        cls,
+        project_dir: Path,
+        prop: Prop,
+        normal_props_by_base: dict[str, Prop],
+    ) -> list | None:
+        if cls._prop_status_key(prop.status) == "normal":
+            return None
+        normal_prop = normal_props_by_base.get(cls._prop_variant_base_key(prop))
+        if normal_prop is None or normal_prop is prop or not normal_prop.asset_path:
+            return None
+        reference_path = project_dir / normal_prop.asset_path
+        if not reference_path.exists() or not reference_path.is_file():
+            raise ValueError(
+                f"Cannot use normal prop reference for {prop.id}: missing file {normal_prop.asset_path}"
+            )
+
+        from autodrama.providers.base import AssetRef
+
+        return [
+            AssetRef(
+                id=normal_prop.asset_id or normal_prop.id,
+                type="image",
+                path=str(reference_path),
+                metadata={
+                    "asset_type": "prop",
+                    "name": normal_prop.name,
+                    "status": normal_prop.status,
+                    "reference_for": prop.id,
+                },
+            )
+        ]
+
     async def _run_prop_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("prop")
         get_logger().info(
@@ -1538,14 +1632,19 @@ class PregenWorkflow:
             getattr(provider, "model", "-"),
         )
         generated: list[StaticAssetGenerationItem] = []
-        props = list(state.props.values())
+        props = self._ordered_props_for_generation(list(state.props.values()))
+        normal_props_by_base = self._normal_props_by_variant_base(props)
         get_logger().info(
             "node=prop_image_generation total_images=%d",
             len(props),
         )
         for prop in props:
+            refs = None
+            if getattr(provider, "supports_reference_images", False):
+                refs = self._prop_reference_refs(project_dir, prop, normal_props_by_base)
             result = await provider.generate_image(
                 prop.prompt,
+                refs=refs,
                 metadata={
                     "node_name": "prop_image_generation",
                     "project_id": state.project_id,

@@ -20,6 +20,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from autodrama.config import load_settings  # noqa: E402
+from autodrama.providers.base import AssetRef  # noqa: E402
 from autodrama.providers.rightcode import RightCodeImageProvider  # noqa: E402
 
 
@@ -42,6 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default=None, help="Directory for response JSON and generated image.")
     parser.add_argument("--output-format", default=None, help="Optional output_format request parameter, e.g. png/webp.")
     parser.add_argument("--response-format", default=None, help="Optional response_format request parameter.")
+    parser.add_argument(
+        "--reference-image",
+        action="append",
+        default=[],
+        help="Optional local reference image path. Can be repeated; sent as base64 data URLs.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print sanitized request details without calling RightCode.")
     return parser
 
@@ -52,6 +59,10 @@ def default_output_dir() -> Path:
 
 
 def sanitize_response(value: Any) -> Any:
+    if isinstance(value, str):
+        if value.startswith("data:image/") and ";base64," in value:
+            return f"<base64 image data URL omitted; chars={len(value)}>"
+        return value
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for key, nested in value.items():
@@ -107,6 +118,16 @@ def normalize_base64(data: str) -> tuple[str, str]:
     if data.startswith("data:") and ";base64," in data:
         data = data.split(";base64,", 1)[1]
     return data, extension
+
+
+def reference_refs(paths: list[str]) -> list[AssetRef]:
+    refs: list[AssetRef] = []
+    for value in paths:
+        path = Path(value)
+        if not path.is_absolute():
+            path = (ROOT_DIR / path).resolve()
+        refs.append(AssetRef(id=path.stem, type="image", path=str(path)))
+    return refs
 
 
 async def save_first_image(
@@ -166,6 +187,7 @@ async def main_async(args: argparse.Namespace) -> int:
         metadata["output_format"] = args.output_format
     if args.response_format:
         metadata["response_format"] = args.response_format
+    refs = reference_refs(args.reference_image)
 
     print(f"provider={provider.name}")
     print(f"endpoint={provider.endpoint}")
@@ -173,6 +195,7 @@ async def main_async(args: argparse.Namespace) -> int:
     print(f"key_present={bool(provider.api_key)}")
     print(f"size={args.size or provider.settings.options.get('size') or provider.settings.options.get('image_size') or '-'}")
     print(f"n={metadata.get('n', provider.settings.options.get('n', '-'))}")
+    print(f"reference_images={len(refs)}")
     print(f"output_dir={output_dir}")
 
     if not provider.api_key:
@@ -180,15 +203,15 @@ async def main_async(args: argparse.Namespace) -> int:
         return 1
 
     if args.dry_run:
-        payload = provider._build_chat_payload(args.prompt, size=args.size, metadata=metadata)
+        payload = provider.build_payload(args.prompt, refs=refs, size=args.size, metadata=metadata)
         payload = {key: value for key, value in payload.items() if value is not None}
         print("dry_run=true")
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(json.dumps(sanitize_response(payload), ensure_ascii=False, indent=2))
         return 0
 
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
-        result = await provider.generate_image(args.prompt, size=args.size, metadata=metadata)
+        result = await provider.generate_image(args.prompt, refs=refs, size=args.size, metadata=metadata)
         image_path = await save_first_image(
             provider,
             image_data=result.image_data,

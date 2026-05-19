@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from autodrama.config import ProviderSettings, RuntimeSettings  # noqa: E402
+from autodrama.providers.base import AssetRef  # noqa: E402
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider  # noqa: E402
 
 
@@ -21,15 +23,38 @@ def main() -> int:
         options={"size": "1024x1024", "n": 1},
     )
     provider = RightCodeImageProvider(settings, RuntimeSettings())
-    payload = provider._build_chat_payload("A clean test image.", metadata={})
-    if provider.endpoint != "https://www.right.codes/draw/v1/chat/completions":
+
+    tmp_dir = ROOT_DIR / ".tmp" / "smoke" / "rightcode_image_payload"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    reference_path = tmp_dir / "reference.png"
+    reference_path.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/luz7XwAAAABJRU5ErkJggg=="
+        )
+    )
+
+    payload = provider.build_payload(
+        "A clean test image.",
+        refs=[AssetRef(id="reference", type="image", path=str(reference_path))],
+        metadata={},
+    )
+    if provider.endpoint != "https://www.right.codes/draw/v1/images/generations":
         raise AssertionError(f"Unexpected endpoint: {provider.endpoint}")
     if payload["model"] != "gpt-image-2":
         raise AssertionError(f"Unexpected model: {payload['model']}")
-    if payload["messages"][0]["content"] != "A clean test image.":
-        raise AssertionError("Prompt was not placed in messages content")
-    if "prompt" in payload:
-        raise AssertionError("Chat completions payload should not use top-level prompt")
+    if payload["prompt"] != "A clean test image.":
+        raise AssertionError("Prompt was not placed in the top-level OpenAI image payload")
+    if "messages" in payload:
+        raise AssertionError("OpenAI image generation payload should not use chat messages")
+    if payload.get("size") != "1024x1024":
+        raise AssertionError(f"Unexpected size: {payload.get('size')}")
+    if payload.get("n") != 1:
+        raise AssertionError(f"Unexpected n: {payload.get('n')}")
+    images = payload.get("image")
+    if not isinstance(images, list) or len(images) != 1:
+        raise AssertionError(f"Reference image was not sent as an image array: {images}")
+    if not str(images[0]).startswith("data:image/png;base64,"):
+        raise AssertionError("Reference image was not encoded as a png data URL")
 
     image_urls, image_data = provider._extract_images(
         {
@@ -54,9 +79,10 @@ def main() -> int:
     if image_data != ["ZmFrZV9pbWFnZQ=="]:
         raise AssertionError(f"Unexpected image data: {image_data}")
 
-    print("rightcode_chat_image_payload_smoke=ok")
+    print("rightcode_image_payload_smoke=ok")
     print(f"endpoint={provider.endpoint}")
     print(f"model={payload['model']}")
+    print(f"reference_path={reference_path}")
     return 0
 
 
