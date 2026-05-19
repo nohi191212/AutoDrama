@@ -66,8 +66,8 @@ async def main_async() -> int:
 
     slot = json.loads((project_dir / "slots" / "episode_001.json").read_text(encoding="utf-8"))
     shots = slot["shots"]
-    require(shots[0]["video_asset_path"], "first shot video was not generated")
-    require(not shots[1]["video_asset_path"], "second shot video should not be generated")
+    require(shots[0].get("video_asset_path"), "first shot video was not generated")
+    require(not shots[1].get("video_asset_path"), "second shot video should not be generated")
 
     node_output = json.loads(
         (project_dir / "assets" / "json" / "nodes" / "shot_video_generation.json").read_text(encoding="utf-8")

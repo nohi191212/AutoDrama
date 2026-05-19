@@ -152,7 +152,10 @@ async def main_async() -> int:
             all("bgm_id" not in shot for shot in slot["shots"]),
             f"{episode_key} should not include shot-level bgm_id",
         )
-        require('"dialogue_audio_assets"' in slot_text, f"{episode_key} missing dialogue audio assets")
+        require(
+            '"assets/audios/shot_dialogues/' not in slot_text,
+            f"{episode_key} generated dialogue audio in the default generation flow",
+        )
         require('"assets/images/ref_frames/' in slot_text, f"{episode_key} missing ref frame")
         require('"assets/videos/shots/' in slot_text, f"{episode_key} missing shot video")
         require('"solidified_asset_ids"' in slot_text, f"{episode_key} missing solidified asset ids")

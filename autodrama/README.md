@@ -26,12 +26,13 @@ Implemented scope:
 Dynamic shot-level assets now live in a separate workflow:
 
 1. `storyboard_generation`
-2. `shot_dialogue_audio_generation`
-3. `ref_frame_generation`
-4. `shot_video_generation`
-5. `dynamic_asset_solidification`
+2. `ref_frame_generation`
+3. `shot_video_generation`
+4. `dynamic_asset_solidification`
 
-`run generation` processes selected episodes in episode order. For each episode it writes the storyboard slot to `slots/{episode_key}.json`, generates dialogue audio, reference frames, shot videos, and solidified dynamic asset metadata back into that slot before moving to the next episode. Completed storyboard summaries are stored in `assets/json/storyboard_history.json` and injected into later storyboard prompts so following episodes can preserve continuity. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
+`shot_dialogue_audio_generation` is implemented but skipped by the default generation flow. Run it explicitly with `--only shot_dialogue_audio_generation` when dialogue audio assets are needed.
+
+`run generation` processes selected episodes in episode order. For each episode it writes the storyboard slot to `slots/{episode_key}.json`, generates reference frames, shot videos, and solidified dynamic asset metadata back into that slot before moving to the next episode. Completed storyboard summaries are stored in `assets/json/storyboard_history.json` and injected into later storyboard prompts so following episodes can preserve continuity. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
 
 ## Provider routing
 
@@ -39,7 +40,7 @@ The default production routing in `config.yaml` is:
 
 - `text.bgm_plan: aliyun` for `bgm_design`.
 - `music.bgm: minimax` for `bgm_generation` with MiniMax `music-2.6`.
-- `audio.speech: volcengine` for role and shot dialogue TTS.
+- `audio.speech: volcengine` for role TTS and optional shot dialogue TTS.
 - `image.role`, `image.prop`, and `image.layout`: `rightcode` for reusable global/static image assets.
 - `image.ref_frame: volcengine` for shot-level storyboard/reference frames with Seedream 5.0 lite, reference images, and 9:16 2K output.
 - `video.shot: volcengine` for shot videos.

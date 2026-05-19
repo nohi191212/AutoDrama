@@ -32,6 +32,13 @@ GENERATION_NODES = [
     "dynamic_asset_solidification",
 ]
 
+DEFAULT_GENERATION_NODES = [
+    "storyboard_generation",
+    "ref_frame_generation",
+    "shot_video_generation",
+    "dynamic_asset_solidification",
+]
+
 
 class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
     @staticmethod
@@ -182,6 +189,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         for node_name, output in run_outputs.items():
             self.repo.save_node_output(project_dir, node_name, output)
 
+    @staticmethod
+    def _target_generation_nodes(until: str, only: str | None) -> list[str]:
+        if only:
+            return [only]
+        if until in DEFAULT_GENERATION_NODES:
+            return DEFAULT_GENERATION_NODES[: DEFAULT_GENERATION_NODES.index(until) + 1]
+        return GENERATION_NODES[: GENERATION_NODES.index(until) + 1]
+
     def _sort_episode_keys_in_story_order(self, state: ProjectState, episode_keys: list[str]) -> list[str]:
         selected = set(episode_keys)
         ordered = [
@@ -236,7 +251,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         selected_episode_keys = self._sort_episode_keys_in_story_order(state, selected_episode_keys)
         selected_set = set(selected_episode_keys)
 
-        target_nodes = [only] if only else GENERATION_NODES[: GENERATION_NODES.index(until) + 1]
+        target_nodes = self._target_generation_nodes(until, only)
         if shot_selectors and "storyboard_generation" in target_nodes:
             raise ValueError("--shots can only be used with generation nodes after storyboard_generation")
         run_outputs = self._empty_run_outputs(target_nodes)

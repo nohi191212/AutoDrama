@@ -63,7 +63,7 @@ def _episode_status(project_dir: Path, episode_key: str) -> dict[str, EpisodeGen
     video_done = all(bool(shot.video_asset_path or shot.video_task_id) for shot in episode.shots)
     solidified_done = all(bool(shot.solidified_asset_ids) for shot in episode.shots)
     return {
-        "dialogue_audio": "completed" if (not has_dialogue or dialogue_done) else "pending",
+        "dialogue_audio": "completed" if (not has_dialogue or dialogue_done) else "skipped",
         "ref_frame": "completed" if ref_done else "pending",
         "shot_video": "completed" if video_done else "pending",
         "solidified": "completed" if solidified_done else "pending",
@@ -169,6 +169,7 @@ def update_checklist_from_state(
         "instructions": (
             "把某集的 generate 改为 true 后，run generation 会生成或重新生成该集动态资产；"
             "成功后系统会自动把 generate 改回 false。"
+            "默认流程会跳过 shot_dialogue_audio_generation；如需对白音频，单独运行该节点。"
         ),
         "episodes": episodes,
     }

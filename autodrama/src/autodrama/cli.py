@@ -8,7 +8,7 @@ from autodrama.config import load_settings
 from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
-from autodrama.workflows.generation import GENERATION_NODES, GenerationWorkflow
+from autodrama.workflows.generation import DEFAULT_GENERATION_NODES, GENERATION_NODES, GenerationWorkflow
 from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow
 
 
@@ -96,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     generation_parser = run_subparsers.add_parser("generation", help="Run dynamic shot-level asset generation")
     generation_parser.add_argument("--config", required=True)
     generation_parser.add_argument("--project")
-    generation_parser.add_argument("--until", choices=GENERATION_NODES, default=GENERATION_NODES[-1])
+    generation_parser.add_argument("--until", choices=GENERATION_NODES, default=DEFAULT_GENERATION_NODES[-1])
     generation_parser.add_argument(
         "--only",
         "--node",
