@@ -15,6 +15,7 @@ from autodrama.providers.base import (
     VoiceDesigner,
 )
 from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
+from autodrama.providers.elevenlabs.music.compose import ElevenLabsMusicProvider
 from autodrama.providers.local.mock.fake import (
     FakeImageProvider,
     FakeMusicProvider,
@@ -36,6 +37,7 @@ ALIYUN_VIDEO_PROVIDER_NAMES = {"aliyun", "wanxiang"}
 ALIYUN_AUDIO_PROVIDER_NAMES = {"aliyun", "qwen_tts"}
 ALIYUN_MUSIC_PROVIDER_NAMES = {"aliyun", "bailian"}
 MINIMAX_MUSIC_PROVIDER_NAMES = {"minimax", "minimax_music"}
+ELEVENLABS_MUSIC_PROVIDER_NAMES = {"elevenlabs", "elevenlabs_music"}
 VOLCENGINE_IMAGE_PROVIDER_NAMES = {"volcengine", "seedream", "volcengine_seedream"}
 
 
@@ -147,6 +149,8 @@ class ProviderRouter:
             return self._fake_music
         if provider_name in MINIMAX_MUSIC_PROVIDER_NAMES:
             return MiniMaxMusicProvider(self._settings_for("minimax"), self.settings.runtime)
+        if provider_name in ELEVENLABS_MUSIC_PROVIDER_NAMES:
+            return ElevenLabsMusicProvider(self._settings_for("elevenlabs"), self.settings.runtime)
         if provider_name in ALIYUN_MUSIC_PROVIDER_NAMES:
             return BailianMusicProvider(self._dashscope_root_settings(provider_name), self.settings.runtime)
         raise ValueError(f"Unsupported music provider: {provider_name}")

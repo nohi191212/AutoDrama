@@ -85,16 +85,16 @@ async def main_async() -> int:
     await generation_workflow.run(
         project_dir,
         until="dynamic_asset_solidification",
-        only="shot_dialogue_audio_generation",
+        only="shot_bgm_generation",
         episode_keys=parse_episode_keys("2"),
     )
     require(
-        '"assets/audios/shot_dialogues/' not in shot_text(project_dir, "episode_001"),
-        "episode_001 got dialogue audio during episode_002-only generation",
+        '"assets/audios/shot_bgms/' not in shot_text(project_dir, "episode_001"),
+        "episode_001 got shot BGM during episode_002-only generation",
     )
     require(
-        '"assets/audios/shot_dialogues/' in shot_text(project_dir, "episode_002"),
-        "episode_002 did not get dialogue audio",
+        '"assets/audios/shot_bgms/' in shot_text(project_dir, "episode_002"),
+        "episode_002 did not get shot BGM",
     )
 
     await generation_workflow.run(

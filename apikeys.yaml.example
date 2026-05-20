@@ -13,6 +13,7 @@ DEEPSEEK_API_KEY: ""
 # MiniMax audio/music, if enabled
 MINIMAX_API_KEY: ""
 MINIMAX_GROUP_ID: ""
+ELEVENLABS_API_KEY: ""
 
 # Volcengine Speech new console authentication, preferred for TTS.
 # Also used as the Volcengine Ark API key for Seedance when configured by

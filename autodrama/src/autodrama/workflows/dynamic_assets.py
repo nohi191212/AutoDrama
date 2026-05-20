@@ -12,6 +12,10 @@ from autodrama.core.schemas import (
     ProjectState,
     RefFrameGenerationItem,
     RefFrameGenerationOutput,
+    ShotBGMAsset,
+    ShotBGMGenerationItem,
+    ShotBGMGenerationOutput,
+    ShotBGMSoundDesignOutput,
     ShotDialogueAudioGenerationItem,
     ShotDialogueAudioGenerationOutput,
     ShotVideoGenerationItem,
@@ -195,6 +199,136 @@ class DynamicAssetNodeMixin:
                 generated_dialogue_audios=generated,
                 skipped_dialogue_lines=skipped,
             ),
+        )
+        return state
+
+    async def _shot_bgm_sound_description(
+        self,
+        *,
+        state: ProjectState,
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        provider,
+    ) -> str:
+        prompt = self.prompts.render(
+            "shot_bgm_design",
+            title=state.title,
+            episode_key=episode.episode_key,
+            shot_id=shot.shot_id,
+            shot_title=shot.title,
+            duration_seconds=round(float(shot.duration_seconds or 0), 3),
+            transition=shot.transition or "",
+            video_prompt=shot.video_prompt,
+            ref_frame_prompt=shot.ref_frame_prompt,
+            dialogue="\n".join(shot.dialogue),
+            visual_style_prompt=state.metadata.get("visual_style_prompt", ""),
+        )
+        output = await provider.generate_json(
+            prompt,
+            ShotBGMSoundDesignOutput,
+            temperature=0.45,
+            metadata={
+                "node_name": "shot_bgm_generation",
+                "project_id": state.project_id,
+                "episode_key": episode.episode_key,
+                "shot_id": shot.shot_id,
+                "duration_seconds": shot.duration_seconds,
+            },
+        )
+        return output.sound_description
+
+    async def _run_shot_bgm_generation_for_episode(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        episode_key: str,
+    ) -> ShotBGMGenerationOutput:
+        text_provider = self.router.text("shot_bgm")
+        music_provider = self.router.music("shot_bgm")
+        get_logger().info(
+            "node=shot_bgm_generation text_provider=%s text_model=%s music_provider=%s music_model=%s",
+            getattr(text_provider, "name", "unknown"),
+            getattr(text_provider, "model", "-"),
+            getattr(music_provider, "name", "unknown"),
+            getattr(music_provider, "model", "-"),
+        )
+        generated: list[ShotBGMGenerationItem] = []
+        episode = self._load_storyboard_episode(project_dir, episode_key)
+        changed = False
+        for shot in self._active_shots_for_episode(episode):
+            with log_context(episode_key=episode.episode_key, shot_id=shot.shot_id):
+                asset_id = normalize_id(f"{shot.shot_id}", "bgm")
+                sound_description = await self._shot_bgm_sound_description(
+                    state=state,
+                    episode=episode,
+                    shot=shot,
+                    provider=text_provider,
+                )
+                state.budget.used_text_calls += 1
+                duration_seconds = float(shot.duration_seconds or 0)
+                result = await music_provider.generate_music(
+                    sound_description,
+                    metadata={
+                        "node_name": "shot_bgm_generation",
+                        "project_id": state.project_id,
+                        "episode_key": episode.episode_key,
+                        "shot_id": shot.shot_id,
+                        "asset_id": asset_id,
+                        "duration_seconds": duration_seconds,
+                        "music_length_ms": max(3000, round(duration_seconds * 1000)),
+                        "force_instrumental": True,
+                    },
+                )
+                asset_path = await self._write_generated_music(
+                    project_dir,
+                    self._audio_asset_path(project_dir, "shot_bgms", asset_id, result.audio_format),
+                    result,
+                )
+                asset = ShotBGMAsset(
+                    asset_id=asset_id,
+                    sound_description=sound_description,
+                    asset_path=asset_path,
+                    provider=result.provider,
+                    model=result.model,
+                    duration_seconds=result.duration_seconds or duration_seconds,
+                    response_format=result.audio_format,
+                    request_id=result.request_id,
+                    usage=result.usage,
+                    raw_response=result.raw_response,
+                )
+                if shot.shot_bgm_assets:
+                    changed = True
+                shot.shot_bgm_assets = [asset]
+                generated.append(
+                    ShotBGMGenerationItem(
+                        episode_key=episode.episode_key,
+                        shot_id=shot.shot_id,
+                        asset=asset,
+                    )
+                )
+                self._save_storyboard_episode(project_dir, episode)
+                get_logger().info(
+                    "%s bgm generated, saved in %s",
+                    shot.shot_id,
+                    asset_path,
+                    extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
+                )
+                changed = True
+
+        if changed:
+            self._save_storyboard_episode(project_dir, episode)
+        return ShotBGMGenerationOutput(generated_bgms=generated)
+
+    async def _run_shot_bgm_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        generated: list[ShotBGMGenerationItem] = []
+        for episode_key in self._active_episode_keys_in_order(state):
+            output = await self._run_shot_bgm_generation_for_episode(project_dir, state, episode_key)
+            generated.extend(output.generated_bgms)
+
+        self.repo.save_node_output(
+            project_dir,
+            "shot_bgm_generation",
+            ShotBGMGenerationOutput(generated_bgms=generated),
         )
         return state
 
@@ -874,6 +1008,25 @@ class DynamicAssetNodeMixin:
                             "line_index": audio.line_index,
                             "text": audio.text,
                             "emotion": audio.emotion,
+                        },
+                    )
+                )
+            for bgm in shot.shot_bgm_assets:
+                shot.solidified_asset_ids.append(bgm.asset_id)
+                solidified.append(
+                    DynamicAssetSolidificationItem(
+                        asset_id=bgm.asset_id,
+                        asset_type="shot_bgm",
+                        episode_key=episode.episode_key,
+                        shot_id=shot.shot_id,
+                        asset_path=bgm.asset_path,
+                        source_node="shot_bgm_generation",
+                        metadata={
+                            "sound_description": bgm.sound_description,
+                            "provider": bgm.provider,
+                            "model": bgm.model,
+                            "duration_seconds": bgm.duration_seconds,
+                            "response_format": bgm.response_format,
                         },
                     )
                 )

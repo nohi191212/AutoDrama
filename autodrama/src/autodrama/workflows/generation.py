@@ -9,7 +9,7 @@ from autodrama.core.schemas import (
     DynamicAssetSolidificationOutput,
     ProjectState,
     RefFrameGenerationOutput,
-    ShotDialogueAudioGenerationOutput,
+    ShotBGMGenerationOutput,
     ShotVideoGenerationOutput,
     StoryboardEpisodeOutput,
     StoryboardGenerationOutput,
@@ -26,7 +26,7 @@ from autodrama.workflows.storyboard_history import update_storyboard_history_fro
 
 GENERATION_NODES = [
     "storyboard_generation",
-    "shot_dialogue_audio_generation",
+    "shot_bgm_generation",
     "ref_frame_generation",
     "shot_video_generation",
     "dynamic_asset_solidification",
@@ -34,6 +34,7 @@ GENERATION_NODES = [
 
 DEFAULT_GENERATION_NODES = [
     "storyboard_generation",
+    "shot_bgm_generation",
     "ref_frame_generation",
     "shot_video_generation",
     "dynamic_asset_solidification",
@@ -144,11 +145,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         outputs: dict[str, BaseModel] = {}
         if "storyboard_generation" in target_nodes:
             outputs["storyboard_generation"] = StoryboardGenerationOutput(generated_episodes=[])
-        if "shot_dialogue_audio_generation" in target_nodes:
-            outputs["shot_dialogue_audio_generation"] = ShotDialogueAudioGenerationOutput(
-                generated_dialogue_audios=[],
-                skipped_dialogue_lines=[],
-            )
+        if "shot_bgm_generation" in target_nodes:
+            outputs["shot_bgm_generation"] = ShotBGMGenerationOutput(generated_bgms=[])
         if "ref_frame_generation" in target_nodes:
             outputs["ref_frame_generation"] = RefFrameGenerationOutput(generated_ref_frames=[])
         if "shot_video_generation" in target_nodes:
@@ -164,13 +162,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
             if not isinstance(current, StoryboardGenerationOutput) or not isinstance(output, StoryboardGenerationOutput):
                 raise TypeError("storyboard_generation output type mismatch")
             current.generated_episodes.extend(output.generated_episodes)
-        elif node_name == "shot_dialogue_audio_generation":
-            if not isinstance(current, ShotDialogueAudioGenerationOutput) or not isinstance(
-                output, ShotDialogueAudioGenerationOutput
-            ):
-                raise TypeError("shot_dialogue_audio_generation output type mismatch")
-            current.generated_dialogue_audios.extend(output.generated_dialogue_audios)
-            current.skipped_dialogue_lines.extend(output.skipped_dialogue_lines)
+        elif node_name == "shot_bgm_generation":
+            if not isinstance(current, ShotBGMGenerationOutput) or not isinstance(output, ShotBGMGenerationOutput):
+                raise TypeError("shot_bgm_generation output type mismatch")
+            current.generated_bgms.extend(output.generated_bgms)
         elif node_name == "ref_frame_generation":
             if not isinstance(current, RefFrameGenerationOutput) or not isinstance(output, RefFrameGenerationOutput):
                 raise TypeError("ref_frame_generation output type mismatch")

@@ -26,21 +26,24 @@ Implemented scope:
 Dynamic shot-level assets now live in a separate workflow:
 
 1. `storyboard_generation`
-2. `ref_frame_generation`
-3. `shot_video_generation`
-4. `dynamic_asset_solidification`
+2. `shot_bgm_generation`
+3. `ref_frame_generation`
+4. `shot_video_generation`
+5. `dynamic_asset_solidification`
 
-`shot_dialogue_audio_generation` is implemented but skipped by the default generation flow. Run it explicitly with `--only shot_dialogue_audio_generation` when dialogue audio assets are needed.
+`shot_bgm_generation` generates per-shot background audio in two steps: DeepSeek writes an English timed sound description from the storyboard shot, then ElevenLabs Music Compose renders the audio.
 
-`run generation` processes selected episodes in episode order. For each episode it writes the storyboard shot to `shots/{episode_key}.json`, generates reference frames, shot videos, and solidified dynamic asset metadata back into that shot before moving to the next episode. Completed storyboard summaries are stored in `assets/json/storyboard_history.json` and injected into later storyboard prompts so following episodes can preserve continuity. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
+`run generation` processes selected episodes in episode order. For each episode it writes the storyboard shot to `shots/{episode_key}.json`, generates shot BGM, reference frames, shot videos, and solidified dynamic asset metadata back into that shot before moving to the next episode. Completed storyboard summaries are stored in `assets/json/storyboard_history.json` and injected into later storyboard prompts so following episodes can preserve continuity. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
 
 ## Provider routing
 
 The default production routing in `config.yaml` is:
 
 - `text.bgm_plan: aliyun` for `bgm_design`.
+- `text.shot_bgm: deepseek` for shot-level sound description design.
 - `music.bgm: minimax` for `bgm_generation` with MiniMax `music-2.6`.
-- `audio.speech: volcengine` for role TTS and optional shot dialogue TTS.
+- `music.shot_bgm: elevenlabs` for per-shot ElevenLabs Music Compose audio.
+- `audio.speech: volcengine` for role TTS.
 - `image.role`, `image.prop`, `image.layout`, and `image.ref_frame`: `rightcode` for GPT Image 2 static assets and shot-level reference frames with reference images.
 - Set `image.ref_frame: volcengine` to switch shot-level reference frames back to Seedream 5.0 lite.
 - `video.shot: volcengine` for shot videos.
@@ -193,7 +196,7 @@ Run exactly one node:
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only role_voice_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only bgm_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only shot_dialogue_audio_generation --episodes 1
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only shot_bgm_generation --episodes 1
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1,3
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only dynamic_asset_solidification --episodes episode_001
@@ -222,7 +225,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --only sh
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes episode_001 --shots episode_001_shot_1
 ```
 
-`--shots` can only be used with generation nodes after `storyboard_generation`, such as `shot_dialogue_audio_generation`, `ref_frame_generation`, `shot_video_generation`, and `dynamic_asset_solidification`.
+`--shots` can only be used with generation nodes after `storyboard_generation`, such as `shot_bgm_generation`, `ref_frame_generation`, `shot_video_generation`, and `dynamic_asset_solidification`.
 
 ### 5. Common resume and rerun cases
 
@@ -245,10 +248,10 @@ Regenerate only storyboard for one episode:
 run\start.cmd --generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1 --force
 ```
 
-Regenerate dialogue audio after editing storyboard dialogue:
+Regenerate shot BGM after editing storyboard video prompts or timing:
 
 ```powershell
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_dialogue_audio_generation --episodes 1 --force
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_bgm_generation --episodes 1 --force
 ```
 
 Regenerate reference frames for selected shots:

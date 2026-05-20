@@ -105,6 +105,8 @@ class MiniMaxMusicProvider:
             "voice_id",
             "timber_weights",
             "stream",
+            "duration",
+            "duration_seconds",
         ):
             if optional_key in metadata:
                 payload[optional_key] = metadata[optional_key]

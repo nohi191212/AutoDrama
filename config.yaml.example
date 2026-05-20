@@ -128,6 +128,17 @@ providers:
       aigc_watermark: false
       music_timeout_seconds: 600
 
+  elevenlabs:
+    base_url: https://api.elevenlabs.io
+    api_key_env: ELEVENLABS_API_KEY
+    models:
+      music: music_v1
+    options:
+      output_format: mp3_44100_128
+      force_instrumental: true
+      respect_sections_durations: true
+      music_timeout_seconds: 600
+
   volcengine:
     base_url: https://openspeech.bytedance.com
     region: cn-beijing
@@ -237,6 +248,7 @@ routing:
     prop: deepseek
     layout: deepseek
     storyboard: deepseek
+    shot_bgm: deepseek
     edit_plan: aliyun
     bgm_plan: aliyun
   image:
@@ -255,5 +267,6 @@ routing:
     music: minimax
   music:
     bgm: minimax
+    shot_bgm: elevenlabs
   vision:
     media_review: aliyun

@@ -316,6 +316,15 @@ class EditingWorkflow(PregenWorkflow):
             )
             audio_layers.extend(dialogue_layers)
             missing_assets.extend(dialogue_missing)
+            shot_bgm_layers, shot_bgm_missing = self._build_shot_bgm_layers(
+                project_dir,
+                episode.episode_key,
+                shot,
+                cursor,
+                duration,
+            )
+            audio_layers.extend(shot_bgm_layers)
+            missing_assets.extend(shot_bgm_missing)
             subtitle_cues.extend(self._build_subtitle_cues(shot, cursor, duration, len(subtitle_cues)))
             cursor += duration
 
@@ -457,7 +466,7 @@ class EditingWorkflow(PregenWorkflow):
                 )
             return layers, missing
 
-        shot = shot_duration / max(len(assets), 1)
+        line_duration = shot_duration / max(len(assets), 1)
         for index, asset in enumerate(assets):
             if not self._project_path_exists(project_dir, asset.asset_path):
                 missing.append(
@@ -477,7 +486,7 @@ class EditingWorkflow(PregenWorkflow):
                     layer_id=f"{shot.shot_id}_dialogue_{asset.line_index:02d}",
                     layer_type="dialogue",
                     source_path=asset.asset_path or "",
-                    start_time=round(shot_start + shot * index + min(0.25, shot * 0.2), 3),
+                    start_time=round(shot_start + line_duration * index + min(0.25, line_duration * 0.2), 3),
                     volume=1.0,
                     metadata={
                         "shot_id": shot.shot_id,
@@ -485,6 +494,49 @@ class EditingWorkflow(PregenWorkflow):
                         "role_id": asset.role_id,
                         "role_name": asset.role_name,
                         "text": asset.text,
+                    },
+                )
+            )
+        return layers, missing
+
+    def _build_shot_bgm_layers(
+        self,
+        project_dir: Path,
+        episode_key: str,
+        shot: StoryboardShot,
+        shot_start: float,
+        shot_duration: float,
+    ) -> tuple[list[EditAudioLayer], list[EditMissingAsset]]:
+        layers: list[EditAudioLayer] = []
+        missing: list[EditMissingAsset] = []
+        for index, asset in enumerate(shot.shot_bgm_assets, start=1):
+            if not self._project_path_exists(project_dir, asset.asset_path):
+                missing.append(
+                    EditMissingAsset(
+                        asset_type="bgm",
+                        episode_key=episode_key,
+                        shot_id=shot.shot_id,
+                        asset_id=asset.asset_id,
+                        path=asset.asset_path,
+                        required=False,
+                        reason="Shot BGM file is missing; final video will be composed without this shot BGM layer.",
+                    )
+                )
+                continue
+            layers.append(
+                EditAudioLayer(
+                    layer_id=f"{shot.shot_id}_bgm_{index:02d}",
+                    layer_type="bgm",
+                    source_path=asset.asset_path or "",
+                    start_time=round(shot_start, 3),
+                    duration_seconds=round(shot_duration, 3),
+                    volume=0.75,
+                    fade_in_seconds=min(0.25, shot_duration / 6),
+                    fade_out_seconds=min(0.35, shot_duration / 5),
+                    metadata={
+                        "shot_id": shot.shot_id,
+                        "asset_id": asset.asset_id,
+                        "source_node": "shot_bgm_generation",
                     },
                 )
             )
@@ -501,10 +553,10 @@ class EditingWorkflow(PregenWorkflow):
             return []
 
         cues: list[EditSubtitleCue] = []
-        shot = shot_duration / max(len(shot.dialogue), 1)
+        line_duration = shot_duration / max(len(shot.dialogue), 1)
         for index, raw_line in enumerate(shot.dialogue):
-            start = shot_start + shot * index + min(0.2, shot * 0.2)
-            end = min(shot_start + shot_duration, start + max(1.0, shot * 0.75))
+            start = shot_start + line_duration * index + min(0.2, line_duration * 0.2)
+            end = min(shot_start + shot_duration, start + max(1.0, line_duration * 0.75))
             role_name, text = self._parse_dialogue_line(raw_line)
             cues.append(
                 EditSubtitleCue(

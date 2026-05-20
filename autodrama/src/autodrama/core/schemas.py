@@ -335,6 +335,19 @@ class ShotDialogueAudioAsset(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
+class ShotBGMAsset(BaseModel):
+    asset_id: str
+    sound_description: str
+    asset_path: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    duration_seconds: float | None = None
+    response_format: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
 class StoryboardShot(BaseModel):
     shot_id: str
     index: int
@@ -360,6 +373,7 @@ class StoryboardShot(BaseModel):
     ref_frame_prompt: str
     video_prompt: str
     dialogue_audio_assets: list[ShotDialogueAudioAsset] = Field(default_factory=list)
+    shot_bgm_assets: list[ShotBGMAsset] = Field(default_factory=list)
     ref_frame_asset_id: str | None = None
     ref_frame_asset_path: str | None = None
     ref_frame_provider: str | None = None
@@ -407,6 +421,20 @@ class ShotDialogueAudioGenerationOutput(BaseModel):
     skipped_dialogue_lines: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ShotBGMSoundDesignOutput(BaseModel):
+    sound_description: str
+
+
+class ShotBGMGenerationItem(BaseModel):
+    episode_key: str
+    shot_id: str
+    asset: ShotBGMAsset
+
+
+class ShotBGMGenerationOutput(BaseModel):
+    generated_bgms: list[ShotBGMGenerationItem]
+
+
 class RefFrameGenerationItem(BaseModel):
     episode_key: str
     shot_id: str
@@ -447,7 +475,7 @@ class ShotVideoGenerationOutput(BaseModel):
 
 class DynamicAssetSolidificationItem(BaseModel):
     asset_id: str
-    asset_type: Literal["shot_dialogue_audio", "ref_frame", "shot_video"]
+    asset_type: Literal["shot_dialogue_audio", "shot_bgm", "ref_frame", "shot_video"]
     episode_key: str
     shot_id: str
     asset_path: str | None = None

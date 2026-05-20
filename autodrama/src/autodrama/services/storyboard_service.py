@@ -44,6 +44,7 @@ class StoryboardService:
                     exclude_none=True,
                     exclude={
                         "dialogue_audio_assets",
+                        "shot_bgm_assets",
                         "ref_frame_asset_id",
                         "ref_frame_asset_path",
                         "ref_frame_provider",
