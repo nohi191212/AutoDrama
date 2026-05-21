@@ -160,6 +160,22 @@ async def main_async() -> int:
     require(state.roles["role_林舟"].source_chapters == ["第1章"], "林舟 source_chapters mismatch")
     require(state.metadata["role_design_generation_mode"] == "per_role_recursive", "role_design mode mismatch")
 
+    role_provider.role_design_prompts = {}
+    state = await workflow.run(
+        project_dir,
+        only="role_design",
+        episode_keys=["episode_002"],
+        force=True,
+    )
+    require(set(role_provider.role_design_prompts) == {"苏晚"}, "episode-scoped role_design reran unexpected roles")
+    require("role_林舟" in state.roles, "episode-scoped role_design dropped non-target existing role")
+    require("role_苏晚" in state.roles, "episode-scoped role_design missing target role")
+    require(state.metadata["role_design_active_episode_keys"] == ["episode_002"], "active episode metadata mismatch")
+    require(state.metadata["role_design_target_role_names"] == ["苏晚"], "target role metadata mismatch")
+    scoped_design = json.loads((project_dir / "assets" / "json" / "nodes" / "role_design.json").read_text(encoding="utf-8"))
+    scoped_role_names = {item["name"] for item in scoped_design["roles"]}
+    require(scoped_role_names == {"林舟", "苏晚"}, "episode-scoped role_design node output did not preserve roles")
+
     print("role_extract_design_scoping_smoke=ok")
     print(f"project_dir={project_dir}")
     return 0

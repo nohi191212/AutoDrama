@@ -63,7 +63,6 @@ PREGEN_NODES = [
     "bgm_generation",
 ]
 
-PREGEN_EPISODE_SCOPED_NODES: set[str] = set()
 SCRIPT_NOVEL_EXTRACT_BATCH_SIZE = 5
 
 
@@ -480,6 +479,23 @@ class PregenWorkflow:
         )
         return self._expected_episode_keys(state)
 
+    def _role_design_target_extract_roles(
+        self,
+        extract_roles: list[RoleExtractItem],
+        state: ProjectState,
+    ) -> list[RoleExtractItem]:
+        active_episode_keys = getattr(self, "_active_episode_keys", None)
+        if not active_episode_keys:
+            return extract_roles
+
+        active_set = {str(key) for key in active_episode_keys}
+        target_roles: list[RoleExtractItem] = []
+        for item in extract_roles:
+            role_episode_keys = set(self._role_episode_keys(item, state))
+            if role_episode_keys.intersection(active_set):
+                target_roles.append(item)
+        return target_roles
+
     @staticmethod
     def _format_previous_novel_chapters(novel_full: dict[str, str], episode_keys: list[str]) -> str:
         chunks: list[str] = []
@@ -518,10 +534,10 @@ class PregenWorkflow:
         self._apply_script_plan_settings(state)
         target_nodes = [only] if only else PREGEN_NODES[: PREGEN_NODES.index(until) + 1]
         selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
-        if selected_episode_keys and not PREGEN_EPISODE_SCOPED_NODES.intersection(target_nodes):
+        if selected_episode_keys and target_nodes != ["role_design"]:
             raise ValueError(
-                "--episodes is not supported for pregen nodes. storyboard_generation now belongs to "
-                "the generation workflow; run generation --only storyboard_generation --episodes ..."
+                "--episodes is only supported for pregen --only role_design. "
+                "Use run generation --only storyboard_generation --episodes ... for storyboard shots."
             )
         logger.info(
             "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s completed=%s",
@@ -1064,23 +1080,39 @@ class PregenWorkflow:
         if not extract_output.roles:
             raise ValueError("role_design requires at least one role from role_extract")
 
+        active_episode_keys = self._active_episode_keys_in_order(state) if getattr(self, "_active_episode_keys", None) else []
+        target_extract_roles = self._role_design_target_extract_roles(extract_output.roles, state)
+        if active_episode_keys:
+            get_logger().info(
+                "role_design episode-scoped rerun episodes=%s target_roles=%s",
+                ",".join(active_episode_keys),
+                ",".join(item.name for item in target_extract_roles) or "-",
+            )
+            if not target_extract_roles:
+                get_logger().warning(
+                    "role_design found no roles appearing in selected episodes: %s",
+                    ",".join(active_episode_keys),
+                )
+
         force_pregen = bool(getattr(self, "_force_pregen", False))
         self._clear_role_design_state(state)
 
         designed_by_key: dict[str, RoleDesignItem] = {}
-        existing_output = None if force_pregen else self._load_existing_role_design_output(project_dir)
+        existing_output = self._load_existing_role_design_output(project_dir)
         if existing_output is not None:
-            for existing_item in existing_output.roles:
-                if not self._role_design_item_complete(existing_item):
-                    continue
-                existing_key = self._role_name_key(existing_item.name)
-                designed_by_key[existing_key] = existing_item
-                self._apply_role_design_item(state, existing_item, speech_provider=speech_provider)
+            should_keep_existing = not force_pregen or bool(active_episode_keys)
+            if should_keep_existing:
+                for existing_item in existing_output.roles:
+                    if not self._role_design_item_complete(existing_item):
+                        continue
+                    existing_key = self._role_name_key(existing_item.name)
+                    designed_by_key[existing_key] = existing_item
+                    self._apply_role_design_item(state, existing_item, speech_provider=speech_provider)
 
         all_role_extracts = [item.model_dump(mode="json") for item in extract_output.roles]
-        for extract_item in extract_output.roles:
+        for extract_item in target_extract_roles:
             role_key = self._role_name_key(extract_item.name)
-            if role_key in designed_by_key:
+            if role_key in designed_by_key and not force_pregen:
                 get_logger().info("role_design %s already exists, skipped", extract_item.name)
                 continue
 
@@ -1112,6 +1144,10 @@ class PregenWorkflow:
             designed_by_key[role_key] = item
             state.budget.used_text_calls += 1
             state.metadata["role_design_generation_mode"] = "per_role_recursive"
+            state.metadata["role_design_active_episode_keys"] = active_episode_keys
+            state.metadata["role_design_target_role_names"] = [
+                item.name for item in target_extract_roles
+            ]
             state.metadata["role_design_designed_role_names"] = [
                 item.name for item in self._ordered_role_design_items(extract_output.roles, designed_by_key)
             ]
@@ -1124,6 +1160,8 @@ class PregenWorkflow:
 
         final_items = self._ordered_role_design_items(extract_output.roles, designed_by_key)
         state.metadata["role_design_generation_mode"] = "per_role_recursive"
+        state.metadata["role_design_active_episode_keys"] = active_episode_keys
+        state.metadata["role_design_target_role_names"] = [item.name for item in target_extract_roles]
         state.metadata["role_design_designed_role_names"] = [item.name for item in final_items]
         self.repo.save_node_output(
             project_dir,

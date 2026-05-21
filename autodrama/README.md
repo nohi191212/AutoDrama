@@ -32,6 +32,8 @@ Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at m
 
 `role_extract` reads the complete `novel_full` set and records each role's `episode_keys` and source chapter references. `role_design` then runs one role at a time, loading only that role's `novel_full` episodes, and writes identity, relationships, voice design, appearance prompt, intro video prompt, and role-bound prop design into the active role state.
 
+`run pregen --only role_design --episodes ...` is supported for role-scoped reruns. It only regenerates roles whose `role_extract.episode_keys` include the selected episode(s), while preserving existing role designs outside that episode when `assets/json/nodes/role_design.json` exists.
+
 Dynamic shot-level assets now live in a separate workflow:
 
 1. `storyboard_generation`
