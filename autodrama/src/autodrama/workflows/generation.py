@@ -91,7 +91,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
             f"剧集: {episode.episode_key}",
             "参考帧生成要求:",
             shot.ref_frame_prompt,
-            "输出规格: 16:9横屏单帧剧照，适配手机短剧画幅；主体完整，避免横版构图或左右大面积留白。",
         ]
         if layout:
             parts.append(f"场景设定: {layout.name} - {layout.desc}")
