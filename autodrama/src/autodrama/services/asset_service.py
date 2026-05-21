@@ -90,7 +90,7 @@ class AssetService:
         role_bound_props = [
             prop.model_dump(mode="json")
             for prop in state.props.values()
-            if prop.source == "role_appearance_design" or prop.owner_role_id
+            if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
         ]
         prompt = self.prompts.render(
             "prop_design",

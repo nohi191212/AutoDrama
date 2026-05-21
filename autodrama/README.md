@@ -7,19 +7,18 @@ Implemented scope:
 1. `script_outline`
 2. `script_novel`
 3. `script_novel_extract`
-4. `role_design`
-5. `role_voice_design`
+4. `role_extract`
+5. `role_design`
 6. `role_voice_generation`
-7. `role_appearance_design`
-8. `role_appearance_generation`
-9. `prop_design`
-10. `prop_image_generation`
-11. `script_compress`
-12. `layout_design`
-13. `layout_dedupe_review`
-14. `layout_image_generation`
-15. `bgm_design`
-16. `bgm_generation`
+7. `role_appearance_generation`
+8. `prop_design`
+9. `prop_image_generation`
+10. `script_compress`
+11. `layout_design`
+12. `layout_dedupe_review`
+13. `layout_image_generation`
+14. `bgm_design`
+15. `bgm_generation`
 
 `run pregen` covers script, reusable static assets, BGM design, and BGM audio generation. It stops at `bgm_generation` by default.
 
@@ -30,6 +29,8 @@ Script episode content is stored as per-episode JSON files:
 - `script_novel_extract`: `assets/json/scripts/novel_extract/episode_XXX.json`
 
 Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at most one direct source path such as `source_novel_full_path`. The state stores the JSON path when an episode is generated, or `false` when it is not generated yet.
+
+`role_extract` reads the complete `novel_full` set and records each role's `episode_keys` and source chapter references. `role_design` then runs one role at a time, loading only that role's `novel_full` episodes, and writes identity, relationships, voice design, appearance prompt, intro video prompt, and role-bound prop design into the active role state.
 
 Dynamic shot-level assets now live in a separate workflow:
 
@@ -321,6 +322,7 @@ Do not use pytest in this repository. Use compile checks and focused smoke scrip
 
 ```powershell
 D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama scripts/smoke/dynamic_assets_fake_smoke.py scripts/smoke/only_node_episode_smoke.py scripts/smoke/episode_serial_generation_smoke.py scripts/smoke/minimax_music_payload_smoke.py scripts/smoke/seedream_payload_smoke.py scripts/smoke/ref_frame_image_provider_payload_smoke.py scripts/smoke/shot_selector_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_design_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/only_node_episode_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/episode_serial_generation_smoke.py

@@ -32,7 +32,7 @@ async def main_async() -> int:
     )
     router = ProviderRouter(settings, provider_override="fake")
     workflow = PregenWorkflow(repo=repo, router=router)
-    state = await workflow.run(project_dir, until="role_appearance_design", force=True)
+    state = await workflow.run(project_dir, until="role_design", force=True)
     prompts = [appearance.prompt for role in state.roles.values() for appearance in role.appearances.values()]
     if not prompts:
         raise AssertionError("No role appearance prompts generated")

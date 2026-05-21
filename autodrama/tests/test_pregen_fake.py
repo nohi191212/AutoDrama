@@ -34,7 +34,7 @@ providers: {}
     return config
 
 
-def test_pregen_stops_at_role_voice_design(tmp_path: Path) -> None:
+def test_pregen_runs_integrated_role_pipeline(tmp_path: Path) -> None:
     settings = load_settings(write_config(tmp_path))
     repo = ProjectRepository(settings)
     project_dir = repo.create_project_from_config()
@@ -47,10 +47,9 @@ def test_pregen_stops_at_role_voice_design(tmp_path: Path) -> None:
         "script_outline",
         "script_novel",
         "script_novel_extract",
+        "role_extract",
         "role_design",
-        "role_voice_design",
         "role_voice_generation",
-        "role_appearance_design",
         "role_appearance_generation",
         "prop_design",
         "prop_image_generation",
@@ -80,7 +79,8 @@ def test_pregen_stops_at_role_voice_design(tmp_path: Path) -> None:
     assert state.props
     assert state.layouts
     assert state.bgms
-    assert (project_dir / "assets" / "json" / "nodes" / "role_voice_design.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "role_extract.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "role_design.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "role_voice_generation.json").exists()
     assert not hasattr(state, "storyboards")
     assert (settings.output.root_dir / "current_project.json").exists()

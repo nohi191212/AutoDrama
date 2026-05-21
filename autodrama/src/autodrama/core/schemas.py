@@ -60,6 +60,10 @@ class Role(BaseModel):
     name: str
     intro: str
     personality: str | None = None
+    importance: str | None = None
+    episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    relationships: list[dict[str, Any]] = Field(default_factory=list)
     voice_summary: str | None = None
     voice_name: str | None = None
     voice_type: str | None = None
@@ -185,15 +189,14 @@ class ScriptNovelEpisodeOutput(BaseModel):
     novel_full: str = Field(validation_alias=AliasChoices("novel_full", "novel_text"))
 
 
-class RoleDesignItem(BaseModel):
+class RoleExtractItem(BaseModel):
     name: str
-    intro: str
-    personality: str | None = None
     aliases: list[str] = Field(default_factory=list)
-
-
-class RoleDesignOutput(BaseModel):
-    roles: list[RoleDesignItem]
+    importance: Literal["lead", "main", "supporting", "minor", "background"] | str = "supporting"
+    episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    brief: str | None = None
+    appearance_notes: list[str] = Field(default_factory=list)
 
 
 class RoleBoundPropDesignItem(BaseModel):
@@ -216,6 +219,13 @@ class RoleAppearanceDesignItem(BaseModel):
 
 class RoleAppearanceDesignOutput(BaseModel):
     appearances: list[RoleAppearanceDesignItem]
+
+
+class RoleRelationshipDesignItem(BaseModel):
+    target_role_name: str
+    relation: str
+    dynamic: str | None = None
+    evidence: str | None = None
 
 
 class RoleVoiceItem(BaseModel):
@@ -250,6 +260,28 @@ class RoleVoiceItem(BaseModel):
 
 class RoleVoiceDesignOutput(BaseModel):
     role_voices: list[RoleVoiceItem]
+
+
+class RoleExtractOutput(BaseModel):
+    roles: list[RoleExtractItem]
+
+
+class RoleDesignItem(BaseModel):
+    name: str
+    intro: str
+    personality: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    importance: Literal["lead", "main", "supporting", "minor", "background"] | str | None = None
+    episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    relationships: list[RoleRelationshipDesignItem] = Field(default_factory=list)
+    appearances: list[RoleAppearanceDesignItem] = Field(default_factory=list)
+    voices: list[RoleVoiceItem] = Field(default_factory=list)
+    design_notes: str | None = None
+
+
+class RoleDesignOutput(BaseModel):
+    roles: list[RoleDesignItem]
 
 
 class RoleVoiceGenerationItem(BaseModel):

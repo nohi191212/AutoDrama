@@ -17,6 +17,10 @@ from autodrama.core.schemas import (
     Role,
     RoleAppearance,
     RoleAudio,
+    RoleDesignItem,
+    RoleDesignOutput,
+    RoleExtractItem,
+    RoleExtractOutput,
     RoleVoiceDesignOutput,
     RoleVoiceGenerationItem,
     RoleVoiceGenerationOutput,
@@ -45,10 +49,9 @@ PREGEN_NODES = [
     "script_outline",
     "script_novel",
     "script_novel_extract",
+    "role_extract",
     "role_design",
-    "role_voice_design",
     "role_voice_generation",
-    "role_appearance_design",
     "role_appearance_generation",
     "prop_design",
     "prop_image_generation",
@@ -402,6 +405,80 @@ class PregenWorkflow:
             episode_keys,
             label="episode_stories",
         )
+
+    def _novel_full_contents(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        episode_keys: list[str] | None = None,
+        *,
+        allow_missing: bool = False,
+    ) -> dict[str, str]:
+        selected_keys = episode_keys or self._expected_episode_keys(state)
+        return self._load_script_contents(
+            project_dir,
+            state.script.novel_full,
+            selected_keys,
+            label="script_novel.novel_full",
+            allow_missing=allow_missing,
+        )
+
+    @staticmethod
+    def _dedupe_texts(values: list[object]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                continue
+            result.append(text)
+            seen.add(text)
+        return result
+
+    def _load_role_extract_output(self, project_dir: Path) -> RoleExtractOutput:
+        path = project_dir / "assets" / "json" / "nodes" / "role_extract.json"
+        if not path.exists():
+            raise FileNotFoundError(
+                "role_extract output is missing; run pregen --only role_extract before role_design"
+            )
+        return RoleExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def _load_existing_role_design_output(self, project_dir: Path) -> RoleDesignOutput | None:
+        path = project_dir / "assets" / "json" / "nodes" / "role_design.json"
+        if not path.exists():
+            return None
+        return RoleDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _role_design_item_complete(item: RoleDesignItem) -> bool:
+        return bool(str(item.intro or "").strip() and item.appearances and item.voices)
+
+    def _role_episode_keys(self, item: RoleExtractItem, state: ProjectState) -> list[str]:
+        expected = set(self._expected_episode_keys(state))
+        keys: list[str] = []
+        invalid_keys: list[str] = []
+        for key in item.episode_keys:
+            text = str(key or "").strip()
+            if not text:
+                continue
+            if text not in expected:
+                invalid_keys.append(text)
+                continue
+            if text not in keys:
+                keys.append(text)
+        if invalid_keys:
+            get_logger().warning(
+                "role_extract ignored invalid episode_keys for %s: %s",
+                item.name,
+                ", ".join(invalid_keys),
+            )
+        if keys:
+            return keys
+        get_logger().warning(
+            "role_extract missing episode_keys for %s; role_design will load all novel_full episodes",
+            item.name,
+        )
+        return self._expected_episode_keys(state)
 
     @staticmethod
     def _format_previous_novel_chapters(novel_full: dict[str, str], episode_keys: list[str]) -> str:
@@ -777,31 +854,282 @@ class PregenWorkflow:
         self.repo.save_node_output(project_dir, "script_novel_extract", output)
         return state
 
-    async def _run_role_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
+    @staticmethod
+    def _role_name_key(name: object) -> str:
+        return str(name or "").strip().casefold()
+
+    def _select_role_design_item(self, output: RoleDesignOutput, extract_item: RoleExtractItem) -> RoleDesignItem:
+        if not output.roles:
+            raise ValueError(f"role_design returned no roles for {extract_item.name}")
+
+        expected_keys = {self._role_name_key(extract_item.name)}
+        expected_keys.update(self._role_name_key(alias) for alias in extract_item.aliases)
+        for item in output.roles:
+            if self._role_name_key(item.name) in expected_keys:
+                return item
+            if any(self._role_name_key(alias) in expected_keys for alias in item.aliases):
+                return item
+
+        if len(output.roles) == 1:
+            return output.roles[0]
+        raise ValueError(
+            f"role_design must return only {extract_item.name}; got "
+            f"{', '.join(item.name for item in output.roles)}"
+        )
+
+    def _merge_role_extract_into_design(self, item: RoleDesignItem, extract_item: RoleExtractItem) -> RoleDesignItem:
+        item.name = extract_item.name
+        item.aliases = self._dedupe_texts([*extract_item.aliases, *item.aliases])
+        item.importance = item.importance or extract_item.importance
+        item.episode_keys = self._dedupe_texts([*extract_item.episode_keys, *item.episode_keys])
+        item.source_chapters = self._dedupe_texts([*extract_item.source_chapters, *item.source_chapters])
+        for voice in item.voices:
+            voice.role_name = extract_item.name
+        for appearance in item.appearances:
+            appearance.role_name = extract_item.name
+        return item
+
+    def _ordered_role_design_items(
+        self,
+        extract_roles: list[RoleExtractItem],
+        designed_by_key: dict[str, RoleDesignItem],
+    ) -> list[RoleDesignItem]:
+        ordered: list[RoleDesignItem] = []
+        emitted: set[str] = set()
+        for extract_item in extract_roles:
+            key = self._role_name_key(extract_item.name)
+            item = designed_by_key.get(key)
+            if item is None:
+                continue
+            ordered.append(item)
+            emitted.add(key)
+        for key, item in designed_by_key.items():
+            if key not in emitted:
+                ordered.append(item)
+        return ordered
+
+    def _clear_role_design_state(self, state: ProjectState) -> None:
+        state.roles = {}
+        state.props = {
+            prop_id: prop
+            for prop_id, prop in state.props.items()
+            if not prop.owner_role_id and prop.source not in {"role_design", "role_appearance_design"}
+        }
+
+    def _apply_role_design_item(
+        self,
+        state: ProjectState,
+        item: RoleDesignItem,
+        *,
+        speech_provider=None,
+    ) -> None:
+        if not self._role_design_item_complete(item):
+            missing: list[str] = []
+            if not str(item.intro or "").strip():
+                missing.append("intro")
+            if not item.appearances:
+                missing.append("appearances")
+            if not item.voices:
+                missing.append("voices")
+            raise ValueError(f"role_design for {item.name} is missing required fields: {', '.join(missing)}")
+
+        role_id = normalize_id("role", item.name)
+        existing_role = state.roles.get(role_id)
+        role = existing_role or Role(
+            id=role_id,
+            name=item.name,
+            intro=item.intro,
+        )
+        role.name = item.name
+        role.intro = item.intro
+        role.personality = item.personality
+        role.importance = item.importance
+        role.aliases = self._dedupe_texts(item.aliases)
+        role.episode_keys = self._dedupe_texts(item.episode_keys)
+        role.source_chapters = self._dedupe_texts(item.source_chapters)
+        role.relationships = [relationship.model_dump(mode="json") for relationship in item.relationships]
+        role.appearances = {}
+        state.roles[role_id] = role
+
+        state.props = {
+            prop_id: prop
+            for prop_id, prop in state.props.items()
+            if prop.owner_role_id != role_id
+        }
+
+        self._apply_role_voice_design_output(
+            state,
+            RoleVoiceDesignOutput(role_voices=item.voices),
+            speech_provider=speech_provider,
+        )
+        role = state.roles[role_id]
+
+        for appearance_item in item.appearances:
+            appearance_name = str(appearance_item.name or "base").strip() or "base"
+            appearance_id = normalize_id(f"{role.id}_appearance", appearance_name)
+            role_bound_prop_ids: list[str] = []
+            for prop_item in appearance_item.role_bound_props:
+                prop_id = normalize_id(f"{role.id}_prop", prop_item.name)
+                status_key = self._prop_status_key(prop_item.status)
+                if status_key != "normal" and not prop_id.endswith(f"_{status_key}"):
+                    prop_id = f"{prop_id}_{status_key}"
+                desc_parts = [prop_item.desc]
+                if prop_item.scale_relation:
+                    desc_parts.append(f"比例关系：{prop_item.scale_relation}")
+                if prop_item.usage:
+                    desc_parts.append(f"使用方式：{prop_item.usage}")
+                state.props[prop_id] = Prop(
+                    id=prop_id,
+                    name=prop_item.name,
+                    desc="；".join(part.strip("；") for part in desc_parts if part),
+                    prompt=prop_item.prompt,
+                    status=prop_item.status,
+                    owner_role_id=role.id,
+                    owner_role_name=role.name,
+                    source="role_design",
+                )
+                role_bound_prop_ids.append(prop_id)
+            role.appearances[appearance_name] = RoleAppearance(
+                id=appearance_id,
+                role_id=role.id,
+                name=appearance_name,
+                desc=appearance_item.desc,
+                prompt=appearance_item.prompt,
+                role_bound_prop_ids=role_bound_prop_ids,
+                intro_video_prompt=appearance_item.intro_video_prompt,
+            )
+
+    async def _run_role_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("role")
         get_logger().info(
-            "node=role_design provider=%s model=%s",
+            "node=role_extract provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.role_service.role_design(
+        episode_keys = self._expected_episode_keys(state)
+        self._validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        novel_full = self._novel_full_contents(project_dir, state, episode_keys)
+        output = await self.role_service.role_extract(
             state,
             provider,
-            episode_stories=self._episode_stories(project_dir, state),
+            novel_full=novel_full,
         )
-        roles: dict[str, Role] = {}
+        if not output.roles:
+            raise ValueError("role_extract must return at least one role")
+
+        expected = set(episode_keys)
+        seen_names: set[str] = set()
         for item in output.roles:
-            role_id = normalize_id("role", item.name)
-            roles[role_id] = Role(
-                id=role_id,
-                name=item.name,
-                intro=item.intro,
-                personality=item.personality,
-                aliases=item.aliases,
-            )
-        state.roles = roles
+            item.name = str(item.name or "").strip()
+            if not item.name:
+                raise ValueError("role_extract returned a role with empty name")
+            name_key = self._role_name_key(item.name)
+            if name_key in seen_names:
+                raise ValueError(f"role_extract returned duplicated role name: {item.name}")
+            seen_names.add(name_key)
+            item.aliases = self._dedupe_texts(item.aliases)
+            item.source_chapters = self._dedupe_texts(item.source_chapters)
+            item.appearance_notes = self._dedupe_texts(item.appearance_notes)
+            item.episode_keys = self._dedupe_texts(item.episode_keys)
+            invalid_episode_keys = sorted(set(item.episode_keys).difference(expected))
+            if invalid_episode_keys:
+                raise ValueError(
+                    f"role_extract episode_keys for {item.name} must use existing keys; "
+                    f"got {', '.join(invalid_episode_keys)}"
+                )
+            if not item.episode_keys:
+                raise ValueError(f"role_extract must include episode_keys for {item.name}")
+
+        state.metadata["role_extract"] = output.model_dump(mode="json")
         state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "role_design", output)
+        self.repo.save_node_output(project_dir, "role_extract", output)
+        return state
+
+    async def _run_role_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("role")
+        speech_provider = None
+        available_voices: list[dict[str, Any]] = []
+        try:
+            speech_provider = self.router.audio("speech")
+            available_voices = self._available_speakers_for_prompt(speech_provider)
+        except Exception as exc:
+            get_logger().warning("node=role_design could not load speech voice catalog: %s", exc)
+        get_logger().info(
+            "node=role_design provider=%s model=%s available_voices=%d",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+            len(available_voices),
+        )
+        extract_output = self._load_role_extract_output(project_dir)
+        if not extract_output.roles:
+            raise ValueError("role_design requires at least one role from role_extract")
+
+        force_pregen = bool(getattr(self, "_force_pregen", False))
+        self._clear_role_design_state(state)
+
+        designed_by_key: dict[str, RoleDesignItem] = {}
+        existing_output = None if force_pregen else self._load_existing_role_design_output(project_dir)
+        if existing_output is not None:
+            for existing_item in existing_output.roles:
+                if not self._role_design_item_complete(existing_item):
+                    continue
+                existing_key = self._role_name_key(existing_item.name)
+                designed_by_key[existing_key] = existing_item
+                self._apply_role_design_item(state, existing_item, speech_provider=speech_provider)
+
+        all_role_extracts = [item.model_dump(mode="json") for item in extract_output.roles]
+        for extract_item in extract_output.roles:
+            role_key = self._role_name_key(extract_item.name)
+            if role_key in designed_by_key:
+                get_logger().info("role_design %s already exists, skipped", extract_item.name)
+                continue
+
+            episode_keys = self._role_episode_keys(extract_item, state)
+            role_novel_full = self._novel_full_contents(project_dir, state, episode_keys)
+            get_logger().info(
+                "role_design generating %s from episodes=%s chapters=%s",
+                extract_item.name,
+                ",".join(episode_keys),
+                ",".join(extract_item.source_chapters) or "-",
+            )
+            output = await self.role_service.role_design(
+                state,
+                provider,
+                role_item=extract_item,
+                role_novel_full=role_novel_full,
+                all_role_extracts=all_role_extracts,
+                existing_role_designs=[
+                    item.model_dump(mode="json")
+                    for item in self._ordered_role_design_items(extract_output.roles, designed_by_key)
+                ],
+                available_voices=available_voices,
+            )
+            item = self._merge_role_extract_into_design(
+                self._select_role_design_item(output, extract_item),
+                extract_item,
+            )
+            self._apply_role_design_item(state, item, speech_provider=speech_provider)
+            designed_by_key[role_key] = item
+            state.budget.used_text_calls += 1
+            state.metadata["role_design_generation_mode"] = "per_role_recursive"
+            state.metadata["role_design_designed_role_names"] = [
+                item.name for item in self._ordered_role_design_items(extract_output.roles, designed_by_key)
+            ]
+            self.repo.save_node_output(
+                project_dir,
+                "role_design",
+                RoleDesignOutput(roles=self._ordered_role_design_items(extract_output.roles, designed_by_key)),
+            )
+            self.repo.save_state(project_dir, state)
+
+        final_items = self._ordered_role_design_items(extract_output.roles, designed_by_key)
+        state.metadata["role_design_generation_mode"] = "per_role_recursive"
+        state.metadata["role_design_designed_role_names"] = [item.name for item in final_items]
+        self.repo.save_node_output(
+            project_dir,
+            "role_design",
+            RoleDesignOutput(roles=final_items),
+        )
         return state
 
     async def _run_role_voice_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
@@ -1969,7 +2297,7 @@ class PregenWorkflow:
         role_bound_props = {
             prop_id: prop
             for prop_id, prop in state.props.items()
-            if prop.source == "role_appearance_design" or prop.owner_role_id
+            if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
         }
         global_props = {
             self._prop_asset_id(item.name, item.status): Prop(
