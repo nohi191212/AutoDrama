@@ -3,16 +3,20 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
+
+ScriptContentRef = str | Literal[False]
 
 
 class ScriptBundle(BaseModel):
     raw_script: str
     outline: str | None = None
-    episode_outlines: dict[str, str] = Field(default_factory=dict)
-    detailed_script: dict[str, str] = Field(default_factory=dict)
-    final_script: dict[str, str] = Field(default_factory=dict)
-    revision_notes: list[str] = Field(default_factory=list)
+    episode_outlines: dict[str, ScriptContentRef] = Field(default_factory=dict)
+    novel_full: dict[str, ScriptContentRef] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("novel_full", "novel_script"),
+    )
+    novel_extract: dict[str, ScriptContentRef] = Field(default_factory=dict)
 
 
 class RoleAudio(BaseModel):
@@ -37,6 +41,12 @@ class RoleAppearance(BaseModel):
     name: str = "base"
     desc: str
     prompt: str
+    role_bound_prop_ids: list[str] = Field(default_factory=list)
+    intro_video_prompt: str | None = None
+    design_image_asset_id: str | None = None
+    design_image_asset_path: str | None = None
+    intro_video_asset_id: str | None = None
+    intro_video_asset_path: str | None = None
     asset_id: str | None = None
     asset_path: str | None = None
     provider: str | None = None
@@ -67,6 +77,9 @@ class Prop(BaseModel):
     desc: str
     prompt: str
     status: str = "normal"
+    owner_role_id: str | None = None
+    owner_role_name: str | None = None
+    source: str | None = None
     asset_id: str | None = None
     asset_path: str | None = None
     provider: str | None = None
@@ -154,13 +167,22 @@ class ScriptOutlineOutput(BaseModel):
     episode_outlines: dict[str, str] = Field(default_factory=dict)
 
 
-class ScriptDetailOutput(BaseModel):
-    detailed_script: dict[str, str]
+class ScriptNovelOutput(BaseModel):
+    novel_full: dict[str, str] = Field(validation_alias=AliasChoices("novel_full", "novel_script"))
 
 
-class ScriptPolishOutput(BaseModel):
-    final_script: dict[str, str]
-    revision_notes: list[str] = Field(default_factory=list)
+class ScriptNovelExtractBatchOutput(BaseModel):
+    novel_extract: dict[str, str]
+
+
+class ScriptNovelExtractOutput(BaseModel):
+    novel_extract: dict[str, str]
+
+
+class ScriptNovelEpisodeOutput(BaseModel):
+    episode_key: str
+    target_char_count: int
+    novel_full: str = Field(validation_alias=AliasChoices("novel_full", "novel_text"))
 
 
 class RoleDesignItem(BaseModel):
@@ -174,11 +196,22 @@ class RoleDesignOutput(BaseModel):
     roles: list[RoleDesignItem]
 
 
+class RoleBoundPropDesignItem(BaseModel):
+    name: str
+    desc: str
+    prompt: str
+    status: str = "normal"
+    scale_relation: str | None = None
+    usage: str | None = None
+
+
 class RoleAppearanceDesignItem(BaseModel):
     role_name: str
     name: str = "base"
     desc: str
     prompt: str
+    role_bound_props: list[RoleBoundPropDesignItem] = Field(default_factory=list)
+    intro_video_prompt: str | None = None
 
 
 class RoleAppearanceDesignOutput(BaseModel):
@@ -296,7 +329,7 @@ class BGMDesignOutput(BaseModel):
 
 class StaticAssetGenerationItem(BaseModel):
     asset_id: str
-    asset_type: Literal["role_appearance", "prop", "layout", "bgm"]
+    asset_type: Literal["role_appearance", "role_appearance_video", "prop", "layout", "bgm"]
     owner_id: str
     name: str
     prompt: str

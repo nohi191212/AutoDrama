@@ -5,8 +5,8 @@ AutoDrama builds short-drama projects in two stages: pre-generation for script/s
 Implemented scope:
 
 1. `script_outline`
-2. `script_detail`
-3. `script_polish`
+2. `script_novel`
+3. `script_novel_extract`
 4. `role_design`
 5. `role_voice_design`
 6. `role_voice_generation`
@@ -22,6 +22,14 @@ Implemented scope:
 16. `bgm_generation`
 
 `run pregen` covers script, reusable static assets, BGM design, and BGM audio generation. It stops at `bgm_generation` by default.
+
+Script episode content is stored as per-episode JSON files:
+
+- `script_outline`: `assets/json/scripts/outlines/episode_XXX.json`
+- `script_novel`: `assets/json/scripts/novel_full/episode_XXX.json`
+- `script_novel_extract`: `assets/json/scripts/novel_extract/episode_XXX.json`
+
+Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at most one direct source path such as `source_novel_full_path`. The state stores the JSON path when an episode is generated, or `false` when it is not generated yet.
 
 Dynamic shot-level assets now live in a separate workflow:
 

@@ -103,11 +103,17 @@ async def main_async() -> int:
         raise AssertionError("episode_002 generate should remain false")
 
     ref_frames = list((project_dir / "assets" / "images" / "ref_frames").glob("*.png"))
+    role_images = list((project_dir / "assets" / "images" / "roles").glob("*.png"))
+    role_videos = list((project_dir / "assets" / "videos" / "roles").glob("*.mp4"))
     shot_videos = list((project_dir / "assets" / "videos" / "shots").glob("*.mp4"))
     shot_bgms = list((project_dir / "assets" / "audios" / "shot_bgms").glob("*.*"))
     shot_audios = list((project_dir / "assets" / "audios" / "shot_dialogues").glob("*.*"))
     if not ref_frames:
         raise AssertionError("No ref frame generated")
+    if not role_images:
+        raise AssertionError("No role design image generated")
+    if not role_videos:
+        raise AssertionError("No role intro video generated")
     if not shot_videos:
         raise AssertionError("No shot video generated")
     if not shot_bgms:
@@ -118,6 +124,7 @@ async def main_async() -> int:
     print("dynamic_assets_fake_smoke=ok")
     print(f"project_dir={project_dir}")
     print(
+        f"role_images={len(role_images)} role_videos={len(role_videos)} "
         f"ref_frames={len(ref_frames)} shot_videos={len(shot_videos)} "
         f"shot_bgms={len(shot_bgms)} shot_audios={len(shot_audios)}"
     )

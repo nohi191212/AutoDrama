@@ -90,6 +90,7 @@ class StoryboardService:
         provider: TextLLM,
         *,
         episode_key: str,
+        episode_story: str,
         previous_storyboard_history: dict[str, Any] | None = None,
         on_shot_generated: Callable[[StoryboardEpisodeOutput, StoryboardShot], None] | None = None,
     ) -> StoryboardEpisodeOutput:
@@ -106,7 +107,7 @@ class StoryboardService:
                 "storyboard_generate",
                 title=state.title,
                 episode_key=episode_key,
-                episode_script=state.script.final_script.get(episode_key, ""),
+                episode_story=episode_story,
                 previous_storyboard_history=self.format_json(previous_storyboard_history or {"episodes": []}),
                 generated_shots=self.format_json(self._generated_shots_context(shots)),
                 shot_index=shot_index,

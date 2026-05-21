@@ -109,6 +109,7 @@ class DynamicAssetNodeMixin:
             state,
             provider,
             episode_key=episode_key,
+            episode_story=self._episode_stories(project_dir, state).get(episode_key, ""),
             previous_storyboard_history=history_before_episode(project_dir, state, episode_key),
             on_shot_generated=save_storyboard_progress,
         )
@@ -627,6 +628,7 @@ class DynamicAssetNodeMixin:
         max_polls = int(getattr(provider, "max_polls", 120))
         poll_interval_seconds = float(getattr(provider, "poll_interval_seconds", 5))
         status_log_interval_polls = max(1, int(getattr(provider, "status_log_interval_polls", 6)))
+        force_generation = bool(getattr(self, "_force_generation", False))
         remaining_shots = list(shots)
 
         while remaining_shots:
@@ -648,7 +650,7 @@ class DynamicAssetNodeMixin:
                     else ""
                 )
 
-                if existing_status in success_statuses and self._path_exists(project_dir, saved_asset_path):
+                if not force_generation and existing_status in success_statuses and self._path_exists(project_dir, saved_asset_path):
                     result = VideoGenerationResult(
                         provider=str(
                             (existing_task or {}).get("provider")
@@ -711,7 +713,7 @@ class DynamicAssetNodeMixin:
                     made_progress = True
                     continue
 
-                if existing_task and existing_task.get("task_id") and existing_status not in failure_statuses:
+                if not force_generation and existing_task and existing_task.get("task_id") and existing_status not in failure_statuses:
                     pending[task_key] = {
                         "shot": shot,
                         "asset_id": asset_id,
@@ -742,6 +744,14 @@ class DynamicAssetNodeMixin:
                         shot.shot_id,
                         existing_task.get("task_id"),
                         existing_status,
+                        extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
+                    )
+                elif force_generation and existing_task:
+                    get_logger().info(
+                        "%s forced video regeneration; ignoring previous task %s status=%s",
+                        shot.shot_id,
+                        existing_task.get("task_id") or "-",
+                        existing_status or "-",
                         extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                     )
 

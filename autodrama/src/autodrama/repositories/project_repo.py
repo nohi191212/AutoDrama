@@ -82,12 +82,21 @@ class ProjectRepository:
         self._create_project_dirs(project_dir)
         resolved_episode_count = episode_count or self.settings.project.episode_count
         resolved_episode_duration_seconds = episode_duration_seconds or self.settings.project.episode_duration_seconds
+        initial_script_refs = {
+            f"episode_{index:03d}": False
+            for index in range(1, resolved_episode_count + 1)
+        }
 
         state = ProjectState(
             project_id=project_id,
             title=title,
             raw_script=raw_script,
-            script=ScriptBundle(raw_script=raw_script),
+            script=ScriptBundle(
+                raw_script=raw_script,
+                episode_outlines=initial_script_refs.copy(),
+                novel_full=initial_script_refs.copy(),
+                novel_extract=initial_script_refs.copy(),
+            ),
             budget=BudgetState.model_validate(self.settings.budget.model_dump()),
             metadata={
                 "created_by": "autodrama",
@@ -110,6 +119,9 @@ class ProjectRepository:
             (project_dir / subdir).mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "json" / "nodes").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "json" / "scripts").mkdir(parents=True, exist_ok=True)
+        (project_dir / "assets" / "json" / "scripts" / "outlines").mkdir(parents=True, exist_ok=True)
+        (project_dir / "assets" / "json" / "scripts" / "novel_full").mkdir(parents=True, exist_ok=True)
+        (project_dir / "assets" / "json" / "scripts" / "novel_extract").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "json" / "roles").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "images" / "roles").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "images" / "props").mkdir(parents=True, exist_ok=True)
@@ -117,6 +129,7 @@ class ProjectRepository:
         (project_dir / "assets" / "images" / "ref_frames").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "audios" / "bgms").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "audios" / "shot_dialogues").mkdir(parents=True, exist_ok=True)
+        (project_dir / "assets" / "videos" / "roles").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "videos" / "shots").mkdir(parents=True, exist_ok=True)
         (project_dir / "shots").mkdir(parents=True, exist_ok=True)
 

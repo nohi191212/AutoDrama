@@ -265,6 +265,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
 
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
         previous_active_shot_selectors = getattr(self, "_active_shot_selectors", None)
+        previous_force_generation = getattr(self, "_force_generation", None)
+        self._force_generation = bool(force)
         if shot_selectors:
             self._active_shot_selectors = {str(selector).strip().lower() for selector in shot_selectors if str(selector).strip()}
         elif hasattr(self, "_active_shot_selectors"):
@@ -357,6 +359,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
                     delattr(self, "_active_shot_selectors")
             else:
                 self._active_shot_selectors = previous_active_shot_selectors
+            if previous_force_generation is None:
+                if hasattr(self, "_force_generation"):
+                    delattr(self, "_force_generation")
+            else:
+                self._force_generation = previous_force_generation
 
         processed_episode_keys = selected_set if target_nodes[-1] == GENERATION_NODES[-1] else None
         update_checklist_from_state(

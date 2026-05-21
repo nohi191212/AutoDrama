@@ -85,7 +85,7 @@ async def main_async() -> int:
         project_id="voice_catalog_smoke",
         title="Smoke",
         raw_script="林舟发现合同异常。",
-        script=ScriptBundle(raw_script="林舟发现合同异常。", final_script={"episode_1": "林舟发现合同异常。"}),
+        script=ScriptBundle(raw_script="林舟发现合同异常。", novel_extract={"episode_1": "林舟发现合同异常。"}),
         roles={
             "role_linz": Role(
                 id="role_linz",
@@ -100,6 +100,7 @@ async def main_async() -> int:
     output = await service.role_voice_design(
         state,
         text_provider,
+        episode_stories={"episode_1": "林舟发现合同异常。"},
         available_voices=prompt_speakers,
     )
 

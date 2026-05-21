@@ -46,11 +46,17 @@ class AssetService:
             "统一身高比例和服装细节，干净背景，无其他人物；不要做单张半身照或只有一个角度的角色图。"
         )
 
-    async def role_appearance_design(self, state: ProjectState, provider: TextLLM) -> RoleAppearanceDesignOutput:
+    async def role_appearance_design(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        episode_stories: dict[str, str],
+    ) -> RoleAppearanceDesignOutput:
         prompt = self.prompts.render(
             "role_appearance_design",
             title=state.title,
-            final_script=self.format_json(state.script.final_script),
+            episode_stories=self.format_json(episode_stories),
             roles=self.format_json(
                 [
                     {
@@ -74,12 +80,24 @@ class AssetService:
             metadata={"node_name": "role_appearance_design", "project_id": state.project_id},
         )
 
-    async def prop_design(self, state: ProjectState, provider: TextLLM) -> PropDesignOutput:
+    async def prop_design(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        episode_stories: dict[str, str],
+    ) -> PropDesignOutput:
+        role_bound_props = [
+            prop.model_dump(mode="json")
+            for prop in state.props.values()
+            if prop.source == "role_appearance_design" or prop.owner_role_id
+        ]
         prompt = self.prompts.render(
             "prop_design",
             title=state.title,
-            final_script=self.format_json(state.script.final_script),
+            episode_stories=self.format_json(episode_stories),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
+            role_bound_props=self.format_json(role_bound_props),
             visual_style_label=self.visual_style_label(state),
             visual_style_prompt=self.visual_style_prompt(state),
         )
@@ -90,12 +108,18 @@ class AssetService:
             metadata={"node_name": "prop_design", "project_id": state.project_id},
         )
 
-    async def script_compress(self, state: ProjectState, provider: TextLLM) -> ScriptCompressOutput:
-        episode_keys = list(state.script.final_script)
+    async def script_compress(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        episode_stories: dict[str, str],
+    ) -> ScriptCompressOutput:
+        episode_keys = list(episode_stories)
         prompt = self.prompts.render(
             "script_compress",
             title=state.title,
-            final_script=self.format_json(state.script.final_script),
+            episode_stories=self.format_json(episode_stories),
             episode_keys=", ".join(episode_keys),
         )
         return await provider.generate_json(
@@ -110,11 +134,17 @@ class AssetService:
             },
         )
 
-    async def layout_design(self, state: ProjectState, provider: TextLLM) -> LayoutDesignOutput:
+    async def layout_design(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        episode_stories: dict[str, str],
+    ) -> LayoutDesignOutput:
         prompt = self.prompts.render(
             "layout_design",
             title=state.title,
-            final_script=self.format_json(state.script.final_script),
+            episode_stories=self.format_json(episode_stories),
             simple_script=self.format_json(state.metadata.get("simple_script", {})),
             global_script=state.metadata.get("global_script", ""),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
@@ -144,11 +174,18 @@ class AssetService:
             metadata={"node_name": "layout_dedupe_review", "project_id": state.project_id},
         )
 
-    async def bgm_design(self, state: ProjectState, provider: TextLLM) -> BGMDesignOutput:
+    async def bgm_design(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        episode_stories: dict[str, str],
+    ) -> BGMDesignOutput:
         bgm_count = int(state.metadata.get("bgm_count", 3))
         prompt = self.prompts.render(
             "bgm_design",
             title=state.title,
+            episode_stories=self.format_json(episode_stories),
             simple_script=self.format_json(state.metadata.get("simple_script", {})),
             global_script=state.metadata.get("global_script", ""),
             visual_style_label=self.visual_style_label(state),

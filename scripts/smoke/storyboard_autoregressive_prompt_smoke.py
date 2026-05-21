@@ -66,7 +66,7 @@ def build_state() -> ProjectState:
         raw_script="林舟发现合同被调包，并在会议室公开反击赵启。",
         script=ScriptBundle(
             raw_script="林舟发现合同被调包，并在会议室公开反击赵启。",
-            final_script={
+            novel_extract={
                 "episode_001": (
                     "雨夜办公室，林舟发现合同关键页纸张颜色不对。苏晚递来旧邮件截图，"
                     "邮件附件时间线证明合同被调包。次日会议室，赵启试图压住议程，"
@@ -174,6 +174,11 @@ async def main_async() -> int:
         build_state(),
         provider,
         episode_key="episode_001",
+        episode_story=(
+            "雨夜办公室，林舟发现合同关键页纸张颜色不对。苏晚递来旧邮件截图，"
+            "邮件附件时间线证明合同被调包。次日会议室，赵启试图压住议程，"
+            "林舟投屏证据并公开反击。"
+        ),
         previous_storyboard_history={"episodes": []},
         on_shot_generated=record_progress,
     )

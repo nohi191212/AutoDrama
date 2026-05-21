@@ -72,6 +72,7 @@ class BGMCountRouter:
 
 async def main_async() -> int:
     settings = load_settings(ROOT_DIR / "config.yaml")
+    settings.project.episode_count = 1
     repo = ProjectRepository(settings)
     workflow = PregenWorkflow(repo=repo, router=BGMCountRouter())
 
@@ -81,7 +82,19 @@ async def main_async() -> int:
         project_id="bgm_count_smoke",
         title="BGM Count Smoke",
         raw_script="Smoke",
-        script=ScriptBundle(raw_script="Smoke"),
+        script=ScriptBundle(
+            raw_script="Smoke",
+            novel_extract={"episode_001": "assets/json/scripts/novel_extract/episode_001.json"},
+        ),
+    )
+    repo.write_json(
+        project_dir / "assets" / "json" / "scripts" / "novel_extract" / "episode_001.json",
+        {
+            "node_name": "script_novel_extract",
+            "episode_key": "episode_001",
+            "content": "林舟发现合同异常，并在会议上公开反击赵启。",
+            "source_novel_full_path": "assets/json/scripts/novel_full/episode_001.json",
+        },
     )
     workflow._apply_script_plan_settings(state)
 

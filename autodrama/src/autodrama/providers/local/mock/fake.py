@@ -15,9 +15,9 @@ from autodrama.core.schemas import (
     RoleDesignOutput,
     RoleVoiceDesignOutput,
     ScriptCompressOutput,
-    ScriptDetailOutput,
+    ScriptNovelExtractBatchOutput,
+    ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
-    ScriptPolishOutput,
     ShotBGMSoundDesignOutput,
     StoryboardEpisodeOutput,
     StoryboardShotGenerationOutput,
@@ -79,32 +79,31 @@ class FakeTextProvider:
                     for index, key in enumerate(episode_keys, start=1)
                 },
             }
-        elif schema is ScriptDetailOutput or node_name == "script_detail":
+        elif schema is ScriptNovelEpisodeOutput or node_name == "script_novel_episode":
+            episode_key = str(metadata.get("episode_key") or episode_keys[0])
+            target_char_count = int(metadata.get("target_char_count") or _extract_prompt_int(prompt, "当前集目标字数", 1800))
             data = {
-                "detailed_script": {
-                    key: (
-                        f"第{index}集，雨夜办公室，林舟发现合同页码被替换。"
-                        "苏晚递来旧邮件截图，提醒他保存证据。"
-                        "赵启在电话里催他认错，林舟沉默片刻后决定反击。"
-                    )
-                    for index, key in enumerate(episode_keys, start=1)
-                }
+                "episode_key": episode_key,
+                "target_char_count": target_char_count,
+                "novel_full": (
+                    f"{episode_key}，雨夜办公室的灯只剩下一排。林舟摊开合同，"
+                    "发现关键页纸张颜色比其他页浅了半分，装订孔也错开了一线。"
+                    "苏晚把旧邮件截图推到他面前，附件时间像一枚钉子，把赵启的谎言钉在屏幕上。"
+                    "林舟没有立刻说话，他把证据一页页拍下，听着窗外雨声，第一次决定不再退让。"
+                ),
             }
-        elif schema is ScriptPolishOutput or node_name == "script_polish":
+        elif schema is ScriptNovelExtractBatchOutput or node_name == "script_novel_extract":
+            batch_episode_keys = metadata.get("batch_episode_keys") or expected_keys or episode_keys
+            batch_keys = [str(key) for key in batch_episode_keys]
             data = {
-                "final_script": {
+                "novel_extract": {
                     key: (
-                        f"第{index}集，雨夜，公司只剩林舟还在翻合同。"
-                        "他发现关键页纸张颜色不对，刚要放弃，苏晚把三天前的邮件截图推到他面前。"
-                        "次日会议，赵启正准备宣布林舟失职，林舟投屏原始合同和邮件时间线。"
-                        "会议室安静下来，赵启的笑僵在脸上。"
+                        f"第{index}集，时间是雨夜到次日会议前后，地点在公司办公室和会议室。"
+                        "林舟发现合同关键页被调包，苏晚递来旧邮件截图作为证据。"
+                        "赵启持续施压，林舟保留证据并准备在会议上反击。"
                     )
-                    for index, key in enumerate(episode_keys, start=1)
-                },
-                "revision_notes": [
-                    "强化了合同被调包的视觉线索。",
-                    "把反击点集中到会议投屏，便于后续分镜。"
-                ],
+                    for index, key in enumerate(batch_keys, start=1)
+                }
             }
         elif schema is RoleDesignOutput or node_name == "role_design":
             data = {
@@ -130,11 +129,11 @@ class FakeTextProvider:
                 ]
             }
         elif schema is RoleAppearanceDesignOutput or node_name == "role_appearance_design":
-            if "CG动画电影风" in prompt:
-                appearance_style = "CG动画电影风"
-            elif "3D动漫" in prompt:
+            if "爱死机写实CG风" in prompt or "爱死机风格写实CG" in prompt or "CG动画电影风" in prompt or "cg_animation" in prompt:
+                appearance_style = "爱死机写实CG风"
+            elif "3D动漫" in prompt or "anime_3d" in prompt:
                 appearance_style = "3D动漫"
-            elif "2D动漫" in prompt:
+            elif "2D动漫" in prompt or "anime_2d" in prompt:
                 appearance_style = "2D动漫"
             else:
                 appearance_style = "真人电影质感"
@@ -149,19 +148,46 @@ class FakeTextProvider:
                         "role_name": "林舟",
                         "name": "base",
                         "desc": "二十八岁职场青年，身形偏瘦，短发，眼下有轻微疲惫感，五官清秀但神情克制。",
-                        "prompt": f"{appearance_style}，二十八岁中国职场青年男性，短发，身形偏瘦，五官清秀，眼神疲惫但冷静，{view_requirement}。",
+                        "prompt": (
+                            f"{appearance_style}，左侧为二十八岁中国职场青年男性形象，短发，身形偏瘦，"
+                            f"五官清秀，眼神疲惫但冷静，{view_requirement}；右侧为黑色录音笔和合同夹设计图，"
+                            "展示手掌长度比例和持握方式。"
+                        ),
+                        "role_bound_props": [
+                            {
+                                "name": "黑色录音笔",
+                                "desc": "林舟随身携带的证据记录工具，细长黑色金属外壳，约手掌长度。",
+                                "prompt": "黑色录音笔设计图，细长金属外壳，按钮和拾音孔清晰，展示手掌持握比例。",
+                                "status": "normal",
+                                "scale_relation": "约为林舟手掌长度",
+                                "usage": "林舟常放在合同旁或右手握持记录证据。",
+                            }
+                        ],
+                        "intro_video_prompt": "林舟站在洁净、亮度适中的虚空圆台上，圆台缓慢转动。他低头整理袖口，拿起黑色录音笔，抬眼时保持疲惫但冷静的神情；背景干净抽象，无其他人物、字幕或水印。",
                     },
                     {
                         "role_name": "苏晚",
                         "name": "base",
                         "desc": "二十六岁数据分析师，身形修长，眉眼清冷，气质理性克制。",
-                        "prompt": f"{appearance_style}，二十六岁中国女性数据分析师，身形修长，眉眼清冷，气质理性克制，{view_requirement}。",
+                        "prompt": (
+                            f"{appearance_style}，左侧为二十六岁中国女性数据分析师形象，身形修长，"
+                            f"眉眼清冷，气质理性克制，{view_requirement}；右侧为细框眼镜和数据平板设计图，"
+                            "展示手持平板的比例关系。"
+                        ),
+                        "role_bound_props": [],
+                        "intro_video_prompt": "苏晚站在洁净、亮度适中的虚空圆台上，圆台缓慢转动。她推正细框眼镜，单手划过数据平板，动作克制准确；背景干净抽象，无其他人物、字幕或水印。",
                     },
                     {
                         "role_name": "赵启",
                         "name": "base",
                         "desc": "三十五岁部门主管，体型中等偏壮，五官锐利，神情自负，压迫感强。",
-                        "prompt": f"{appearance_style}，三十五岁中国男性部门主管，体型中等偏壮，五官锐利，神情自负，{view_requirement}。",
+                        "prompt": (
+                            f"{appearance_style}，左侧为三十五岁中国男性部门主管形象，体型中等偏壮，"
+                            f"五官锐利，神情自负，{view_requirement}；右侧为深色文件夹和钢笔设计图，"
+                            "展示与手部和西装口袋的比例关系。"
+                        ),
+                        "role_bound_props": [],
+                        "intro_video_prompt": "赵启站在洁净、亮度适中的虚空圆台上，圆台缓慢转动。他整理西装下摆，夹起深色文件夹，短暂停顿后露出压迫感强的目光；背景干净抽象，无其他人物、字幕或水印。",
                     },
                 ]
             }
@@ -511,6 +537,7 @@ class FakeTextProvider:
 class FakeImageProvider:
     name = "fake"
     model = "fake-image"
+    supports_reference_images = True
 
     async def generate_image(
         self,

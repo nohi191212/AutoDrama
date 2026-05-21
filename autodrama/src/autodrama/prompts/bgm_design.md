@@ -6,6 +6,9 @@
 
 标题：{{title}}
 
+分集剧情依据：
+{{episode_stories}}
+
 简约分集剧本：
 {{simple_script}}
 

@@ -15,12 +15,18 @@ class RoleService:
     def format_json(value: object) -> str:
         return json.dumps(value, ensure_ascii=False, indent=2)
 
-    async def role_design(self, state: ProjectState, provider: TextLLM) -> RoleDesignOutput:
+    async def role_design(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        episode_stories: dict[str, str],
+    ) -> RoleDesignOutput:
         prompt = self.prompts.render(
             "role_design",
             title=state.title,
             raw_script=state.raw_script,
-            final_script=self.format_json(state.script.final_script),
+            episode_stories=self.format_json(episode_stories),
             visual_style_label=state.metadata.get("visual_style_label", "真人电影质感"),
             visual_style_prompt=state.metadata.get(
                 "visual_style_prompt",
@@ -39,13 +45,14 @@ class RoleService:
         state: ProjectState,
         provider: TextLLM,
         *,
+        episode_stories: dict[str, str],
         available_voices: list[dict[str, object]] | None = None,
     ) -> RoleVoiceDesignOutput:
         available_voices = available_voices or []
         prompt = self.prompts.render(
             "role_voice_design",
             title=state.title,
-            final_script=self.format_json(state.script.final_script),
+            episode_stories=self.format_json(episode_stories),
             roles=self.format_json(
                 [
                     {

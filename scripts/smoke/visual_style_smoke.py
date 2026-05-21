@@ -37,7 +37,7 @@ async def main_async() -> int:
     if not prompts:
         raise AssertionError("No role appearance prompts generated")
     for prompt in prompts:
-        if "CG动画电影风" not in prompt:
+        if "爱死机" not in prompt and "CG动画电影风" not in prompt:
             raise AssertionError(f"Prompt missing CG animation style: {prompt}")
         if "三视图" not in prompt:
             raise AssertionError(f"Prompt missing turnaround sheet requirement: {prompt}")

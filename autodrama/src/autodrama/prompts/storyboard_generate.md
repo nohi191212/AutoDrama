@@ -10,8 +10,8 @@
 
 集键名：{{episode_key}}
 
-本集最终剧本：
-{{episode_script}}
+本集剧情依据：
+{{episode_story}}
 
 前序分镜历史（前序视频片段历史）：
 {{previous_storyboard_history}}
@@ -57,7 +57,7 @@
 
 - 如果 `{{shot_index}}` 小于 `{{min_shots}}`，`is_episode_complete` 必须为 `false`。
 - 如果本 shot 之后仍有关键剧情、关键动作、关键情绪转折、关键视觉状态未覆盖，`is_episode_complete` 必须为 `false`。
-- 如果本 shot 已经覆盖本集最终剧本的结尾，并且总 shot 数不少于 `{{min_shots}}`，`is_episode_complete` 可以为 `true`。
+- 如果本 shot 已经覆盖本集剧情依据的结尾，并且总 shot 数不少于 `{{min_shots}}`，`is_episode_complete` 可以为 `true`。
 - 如果已经到 `{{max_shots}}`，必须在当前 shot 内收束本集剩余内容，并把 `is_episode_complete` 设为 `true`。
 - 总规划时长应接近本集参数目标时长，但不要在 `video_prompt` 里写“目标时长”这类调度信息。
 
@@ -82,7 +82,7 @@
 
 # 剧情拆分要求
 
-- 先阅读本集最终剧本，再结合“本集已生成 shot”判断已经覆盖到哪里。
+- 先阅读本集剧情依据，再结合“本集已生成 shot”判断已经覆盖到哪里。
 - 当前 shot 必须从尚未覆盖的剧情继续向后推进，不要重复已经生成的动作，除非剧本明确要求回放、闪回或呼应。
 - 一个 shot 可以覆盖剧本中的一个强视觉动作、一段明确情绪推进、一次空间建立、一次冲突揭示或一次转场。
 - 不要把大量剧情压缩成摘要。片段规划是给生图和视频模型执行的，不是给人看梗概。

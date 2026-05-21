@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -19,6 +20,8 @@ from autodrama.core.schemas import (
     RoleVoiceDesignOutput,
     RoleVoiceGenerationItem,
     RoleVoiceGenerationOutput,
+    ScriptNovelExtractOutput,
+    ScriptNovelOutput,
     ShotDialogueAudioAsset,
     StaticAssetGenerationItem,
     StaticAssetGenerationOutput,
@@ -40,8 +43,8 @@ NodeRunner = Callable[[ProjectState], Awaitable[ProjectState]]
 
 PREGEN_NODES = [
     "script_outline",
-    "script_detail",
-    "script_polish",
+    "script_novel",
+    "script_novel_extract",
     "role_design",
     "role_voice_design",
     "role_voice_generation",
@@ -58,6 +61,7 @@ PREGEN_NODES = [
 ]
 
 PREGEN_EPISODE_SCOPED_NODES: set[str] = set()
+SCRIPT_NOVEL_EXTRACT_BATCH_SIZE = 5
 
 
 class PregenWorkflow:
@@ -79,7 +83,7 @@ class PregenWorkflow:
     def _expected_episode_keys(self, state: ProjectState) -> list[str]:
         return self.script_service.episode_keys(self.script_service.episode_count(state))
 
-    def _validate_episode_keys(self, label: str, payload: dict[str, str], state: ProjectState) -> None:
+    def _validate_episode_keys(self, label: str, payload: dict[str, object], state: ProjectState) -> None:
         expected_keys = self._expected_episode_keys(state)
         expected = set(expected_keys)
         actual = set(payload)
@@ -314,6 +318,110 @@ class PregenWorkflow:
         state.metadata["bgm_count"] = self.repo.settings.project.bgm_count
         state.metadata.update(visual_style_metadata(self.repo.settings.project.visual_style))
 
+    @staticmethod
+    def _script_content_path(project_dir: Path, category: str, episode_key: str) -> Path:
+        return project_dir / "assets" / "json" / "scripts" / category / f"{episode_key}.json"
+
+    @staticmethod
+    def _script_novel_legacy_episode_path(project_dir: Path, episode_key: str) -> Path:
+        return project_dir / "assets" / "json" / "scripts" / f"{episode_key}.json"
+
+    @staticmethod
+    def _script_novel_legacy_full_path(project_dir: Path, episode_key: str) -> Path:
+        return project_dir / "assets" / "json" / "scripts" / "novel" / f"{episode_key}.json"
+
+    @staticmethod
+    def _script_content_payload(
+        *,
+        node_name: str,
+        episode_key: str,
+        content: str,
+        dependency_field: str | None = None,
+        dependency_path: object | None = None,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "node_name": node_name,
+            "episode_key": episode_key,
+            "content": content,
+        }
+        if dependency_field and dependency_path:
+            payload[dependency_field] = dependency_path
+        return payload
+
+    @classmethod
+    def _load_script_content_ref(cls, project_dir: Path, value: object) -> str | None:
+        if value is False or value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+
+        path = Path(text)
+        if not path.is_absolute():
+            path = project_dir / text
+        if path.exists() and path.is_file():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError(f"Invalid script content JSON: {path}")
+            for key in ("content", "novel_full", "novel_text", "episode_outline"):
+                content = str(payload.get(key) or "").strip()
+                if content:
+                    return content
+            return None
+
+        if text.endswith(".json") or "/" in text or "\\" in text:
+            return None
+        return text
+
+    def _load_script_contents(
+        self,
+        project_dir: Path,
+        refs: dict[str, object],
+        episode_keys: list[str],
+        *,
+        label: str,
+        allow_missing: bool = False,
+    ) -> dict[str, str]:
+        contents: dict[str, str] = {}
+        for episode_key in episode_keys:
+            content = self._load_script_content_ref(project_dir, refs.get(episode_key))
+            if content:
+                contents[episode_key] = content
+            elif not allow_missing:
+                raise ValueError(f"{label} is missing content for {episode_key}")
+        return contents
+
+    def _episode_stories(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
+        episode_keys = self._expected_episode_keys(state)
+        refs = state.script.novel_extract
+        if not any(refs.get(episode_key) for episode_key in episode_keys):
+            refs = state.script.novel_full
+        return self._load_script_contents(
+            project_dir,
+            refs,
+            episode_keys,
+            label="episode_stories",
+        )
+
+    @staticmethod
+    def _format_previous_novel_chapters(novel_full: dict[str, str], episode_keys: list[str]) -> str:
+        chunks: list[str] = []
+        for episode_key in episode_keys:
+            text = str(novel_full.get(episode_key) or "").strip()
+            if text:
+                chunks.append(f"## {episode_key}\n{text}")
+        return "\n\n".join(chunks) if chunks else "（暂无，当前是第一章。）"
+
+    @staticmethod
+    def _load_script_novel_episode_text(path: Path) -> str | None:
+        if not path.exists():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Invalid script_novel episode JSON: {path}")
+        text = str(payload.get("content") or payload.get("novel_full") or payload.get("novel_text") or "").strip()
+        return text or None
+
     async def run(
         self,
         project_dir: Path,
@@ -349,6 +457,8 @@ class PregenWorkflow:
         )
 
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
+        previous_force_pregen = getattr(self, "_force_pregen", None)
+        self._force_pregen = bool(force)
         if selected_episode_keys is not None:
             self._active_episode_keys = set(selected_episode_keys)
         try:
@@ -379,6 +489,11 @@ class PregenWorkflow:
                     delattr(self, "_active_episode_keys")
                 else:
                     self._active_episode_keys = previous_active_episode_keys
+            if previous_force_pregen is None:
+                if hasattr(self, "_force_pregen"):
+                    delattr(self, "_force_pregen")
+            else:
+                self._force_pregen = previous_force_pregen
 
         logger.info("workflow=pregen completed project_id=%s current_node=%s", state.project_id, state.current_node)
         return state
@@ -406,38 +521,260 @@ class PregenWorkflow:
         self._validate_script_outline(output.episode_count, output.target_duration_seconds, state)
         self._validate_episode_keys("script_outline.episode_outlines", output.episode_outlines, state)
         state.script.outline = output.outline
-        state.script.episode_outlines = output.episode_outlines
+        state.script.episode_outlines = {}
+        for episode_key, content in output.episode_outlines.items():
+            outline_path = self._script_content_path(project_dir, "outlines", episode_key)
+            self.repo.write_json(
+                outline_path,
+                self._script_content_payload(
+                    node_name="script_outline",
+                    episode_key=episode_key,
+                    content=str(content).strip(),
+                ),
+            )
+            state.script.episode_outlines[episode_key] = self._project_relative(project_dir, outline_path)
         state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "script_outline", output)
+        self.repo.save_node_output(
+            project_dir,
+            "script_outline",
+            {
+                "logline": output.logline,
+                "outline": output.outline,
+                "episode_count": output.episode_count,
+                "target_duration_seconds": output.target_duration_seconds,
+                "episode_outlines": state.script.episode_outlines,
+            },
+        )
         return state
 
-    async def _run_script_detail(self, project_dir: Path, state: ProjectState) -> ProjectState:
+    async def _run_script_novel(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("script")
         get_logger().info(
-            "node=script_detail provider=%s model=%s",
+            "node=script_novel provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.script_service.script_detail(state, provider)
-        self._validate_episode_keys("script_detail.detailed_script", output.detailed_script, state)
-        state.script.detailed_script = output.detailed_script
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "script_detail", output)
+        episode_keys = self._expected_episode_keys(state)
+        outline_contents = self._load_script_contents(
+            project_dir,
+            state.script.episode_outlines,
+            episode_keys,
+            label="script_outline.episode_outlines",
+        )
+        target_char_count = self.script_service.episode_target_char_count(state)
+        force_pregen = bool(getattr(self, "_force_pregen", False))
+        if force_pregen:
+            state.script.novel_full = {episode_key: False for episode_key in episode_keys}
+        else:
+            state.script.novel_full = {
+                episode_key: state.script.novel_full.get(episode_key) or False
+                for episode_key in episode_keys
+            }
+        state.metadata["script_novel_target_char_count"] = target_char_count
+        expected_episode_keys = set(episode_keys)
+        state.metadata["script_novel_full_episode_paths"] = (
+            {
+                key: value
+                for key, value in dict(state.metadata.get("script_novel_full_episode_paths") or {}).items()
+                if key in expected_episode_keys
+            }
+            if not force_pregen
+            else {}
+        )
+
+        novel_contents: dict[str, str] = {}
+        for episode_index, episode_key in enumerate(episode_keys, start=1):
+            episode_path = self._script_content_path(project_dir, "novel_full", episode_key)
+            legacy_full_path = self._script_novel_legacy_full_path(project_dir, episode_key)
+            legacy_episode_path = self._script_novel_legacy_episode_path(project_dir, episode_key)
+            existing_text = None
+            if not force_pregen:
+                existing_text = self._load_script_content_ref(project_dir, state.script.novel_full.get(episode_key))
+                if not existing_text:
+                    existing_text = self._load_script_novel_episode_text(episode_path)
+                if not existing_text:
+                    existing_text = self._load_script_novel_episode_text(legacy_full_path)
+                if not existing_text:
+                    existing_text = self._load_script_novel_episode_text(legacy_episode_path)
+
+            if not force_pregen and existing_text:
+                if not episode_path.exists():
+                    self.repo.write_json(
+                        episode_path,
+                        self._script_content_payload(
+                            node_name="script_novel",
+                            episode_key=episode_key,
+                            content=existing_text,
+                            dependency_field="source_outline_path",
+                            dependency_path=state.script.episode_outlines.get(episode_key),
+                        ),
+                    )
+                novel_contents[episode_key] = existing_text
+                state.script.novel_full[episode_key] = self._project_relative(project_dir, episode_path)
+                state.metadata["script_novel_full_episode_paths"][episode_key] = self._project_relative(project_dir, episode_path)
+                self.repo.save_state(project_dir, state)
+                get_logger().info(
+                    "script_novel %s already exists, skipped; saved in %s",
+                    episode_key,
+                    self._project_relative(project_dir, episode_path),
+                )
+                continue
+
+            previous_chapters = self._format_previous_novel_chapters(
+                novel_contents,
+                episode_keys[: episode_index - 1],
+            )
+            output = await self.script_service.script_novel_episode(
+                state,
+                provider,
+                episode_key=episode_key,
+                episode_outlines=outline_contents,
+                current_episode_outline=outline_contents.get(episode_key, ""),
+                previous_chapters=previous_chapters,
+            )
+            if output.episode_key != episode_key:
+                raise ValueError(f"script_novel episode_key must be {episode_key}; got {output.episode_key}")
+            if output.target_char_count != target_char_count:
+                raise ValueError(
+                    f"script_novel target_char_count must be {target_char_count}; got {output.target_char_count}"
+                )
+            novel_full = output.novel_full.strip()
+            if not novel_full:
+                raise ValueError(f"script_novel novel_full is empty for {episode_key}")
+
+            novel_contents[episode_key] = novel_full
+            state.budget.used_text_calls += 1
+            self.repo.write_json(
+                episode_path,
+                self._script_content_payload(
+                    node_name="script_novel",
+                    episode_key=episode_key,
+                    content=novel_full,
+                    dependency_field="source_outline_path",
+                    dependency_path=state.script.episode_outlines.get(episode_key),
+                ),
+            )
+            state.script.novel_full[episode_key] = self._project_relative(project_dir, episode_path)
+            state.metadata["script_novel_full_episode_paths"][episode_key] = self._project_relative(project_dir, episode_path)
+            self.repo.save_state(project_dir, state)
+            get_logger().info(
+                "script_novel %s generated target_chars=%d saved in %s",
+                episode_key,
+                target_char_count,
+                self._project_relative(project_dir, episode_path),
+            )
+
+        self._validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        output = ScriptNovelOutput(novel_full=state.script.novel_full)
+        self.repo.save_node_output(project_dir, "script_novel", output)
         return state
 
-    async def _run_script_polish(self, project_dir: Path, state: ProjectState) -> ProjectState:
+    async def _run_script_novel_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("script")
         get_logger().info(
-            "node=script_polish provider=%s model=%s",
+            "node=script_novel_extract provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.script_service.script_polish(state, provider)
-        self._validate_episode_keys("script_polish.final_script", output.final_script, state)
-        state.script.final_script = output.final_script
-        state.script.revision_notes = output.revision_notes
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "script_polish", output)
+        episode_keys = self._expected_episode_keys(state)
+        self._validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        novel_contents = self._load_script_contents(
+            project_dir,
+            state.script.novel_full,
+            episode_keys,
+            label="script_novel.novel_full",
+        )
+        outline_contents = self._load_script_contents(
+            project_dir,
+            state.script.episode_outlines,
+            episode_keys,
+            label="script_outline.episode_outlines",
+            allow_missing=True,
+        )
+        force_pregen = bool(getattr(self, "_force_pregen", False))
+        if force_pregen:
+            state.script.novel_extract = {episode_key: False for episode_key in episode_keys}
+        else:
+            state.script.novel_extract = {
+                episode_key: state.script.novel_extract.get(episode_key) or False
+                for episode_key in episode_keys
+            }
+        state.metadata["script_novel_extract_batch_size"] = SCRIPT_NOVEL_EXTRACT_BATCH_SIZE
+
+        extract_contents = (
+            {}
+            if force_pregen
+            else self._load_script_contents(
+                project_dir,
+                state.script.novel_extract,
+                episode_keys,
+                label="script_novel_extract.novel_extract",
+                allow_missing=True,
+            )
+        )
+        for batch_start in range(0, len(episode_keys), SCRIPT_NOVEL_EXTRACT_BATCH_SIZE):
+            batch_keys = episode_keys[batch_start : batch_start + SCRIPT_NOVEL_EXTRACT_BATCH_SIZE]
+            if not force_pregen and all(extract_contents.get(episode_key) for episode_key in batch_keys):
+                get_logger().info(
+                    "script_novel_extract batch %s already exists, skipped",
+                    ",".join(batch_keys),
+                )
+                continue
+
+            previous_keys = episode_keys[:batch_start]
+            previous_extract = {
+                episode_key: extract_contents[episode_key]
+                for episode_key in previous_keys
+                if extract_contents.get(episode_key)
+            }
+            extract_hints = {
+                episode_key: outline_contents.get(episode_key, "")
+                for episode_key in batch_keys
+            }
+            output = await self.script_service.script_novel_extract_batch(
+                state,
+                provider,
+                batch_episode_keys=batch_keys,
+                novel_full=novel_contents,
+                previous_extract=previous_extract,
+                extract_hints=extract_hints,
+            )
+            actual_keys = set(output.novel_extract)
+            expected_keys = set(batch_keys)
+            if actual_keys != expected_keys:
+                raise ValueError(
+                    "script_novel_extract.novel_extract must contain exactly "
+                    f"{', '.join(batch_keys)}; got {', '.join(sorted(actual_keys)) or '-'}"
+                )
+            for episode_key in batch_keys:
+                extracted_text = str(output.novel_extract.get(episode_key) or "").strip()
+                if not extracted_text:
+                    raise ValueError(f"script_novel_extract novel_extract is empty for {episode_key}")
+                episode_path = self._script_content_path(project_dir, "novel_extract", episode_key)
+                self.repo.write_json(
+                    episode_path,
+                    self._script_content_payload(
+                        node_name="script_novel_extract",
+                        episode_key=episode_key,
+                        content=extracted_text,
+                        dependency_field="source_novel_full_path",
+                        dependency_path=state.script.novel_full.get(episode_key),
+                    ),
+                )
+                extract_contents[episode_key] = extracted_text
+                state.script.novel_extract[episode_key] = self._project_relative(project_dir, episode_path)
+
+            state.budget.used_text_calls += 1
+            self.repo.save_state(project_dir, state)
+            get_logger().info(
+                "script_novel_extract batch %s generated saved_count=%d",
+                ",".join(batch_keys),
+                len(batch_keys),
+            )
+
+        self._validate_episode_keys("script_novel_extract.novel_extract", state.script.novel_extract, state)
+        output = ScriptNovelExtractOutput(novel_extract=state.script.novel_extract)
+        self.repo.save_node_output(project_dir, "script_novel_extract", output)
         return state
 
     async def _run_role_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
@@ -447,7 +784,11 @@ class PregenWorkflow:
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.role_service.role_design(state, provider)
+        output = await self.role_service.role_design(
+            state,
+            provider,
+            episode_stories=self._episode_stories(project_dir, state),
+        )
         roles: dict[str, Role] = {}
         for item in output.roles:
             role_id = normalize_id("role", item.name)
@@ -481,6 +822,7 @@ class PregenWorkflow:
         output = await self.role_service.role_voice_design(
             state,
             provider,
+            episode_stories=self._episode_stories(project_dir, state),
             available_voices=available_voices,
         )
         self._apply_role_voice_design_output(state, output, speech_provider=speech_provider)
@@ -1425,7 +1767,11 @@ class PregenWorkflow:
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.asset_service.role_appearance_design(state, provider)
+        output = await self.asset_service.role_appearance_design(
+            state,
+            provider,
+            episode_stories=self._episode_stories(project_dir, state),
+        )
         roles_by_key = self._role_lookup(state)
         unmatched_role_names: list[str] = []
         for item in output.appearances:
@@ -1434,12 +1780,36 @@ class PregenWorkflow:
                 unmatched_role_names.append(item.role_name)
                 continue
             appearance_id = normalize_id(f"{role.id}_appearance", item.name)
+            role_bound_prop_ids: list[str] = []
+            for prop_item in item.role_bound_props:
+                prop_id = normalize_id(f"{role.id}_prop", prop_item.name)
+                status_key = self._prop_status_key(prop_item.status)
+                if status_key != "normal" and not prop_id.endswith(f"_{status_key}"):
+                    prop_id = f"{prop_id}_{status_key}"
+                desc_parts = [prop_item.desc]
+                if prop_item.scale_relation:
+                    desc_parts.append(f"比例关系：{prop_item.scale_relation}")
+                if prop_item.usage:
+                    desc_parts.append(f"使用方式：{prop_item.usage}")
+                state.props[prop_id] = Prop(
+                    id=prop_id,
+                    name=prop_item.name,
+                    desc="；".join(part.strip("；") for part in desc_parts if part),
+                    prompt=prop_item.prompt,
+                    status=prop_item.status,
+                    owner_role_id=role.id,
+                    owner_role_name=role.name,
+                    source="role_appearance_design",
+                )
+                role_bound_prop_ids.append(prop_id)
             role.appearances[item.name] = RoleAppearance(
                 id=appearance_id,
                 role_id=role.id,
                 name=item.name,
                 desc=item.desc,
                 prompt=item.prompt,
+                role_bound_prop_ids=role_bound_prop_ids,
+                intro_video_prompt=item.intro_video_prompt,
             )
         if unmatched_role_names:
             get_logger().warning(
@@ -1452,10 +1822,16 @@ class PregenWorkflow:
 
     async def _run_role_appearance_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("role")
+        try:
+            video_provider = self.router.video("role")
+        except Exception:
+            video_provider = self.router.video("shot")
         get_logger().info(
-            "node=role_appearance_generation provider=%s model=%s",
+            "node=role_appearance_generation image_provider=%s image_model=%s video_provider=%s video_model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
+            getattr(video_provider, "name", "unknown"),
+            getattr(video_provider, "model", "-"),
         )
         generated: list[StaticAssetGenerationItem] = []
         appearances = [
@@ -1485,10 +1861,21 @@ class PregenWorkflow:
             )
             appearance.asset_id = appearance.id
             appearance.asset_path = asset_path
+            appearance.design_image_asset_id = appearance.id
+            appearance.design_image_asset_path = asset_path
             appearance.provider = result.provider
             appearance.model = result.model
             appearance.request_id = result.request_id
             appearance.usage = result.usage
+            for prop_id in appearance.role_bound_prop_ids:
+                prop = state.props.get(prop_id)
+                if prop is not None:
+                    prop.asset_id = appearance.id
+                    prop.asset_path = asset_path
+                    prop.provider = result.provider
+                    prop.model = result.model
+                    prop.request_id = result.request_id
+                    prop.usage = result.usage
             generated.append(
                 StaticAssetGenerationItem(
                     asset_id=appearance.id,
@@ -1505,6 +1892,65 @@ class PregenWorkflow:
                 )
             )
             get_logger().info("%s generated successfully, saved in %s", appearance.id, asset_path)
+
+            intro_video_asset_id = f"{appearance.id}_intro_video"
+            intro_prompt = appearance.intro_video_prompt or (
+                f"{role.name}站在洁净、亮度适中的虚空圆台上，圆台缓慢转动。"
+                f"人物保持{appearance.desc}的稳定外观，做几个符合身份和性格的常见动作；"
+                "如有随身物品，展示佩戴、握持或使用方式。背景干净抽象，无其他人物、无字幕、水印或文字标识。"
+            )
+            from autodrama.providers.base import AssetRef
+
+            refs = [
+                AssetRef(
+                    id=appearance.id,
+                    type="image",
+                    path=str(project_dir / asset_path),
+                    metadata={
+                        "asset_type": "role_appearance",
+                        "role_id": role.id,
+                        "role_name": role.name,
+                        "reference_for": intro_video_asset_id,
+                    },
+                )
+            ]
+            video_result = await video_provider.generate_video(
+                intro_prompt,
+                refs=refs,
+                duration=8,
+                wait=True,
+                metadata={
+                    "node_name": "role_appearance_generation",
+                    "project_id": state.project_id,
+                    "role_id": role.id,
+                    "appearance_id": appearance.id,
+                    "asset_id": intro_video_asset_id,
+                    "asset_type": "role_appearance_video",
+                },
+            )
+            video_asset_path = await self._write_generated_video(
+                project_dir,
+                self._video_asset_path(project_dir, "roles", intro_video_asset_id),
+                video_result,
+            )
+            appearance.intro_video_asset_id = intro_video_asset_id
+            appearance.intro_video_asset_path = video_asset_path
+            generated.append(
+                StaticAssetGenerationItem(
+                    asset_id=intro_video_asset_id,
+                    asset_type="role_appearance_video",
+                    owner_id=role.id,
+                    name=f"{role.name}/{appearance.name}/intro_video",
+                    prompt=intro_prompt,
+                    asset_path=video_asset_path,
+                    provider=video_result.provider,
+                    model=video_result.model,
+                    request_id=video_result.request_id,
+                    usage=video_result.usage,
+                    raw_response=video_result.raw_response,
+                )
+            )
+            get_logger().info("%s generated successfully, saved in %s", intro_video_asset_id, video_asset_path)
         self.repo.save_node_output(project_dir, "role_appearance_generation", StaticAssetGenerationOutput(generated_assets=generated))
         return state
 
@@ -1515,17 +1961,28 @@ class PregenWorkflow:
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.asset_service.prop_design(state, provider)
-        state.props = {
+        output = await self.asset_service.prop_design(
+            state,
+            provider,
+            episode_stories=self._episode_stories(project_dir, state),
+        )
+        role_bound_props = {
+            prop_id: prop
+            for prop_id, prop in state.props.items()
+            if prop.source == "role_appearance_design" or prop.owner_role_id
+        }
+        global_props = {
             self._prop_asset_id(item.name, item.status): Prop(
                 id=self._prop_asset_id(item.name, item.status),
                 name=item.name,
                 desc=item.desc,
                 prompt=item.prompt,
                 status=item.status,
+                source="prop_design",
             )
             for item in output.props
         }
+        state.props = {**role_bound_props, **global_props}
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, "prop_design", output)
         return state
@@ -1624,6 +2081,45 @@ class PregenWorkflow:
             )
         ]
 
+    @staticmethod
+    def _role_bound_prop_reference_refs(project_dir: Path, state: ProjectState, prop: Prop) -> list | None:
+        if not prop.owner_role_id:
+            return None
+        role = state.roles.get(prop.owner_role_id)
+        if role is None:
+            return None
+        appearance = next(
+            (
+                item
+                for item in role.appearances.values()
+                if prop.id in item.role_bound_prop_ids and item.design_image_asset_path
+            ),
+            None,
+        )
+        if appearance is None or not appearance.design_image_asset_path:
+            return None
+        reference_path = project_dir / appearance.design_image_asset_path
+        if not reference_path.exists() or not reference_path.is_file():
+            raise ValueError(
+                f"Cannot use role appearance reference for {prop.id}: missing file {appearance.design_image_asset_path}"
+            )
+
+        from autodrama.providers.base import AssetRef
+
+        return [
+            AssetRef(
+                id=appearance.design_image_asset_id or appearance.id,
+                type="image",
+                path=str(reference_path),
+                metadata={
+                    "asset_type": "role_appearance",
+                    "role_id": role.id,
+                    "role_name": role.name,
+                    "reference_for": prop.id,
+                },
+            )
+        ]
+
     async def _run_prop_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("prop")
         get_logger().info(
@@ -1641,7 +2137,9 @@ class PregenWorkflow:
         for prop in props:
             refs = None
             if getattr(provider, "supports_reference_images", False):
-                refs = self._prop_reference_refs(project_dir, prop, normal_props_by_base)
+                refs = self._role_bound_prop_reference_refs(project_dir, state, prop)
+                if refs is None:
+                    refs = self._prop_reference_refs(project_dir, prop, normal_props_by_base)
             result = await provider.generate_image(
                 prop.prompt,
                 refs=refs,
@@ -1689,7 +2187,11 @@ class PregenWorkflow:
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.asset_service.script_compress(state, provider)
+        output = await self.asset_service.script_compress(
+            state,
+            provider,
+            episode_stories=self._episode_stories(project_dir, state),
+        )
         self._validate_episode_keys("script_compress.simple_script", output.simple_script, state)
         state.metadata["simple_script"] = output.simple_script
         state.metadata["global_script"] = output.global_script
@@ -1704,7 +2206,11 @@ class PregenWorkflow:
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.asset_service.layout_design(state, provider)
+        output = await self.asset_service.layout_design(
+            state,
+            provider,
+            episode_stories=self._episode_stories(project_dir, state),
+        )
         state.layouts = {
             normalize_id("layout", item.name): Layout(
                 id=normalize_id("layout", item.name),
@@ -1801,7 +2307,11 @@ class PregenWorkflow:
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.asset_service.bgm_design(state, provider)
+        output = await self.asset_service.bgm_design(
+            state,
+            provider,
+            episode_stories=self._episode_stories(project_dir, state),
+        )
         expected_bgm_count = self.repo.settings.project.bgm_count
         if len(output.bgms) != expected_bgm_count:
             raise ValueError(f"bgm_design must generate exactly {expected_bgm_count} BGM items; got {len(output.bgms)}")

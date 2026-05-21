@@ -163,6 +163,29 @@ async def main_async() -> int:
     shot = json.loads((project_dir / "shots" / "episode_001.json").read_text(encoding="utf-8"))
     require(shot["shots"][0]["video_asset_path"] == task["asset_path"], "shot video path was not updated")
 
+    skip_provider = QueueVideoProvider(complete=True)
+    await GenerationWorkflow(repo=repo, router=VideoRouter(skip_provider)).run(
+        project_dir,
+        until="shot_video_generation",
+        only="shot_video_generation",
+        episode_keys=parse_episode_keys("1"),
+        shot_selectors=parse_shot_selectors("1"),
+    )
+    require(skip_provider.submit_count == 0, "Completed video should be reused without --force")
+    require(skip_provider.query_count == 0, "Completed video should not be polled without --force")
+
+    force_provider = QueueVideoProvider(complete=True)
+    await GenerationWorkflow(repo=repo, router=VideoRouter(force_provider)).run(
+        project_dir,
+        until="shot_video_generation",
+        only="shot_video_generation",
+        episode_keys=parse_episode_keys("1"),
+        shot_selectors=parse_shot_selectors("1"),
+        force=True,
+    )
+    require(force_provider.submit_count == 1, "Forced video generation should submit a new task")
+    require(force_provider.query_count == 1, f"Forced video generation should poll once, got {force_provider.query_count}")
+
     print("generation_tasks_smoke=ok")
     print(f"project_dir={project_dir}")
     print(f"task_id={task['task_id']} video={task['asset_path']}")

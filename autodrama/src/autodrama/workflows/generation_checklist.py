@@ -24,8 +24,10 @@ def checklist_path(project_dir: Path) -> Path:
 
 
 def _episode_display_name(state: ProjectState, episode_key: str) -> str:
-    outline = state.script.episode_outlines.get(episode_key) or state.script.final_script.get(episode_key) or ""
+    outline = state.script.episode_outlines.get(episode_key) or ""
     first_line = str(outline).strip().splitlines()[0] if str(outline).strip() else ""
+    if first_line.endswith(".json") or "/" in first_line or "\\" in first_line:
+        first_line = ""
     if first_line:
         return first_line[:80]
     try:

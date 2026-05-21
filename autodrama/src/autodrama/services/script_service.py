@@ -4,9 +4,9 @@ import json
 
 from autodrama.core.schemas import (
     ProjectState,
-    ScriptDetailOutput,
+    ScriptNovelExtractBatchOutput,
+    ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
-    ScriptPolishOutput,
 )
 from autodrama.providers.base import TextLLM
 from autodrama.utils.prompts import PromptStore
@@ -23,6 +23,10 @@ class ScriptService:
     @staticmethod
     def episode_duration_seconds(state: ProjectState) -> int:
         return int(state.metadata.get("episode_duration_seconds", 30))
+
+    @classmethod
+    def episode_target_char_count(cls, state: ProjectState) -> int:
+        return cls.episode_duration_seconds(state) * 60
 
     @staticmethod
     def visual_style_label(state: ProjectState) -> str:
@@ -70,54 +74,79 @@ class ScriptService:
             },
         )
 
-    async def script_detail(self, state: ProjectState, provider: TextLLM) -> ScriptDetailOutput:
+    async def script_novel_extract_batch(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        batch_episode_keys: list[str],
+        novel_full: dict[str, str],
+        previous_extract: dict[str, str],
+        extract_hints: dict[str, str],
+    ) -> ScriptNovelExtractBatchOutput:
         episode_count = self.episode_count(state)
         episode_duration_seconds = self.episode_duration_seconds(state)
         prompt = self.prompts.render(
-            "script_detail",
+            "script_novel_extract",
             title=state.title,
-            raw_script=state.raw_script,
-            outline=state.script.outline or "",
-            episode_outlines=self.format_json(state.script.episode_outlines),
+            novel_full=self.format_json(novel_full),
+            previous_extract=self.format_json(previous_extract) if previous_extract else "（暂无，当前是第一批。）",
+            extract_hints=self.format_json(extract_hints),
+            batch_episode_keys=", ".join(batch_episode_keys),
             episode_count=episode_count,
             episode_duration_seconds=episode_duration_seconds,
-            episode_keys=", ".join(self.episode_keys(episode_count)),
             visual_style_label=self.visual_style_label(state),
             visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,
-            ScriptDetailOutput,
-            temperature=0.7,
+            ScriptNovelExtractBatchOutput,
+            temperature=0.5,
             metadata={
-                "node_name": "script_detail",
+                "node_name": "script_novel_extract",
                 "project_id": state.project_id,
-                "required_mapping_field": "detailed_script",
-                "expected_keys": self.episode_keys(episode_count),
+                "required_mapping_field": "novel_extract",
+                "expected_keys": batch_episode_keys,
+                "batch_episode_keys": batch_episode_keys,
             },
         )
 
-    async def script_polish(self, state: ProjectState, provider: TextLLM) -> ScriptPolishOutput:
+    async def script_novel_episode(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        episode_key: str,
+        episode_outlines: dict[str, str],
+        current_episode_outline: str,
+        previous_chapters: str,
+    ) -> ScriptNovelEpisodeOutput:
         episode_count = self.episode_count(state)
         episode_duration_seconds = self.episode_duration_seconds(state)
+        target_char_count = self.episode_target_char_count(state)
         prompt = self.prompts.render(
-            "script_polish",
+            "script_novel_episode",
             title=state.title,
-            detailed_script=self.format_json(state.script.detailed_script),
+            outline=state.script.outline or "",
+            episode_outlines=self.format_json(episode_outlines),
+            current_episode_key=episode_key,
+            current_episode_outline=current_episode_outline,
+            previous_chapters=previous_chapters,
             episode_count=episode_count,
             episode_duration_seconds=episode_duration_seconds,
+            target_char_count=target_char_count,
             episode_keys=", ".join(self.episode_keys(episode_count)),
             visual_style_label=self.visual_style_label(state),
             visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,
-            ScriptPolishOutput,
-            temperature=0.7,
+            ScriptNovelEpisodeOutput,
+            temperature=0.75,
             metadata={
-                "node_name": "script_polish",
+                "node_name": "script_novel_episode",
                 "project_id": state.project_id,
-                "required_mapping_field": "final_script",
-                "expected_keys": self.episode_keys(episode_count),
+                "episode_key": episode_key,
+                "target_char_count": target_char_count,
             },
         )
