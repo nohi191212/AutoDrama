@@ -96,8 +96,13 @@ providers:
     api_key_env: RIGHTCODE_API_KEY
     models:
       image: gpt-image-2
+      # Used by role_appearance_generation for role design images.
+      role_design: gpt-image-2-vip
     options:
       size: 1024x1024
+      # Used by role_appearance_generation for role design images.
+      role_design_size: 3840x2160
+      role_design_quality: high
       # Used when routing.image.ref_frame is rightcode.
       ref_frame_size: 1024x1536
       n: 1

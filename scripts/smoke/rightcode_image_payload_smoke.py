@@ -19,8 +19,13 @@ def main() -> int:
     settings = ProviderSettings(
         base_url="https://www.right.codes/draw",
         api_key_env="RIGHTCODE_API_KEY",
-        models={"image": "gpt-image-2"},
-        options={"size": "1024x1024", "n": 1},
+        models={"image": "gpt-image-2", "role_design": "gpt-image-2-vip"},
+        options={
+            "size": "1024x1024",
+            "role_design_size": "3840x2160",
+            "role_design_quality": "high",
+            "n": 1,
+        },
     )
     provider = RightCodeImageProvider(settings, RuntimeSettings())
 
@@ -56,6 +61,17 @@ def main() -> int:
     if not str(images[0]).startswith("data:image/png;base64,"):
         raise AssertionError("Reference image was not encoded as a png data URL")
 
+    role_design_payload = provider.build_payload(
+        "A clean role design sheet.",
+        metadata={"node_name": "role_appearance_generation", "asset_type": "role_appearance"},
+    )
+    if role_design_payload["model"] != "gpt-image-2-vip":
+        raise AssertionError(f"Unexpected role design model: {role_design_payload['model']}")
+    if role_design_payload["size"] != "3840x2160":
+        raise AssertionError(f"Unexpected role design size: {role_design_payload['size']}")
+    if role_design_payload["quality"] != "high":
+        raise AssertionError(f"Unexpected role design quality: {role_design_payload['quality']}")
+
     image_urls, image_data = provider._extract_images(
         {
             "choices": [
@@ -82,6 +98,11 @@ def main() -> int:
     print("rightcode_image_payload_smoke=ok")
     print(f"endpoint={provider.endpoint}")
     print(f"model={payload['model']}")
+    print(
+        "role_design="
+        f"{role_design_payload['model']} size={role_design_payload['size']} "
+        f"quality={role_design_payload['quality']}"
+    )
     print(f"reference_path={reference_path}")
     return 0
 

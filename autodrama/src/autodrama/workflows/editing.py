@@ -227,7 +227,7 @@ class EditingWorkflow(PregenWorkflow):
         ratio = self._configured_video_ratio()
         resolution = self._configured_video_resolution()
         long_side = 720 if "720" in resolution else 1080 if "1080" in resolution else 720
-        if ratio == "9:16":
+        if ratio == "16:9":
             return long_side, int(long_side * 16 / 9), 25, ratio
         if ratio == "1:1":
             return long_side, long_side, 25, ratio
@@ -240,7 +240,7 @@ class EditingWorkflow(PregenWorkflow):
                 continue
             options = provider.options
             value = options.get("video_ratio") or options.get("ratio")
-            if isinstance(value, str) and value.strip() in {"16:9", "9:16", "1:1"}:
+            if isinstance(value, str) and value.strip() in {"16:9", "16:9", "1:1"}:
                 return value.strip()
         return "16:9"
 

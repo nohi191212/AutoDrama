@@ -2218,6 +2218,7 @@ class PregenWorkflow:
                     "role_id": role.id,
                     "appearance_id": appearance.id,
                     "asset_id": appearance.id,
+                    "asset_type": "role_appearance",
                 },
             )
             asset_path = await self._write_first_generated_image(

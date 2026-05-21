@@ -136,6 +136,9 @@ class RightCodeImageProvider:
         ):
             if key in self.settings.options:
                 payload[key] = self.settings.options[key]
+            purpose_value = self._purpose_parameter(key, metadata)
+            if purpose_value is not None:
+                payload[key] = purpose_value
             if key in metadata:
                 payload[key] = metadata[key]
 
@@ -145,14 +148,29 @@ class RightCodeImageProvider:
         return payload
 
     def _purpose_model(self, metadata: dict[str, Any]) -> str | None:
+        if self._is_role_design_image(metadata):
+            return self.settings.models.get("rightcode_role_design") or self.settings.models.get("role_design")
         if str(metadata.get("node_name") or "") == "ref_frame_generation":
             return self.settings.models.get("rightcode_ref_frame") or self.settings.models.get("ref_frame")
         return None
 
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
+        if self._is_role_design_image(metadata):
+            return self.settings.options.get("rightcode_role_design_size") or self.settings.options.get("role_design_size")
         if str(metadata.get("node_name") or "") == "ref_frame_generation":
             return self.settings.options.get("rightcode_ref_frame_size") or self.settings.options.get("ref_frame_size")
         return None
+
+    def _purpose_parameter(self, key: str, metadata: dict[str, Any]) -> object | None:
+        if key == "quality" and self._is_role_design_image(metadata):
+            return self.settings.options.get("rightcode_role_design_quality") or self.settings.options.get(
+                "role_design_quality"
+            )
+        return None
+
+    @staticmethod
+    def _is_role_design_image(metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("node_name") or "") == "role_appearance_generation"
 
     def _build_chat_payload(
         self,
