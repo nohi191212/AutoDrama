@@ -439,8 +439,9 @@ class WorkflowNode(Protocol):
 迁移内容：
 
 - `role_appearance_generation`
+- `prop_extract`
 - `prop_design`
-- `prop_image_generation`
+- `prop_generation`
 - `script_compress`
 - `layout_design`
 - `layout_dedupe_review`

@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from autodrama.core.schemas import Prop
+from autodrama.core.schemas import Prop, PropDesignItem, PropDesignOutput, PropExtractOutput
+from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
 
@@ -16,11 +17,57 @@ class PropDesignRepository:
         self.repo = repo
         self.layout = layout
 
+    def extract_output_path(self, project_dir: Path) -> Path:
+        return self.layout.node_output_path(project_dir, "prop_extract")
+
+    def design_output_path(self, project_dir: Path) -> Path:
+        return self.layout.node_output_path(project_dir, "prop_design")
+
     def item_path(self, project_dir: Path, prop_id: str) -> Path:
         return self.layout.prop_design_path(project_dir, prop_id)
 
     def item_relative_path(self, project_dir: Path, prop_id: str) -> str:
         return self.layout.project_relative(project_dir, self.item_path(project_dir, prop_id))
+
+    def load_extract_output(self, project_dir: Path) -> PropExtractOutput:
+        path = self.extract_output_path(project_dir)
+        if not path.exists():
+            raise FileNotFoundError(
+                "prop_extract output is missing; run pregen --only prop_extract before prop_design"
+            )
+        return PropExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def load_design_item(path: Path) -> PropDesignItem:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Invalid prop design JSON: {path}")
+        content = payload.get("content", payload)
+        if not isinstance(content, dict):
+            raise ValueError(f"Invalid prop design content JSON: {path}")
+        return PropDesignItem.model_validate(content)
+
+    def load_existing_output(self, project_dir: Path) -> PropDesignOutput | None:
+        prop_items: list[PropDesignItem] = []
+        props_dir = project_dir / "assets" / "json" / "props"
+        if props_dir.exists():
+            for path in sorted(props_dir.glob("prop_*.json")):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(payload, dict):
+                        continue
+                    if payload.get("node_name") != "prop_design" and payload.get("source") != "prop_design":
+                        continue
+                    prop_items.append(self.load_design_item(path))
+                except Exception as exc:
+                    get_logger().warning("prop_design ignored invalid prop design JSON %s: %s", path, exc)
+            if prop_items:
+                return PropDesignOutput(props=prop_items)
+
+        path = self.design_output_path(project_dir)
+        if not path.exists():
+            return None
+        return PropDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
     def save_record(
         self,

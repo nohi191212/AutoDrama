@@ -131,7 +131,7 @@
 - `anchor_frame_prompt`：完整静态锚点参考帧主体 prompt。
 - `video_prompt`：完整连续视频片段主体 prompt。
 
-旧的结构化视觉字段 `content`、`scene_description`、`composition`、`lighting`、`sound_design`、`camera_shooting_angle`、`camera_movement`、`focal_length` 不属于本次输出。所有场景、构图、光线、机位、焦段、动作、节奏、声音和结尾状态都要自然融合进 `anchor_frame_prompt` 或 `video_prompt`。
+所有场景、构图、光线、机位、焦段、动作、节奏、声音和结尾状态都要自然融合进 `anchor_frame_prompt` 或 `video_prompt`。
 
 # 正文覆盖边界要求
 

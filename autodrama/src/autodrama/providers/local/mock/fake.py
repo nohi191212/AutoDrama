@@ -11,6 +11,7 @@ from autodrama.core.schemas import (
     LayoutDedupeReviewOutput,
     LayoutDesignOutput,
     PropDesignOutput,
+    PropExtractOutput,
     RoleAppearanceDesignOutput,
     RoleDesignOutput,
     RoleExtractOutput,
@@ -486,7 +487,30 @@ class FakeTextProvider:
                     },
                 ]
             }
+        elif schema is PropExtractOutput or node_name == "prop_extract":
+            data = {
+                "props": [
+                    {
+                        "name": "被调包的合同",
+                        "status": "normal",
+                        "episode_keys": episode_keys,
+                        "source_chapters": ["第1章-第2章"],
+                        "brief": "林舟发现合同关键页异常的核心证据道具。",
+                        "appearance_notes": ["A4商务合同", "关键页纸张颜色略浅", "页码和边缘纹理不一致"],
+                    },
+                    {
+                        "name": "邮件截图",
+                        "status": "normal",
+                        "episode_keys": episode_keys,
+                        "source_chapters": ["第1章-第2章"],
+                        "brief": "苏晚提供的旧邮件附件时间线证据。",
+                        "appearance_notes": ["电脑或手机屏幕截图", "附件时间线", "冷蓝屏幕光"],
+                    },
+                ]
+            }
         elif schema is PropDesignOutput or node_name == "prop_design":
+            prop_name = str(metadata.get("prop_name") or "").strip()
+            prop_episode_keys = [str(key) for key in (metadata.get("episode_keys") or episode_keys)]
             data = {
                 "props": [
                     {
@@ -494,17 +518,20 @@ class FakeTextProvider:
                         "desc": "一份装订整齐的商务合同，关键页纸张颜色略浅，页码和边缘纹理与其他页不一致。",
                         "prompt": "真人电影质感，商务合同特写，装订整齐，关键页纸张颜色略浅，页码和纸张边缘细节清晰，办公室桌面，自然冷色光。",
                         "status": "normal",
-                        "episode_keys": episode_keys,
+                        "episode_keys": prop_episode_keys,
                     },
                     {
                         "name": "邮件截图",
                         "desc": "手机或电脑上的旧邮件截图，能看到时间线和附件记录，是反击证据。",
                         "prompt": "真人电影质感，电脑屏幕上的邮件截图特写，时间线和附件记录清晰但不过度曝光，办公室环境反光自然。",
                         "status": "normal",
-                        "episode_keys": episode_keys,
+                        "episode_keys": prop_episode_keys,
                     },
                 ]
             }
+            if prop_name:
+                selected_props = [prop for prop in data["props"] if prop.get("name") == prop_name]
+                data["props"] = selected_props or data["props"][:1]
         elif schema is ScriptCompressOutput or node_name == "script_compress":
             data = {
                 "simple_script": {

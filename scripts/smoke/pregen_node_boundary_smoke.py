@@ -35,7 +35,8 @@ from autodrama.workflows.nodes.static_asset_nodes import (  # noqa: E402
     LayoutDesignNode,
     LayoutImageGenerationNode,
     PropDesignNode,
-    PropImageGenerationNode,
+    PropExtractNode,
+    PropGenerationNode,
     RoleAppearanceGenerationNode,
     ScriptCompressNode,
 )
@@ -109,8 +110,9 @@ def main() -> int:
 
     expected_static_asset_owners = {
         "role_appearance_generation": RoleAppearanceGenerationNode,
+        "prop_extract": PropExtractNode,
         "prop_design": PropDesignNode,
-        "prop_image_generation": PropImageGenerationNode,
+        "prop_generation": PropGenerationNode,
         "script_compress": ScriptCompressNode,
         "layout_design": LayoutDesignNode,
         "layout_dedupe_review": LayoutDedupeReviewNode,

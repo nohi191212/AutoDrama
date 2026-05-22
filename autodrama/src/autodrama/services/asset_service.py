@@ -8,6 +8,8 @@ from autodrama.core.schemas import (
     LayoutDesignOutput,
     ProjectState,
     PropDesignOutput,
+    PropExtractItem,
+    PropExtractOutput,
     RoleAppearanceDesignOutput,
     ScriptCompressOutput,
 )
@@ -80,21 +82,22 @@ class AssetService:
             metadata={"node_name": "role_appearance_design", "project_id": state.project_id},
         )
 
-    async def prop_design(
+    async def prop_extract(
         self,
         state: ProjectState,
         provider: TextLLM,
         *,
         novel_full: dict[str, str],
-    ) -> PropDesignOutput:
+    ) -> PropExtractOutput:
         role_bound_props = [
             prop.model_dump(mode="json")
             for prop in state.props.values()
             if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
         ]
         prompt = self.prompts.render(
-            "prop_design",
+            "prop_extract",
             title=state.title,
+            raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
             episode_keys=", ".join(novel_full),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
@@ -104,9 +107,54 @@ class AssetService:
         )
         return await provider.generate_json(
             prompt,
+            PropExtractOutput,
+            temperature=0.4,
+            metadata={
+                "node_name": "prop_extract",
+                "project_id": state.project_id,
+                "expected_keys": list(novel_full),
+            },
+        )
+
+    async def prop_design(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        prop_item: PropExtractItem,
+        prop_novel_full: dict[str, str],
+        all_prop_extracts: list[dict[str, object]],
+        existing_prop_designs: list[dict[str, object]],
+    ) -> PropDesignOutput:
+        role_bound_props = [
+            prop.model_dump(mode="json")
+            for prop in state.props.values()
+            if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
+        ]
+        prompt = self.prompts.render(
+            "prop_design",
+            title=state.title,
+            raw_script=state.raw_script,
+            prop_extract_item=self.format_json(prop_item.model_dump(mode="json")),
+            prop_novel_full=self.format_json(prop_novel_full),
+            all_prop_extracts=self.format_json(all_prop_extracts),
+            existing_prop_designs=self.format_json(existing_prop_designs),
+            roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
+            role_bound_props=self.format_json(role_bound_props),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
+        )
+        return await provider.generate_json(
+            prompt,
             PropDesignOutput,
             temperature=0.6,
-            metadata={"node_name": "prop_design", "project_id": state.project_id},
+            metadata={
+                "node_name": "prop_design",
+                "project_id": state.project_id,
+                "prop_name": prop_item.name,
+                "prop_status": prop_item.status,
+                "episode_keys": list(prop_novel_full),
+            },
         )
 
     async def script_compress(

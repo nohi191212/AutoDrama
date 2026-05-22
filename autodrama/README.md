@@ -13,14 +13,15 @@ Implemented scope:
 5. `role_design`
 6. `role_voice_generation`
 7. `role_appearance_generation`
-8. `prop_design`
-9. `prop_image_generation`
-10. `script_compress`
-11. `layout_design`
-12. `layout_dedupe_review`
-13. `layout_image_generation`
-14. `bgm_design`
-15. `bgm_generation`
+8. `prop_extract`
+9. `prop_design`
+10. `prop_generation`
+11. `script_compress`
+12. `layout_design`
+13. `layout_dedupe_review`
+14. `layout_image_generation`
+15. `bgm_design`
+16. `bgm_generation`
 
 `run pregen` covers script, reusable static assets, BGM design, and BGM audio generation. It stops at `bgm_generation` by default.
 
@@ -33,6 +34,8 @@ Script episode content is stored as per-episode JSON files:
 Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at most one direct source path such as `source_novel_full_path`. The state stores the JSON path when an episode is generated, or `false` when it is not generated yet.
 
 `role_extract` reads the complete `novel_full` set and records each role's `episode_keys` and source chapter references. `role_design` then runs one role at a time, loading only that role's `novel_full` episodes, and writes identity, relationships, voice design, appearance prompt, intro video prompt, and role-bound prop design into the active role state.
+
+`prop_extract` reads the complete `novel_full` set and records global prop candidates/statuses without image prompts. `prop_design` then runs one prop/status at a time, loading only the relevant `novel_full` episodes and writing per-prop design JSON. `prop_generation` renders the final prop images from those saved prompts.
 
 `run pregen --only role_design --episodes ...` is supported for role-scoped reruns. It only regenerates roles whose `role_extract.episode_keys` include the selected episode(s), while preserving existing role designs outside that episode when `assets/json/nodes/role_design.json` exists.
 

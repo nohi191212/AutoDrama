@@ -278,8 +278,9 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.
 
 - `_run_role_appearance_design`
 - `_run_role_appearance_generation`
+- `_run_prop_extract`
 - `_run_prop_design`
-- `_run_prop_image_generation`
+- `_run_prop_generation`
 - `_run_script_compress`
 - `_run_layout_design`
 - `_run_layout_dedupe_review`

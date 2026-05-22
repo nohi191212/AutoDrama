@@ -322,6 +322,19 @@ class RoleVoiceGenerationOutput(BaseModel):
     generated_voices: list[RoleVoiceGenerationItem]
 
 
+class PropExtractItem(BaseModel):
+    name: str
+    status: str = "normal"
+    episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    brief: str | None = None
+    appearance_notes: list[str] = Field(default_factory=list)
+
+
+class PropExtractOutput(BaseModel):
+    props: list[PropExtractItem]
+
+
 class PropDesignItem(BaseModel):
     name: str
     desc: str

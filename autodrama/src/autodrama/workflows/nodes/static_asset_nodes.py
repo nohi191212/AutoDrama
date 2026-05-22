@@ -8,6 +8,9 @@ from autodrama.core.schemas import (
     Layout,
     ProjectState,
     Prop,
+    PropDesignItem,
+    PropDesignOutput,
+    PropExtractItem,
     RoleAppearance,
     StaticAssetGenerationItem,
     StaticAssetGenerationOutput,
@@ -24,8 +27,9 @@ from autodrama.workflows.runner import WorkflowNode
 
 STATIC_ASSET_NODE_NAMES = [
     "role_appearance_generation",
+    "prop_extract",
     "prop_design",
-    "prop_image_generation",
+    "prop_generation",
     "script_compress",
     "layout_design",
     "layout_dedupe_review",
@@ -114,6 +118,10 @@ class StaticAssetNodeBase:
         return result
 
     @staticmethod
+    def prop_name_key(name: object) -> str:
+        return str(name or "").strip().casefold()
+
+    @staticmethod
     def prop_status_key(value: object) -> str:
         status = str(value or "normal").strip().lower()
         return slugify(status, fallback="normal").lower() or "normal"
@@ -126,20 +134,126 @@ class StaticAssetNodeBase:
             prop_id = f"{prop_id}_{status_key}"
         return prop_id
 
-    def prop_episode_keys(self, name: str, episode_keys: list[str], state: ProjectState) -> list[str]:
+    def prop_episode_keys(
+        self,
+        name: str,
+        episode_keys: list[str],
+        state: ProjectState,
+        *,
+        label: str = "prop_design",
+    ) -> list[str]:
         expected_keys = self.expected_episode_keys(state)
         expected = set(expected_keys)
         cleaned = self.dedupe_texts(episode_keys)
         invalid = [episode_key for episode_key in cleaned if episode_key not in expected]
         if invalid:
             raise ValueError(
-                f"prop_design generated invalid episode_keys for {name}: "
+                f"{label} generated invalid episode_keys for {name}: "
                 f"{', '.join(invalid)}; expected one of {', '.join(expected_keys)}"
             )
         if not cleaned:
-            raise ValueError(f"prop_design must include episode_keys for {name}")
+            raise ValueError(f"{label} must include episode_keys for {name}")
         selected = set(cleaned)
         return [episode_key for episode_key in expected_keys if episode_key in selected]
+
+    @classmethod
+    def prop_extract_key(cls, item: PropExtractItem | PropDesignItem) -> str:
+        return cls.prop_asset_id(item.name, item.status)
+
+    def select_prop_design_item(self, output: PropDesignOutput, extract_item: PropExtractItem) -> PropDesignItem:
+        if not output.props:
+            raise ValueError(f"prop_design returned no props for {extract_item.name}")
+
+        expected_id = self.prop_extract_key(extract_item)
+        expected_name = self.prop_name_key(extract_item.name)
+        for item in output.props:
+            if self.prop_asset_id(item.name, item.status) == expected_id:
+                return item
+            if self.prop_name_key(item.name) == expected_name:
+                return item
+
+        if len(output.props) == 1:
+            return output.props[0]
+        raise ValueError(
+            f"prop_design must return only {extract_item.name}; got "
+            f"{', '.join(item.name for item in output.props)}"
+        )
+
+    def merge_prop_extract_into_design(self, item: PropDesignItem, extract_item: PropExtractItem) -> PropDesignItem:
+        item.name = extract_item.name
+        item.status = extract_item.status or item.status or "normal"
+        item.episode_keys = self.dedupe_texts([*extract_item.episode_keys, *item.episode_keys])
+        return item
+
+    def ordered_prop_design_items(
+        self,
+        extract_items: list[PropExtractItem],
+        designed_by_key: dict[str, PropDesignItem],
+    ) -> list[PropDesignItem]:
+        ordered: list[PropDesignItem] = []
+        emitted: set[str] = set()
+        for extract_item in extract_items:
+            key = self.prop_extract_key(extract_item)
+            item = designed_by_key.get(key)
+            if item is None:
+                continue
+            ordered.append(item)
+            emitted.add(key)
+        for key, item in designed_by_key.items():
+            if key not in emitted:
+                ordered.append(item)
+        return ordered
+
+    @staticmethod
+    def role_bound_props(state: ProjectState) -> dict[str, Prop]:
+        return {
+            prop_id: prop
+            for prop_id, prop in state.props.items()
+            if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
+        }
+
+    def apply_prop_design_item(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: PropDesignItem,
+        *,
+        existing_props: dict[str, Prop],
+    ) -> Prop:
+        item.episode_keys = self.prop_episode_keys(item.name, item.episode_keys, state, label="prop_design")
+        prop_id = self.prop_asset_id(item.name, item.status)
+        prop = Prop(
+            id=prop_id,
+            name=item.name,
+            desc=item.desc,
+            prompt=item.prompt,
+            status=item.status,
+            episode_keys=item.episode_keys,
+            source="prop_design",
+        )
+        existing_prop = existing_props.get(prop_id)
+        if existing_prop is not None:
+            prop.asset_id = existing_prop.asset_id
+            prop.asset_path = existing_prop.asset_path
+            prop.provider = existing_prop.provider
+            prop.model = existing_prop.model
+            prop.request_id = existing_prop.request_id
+            prop.usage = existing_prop.usage
+        prop.design_path = self.save_prop_design_record(
+            project_dir,
+            prop,
+            prompt=item.prompt,
+            node_name="prop_design",
+            extra_payload={
+                "source_prop_extract_path": "assets/json/nodes/prop_extract.json",
+                "source_novel_full_paths": {
+                    episode_key: state.script.novel_full.get(episode_key)
+                    for episode_key in item.episode_keys
+                },
+            },
+        )
+        state.props[prop_id] = prop
+        return prop
 
     def save_prop_design_record(
         self,
@@ -546,6 +660,53 @@ class RoleAppearanceGenerationNode(StaticAssetNodeBase):
         return state
 
 
+class PropExtractNode(StaticAssetNodeBase):
+    name = "prop_extract"
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("prop")
+        self.logger.info(
+            "node=prop_extract provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        episode_keys = self.expected_episode_keys(state)
+        self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        output = await self.asset_service.prop_extract(
+            state,
+            provider,
+            novel_full=self.novel_full_contents(project_dir, state, episode_keys),
+        )
+
+        expected = set(episode_keys)
+        seen_keys: set[str] = set()
+        for item in output.props:
+            item.name = str(item.name or "").strip()
+            if not item.name:
+                raise ValueError("prop_extract returned a prop with empty name")
+            item.status = self.prop_status_key(item.status)
+            item.episode_keys = self.dedupe_texts(item.episode_keys)
+            item.source_chapters = self.dedupe_texts(item.source_chapters)
+            item.appearance_notes = self.dedupe_texts(item.appearance_notes)
+            invalid_episode_keys = sorted(set(item.episode_keys).difference(expected))
+            if invalid_episode_keys:
+                raise ValueError(
+                    f"prop_extract episode_keys for {item.name} must use existing keys; "
+                    f"got {', '.join(invalid_episode_keys)}"
+                )
+            if not item.episode_keys:
+                raise ValueError(f"prop_extract must include episode_keys for {item.name}")
+            key = self.prop_extract_key(item)
+            if key in seen_keys:
+                raise ValueError(f"prop_extract returned duplicated prop/status: {item.name} ({item.status})")
+            seen_keys.add(key)
+
+        state.metadata["prop_extract"] = output.model_dump(mode="json")
+        state.budget.used_text_calls += 1
+        self.repo.save_node_output(project_dir, self.name, output)
+        return state
+
+
 class PropDesignNode(StaticAssetNodeBase):
     name = "prop_design"
 
@@ -556,17 +717,10 @@ class PropDesignNode(StaticAssetNodeBase):
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.asset_service.prop_design(
-            state,
-            provider,
-            novel_full=self.novel_full_contents(project_dir, state),
-        )
+        extract_output = self.prop_designs.load_extract_output(project_dir)
+
         existing_props = dict(state.props)
-        role_bound_props = {
-            prop_id: prop
-            for prop_id, prop in state.props.items()
-            if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
-        }
+        role_bound_props = self.role_bound_props(state)
         for prop in role_bound_props.values():
             if not prop.design_path and prop.prompt:
                 prop.design_path = self.save_prop_design_record(
@@ -575,60 +729,94 @@ class PropDesignNode(StaticAssetNodeBase):
                     prompt=prop.prompt,
                     node_name=prop.source or self.name,
                 )
-        global_props: dict[str, Prop] = {}
-        for item in output.props:
-            item.episode_keys = self.prop_episode_keys(item.name, item.episode_keys, state)
-            prop_id = self.prop_asset_id(item.name, item.status)
-            prop = Prop(
-                id=prop_id,
-                name=item.name,
-                desc=item.desc,
-                prompt=item.prompt,
-                status=item.status,
-                episode_keys=item.episode_keys,
-                source=self.name,
+        state.props = dict(role_bound_props)
+
+        force_pregen = bool(getattr(self.workflow, "_force_pregen", False))
+        designed_by_key: dict[str, PropDesignItem] = {}
+        existing_output = self.prop_designs.load_existing_output(project_dir)
+        if existing_output is not None and not force_pregen:
+            for existing_item in existing_output.props:
+                try:
+                    existing_item.episode_keys = self.prop_episode_keys(
+                        existing_item.name,
+                        existing_item.episode_keys,
+                        state,
+                        label="prop_design",
+                    )
+                except ValueError:
+                    continue
+                key = self.prop_extract_key(existing_item)
+                designed_by_key[key] = existing_item
+                self.apply_prop_design_item(project_dir, state, existing_item, existing_props=existing_props)
+
+        all_prop_extracts = [item.model_dump(mode="json") for item in extract_output.props]
+        for extract_item in extract_output.props:
+            key = self.prop_extract_key(extract_item)
+            if key in designed_by_key and not force_pregen:
+                self.logger.info("prop_design %s already exists, skipped", extract_item.name)
+                continue
+
+            episode_keys = self.prop_episode_keys(
+                extract_item.name,
+                extract_item.episode_keys,
+                state,
+                label="prop_extract",
             )
-            existing_prop = existing_props.get(prop_id)
-            if existing_prop is not None:
-                prop.asset_id = existing_prop.asset_id
-                prop.asset_path = existing_prop.asset_path
-                prop.provider = existing_prop.provider
-                prop.model = existing_prop.model
-                prop.request_id = existing_prop.request_id
-                prop.usage = existing_prop.usage
-            prop.design_path = self.save_prop_design_record(
+            prop_novel_full = self.novel_full_contents(project_dir, state, episode_keys)
+            self.logger.info(
+                "prop_design generating %s status=%s episodes=%s chapters=%s",
+                extract_item.name,
+                extract_item.status,
+                ",".join(episode_keys),
+                ",".join(extract_item.source_chapters) or "-",
+            )
+            output = await self.asset_service.prop_design(
+                state,
+                provider,
+                prop_item=extract_item,
+                prop_novel_full=prop_novel_full,
+                all_prop_extracts=all_prop_extracts,
+                existing_prop_designs=[
+                    item.model_dump(mode="json")
+                    for item in self.ordered_prop_design_items(extract_output.props, designed_by_key)
+                ],
+            )
+            item = self.merge_prop_extract_into_design(
+                self.select_prop_design_item(output, extract_item),
+                extract_item,
+            )
+            item.episode_keys = self.prop_episode_keys(item.name, item.episode_keys, state, label="prop_design")
+            self.apply_prop_design_item(project_dir, state, item, existing_props=existing_props)
+            designed_by_key[key] = item
+            state.budget.used_text_calls += 1
+            self.repo.save_node_output(
                 project_dir,
-                prop,
-                prompt=item.prompt,
-                node_name=self.name,
-                extra_payload={
-                    "source_novel_full_paths": {
-                        episode_key: state.script.novel_full.get(episode_key)
-                        for episode_key in item.episode_keys
-                    }
-                },
+                self.name,
+                PropDesignOutput(props=self.ordered_prop_design_items(extract_output.props, designed_by_key)),
             )
-            global_props[prop_id] = prop
-        state.props = {**role_bound_props, **global_props}
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, self.name, output)
+            self.repo.save_state(project_dir, state)
+
+        final_items = self.ordered_prop_design_items(extract_output.props, designed_by_key)
+        state.metadata["prop_design_generation_mode"] = "per_prop_recursive"
+        state.metadata["prop_design_designed_prop_names"] = [item.name for item in final_items]
+        self.repo.save_node_output(project_dir, self.name, PropDesignOutput(props=final_items))
         return state
 
 
-class PropImageGenerationNode(StaticAssetNodeBase):
-    name = "prop_image_generation"
+class PropGenerationNode(StaticAssetNodeBase):
+    name = "prop_generation"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("prop")
         self.logger.info(
-            "node=prop_image_generation provider=%s model=%s",
+            "node=prop_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
         generated: list[StaticAssetGenerationItem] = []
         props = self.ordered_props_for_generation(list(state.props.values()))
         normal_props_by_base = self.normal_props_by_variant_base(props)
-        self.logger.info("node=prop_image_generation total_images=%d", len(props))
+        self.logger.info("node=prop_generation total_images=%d", len(props))
         for prop in props:
             prompt = self.prop_prompt_for_generation(project_dir, prop)
             refs = None
@@ -833,8 +1021,9 @@ def build_static_asset_node_runners(workflow: Any) -> dict[str, StaticAssetNodeB
     return {
         RoleAppearanceDesignNode.name: RoleAppearanceDesignNode(**deps),
         RoleAppearanceGenerationNode.name: RoleAppearanceGenerationNode(**deps),
+        PropExtractNode.name: PropExtractNode(**deps),
         PropDesignNode.name: PropDesignNode(**deps),
-        PropImageGenerationNode.name: PropImageGenerationNode(**deps),
+        PropGenerationNode.name: PropGenerationNode(**deps),
         ScriptCompressNode.name: ScriptCompressNode(**deps),
         LayoutDesignNode.name: LayoutDesignNode(**deps),
         LayoutDedupeReviewNode.name: LayoutDedupeReviewNode(**deps),
@@ -856,7 +1045,8 @@ __all__ = [
     "LayoutDesignNode",
     "LayoutImageGenerationNode",
     "PropDesignNode",
-    "PropImageGenerationNode",
+    "PropExtractNode",
+    "PropGenerationNode",
     "RoleAppearanceDesignNode",
     "RoleAppearanceGenerationNode",
     "ScriptCompressNode",

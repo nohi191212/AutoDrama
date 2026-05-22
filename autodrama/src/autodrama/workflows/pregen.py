@@ -1511,6 +1511,9 @@ class PregenWorkflow:
     def _update_prop_design_image_result(self, project_dir: Path, prop: Prop, result, asset_path: str) -> None:
         self.prop_designs.update_image_result(project_dir, prop, result, asset_path)
 
+    async def _run_prop_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("prop_extract").run(project_dir, state)
+
     async def _run_prop_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("prop_design").run(project_dir, state)
 
@@ -1647,8 +1650,11 @@ class PregenWorkflow:
             )
         ]
 
+    async def _run_prop_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("prop_generation").run(project_dir, state)
+
     async def _run_prop_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("prop_image_generation").run(project_dir, state)
+        return await self._run_prop_generation(project_dir, state)
 
     async def _run_script_compress(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("script_compress").run(project_dir, state)

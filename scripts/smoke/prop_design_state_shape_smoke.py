@@ -22,9 +22,13 @@ from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
 class RecordingTextProvider(FakeTextProvider):
     def __init__(self) -> None:
         self.last_prompt = ""
+        self.prompts_by_node: dict[str, str] = {}
 
     async def generate_json(self, prompt: str, schema, **kwargs):
         self.last_prompt = prompt
+        metadata = kwargs.get("metadata") or {}
+        node_name = str(metadata.get("node_name") or schema.__name__)
+        self.prompts_by_node[node_name] = prompt
         return await super().generate_json(prompt, schema, **kwargs)
 
 
@@ -46,6 +50,11 @@ class Repo:
     def save_node_output(self, project_dir: Path, node_name: str, data: Any) -> Path:
         path = project_dir / "assets" / "json" / "nodes" / f"{node_name}.json"
         self.write_json(path, data)
+        return path
+
+    def save_state(self, project_dir: Path, state: ProjectState) -> Path:
+        path = project_dir / "project_state.json"
+        self.write_json(path, state)
         return path
 
 
@@ -87,12 +96,21 @@ async def run_smoke() -> None:
 
     provider = RecordingTextProvider()
     workflow = PregenWorkflow(repo=Repo(), router=Router(provider))
+    state = await workflow._run_prop_extract(project_dir, state)
     state = await workflow._run_prop_design(project_dir, state)
 
-    if novel_text not in provider.last_prompt:
+    prop_extract_prompt = provider.prompts_by_node.get("prop_extract", "")
+    prop_design_prompt = provider.prompts_by_node.get("prop_design", "")
+    if novel_text not in prop_extract_prompt:
+        raise AssertionError("prop_extract prompt did not receive novel_full content")
+    if "完整小说正文" not in prop_extract_prompt:
+        raise AssertionError("prop_extract prompt did not use the novel_full input label")
+    if novel_text not in prop_design_prompt:
         raise AssertionError("prop_design prompt did not receive novel_full content")
-    if "分集小说全文" not in provider.last_prompt:
-        raise AssertionError("prop_design prompt did not use the novel_full input label")
+    if "当前道具提取结果" not in prop_design_prompt:
+        raise AssertionError("prop_design prompt did not receive the current prop extract item")
+    if "当前道具对应集/章节的完整小说正文" not in prop_design_prompt:
+        raise AssertionError("prop_design prompt did not use the scoped novel_full input label")
 
     prop = state.props.get("prop_被调包的合同")
     if prop is None:
