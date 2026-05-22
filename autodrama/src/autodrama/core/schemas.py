@@ -83,17 +83,19 @@ class Prop(BaseModel):
     id: str
     name: str
     desc: str
-    prompt: str
     status: str = "normal"
+    episode_keys: list[str] = Field(default_factory=list)
     owner_role_id: str | None = None
     owner_role_name: str | None = None
     source: str | None = None
-    asset_id: str | None = None
+    design_path: str | None = None
     asset_path: str | None = None
-    provider: str | None = None
-    model: str | None = None
-    request_id: str | None = None
-    usage: dict[str, Any] = Field(default_factory=dict)
+    prompt: str | None = Field(default=None, exclude=True)
+    asset_id: str | None = Field(default=None, exclude=True)
+    provider: str | None = Field(default=None, exclude=True)
+    model: str | None = Field(default=None, exclude=True)
+    request_id: str | None = Field(default=None, exclude=True)
+    usage: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
 
 class Layout(BaseModel):
@@ -325,6 +327,7 @@ class PropDesignItem(BaseModel):
     desc: str
     prompt: str
     status: str = "normal"
+    episode_keys: list[str] = Field(default_factory=list)
 
 
 class PropDesignOutput(BaseModel):

@@ -85,7 +85,7 @@ class AssetService:
         state: ProjectState,
         provider: TextLLM,
         *,
-        episode_stories: dict[str, str],
+        novel_full: dict[str, str],
     ) -> PropDesignOutput:
         role_bound_props = [
             prop.model_dump(mode="json")
@@ -95,7 +95,8 @@ class AssetService:
         prompt = self.prompts.render(
             "prop_design",
             title=state.title,
-            episode_stories=self.format_json(episode_stories),
+            novel_full=self.format_json(novel_full),
+            episode_keys=", ".join(novel_full),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
             role_bound_props=self.format_json(role_bound_props),
             visual_style_label=self.visual_style_label(state),

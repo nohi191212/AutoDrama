@@ -450,12 +450,14 @@ class FakeTextProvider:
                         "desc": "一份装订整齐的商务合同，关键页纸张颜色略浅，页码和边缘纹理与其他页不一致。",
                         "prompt": "真人电影质感，商务合同特写，装订整齐，关键页纸张颜色略浅，页码和纸张边缘细节清晰，办公室桌面，自然冷色光。",
                         "status": "normal",
+                        "episode_keys": episode_keys,
                     },
                     {
                         "name": "邮件截图",
                         "desc": "手机或电脑上的旧邮件截图，能看到时间线和附件记录，是反击证据。",
                         "prompt": "真人电影质感，电脑屏幕上的邮件截图特写，时间线和附件记录清晰但不过度曝光，办公室环境反光自然。",
                         "status": "normal",
+                        "episode_keys": episode_keys,
                     },
                 ]
             }

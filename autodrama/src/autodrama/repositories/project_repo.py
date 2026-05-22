@@ -123,6 +123,7 @@ class ProjectRepository:
         (project_dir / "assets" / "json" / "scripts" / "novel_full").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "json" / "scripts" / "novel_extract").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "json" / "roles").mkdir(parents=True, exist_ok=True)
+        (project_dir / "assets" / "json" / "props").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "images" / "roles").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "images" / "props").mkdir(parents=True, exist_ok=True)
         (project_dir / "assets" / "images" / "layouts").mkdir(parents=True, exist_ok=True)

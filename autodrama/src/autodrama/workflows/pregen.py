@@ -995,6 +995,7 @@ class PregenWorkflow:
 
     def _apply_role_design_item(
         self,
+        project_dir: Path,
         state: ProjectState,
         item: RoleDesignItem,
         *,
@@ -1072,6 +1073,7 @@ class PregenWorkflow:
                     desc="；".join(part.strip("；") for part in desc_parts if part),
                     prompt=prop_item.prompt,
                     status=prop_item.status,
+                    episode_keys=role.episode_keys,
                     owner_role_id=role.id,
                     owner_role_name=role.name,
                     source="role_design",
@@ -1084,6 +1086,19 @@ class PregenWorkflow:
                     prop.model = existing_prop.model
                     prop.request_id = existing_prop.request_id
                     prop.usage = existing_prop.usage
+                prop.design_path = self._save_prop_design_record(
+                    project_dir,
+                    prop,
+                    prompt=prop_item.prompt,
+                    node_name="role_design",
+                    extra_content={
+                        "scale_relation": prop_item.scale_relation,
+                        "usage": prop_item.usage,
+                    },
+                    extra_payload={
+                        "source_role_design_path": design_path or self._role_design_relative_path(project_dir, role.id)
+                    },
+                )
                 state.props[prop_id] = prop
                 role_bound_prop_ids.append(prop_id)
             appearance = RoleAppearance(
@@ -1122,6 +1137,7 @@ class PregenWorkflow:
             if item is None:
                 continue
             self._apply_role_design_item(
+                project_dir,
                 state,
                 item,
                 speech_provider=speech_provider,
@@ -1223,6 +1239,7 @@ class PregenWorkflow:
                     existing_design_path = self._save_role_design_item(project_dir, existing_item)
                     designed_by_key[existing_key] = existing_item
                     self._apply_role_design_item(
+                        project_dir,
                         state,
                         existing_item,
                         speech_provider=speech_provider,
@@ -1263,6 +1280,7 @@ class PregenWorkflow:
             )
             design_path = self._save_role_design_item(project_dir, item)
             self._apply_role_design_item(
+                project_dir,
                 state,
                 item,
                 speech_provider=speech_provider,
@@ -2306,16 +2324,28 @@ class PregenWorkflow:
                     desc_parts.append(f"比例关系：{prop_item.scale_relation}")
                 if prop_item.usage:
                     desc_parts.append(f"使用方式：{prop_item.usage}")
-                state.props[prop_id] = Prop(
+                prop = Prop(
                     id=prop_id,
                     name=prop_item.name,
                     desc="；".join(part.strip("；") for part in desc_parts if part),
                     prompt=prop_item.prompt,
                     status=prop_item.status,
+                    episode_keys=role.episode_keys,
                     owner_role_id=role.id,
                     owner_role_name=role.name,
                     source="role_appearance_design",
                 )
+                prop.design_path = self._save_prop_design_record(
+                    project_dir,
+                    prop,
+                    prompt=prop_item.prompt,
+                    node_name="role_appearance_design",
+                    extra_content={
+                        "scale_relation": prop_item.scale_relation,
+                        "usage": prop_item.usage,
+                    },
+                )
+                state.props[prop_id] = prop
                 role_bound_prop_ids.append(prop_id)
             role.appearances[item.name] = RoleAppearance(
                 id=appearance_id,
@@ -2509,6 +2539,142 @@ class PregenWorkflow:
         self.repo.save_node_output(project_dir, "role_appearance_generation", StaticAssetGenerationOutput(generated_assets=generated))
         return state
 
+    @staticmethod
+    def _prop_design_json_path(project_dir: Path, prop_id: str) -> Path:
+        return project_dir / "assets" / "json" / "props" / f"{prop_id}.json"
+
+    def _prop_design_relative_path(self, project_dir: Path, prop_id: str) -> str:
+        return self._project_relative(project_dir, self._prop_design_json_path(project_dir, prop_id))
+
+    def _prop_episode_keys(self, name: str, episode_keys: list[str], state: ProjectState) -> list[str]:
+        expected_keys = self._expected_episode_keys(state)
+        expected = set(expected_keys)
+        cleaned = self._dedupe_texts(episode_keys)
+        invalid = [episode_key for episode_key in cleaned if episode_key not in expected]
+        if invalid:
+            raise ValueError(
+                f"prop_design generated invalid episode_keys for {name}: "
+                f"{', '.join(invalid)}; expected one of {', '.join(expected_keys)}"
+            )
+        if not cleaned:
+            raise ValueError(f"prop_design must include episode_keys for {name}")
+        selected = set(cleaned)
+        return [episode_key for episode_key in expected_keys if episode_key in selected]
+
+    def _save_prop_design_record(
+        self,
+        project_dir: Path,
+        prop: Prop,
+        *,
+        prompt: str,
+        node_name: str,
+        extra_content: dict[str, Any] | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> str:
+        content: dict[str, Any] = {
+            "name": prop.name,
+            "desc": prop.desc,
+            "prompt": prompt,
+            "status": prop.status,
+            "episode_keys": prop.episode_keys,
+        }
+        if prop.asset_path:
+            content["image_asset_path"] = prop.asset_path
+        if extra_content:
+            content.update({key: value for key, value in extra_content.items() if value not in (None, "", [])})
+
+        payload: dict[str, Any] = {
+            "node_name": node_name,
+            "prop_id": prop.id,
+            "prop_name": prop.name,
+            "source": prop.source,
+            "owner_role_id": prop.owner_role_id,
+            "owner_role_name": prop.owner_role_name,
+            "content": content,
+        }
+        if extra_payload:
+            payload.update(extra_payload)
+
+        path = self._prop_design_json_path(project_dir, prop.id)
+        self.repo.write_json(path, payload)
+        return self._project_relative(project_dir, path)
+
+    def _load_prop_design_content(self, project_dir: Path, prop: Prop) -> dict[str, Any]:
+        candidates: list[Path] = []
+        if prop.design_path:
+            design_path = Path(prop.design_path)
+            candidates.append(design_path if design_path.is_absolute() else project_dir / design_path)
+        default_path = self._prop_design_json_path(project_dir, prop.id)
+        if default_path not in candidates:
+            candidates.append(default_path)
+
+        for path in candidates:
+            if not path.exists():
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError(f"Invalid prop design JSON: {path}")
+            content = payload.get("content", payload)
+            if not isinstance(content, dict):
+                raise ValueError(f"Invalid prop design content JSON: {path}")
+            return content
+        return {}
+
+    def _prop_prompt_for_generation(self, project_dir: Path, prop: Prop) -> str:
+        prompt = str(prop.prompt or "").strip()
+        if prompt:
+            return prompt
+        content = self._load_prop_design_content(project_dir, prop)
+        prompt = str(content.get("prompt") or "").strip()
+        if not prompt:
+            raise ValueError(f"Prop {prop.id} is missing prompt; expected it in state or {prop.design_path}")
+        prop.prompt = prompt
+        return prompt
+
+    def _update_prop_design_image_result(self, project_dir: Path, prop: Prop, result, asset_path: str) -> None:
+        path = self._prop_design_json_path(project_dir, prop.id)
+        if prop.design_path:
+            design_path = Path(prop.design_path)
+            path = design_path if design_path.is_absolute() else project_dir / design_path
+
+        payload: dict[str, Any] = {}
+        if path.exists():
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        content = payload.get("content")
+        if not isinstance(content, dict):
+            content = {
+                "name": prop.name,
+                "desc": prop.desc,
+                "prompt": str(prop.prompt or ""),
+                "status": prop.status,
+                "episode_keys": prop.episode_keys,
+            }
+            payload["content"] = content
+
+        content["image_asset_path"] = asset_path
+        payload.update(
+            {
+                "prop_id": prop.id,
+                "prop_name": prop.name,
+                "source": prop.source,
+                "owner_role_id": prop.owner_role_id,
+                "owner_role_name": prop.owner_role_name,
+                "image_generation": {
+                    "asset_id": prop.asset_id or prop.id,
+                    "asset_path": asset_path,
+                    "provider": result.provider,
+                    "model": result.model,
+                    "request_id": result.request_id,
+                    "usage": result.usage,
+                    "raw_response": result.raw_response,
+                },
+            }
+        )
+        self.repo.write_json(path, payload)
+        prop.design_path = self._project_relative(project_dir, path)
+
     async def _run_prop_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("prop")
         get_logger().info(
@@ -2519,24 +2685,56 @@ class PregenWorkflow:
         output = await self.asset_service.prop_design(
             state,
             provider,
-            episode_stories=self._episode_stories(project_dir, state),
+            novel_full=self._novel_full_contents(project_dir, state),
         )
+        existing_props = dict(state.props)
         role_bound_props = {
             prop_id: prop
             for prop_id, prop in state.props.items()
             if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
         }
-        global_props = {
-            self._prop_asset_id(item.name, item.status): Prop(
-                id=self._prop_asset_id(item.name, item.status),
+        for prop in role_bound_props.values():
+            if not prop.design_path and prop.prompt:
+                prop.design_path = self._save_prop_design_record(
+                    project_dir,
+                    prop,
+                    prompt=prop.prompt,
+                    node_name=prop.source or "prop_design",
+                )
+        global_props: dict[str, Prop] = {}
+        for item in output.props:
+            item.episode_keys = self._prop_episode_keys(item.name, item.episode_keys, state)
+            prop_id = self._prop_asset_id(item.name, item.status)
+            prop = Prop(
+                id=prop_id,
                 name=item.name,
                 desc=item.desc,
                 prompt=item.prompt,
                 status=item.status,
+                episode_keys=item.episode_keys,
                 source="prop_design",
             )
-            for item in output.props
-        }
+            existing_prop = existing_props.get(prop_id)
+            if existing_prop is not None:
+                prop.asset_id = existing_prop.asset_id
+                prop.asset_path = existing_prop.asset_path
+                prop.provider = existing_prop.provider
+                prop.model = existing_prop.model
+                prop.request_id = existing_prop.request_id
+                prop.usage = existing_prop.usage
+            prop.design_path = self._save_prop_design_record(
+                project_dir,
+                prop,
+                prompt=item.prompt,
+                node_name="prop_design",
+                extra_payload={
+                    "source_novel_full_paths": {
+                        episode_key: state.script.novel_full.get(episode_key)
+                        for episode_key in item.episode_keys
+                    }
+                },
+            )
+            global_props[prop_id] = prop
         state.props = {**role_bound_props, **global_props}
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, "prop_design", output)
@@ -2690,13 +2888,14 @@ class PregenWorkflow:
             len(props),
         )
         for prop in props:
+            prompt = self._prop_prompt_for_generation(project_dir, prop)
             refs = None
             if getattr(provider, "supports_reference_images", False):
                 refs = self._role_bound_prop_reference_refs(project_dir, state, prop)
                 if refs is None:
                     refs = self._prop_reference_refs(project_dir, prop, normal_props_by_base)
             result = await provider.generate_image(
-                prop.prompt,
+                prompt,
                 refs=refs,
                 metadata={
                     "node_name": "prop_image_generation",
@@ -2716,13 +2915,14 @@ class PregenWorkflow:
             prop.model = result.model
             prop.request_id = result.request_id
             prop.usage = result.usage
+            self._update_prop_design_image_result(project_dir, prop, result, asset_path)
             generated.append(
                 StaticAssetGenerationItem(
                     asset_id=prop.id,
                     asset_type="prop",
                     owner_id=prop.id,
                     name=prop.name,
-                    prompt=prop.prompt,
+                    prompt=prompt,
                     asset_path=asset_path,
                     provider=result.provider,
                     model=result.model,
