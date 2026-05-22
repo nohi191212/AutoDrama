@@ -114,21 +114,32 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         return "\n".join(item for item in parts if item)
 
     def _shot_video_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
-        parts = [
-            self._visual_style_prompt(state),
-            "视频片段生成要求:",
-            shot.video_prompt,
-        ]
+        style_prompt = str(state.metadata.get("visual_style_prompt", "")).strip()
+        body = shot.video_prompt.strip()
+        parts: list[str] = []
         if shot.start_frame_source == "previous_shot_last_frame":
-            parts.append(
-                "首帧继承: 本片段起始画面严格参考上一片段末尾帧，保持人物姿态、空间方向、"
-                "道具位置、能量位置和环境粒子连续，再从该状态进入本片段动作。"
+            lead = (
+                "首帧为图片1，即上一段视频尾帧，承接上一段末尾的人物姿态、空间方向、"
+                "道具位置、能量位置和环境粒子，再从该状态继续本片段动作。"
             )
             if shot.start_frame_inheritance_reason:
-                parts.append(f"继承理由: {shot.start_frame_inheritance_reason}")
+                lead = f"{lead} 延续原因是{shot.start_frame_inheritance_reason.rstrip('。')}。"
+            for prefix in ("首帧承接上一段视频尾帧，", "首帧为上一段视频尾帧，", "首帧为图片1，"):
+                if body.startswith(prefix):
+                    body = body.removeprefix(prefix).lstrip()
+                    break
+            parts.append(lead)
         else:
-            parts.append("起始参考: 以本片段参考帧为首帧视觉基准，保持人物、场景和道具一致。")
-        return "\n".join(item for item in parts if item)
+            for prefix in ("首帧为参考帧，", "首帧为本片段参考帧，", "首帧为图片1，"):
+                if body.startswith(prefix):
+                    body = body.removeprefix(prefix).lstrip()
+                    break
+            parts.append("首帧为图片1，即本片段参考帧，保持图片1中的人物、场景、道具、构图和光线基准。")
+        parts.append(body)
+        if style_prompt:
+            parts.append(f"画面风格保持{style_prompt.rstrip('。')}。")
+        parts.append("全片不要出现字幕、水印、文字标识或片段编号。")
+        return " ".join(item for item in parts if item)
 
     async def _run_generation_node_for_episode(
         self,

@@ -190,10 +190,10 @@ async def main_async() -> int:
     for index, shot in enumerate(output.shots, start=1):
         require(shot.index == index, f"Shot index was not normalized: {shot.index}")
         require(shot.shot_id == f"episode_001_shot_{index:03d}", f"Unexpected shot_id: {shot.shot_id}")
-        require("秒]" in shot.video_prompt, f"Shot {index} video_prompt missing timed segment marker")
+        require(" 秒：" in shot.video_prompt, f"Shot {index} video_prompt missing official-style timed segment")
         require(
-            any(marker in shot.video_prompt for marker in ("[硬切]", "[J-Cut]", "[L-Cut]", "[无切]")),
-            f"Shot {index} video_prompt missing cut marker",
+            any(marker in shot.video_prompt for marker in ("全程不切镜", "可硬切", "J-Cut 式", "硬切到")),
+            f"Shot {index} video_prompt missing natural cut/continuity wording",
         )
     require(
         progress_snapshots == [
@@ -207,8 +207,9 @@ async def main_async() -> int:
     schema_names = {call["schema"] for call in provider.calls}
     require(schema_names == {StoryboardShotGenerationOutput.__name__}, f"Unexpected schemas: {schema_names}")
     require("液态白银" in provider.calls[0]["prompt"], "Prompt missing cloud-sea quality example")
-    require("[0~4.0秒]" in provider.calls[0]["prompt"], "Prompt missing timed video_prompt guidance/example")
-    require("镜头切换到" in provider.calls[0]["prompt"], "Prompt missing explicit cut guidance/example")
+    require("0-4 秒：" in provider.calls[0]["prompt"], "Prompt missing official-style timed video_prompt guidance/example")
+    require("方括号标签" in provider.calls[0]["prompt"], "Prompt missing guidance against old bracketed style")
+    require("硬切到" in provider.calls[0]["prompt"], "Prompt missing natural explicit cut guidance/example")
     require('"shot_count": 1' in provider.calls[1]["prompt"], "Second prompt missing first generated shot context")
     require("episode_001_shot_001" in provider.calls[1]["prompt"], "Second prompt missing first shot id")
     require('"shot_count": 2' in provider.calls[2]["prompt"], "Third prompt missing two generated shots context")
