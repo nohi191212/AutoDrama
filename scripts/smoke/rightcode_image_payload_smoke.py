@@ -21,8 +21,8 @@ def main() -> int:
         api_key_env="RIGHTCODE_API_KEY",
         models={"image": "gpt-image-2", "role_design": "gpt-image-2-vip"},
         options={
-            "size": "1024x1024",
-            "role_design_size": "3840x2160",
+            "size": "1024×1024",
+            "role_design_size": "3840×2160",
             "role_design_quality": "high",
             "n": 1,
         },

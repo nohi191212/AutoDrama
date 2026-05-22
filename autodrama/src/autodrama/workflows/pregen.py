@@ -242,6 +242,7 @@ class PregenWorkflow:
         output: RoleVoiceDesignOutput,
         *,
         speech_provider=None,
+        preserve_assets: bool = False,
     ) -> None:
         roles_by_key = self._role_lookup(state)
         speaker_lookup = self._speaker_lookup(speech_provider) if speech_provider is not None else {}
@@ -263,13 +264,19 @@ class PregenWorkflow:
                 if current is None or priority > current[0]:
                     voice_candidates[role.id] = (priority, item, speaker)
             audio_id = normalize_id(f"{role.id}_audio", str(item.emotion))
-            role.audio[str(item.emotion)] = RoleAudio(
+            existing_audio = role.audio.get(str(item.emotion))
+            audio = RoleAudio(
                 id=audio_id,
                 role_id=role.id,
                 emotion=str(item.emotion),
                 desc=item.desc,
                 sample_text=item.sample_text,
             )
+            if preserve_assets and existing_audio is not None:
+                audio.generation_status = existing_audio.generation_status
+                audio.asset_id = existing_audio.asset_id
+                audio.asset_path = existing_audio.asset_path
+            role.audio[str(item.emotion)] = audio
         for role_id, (_, item, speaker) in voice_candidates.items():
             role = state.roles.get(role_id)
             if role is not None:
@@ -443,10 +450,64 @@ class PregenWorkflow:
         return RoleExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
     def _load_existing_role_design_output(self, project_dir: Path) -> RoleDesignOutput | None:
+        role_items: list[RoleDesignItem] = []
+        roles_dir = project_dir / "assets" / "json" / "roles"
+        if roles_dir.exists():
+            for path in sorted(roles_dir.glob("role_*.json")):
+                try:
+                    role_items.append(self._load_role_design_item(path))
+                except Exception as exc:
+                    get_logger().warning("role_design ignored invalid role design JSON %s: %s", path, exc)
+            if role_items:
+                return RoleDesignOutput(roles=role_items)
+
         path = project_dir / "assets" / "json" / "nodes" / "role_design.json"
         if not path.exists():
             return None
         return RoleDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _role_design_json_path(project_dir: Path, role_id: str) -> Path:
+        return project_dir / "assets" / "json" / "roles" / f"{role_id}.json"
+
+    def _role_design_relative_path(self, project_dir: Path, role_id: str) -> str:
+        return self._project_relative(project_dir, self._role_design_json_path(project_dir, role_id))
+
+    def _save_role_design_item(self, project_dir: Path, item: RoleDesignItem) -> str:
+        role_id = normalize_id("role", item.name)
+        path = self._role_design_json_path(project_dir, role_id)
+        self.repo.write_json(
+            path,
+            {
+                "node_name": "role_design",
+                "role_id": role_id,
+                "role_name": item.name,
+                "content": item.model_dump(mode="json"),
+                "source_role_extract_path": "assets/json/nodes/role_extract.json",
+            },
+        )
+        return self._project_relative(project_dir, path)
+
+    @staticmethod
+    def _load_role_design_item(path: Path) -> RoleDesignItem:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Invalid role design JSON: {path}")
+        content = payload.get("content", payload)
+        if not isinstance(content, dict):
+            raise ValueError(f"Invalid role design content JSON: {path}")
+        return RoleDesignItem.model_validate(content)
+
+    def _load_role_design_item_for_role(self, project_dir: Path, role: Role) -> RoleDesignItem | None:
+        candidates: list[Path] = []
+        if role.design_path:
+            path = Path(role.design_path)
+            candidates.append(path if path.is_absolute() else project_dir / path)
+        candidates.append(self._role_design_json_path(project_dir, role.id))
+        for path in candidates:
+            if path.exists():
+                return self._load_role_design_item(path)
+        return None
 
     @staticmethod
     def _role_design_item_complete(item: RoleDesignItem) -> bool:
@@ -938,6 +999,8 @@ class PregenWorkflow:
         item: RoleDesignItem,
         *,
         speech_provider=None,
+        design_path: str | None = None,
+        preserve_assets: bool = False,
     ) -> None:
         if not self._role_design_item_complete(item):
             missing: list[str] = []
@@ -951,6 +1014,12 @@ class PregenWorkflow:
 
         role_id = normalize_id("role", item.name)
         existing_role = state.roles.get(role_id)
+        existing_appearances = dict(existing_role.appearances) if existing_role is not None else {}
+        existing_props = {
+            prop_id: prop
+            for prop_id, prop in state.props.items()
+            if prop.owner_role_id == role_id
+        }
         role = existing_role or Role(
             id=role_id,
             name=item.name,
@@ -958,6 +1027,7 @@ class PregenWorkflow:
         )
         role.name = item.name
         role.intro = item.intro
+        role.design_path = design_path or role.design_path
         role.personality = item.personality
         role.importance = item.importance
         role.aliases = self._dedupe_texts(item.aliases)
@@ -977,12 +1047,14 @@ class PregenWorkflow:
             state,
             RoleVoiceDesignOutput(role_voices=item.voices),
             speech_provider=speech_provider,
+            preserve_assets=preserve_assets,
         )
         role = state.roles[role_id]
 
         for appearance_item in item.appearances:
             appearance_name = str(appearance_item.name or "base").strip() or "base"
             appearance_id = normalize_id(f"{role.id}_appearance", appearance_name)
+            existing_appearance = existing_appearances.get(appearance_name)
             role_bound_prop_ids: list[str] = []
             for prop_item in appearance_item.role_bound_props:
                 prop_id = normalize_id(f"{role.id}_prop", prop_item.name)
@@ -994,7 +1066,7 @@ class PregenWorkflow:
                     desc_parts.append(f"比例关系：{prop_item.scale_relation}")
                 if prop_item.usage:
                     desc_parts.append(f"使用方式：{prop_item.usage}")
-                state.props[prop_id] = Prop(
+                prop = Prop(
                     id=prop_id,
                     name=prop_item.name,
                     desc="；".join(part.strip("；") for part in desc_parts if part),
@@ -1004,8 +1076,17 @@ class PregenWorkflow:
                     owner_role_name=role.name,
                     source="role_design",
                 )
+                existing_prop = existing_props.get(prop_id)
+                if preserve_assets and existing_prop is not None:
+                    prop.asset_id = existing_prop.asset_id
+                    prop.asset_path = existing_prop.asset_path
+                    prop.provider = existing_prop.provider
+                    prop.model = existing_prop.model
+                    prop.request_id = existing_prop.request_id
+                    prop.usage = existing_prop.usage
+                state.props[prop_id] = prop
                 role_bound_prop_ids.append(prop_id)
-            role.appearances[appearance_name] = RoleAppearance(
+            appearance = RoleAppearance(
                 id=appearance_id,
                 role_id=role.id,
                 name=appearance_name,
@@ -1013,6 +1094,39 @@ class PregenWorkflow:
                 prompt=appearance_item.prompt,
                 role_bound_prop_ids=role_bound_prop_ids,
                 intro_video_prompt=appearance_item.intro_video_prompt,
+            )
+            if preserve_assets and existing_appearance is not None:
+                appearance.design_image_generation_status = existing_appearance.design_image_generation_status
+                appearance.intro_video_generation_status = existing_appearance.intro_video_generation_status
+                appearance.design_image_asset_id = existing_appearance.design_image_asset_id
+                appearance.design_image_asset_path = existing_appearance.design_image_asset_path
+                appearance.intro_video_asset_id = existing_appearance.intro_video_asset_id
+                appearance.intro_video_asset_path = existing_appearance.intro_video_asset_path
+                appearance.asset_id = existing_appearance.asset_id
+                appearance.asset_path = existing_appearance.asset_path
+                appearance.provider = existing_appearance.provider
+                appearance.model = existing_appearance.model
+                appearance.request_id = existing_appearance.request_id
+                appearance.usage = existing_appearance.usage
+            role.appearances[appearance_name] = appearance
+
+    def _hydrate_roles_from_design_files(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        *,
+        speech_provider=None,
+    ) -> None:
+        for role in list(state.roles.values()):
+            item = self._load_role_design_item_for_role(project_dir, role)
+            if item is None:
+                continue
+            self._apply_role_design_item(
+                state,
+                item,
+                speech_provider=speech_provider,
+                design_path=role.design_path or self._role_design_relative_path(project_dir, role.id),
+                preserve_assets=True,
             )
 
     async def _run_role_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
@@ -1106,8 +1220,15 @@ class PregenWorkflow:
                     if not self._role_design_item_complete(existing_item):
                         continue
                     existing_key = self._role_name_key(existing_item.name)
+                    existing_design_path = self._save_role_design_item(project_dir, existing_item)
                     designed_by_key[existing_key] = existing_item
-                    self._apply_role_design_item(state, existing_item, speech_provider=speech_provider)
+                    self._apply_role_design_item(
+                        state,
+                        existing_item,
+                        speech_provider=speech_provider,
+                        design_path=existing_design_path,
+                        preserve_assets=True,
+                    )
 
         all_role_extracts = [item.model_dump(mode="json") for item in extract_output.roles]
         for extract_item in target_extract_roles:
@@ -1140,7 +1261,13 @@ class PregenWorkflow:
                 self._select_role_design_item(output, extract_item),
                 extract_item,
             )
-            self._apply_role_design_item(state, item, speech_provider=speech_provider)
+            design_path = self._save_role_design_item(project_dir, item)
+            self._apply_role_design_item(
+                state,
+                item,
+                speech_provider=speech_provider,
+                design_path=design_path,
+            )
             designed_by_key[role_key] = item
             state.budget.used_text_calls += 1
             state.metadata["role_design_generation_mode"] = "per_role_recursive"
@@ -1203,6 +1330,9 @@ class PregenWorkflow:
     def _preview_text(self, role: Role, audio: RoleAudio) -> str:
         return (audio.sample_text or f"我是{role.name}。")[:1024]
 
+    def _voice_prompt(self, role: Role, audio: RoleAudio) -> str:
+        return audio.desc or f"{role.name}的{audio.emotion}音色。{role.intro}"
+
     def _synthesis_text(self, provider, audio: RoleAudio, preview_text: str) -> str:
         if not getattr(provider, "is_cosyvoice", False):
             return preview_text
@@ -1244,6 +1374,16 @@ class PregenWorkflow:
     @staticmethod
     def _project_relative(project_dir: Path, path: Path) -> str:
         return str(path.relative_to(project_dir)).replace("\\", "/")
+
+    def _existing_project_file(self, project_dir: Path, path: str | Path | None) -> str | None:
+        if not path:
+            return None
+        resolved_path = Path(path)
+        if not resolved_path.is_absolute():
+            resolved_path = project_dir / resolved_path
+        if not resolved_path.is_file() or resolved_path.stat().st_size <= 0:
+            return None
+        return self._project_relative(project_dir, resolved_path)
 
     @staticmethod
     def _shot_path(project_dir: Path, episode_key: str) -> Path:
@@ -1412,8 +1552,9 @@ class PregenWorkflow:
         audio: RoleAudio,
     ) -> RoleVoiceGenerationItem:
         preview_text = self._preview_text(role, audio)
+        voice_prompt = self._voice_prompt(role, audio)
         result = await provider.create_voice(
-            voice_prompt=audio.desc,
+            voice_prompt=voice_prompt,
             preview_text=preview_text,
             preferred_name=self._voice_preferred_name(state, audio),
             metadata={
@@ -1434,6 +1575,7 @@ class PregenWorkflow:
         )
         audio.asset_id = result.voice
         audio.asset_path = preview_audio_path
+        audio.generation_status = "generated" if preview_audio_path or result.voice else "pending"
         return RoleVoiceGenerationItem(
             role_id=role.id,
             role_name=role.name,
@@ -1441,7 +1583,7 @@ class PregenWorkflow:
             audio_id=audio.id,
             generation_method="design",
             voice=result.voice,
-            voice_prompt=audio.desc,
+            voice_prompt=voice_prompt,
             preview_text=preview_text,
             preview_audio_path=preview_audio_path,
             provider=result.provider,
@@ -1468,6 +1610,7 @@ class PregenWorkflow:
             raise ValueError(f"Cannot clone {role.name}/{audio.emotion}: normal voice preview audio is missing")
 
         preview_text = self._preview_text(role, audio)
+        voice_prompt = self._voice_prompt(role, audio)
         clone_result = await provider.clone_voice_from_audio(
             source_audio_path=self._absolute_project_path(project_dir, normal_audio.asset_path),
             preferred_name=self._voice_preferred_name(state, audio),
@@ -1507,6 +1650,7 @@ class PregenWorkflow:
         )
         audio.asset_id = clone_result.voice
         audio.asset_path = preview_audio_path
+        audio.generation_status = "generated" if preview_audio_path or clone_result.voice else "pending"
         return RoleVoiceGenerationItem(
             role_id=role.id,
             role_name=role.name,
@@ -1516,7 +1660,7 @@ class PregenWorkflow:
             voice=clone_result.voice,
             source_audio_id=normal_audio.id,
             source_audio_path=normal_audio.asset_path,
-            voice_prompt=audio.desc,
+            voice_prompt=voice_prompt,
             preview_text=preview_text,
             preview_audio_path=preview_audio_path,
             provider=clone_result.provider,
@@ -1549,6 +1693,7 @@ class PregenWorkflow:
             raise ValueError(f"Cannot reuse {role.name}/{audio.emotion}: normal voice id is missing")
 
         preview_text = self._preview_text(role, audio)
+        voice_prompt = self._voice_prompt(role, audio)
         synthesis_result = await provider.synthesize_speech(
             voice=normal_audio.asset_id,
             text=self._synthesis_text(provider, audio, preview_text),
@@ -1573,6 +1718,7 @@ class PregenWorkflow:
         )
         audio.asset_id = normal_audio.asset_id
         audio.asset_path = preview_audio_path
+        audio.generation_status = "generated" if preview_audio_path or normal_audio.asset_id else "pending"
         return RoleVoiceGenerationItem(
             role_id=role.id,
             role_name=role.name,
@@ -1582,7 +1728,7 @@ class PregenWorkflow:
             voice=normal_audio.asset_id,
             source_audio_id=normal_audio.id,
             source_audio_path=normal_audio.asset_path,
-            voice_prompt=audio.desc,
+            voice_prompt=voice_prompt,
             preview_text=preview_text,
             preview_audio_path=preview_audio_path,
             provider=synthesis_result.provider,
@@ -1657,6 +1803,7 @@ class PregenWorkflow:
         voice_resource_id: str | None = None,
     ) -> RoleVoiceGenerationItem:
         preview_text = self._preview_text(role, audio)
+        voice_prompt = self._voice_prompt(role, audio)
         emotion_instruction, emotion_params = self._role_emotion_synthesis_plan(provider, audio)
         target_model = voice_resource_id or getattr(provider, "model", None)
         synthesis_result = await provider.synthesize_speech(
@@ -1670,7 +1817,7 @@ class PregenWorkflow:
                 "audio_id": audio.id,
                 "emotion": audio.emotion,
                 "generation_method": "synthesis",
-                "voice_prompt": audio.desc,
+                "voice_prompt": voice_prompt,
                 "emotion_instruction": emotion_instruction,
                 "emotion_params": emotion_params,
                 "resource_id": voice_resource_id,
@@ -1692,6 +1839,7 @@ class PregenWorkflow:
         audio.asset_path = preview_audio_path
         audio.emotion_instruction = emotion_instruction
         audio.emotion_params = emotion_params
+        audio.generation_status = "generated" if preview_audio_path or resolved_voice else "pending"
         return RoleVoiceGenerationItem(
             role_id=role.id,
             role_name=role.name,
@@ -1703,7 +1851,7 @@ class PregenWorkflow:
             voice_resource_id=voice_resource_id,
             voice_model_family=role.voice_model_family,
             voice_selection_reason=role.voice_selection_reason,
-            voice_prompt=audio.desc,
+            voice_prompt=voice_prompt,
             preview_text=preview_text,
             emotion_instruction=emotion_instruction,
             emotion_params=emotion_params,
@@ -2111,6 +2259,7 @@ class PregenWorkflow:
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
+        self._hydrate_roles_from_design_files(project_dir, state, speech_provider=provider)
         self._repair_role_voice_design_if_needed(project_dir, state, speech_provider=provider)
 
         if getattr(provider, "supports_direct_emotion_synthesis", False):
@@ -2199,6 +2348,7 @@ class PregenWorkflow:
             getattr(video_provider, "name", "unknown"),
             getattr(video_provider, "model", "-"),
         )
+        self._hydrate_roles_from_design_files(project_dir, state)
         generated: list[StaticAssetGenerationItem] = []
         appearances = [
             (role, appearance)
@@ -2209,40 +2359,63 @@ class PregenWorkflow:
             "node=role_appearance_generation total_images=%d",
             len(appearances),
         )
+        reuse_existing_assets = not bool(getattr(self, "_force_pregen", False))
         for role, appearance in appearances:
-            result = await provider.generate_image(
-                appearance.prompt,
-                metadata={
-                    "node_name": "role_appearance_generation",
-                    "project_id": state.project_id,
-                    "role_id": role.id,
-                    "appearance_id": appearance.id,
-                    "asset_id": appearance.id,
-                    "asset_type": "role_appearance",
-                },
-            )
-            asset_path = await self._write_first_generated_image(
-                project_dir,
-                self._image_asset_path(project_dir, "roles", appearance.id),
-                result,
-            )
+            if not appearance.prompt:
+                raise ValueError(
+                    f"Cannot generate role appearance for {role.name}/{appearance.name}: "
+                    "missing prompt in role design JSON"
+                )
+            image_output_path = self._image_asset_path(project_dir, "roles", appearance.id)
+            existing_image_path = self._existing_project_file(project_dir, appearance.design_image_asset_path)
+            if existing_image_path is None:
+                existing_image_path = self._existing_project_file(project_dir, image_output_path)
+            if reuse_existing_assets and existing_image_path is not None:
+                asset_path = existing_image_path
+                image_provider = str(appearance.provider or getattr(provider, "name", "unknown"))
+                image_model = str(appearance.model or getattr(provider, "model", ""))
+                image_request_id = appearance.request_id
+                image_usage = appearance.usage
+                image_raw_response = {"resumed_from_existing_file": True}
+                get_logger().info("%s already exists, reused from %s", appearance.id, asset_path)
+            else:
+                get_logger().info("%s generating role appearance image for %s/%s", appearance.id, role.name, appearance.name)
+                result = await provider.generate_image(
+                    appearance.prompt,
+                    metadata={
+                        "node_name": "role_appearance_generation",
+                        "project_id": state.project_id,
+                        "role_id": role.id,
+                        "appearance_id": appearance.id,
+                        "asset_id": appearance.id,
+                        "asset_type": "role_appearance",
+                    },
+                )
+                asset_path = await self._write_first_generated_image(project_dir, image_output_path, result)
+                image_provider = result.provider
+                image_model = result.model
+                image_request_id = result.request_id
+                image_usage = result.usage
+                image_raw_response = result.raw_response
+                get_logger().info("%s generated successfully, saved in %s", appearance.id, asset_path)
             appearance.asset_id = appearance.id
             appearance.asset_path = asset_path
             appearance.design_image_asset_id = appearance.id
             appearance.design_image_asset_path = asset_path
-            appearance.provider = result.provider
-            appearance.model = result.model
-            appearance.request_id = result.request_id
-            appearance.usage = result.usage
+            appearance.design_image_generation_status = "generated"
+            appearance.provider = image_provider
+            appearance.model = image_model
+            appearance.request_id = image_request_id
+            appearance.usage = image_usage
             for prop_id in appearance.role_bound_prop_ids:
                 prop = state.props.get(prop_id)
                 if prop is not None:
                     prop.asset_id = appearance.id
                     prop.asset_path = asset_path
-                    prop.provider = result.provider
-                    prop.model = result.model
-                    prop.request_id = result.request_id
-                    prop.usage = result.usage
+                    prop.provider = image_provider
+                    prop.model = image_model
+                    prop.request_id = image_request_id
+                    prop.usage = image_usage
             generated.append(
                 StaticAssetGenerationItem(
                     asset_id=appearance.id,
@@ -2251,14 +2424,13 @@ class PregenWorkflow:
                     name=f"{role.name}/{appearance.name}",
                     prompt=appearance.prompt,
                     asset_path=asset_path,
-                    provider=result.provider,
-                    model=result.model,
-                    request_id=result.request_id,
-                    usage=result.usage,
-                    raw_response=result.raw_response,
+                    provider=image_provider,
+                    model=image_model,
+                    request_id=image_request_id,
+                    usage=image_usage,
+                    raw_response=image_raw_response,
                 )
             )
-            get_logger().info("%s generated successfully, saved in %s", appearance.id, asset_path)
 
             intro_video_asset_id = f"{appearance.id}_intro_video"
             intro_prompt = appearance.intro_video_prompt or (
@@ -2266,42 +2438,58 @@ class PregenWorkflow:
                 f"人物保持{appearance.desc}的稳定外观，做几个符合身份和性格的常见动作；"
                 "如有随身物品，展示佩戴、握持或使用方式。背景干净抽象，无其他人物、无字幕、水印或文字标识。"
             )
-            from autodrama.providers.base import AssetRef
+            video_output_path = self._video_asset_path(project_dir, "roles", intro_video_asset_id)
+            existing_video_path = self._existing_project_file(project_dir, appearance.intro_video_asset_path)
+            if existing_video_path is None:
+                existing_video_path = self._existing_project_file(project_dir, video_output_path)
+            if reuse_existing_assets and existing_video_path is not None:
+                video_asset_path = existing_video_path
+                video_provider_name = str(getattr(video_provider, "name", "unknown"))
+                video_model = str(getattr(video_provider, "model", ""))
+                video_request_id = None
+                video_usage: dict[str, Any] = {}
+                video_raw_response = {"resumed_from_existing_file": True}
+                get_logger().info("%s already exists, reused from %s", intro_video_asset_id, video_asset_path)
+            else:
+                from autodrama.providers.base import AssetRef
 
-            refs = [
-                AssetRef(
-                    id=appearance.id,
-                    type="image",
-                    path=str(project_dir / asset_path),
+                refs = [
+                    AssetRef(
+                        id=appearance.id,
+                        type="image",
+                        path=str(project_dir / asset_path),
+                        metadata={
+                            "asset_type": "role_appearance",
+                            "role_id": role.id,
+                            "role_name": role.name,
+                            "reference_for": intro_video_asset_id,
+                        },
+                    )
+                ]
+                video_result = await video_provider.generate_video(
+                    intro_prompt,
+                    refs=refs,
+                    duration=8,
+                    wait=True,
                     metadata={
-                        "asset_type": "role_appearance",
+                        "node_name": "role_appearance_generation",
+                        "project_id": state.project_id,
                         "role_id": role.id,
-                        "role_name": role.name,
-                        "reference_for": intro_video_asset_id,
+                        "appearance_id": appearance.id,
+                        "asset_id": intro_video_asset_id,
+                        "asset_type": "role_appearance_video",
                     },
                 )
-            ]
-            video_result = await video_provider.generate_video(
-                intro_prompt,
-                refs=refs,
-                duration=8,
-                wait=True,
-                metadata={
-                    "node_name": "role_appearance_generation",
-                    "project_id": state.project_id,
-                    "role_id": role.id,
-                    "appearance_id": appearance.id,
-                    "asset_id": intro_video_asset_id,
-                    "asset_type": "role_appearance_video",
-                },
-            )
-            video_asset_path = await self._write_generated_video(
-                project_dir,
-                self._video_asset_path(project_dir, "roles", intro_video_asset_id),
-                video_result,
-            )
+                video_asset_path = await self._write_generated_video(project_dir, video_output_path, video_result)
+                video_provider_name = video_result.provider
+                video_model = video_result.model
+                video_request_id = video_result.request_id
+                video_usage = video_result.usage
+                video_raw_response = video_result.raw_response
+                get_logger().info("%s generated successfully, saved in %s", intro_video_asset_id, video_asset_path)
             appearance.intro_video_asset_id = intro_video_asset_id
             appearance.intro_video_asset_path = video_asset_path
+            appearance.intro_video_generation_status = "generated"
             generated.append(
                 StaticAssetGenerationItem(
                     asset_id=intro_video_asset_id,
@@ -2310,14 +2498,13 @@ class PregenWorkflow:
                     name=f"{role.name}/{appearance.name}/intro_video",
                     prompt=intro_prompt,
                     asset_path=video_asset_path,
-                    provider=video_result.provider,
-                    model=video_result.model,
-                    request_id=video_result.request_id,
-                    usage=video_result.usage,
-                    raw_response=video_result.raw_response,
+                    provider=video_provider_name,
+                    model=video_model,
+                    request_id=video_request_id,
+                    usage=video_usage,
+                    raw_response=video_raw_response,
                 )
             )
-            get_logger().info("%s generated successfully, saved in %s", intro_video_asset_id, video_asset_path)
         self.repo.save_node_output(project_dir, "role_appearance_generation", StaticAssetGenerationOutput(generated_assets=generated))
         return state
 

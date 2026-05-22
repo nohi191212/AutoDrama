@@ -23,8 +23,9 @@ class RoleAudio(BaseModel):
     id: str
     role_id: str
     emotion: str
-    desc: str
-    sample_text: str | None = None
+    desc: str | None = Field(default=None, exclude=True)
+    sample_text: str | None = Field(default=None, exclude=True)
+    generation_status: str = "pending"
     asset_id: str | None = None
     asset_path: str | None = None
     voice_name: str | None = None
@@ -39,10 +40,12 @@ class RoleAppearance(BaseModel):
     id: str
     role_id: str
     name: str = "base"
-    desc: str
-    prompt: str
+    desc: str | None = Field(default=None, exclude=True)
+    prompt: str | None = Field(default=None, exclude=True)
     role_bound_prop_ids: list[str] = Field(default_factory=list)
-    intro_video_prompt: str | None = None
+    intro_video_prompt: str | None = Field(default=None, exclude=True)
+    design_image_generation_status: str = "pending"
+    intro_video_generation_status: str = "pending"
     design_image_asset_id: str | None = None
     design_image_asset_path: str | None = None
     intro_video_asset_id: str | None = None
@@ -59,6 +62,7 @@ class Role(BaseModel):
     id: str
     name: str
     intro: str
+    design_path: str | None = None
     personality: str | None = None
     importance: str | None = None
     episode_keys: list[str] = Field(default_factory=list)

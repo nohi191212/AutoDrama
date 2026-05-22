@@ -159,6 +159,18 @@ async def main_async() -> int:
     require(state.roles["role_苏晚"].episode_keys == ["episode_002"], "苏晚 episode_keys mismatch")
     require(state.roles["role_林舟"].source_chapters == ["第1章"], "林舟 source_chapters mismatch")
     require(state.metadata["role_design_generation_mode"] == "per_role_recursive", "role_design mode mismatch")
+    lin_role_path = project_dir / "assets" / "json" / "roles" / "role_林舟.json"
+    require(lin_role_path.exists(), "Per-role design JSON was not written")
+    lin_role_payload = json.loads(lin_role_path.read_text(encoding="utf-8"))
+    require(lin_role_payload["node_name"] == "role_design", "Unexpected per-role node_name")
+    require(lin_role_payload["content"]["name"] == "林舟", "Per-role content name mismatch")
+    require(lin_role_payload["content"]["appearances"][0]["prompt"], "Per-role appearance prompt missing")
+    state_payload = json.loads((project_dir / "state.json").read_text(encoding="utf-8"))
+    state_role = state_payload["roles"]["role_林舟"]
+    require(state_role["design_path"] == "assets/json/roles/role_林舟.json", "State role design_path mismatch")
+    require("prompt" not in state_role["appearances"]["base"], "State role appearance should not keep prompt")
+    require("intro_video_prompt" not in state_role["appearances"]["base"], "State role appearance should not keep video prompt")
+    require("sample_text" not in state_role["audio"]["normal"], "State role audio should not keep sample_text")
 
     role_provider.role_design_prompts = {}
     state = await workflow.run(

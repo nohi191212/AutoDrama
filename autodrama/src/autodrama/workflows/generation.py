@@ -226,6 +226,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         logger = setup_logging(project_dir)
         state = self.repo.load_state(project_dir)
         self._apply_script_plan_settings(state)
+        self._hydrate_roles_from_design_files(project_dir, state)
         selected_episode_keys, checklist = selected_episode_keys_from_checklist(
             self.repo,
             project_dir,

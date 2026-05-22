@@ -145,7 +145,16 @@ class RightCodeImageProvider:
         extra_parameters = metadata.get("parameters")
         if isinstance(extra_parameters, dict):
             payload.update(extra_parameters)
+        if "size" in payload and payload["size"] is not None:
+            payload["size"] = self._normalize_size(payload["size"])
         return payload
+
+    @staticmethod
+    def _normalize_size(value: object) -> str:
+        text = str(value).strip()
+        for separator in ("×", "X", "＊", "*", "ｘ", "Ｘ"):
+            text = text.replace(separator, "x")
+        return re.sub(r"\s+", "", text)
 
     def _purpose_model(self, metadata: dict[str, Any]) -> str | None:
         if self._is_role_design_image(metadata):
