@@ -2,6 +2,8 @@
 
 AutoDrama builds short-drama projects in two stages: pre-generation for script/static assets/BGM, then generation for per-episode dynamic shot assets.
 
+The Python package uses a nested `src` layout. Run commands from the repository root and use `autodrama/src` as `PYTHONPATH`; the package source is under `autodrama/src/autodrama`.
+
 Implemented scope:
 
 1. `script_outline`
@@ -323,7 +325,8 @@ AUTODRAMA_PYTHON=/path/to/python scripts/run_pregen.sh --config config.yaml
 Do not use pytest in this repository. Use compile checks and focused smoke scripts.
 
 ```powershell
-D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama scripts/smoke/dynamic_assets_fake_smoke.py scripts/smoke/only_node_episode_smoke.py scripts/smoke/episode_serial_generation_smoke.py scripts/smoke/minimax_music_payload_smoke.py scripts/smoke/seedream_payload_smoke.py scripts/smoke/ref_frame_image_provider_payload_smoke.py scripts/smoke/shot_selector_smoke.py
+D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/refactor_boundaries_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_design_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/only_node_episode_smoke.py

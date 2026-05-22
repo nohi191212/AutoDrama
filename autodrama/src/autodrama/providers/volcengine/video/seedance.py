@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import mimetypes
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +9,8 @@ import httpx
 from autodrama.config import ProviderSettings, RuntimeSettings
 from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError, ProviderError
 from autodrama.providers.base import AssetRef, VideoGenerationResult
+from autodrama.providers.http import request_id_from_response
+from autodrama.providers.media_refs import asset_uri, file_to_data_url
 
 
 class VolcengineSeedanceVideoProvider:
@@ -199,26 +199,12 @@ class VolcengineSeedanceVideoProvider:
 
     @staticmethod
     def _asset_uri(ref: AssetRef) -> str | None:
-        for value in (ref.path, ref.id):
-            if isinstance(value, str) and value.startswith("asset://"):
-                return value
-        return None
+        return asset_uri(ref)
 
     @staticmethod
     def _data_url(path: Path, *, expected_type: str) -> str | None:
-        if not path.exists() or not path.is_file():
-            return None
-        mime_type = mimetypes.guess_type(path.name)[0]
-        if not mime_type:
-            if expected_type == "image":
-                mime_type = "image/png"
-            elif expected_type == "audio":
-                mime_type = "audio/mpeg"
-            else:
-                return None
-        if not mime_type.startswith(f"{expected_type}/"):
-            return None
-        return f"data:{mime_type};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+        default_mime = {"image": "image/png", "audio": "audio/mpeg"}.get(expected_type)
+        return file_to_data_url(path, expected_type=expected_type, default_mime=default_mime)
 
     async def submit_video(
         self,
@@ -311,11 +297,7 @@ class VolcengineSeedanceVideoProvider:
 
     @staticmethod
     def _request_id(body: dict[str, Any], response: httpx.Response) -> str | None:
-        return (
-            str(body.get("request_id") or body.get("requestId") or body.get("id") or "")
-            or response.headers.get("x-request-id")
-            or response.headers.get("x-tt-logid")
-        )
+        return request_id_from_response(body, response, "x-request-id", "x-tt-logid")
 
     @classmethod
     def _task_id(cls, body: dict[str, Any]) -> str | None:

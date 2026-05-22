@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Awaitable, Callable
-
-import httpx
+from typing import Any
 
 from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
@@ -33,35 +30,23 @@ from autodrama.core.schemas import (
     StoryboardShot,
 )
 from autodrama.core.visual_style import visual_style_metadata
-from autodrama.logging import get_logger, log_context, setup_logging
+from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
+from autodrama.repositories.storyboard_repo import StoryboardRepository
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.services.asset_service import AssetService
+from autodrama.services.media_store import MediaStore
 from autodrama.services.role_service import RoleService
 from autodrama.services.script_service import ScriptService
 from autodrama.services.storyboard_service import StoryboardService
 from autodrama.utils.prompts import PromptStore
+from autodrama.workflows.context import WorkflowRunContext
+from autodrama.workflows.nodes import PREGEN_NODE_NAMES, build_pregen_nodes
+from autodrama.workflows.runner import WorkflowRunner
+from autodrama.workflows.selection import select_episode_keys
 
-NodeRunner = Callable[[ProjectState], Awaitable[ProjectState]]
 
-
-PREGEN_NODES = [
-    "script_outline",
-    "script_novel",
-    "script_novel_extract",
-    "role_extract",
-    "role_design",
-    "role_voice_generation",
-    "role_appearance_generation",
-    "prop_design",
-    "prop_image_generation",
-    "script_compress",
-    "layout_design",
-    "layout_dedupe_review",
-    "layout_image_generation",
-    "bgm_design",
-    "bgm_generation",
-]
+PREGEN_NODES = PREGEN_NODE_NAMES
 
 SCRIPT_NOVEL_EXTRACT_BATCH_SIZE = 5
 
@@ -75,12 +60,19 @@ class PregenWorkflow:
         prompts: PromptStore | None = None,
     ) -> None:
         self.repo = repo
+        self.layout = repo.layout
         self.router = router
         self.prompts = prompts or PromptStore()
         self.script_service = ScriptService(self.prompts)
         self.role_service = RoleService(self.prompts)
         self.asset_service = AssetService(self.prompts)
         self.storyboard_service = StoryboardService(self.prompts)
+        self.media_store = MediaStore(
+            self.layout,
+            timeout_seconds=self.repo.settings.runtime.request_timeout_seconds,
+        )
+        self.storyboards = StoryboardRepository(self.repo, self.layout)
+        self.runner = WorkflowRunner(repo=self.repo, logger=get_logger())
 
     def _expected_episode_keys(self, state: ProjectState) -> list[str]:
         return self.script_service.episode_keys(self.script_service.episode_count(state))
@@ -327,17 +319,14 @@ class PregenWorkflow:
         state.metadata["bgm_count"] = self.repo.settings.project.bgm_count
         state.metadata.update(visual_style_metadata(self.repo.settings.project.visual_style))
 
-    @staticmethod
-    def _script_content_path(project_dir: Path, category: str, episode_key: str) -> Path:
-        return project_dir / "assets" / "json" / "scripts" / category / f"{episode_key}.json"
+    def _script_content_path(self, project_dir: Path, category: str, episode_key: str) -> Path:
+        return self.layout.script_content_path(project_dir, category, episode_key)
 
-    @staticmethod
-    def _script_novel_legacy_episode_path(project_dir: Path, episode_key: str) -> Path:
-        return project_dir / "assets" / "json" / "scripts" / f"{episode_key}.json"
+    def _script_novel_legacy_episode_path(self, project_dir: Path, episode_key: str) -> Path:
+        return self.layout.script_novel_legacy_episode_path(project_dir, episode_key)
 
-    @staticmethod
-    def _script_novel_legacy_full_path(project_dir: Path, episode_key: str) -> Path:
-        return project_dir / "assets" / "json" / "scripts" / "novel" / f"{episode_key}.json"
+    def _script_novel_legacy_full_path(self, project_dir: Path, episode_key: str) -> Path:
+        return self.layout.script_novel_legacy_full_path(project_dir, episode_key)
 
     @staticmethod
     def _script_content_payload(
@@ -466,9 +455,8 @@ class PregenWorkflow:
             return None
         return RoleDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
-    @staticmethod
-    def _role_design_json_path(project_dir: Path, role_id: str) -> Path:
-        return project_dir / "assets" / "json" / "roles" / f"{role_id}.json"
+    def _role_design_json_path(self, project_dir: Path, role_id: str) -> Path:
+        return self.layout.role_design_path(project_dir, role_id)
 
     def _role_design_relative_path(self, project_dir: Path, role_id: str) -> str:
         return self._project_relative(project_dir, self._role_design_json_path(project_dir, role_id))
@@ -612,31 +600,27 @@ class PregenWorkflow:
 
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
         previous_force_pregen = getattr(self, "_force_pregen", None)
+        previous_run_context = getattr(self, "_run_context", None)
+        self._run_context = WorkflowRunContext(
+            workflow_name="pregen",
+            project_dir=project_dir,
+            until=until,
+            only=only,
+            force=force,
+            selected_episode_keys=selected_episode_keys,
+        )
         self._force_pregen = bool(force)
         if selected_episode_keys is not None:
             self._active_episode_keys = set(selected_episode_keys)
         try:
-            for index, node_name in enumerate(target_nodes, start=1):
-                if not only and not force and node_name in state.completed_nodes:
-                    with log_context(node_name=node_name):
-                        logger.info("node %d/%d %s skipped", index, len(target_nodes), node_name)
-                    continue
-                with log_context(node_name=node_name):
-                    logger.info("node %d/%d %s started", index, len(target_nodes), node_name)
-                    try:
-                        state = await getattr(self, f"_run_{node_name}")(project_dir, state)
-                        state.mark_completed(node_name)
-                        self.repo.save_state(project_dir, state)
-                    except Exception:
-                        logger.exception("node %d/%d %s failed", index, len(target_nodes), node_name)
-                        raise
-                    logger.info(
-                        "node %d/%d %s completed current_node=%s",
-                        index,
-                        len(target_nodes),
-                        node_name,
-                        state.current_node,
-                    )
+            node_by_name = {node.name: node for node in build_pregen_nodes(self)}
+            state = await self.runner.run_nodes(
+                project_dir,
+                state,
+                [node_by_name[node_name] for node_name in target_nodes],
+                force=force,
+                skip_completed=only is None,
+            )
         finally:
             if selected_episode_keys is not None:
                 if previous_active_episode_keys is None:
@@ -648,21 +632,17 @@ class PregenWorkflow:
                     delattr(self, "_force_pregen")
             else:
                 self._force_pregen = previous_force_pregen
+            if previous_run_context is None:
+                if hasattr(self, "_run_context"):
+                    delattr(self, "_run_context")
+            else:
+                self._run_context = previous_run_context
 
         logger.info("workflow=pregen completed project_id=%s current_node=%s", state.project_id, state.current_node)
         return state
 
     def _select_episode_keys(self, state: ProjectState, episode_keys: list[str] | None) -> list[str]:
-        expected_episode_keys = self._expected_episode_keys(state)
-        if not episode_keys:
-            return expected_episode_keys
-
-        requested = [key for key in episode_keys if key]
-        unknown = sorted(set(requested).difference(expected_episode_keys))
-        if unknown:
-            raise ValueError(f"Unknown episode keys: {', '.join(unknown)}")
-        requested_set = set(requested)
-        return [key for key in expected_episode_keys if key in requested_set]
+        return select_episode_keys(state, episode_keys)
 
     async def _run_script_outline(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("script")
@@ -1372,52 +1352,30 @@ class PregenWorkflow:
         data: str | None,
         response_format: str | None,
     ) -> str | None:
-        if not data:
-            return None
-
-        extension = (response_format or "wav").lower()
-        extension = {"ogg_opus": "opus"}.get(extension, extension)
-        if extension not in {"wav", "mp3", "pcm", "opus", "ogg", "m4a", "aac"}:
-            extension = "bin"
-
-        output_dir = project_dir / "assets" / "audios" / "role_voices"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{audio.id}.{extension}"
-        output_path.write_bytes(base64.b64decode(data))
-        return str(output_path.relative_to(project_dir)).replace("\\", "/")
+        return self.media_store.write_preview_audio(
+            project_dir,
+            audio_id=audio.id,
+            data=data,
+            response_format=response_format,
+        )
 
     def _absolute_project_path(self, project_dir: Path, relative_path: str) -> str:
-        return str(project_dir / relative_path)
+        return self.layout.absolute_project_path(project_dir, relative_path)
 
-    @staticmethod
-    def _project_relative(project_dir: Path, path: Path) -> str:
-        return str(path.relative_to(project_dir)).replace("\\", "/")
+    def _project_relative(self, project_dir: Path, path: Path) -> str:
+        return self.layout.project_relative(project_dir, path)
 
     def _existing_project_file(self, project_dir: Path, path: str | Path | None) -> str | None:
-        if not path:
-            return None
-        resolved_path = Path(path)
-        if not resolved_path.is_absolute():
-            resolved_path = project_dir / resolved_path
-        if not resolved_path.is_file() or resolved_path.stat().st_size <= 0:
-            return None
-        return self._project_relative(project_dir, resolved_path)
+        return self.layout.existing_project_file(project_dir, path)
 
-    @staticmethod
-    def _shot_path(project_dir: Path, episode_key: str) -> Path:
-        return project_dir / "shots" / f"{episode_key}.json"
+    def _shot_path(self, project_dir: Path, episode_key: str) -> Path:
+        return self.layout.shot_path(project_dir, episode_key)
 
     def _load_storyboard_episode(self, project_dir: Path, episode_key: str) -> StoryboardEpisodeOutput:
-        path = self._shot_path(project_dir, episode_key)
-        if not path.exists():
-            raise FileNotFoundError(f"Storyboard shot file not found: {path}")
-        return StoryboardEpisodeOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        return self.storyboards.load(project_dir, episode_key)
 
     def _save_storyboard_episode(self, project_dir: Path, episode: StoryboardEpisodeOutput) -> None:
-        self.repo.write_json(
-            self._shot_path(project_dir, episode.episode_key),
-            episode.model_dump(mode="json", exclude_none=True),
-        )
+        self.storyboards.save(project_dir, episode)
 
     def _iter_storyboard_episodes(
         self,
@@ -1430,6 +1388,14 @@ class PregenWorkflow:
         ]
 
     def _active_episode_keys_in_order(self, state: ProjectState) -> list[str]:
+        context = getattr(self, "_run_context", None)
+        if context is not None and context.selected_episode_keys is not None:
+            selected = context.selected_episode_key_set
+            return [
+                episode_key
+                for episode_key in self._expected_episode_keys(state)
+                if episode_key in selected
+            ]
         active_episode_keys = getattr(self, "_active_episode_keys", None)
         if active_episode_keys is not None:
             return [
@@ -1439,28 +1405,17 @@ class PregenWorkflow:
             ]
         return self._expected_episode_keys(state)
 
-    @staticmethod
-    def _image_asset_path(project_dir: Path, asset_type: str, asset_id: str) -> Path:
-        return project_dir / "assets" / "images" / asset_type / f"{asset_id}.png"
+    def _image_asset_path(self, project_dir: Path, asset_type: str, asset_id: str) -> Path:
+        return self.layout.image_asset_path(project_dir, asset_type, asset_id)
 
-    @staticmethod
-    def _music_asset_path(project_dir: Path, asset_id: str, audio_format: str | None) -> Path:
-        extension = (audio_format or "mp3").lower().lstrip(".")
-        if extension not in {"mp3", "wav", "m4a", "aac", "ogg"}:
-            extension = "mp3"
-        return project_dir / "assets" / "audios" / "bgms" / f"{asset_id}.{extension}"
+    def _music_asset_path(self, project_dir: Path, asset_id: str, audio_format: str | None) -> Path:
+        return self.layout.music_asset_path(project_dir, asset_id, audio_format)
 
-    @staticmethod
-    def _audio_asset_path(project_dir: Path, asset_type: str, asset_id: str, audio_format: str | None) -> Path:
-        extension = (audio_format or "mp3").lower().lstrip(".")
-        extension = {"ogg_opus": "opus"}.get(extension, extension)
-        if extension not in {"wav", "mp3", "pcm", "opus", "ogg", "m4a", "aac"}:
-            extension = "bin"
-        return project_dir / "assets" / "audios" / asset_type / f"{asset_id}.{extension}"
+    def _audio_asset_path(self, project_dir: Path, asset_type: str, asset_id: str, audio_format: str | None) -> Path:
+        return self.layout.audio_asset_path(project_dir, asset_type, asset_id, audio_format)
 
-    @staticmethod
-    def _video_asset_path(project_dir: Path, asset_type: str, asset_id: str) -> Path:
-        return project_dir / "assets" / "videos" / asset_type / f"{asset_id}.mp4"
+    def _video_asset_path(self, project_dir: Path, asset_type: str, asset_id: str) -> Path:
+        return self.layout.video_asset_path(project_dir, asset_type, asset_id)
 
     async def _write_first_generated_image(
         self,
@@ -1468,23 +1423,7 @@ class PregenWorkflow:
         output_path: Path,
         result,
     ) -> str:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        if result.image_data:
-            data = result.image_data[0]
-            if data.startswith("data:") and ";base64," in data:
-                data = data.split(";base64,", 1)[1]
-            output_path.write_bytes(base64.b64decode(data))
-            return self._project_relative(project_dir, output_path)
-
-        if not result.image_urls:
-            raise ValueError("Image generation result has no image data or URL")
-
-        async with httpx.AsyncClient(timeout=self.repo.settings.runtime.request_timeout_seconds) as client:
-            response = await client.get(result.image_urls[0])
-        if response.status_code >= 400:
-            raise RuntimeError(f"Failed to download generated image HTTP {response.status_code}: {response.text[:500]}")
-        output_path.write_bytes(response.content)
-        return self._project_relative(project_dir, output_path)
+        return await self.media_store.write_first_generated_image(project_dir, output_path, result)
 
     async def _write_generated_music(
         self,
@@ -1492,23 +1431,7 @@ class PregenWorkflow:
         output_path: Path,
         result,
     ) -> str:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        if result.audio_data:
-            data = result.audio_data
-            if data.startswith("data:") and ";base64," in data:
-                data = data.split(";base64,", 1)[1]
-            output_path.write_bytes(base64.b64decode(data))
-            return self._project_relative(project_dir, output_path)
-
-        if not result.audio_url:
-            raise ValueError("Music generation result has no audio data or URL")
-
-        async with httpx.AsyncClient(timeout=self.repo.settings.runtime.request_timeout_seconds) as client:
-            response = await client.get(result.audio_url)
-        if response.status_code >= 400:
-            raise RuntimeError(f"Failed to download generated music HTTP {response.status_code}: {response.text[:500]}")
-        output_path.write_bytes(response.content)
-        return self._project_relative(project_dir, output_path)
+        return await self.media_store.write_generated_music(project_dir, output_path, result)
 
     async def _write_generated_audio(
         self,
@@ -1518,23 +1441,12 @@ class PregenWorkflow:
         audio_data: str | None = None,
         audio_url: str | None = None,
     ) -> str | None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        if audio_data:
-            data = audio_data
-            if data.startswith("data:") and ";base64," in data:
-                data = data.split(";base64,", 1)[1]
-            output_path.write_bytes(base64.b64decode(data))
-            return self._project_relative(project_dir, output_path)
-
-        if not audio_url:
-            return None
-
-        async with httpx.AsyncClient(timeout=self.repo.settings.runtime.request_timeout_seconds) as client:
-            response = await client.get(audio_url)
-        if response.status_code >= 400:
-            raise RuntimeError(f"Failed to download generated audio HTTP {response.status_code}: {response.text[:500]}")
-        output_path.write_bytes(response.content)
-        return self._project_relative(project_dir, output_path)
+        return await self.media_store.write_generated_audio(
+            project_dir,
+            output_path,
+            audio_data=audio_data,
+            audio_url=audio_url,
+        )
 
     async def _write_generated_video(
         self,
@@ -1542,23 +1454,7 @@ class PregenWorkflow:
         output_path: Path,
         result,
     ) -> str | None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        if getattr(result, "video_data", None):
-            data = result.video_data
-            if data.startswith("data:") and ";base64," in data:
-                data = data.split(";base64,", 1)[1]
-            output_path.write_bytes(base64.b64decode(data))
-            return self._project_relative(project_dir, output_path)
-
-        if not result.video_url:
-            return None
-
-        async with httpx.AsyncClient(timeout=self.repo.settings.runtime.request_timeout_seconds) as client:
-            response = await client.get(result.video_url)
-        if response.status_code >= 400:
-            raise RuntimeError(f"Failed to download generated video HTTP {response.status_code}: {response.text[:500]}")
-        output_path.write_bytes(response.content)
-        return self._project_relative(project_dir, output_path)
+        return await self.media_store.write_generated_video(project_dir, output_path, result)
 
     async def _generate_designed_voice(
         self,
@@ -2539,9 +2435,8 @@ class PregenWorkflow:
         self.repo.save_node_output(project_dir, "role_appearance_generation", StaticAssetGenerationOutput(generated_assets=generated))
         return state
 
-    @staticmethod
-    def _prop_design_json_path(project_dir: Path, prop_id: str) -> Path:
-        return project_dir / "assets" / "json" / "props" / f"{prop_id}.json"
+    def _prop_design_json_path(self, project_dir: Path, prop_id: str) -> Path:
+        return self.layout.prop_design_path(project_dir, prop_id)
 
     def _prop_design_relative_path(self, project_dir: Path, prop_id: str) -> str:
         return self._project_relative(project_dir, self._prop_design_json_path(project_dir, prop_id))

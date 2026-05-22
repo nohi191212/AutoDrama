@@ -10,57 +10,18 @@ from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.workflows.generation import DEFAULT_GENERATION_NODES, GENERATION_NODES, GenerationWorkflow
 from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow
+from autodrama.workflows.selection import (
+    parse_episode_keys as parse_episode_keys_value,
+    parse_shot_selectors as parse_shot_selectors_value,
+)
 
 
 def parse_episode_keys(value: str | None) -> list[str] | None:
-    if not value:
-        return None
-
-    episode_keys: list[str] = []
-    for raw_item in value.replace("，", ",").split(","):
-        item = raw_item.strip()
-        if not item:
-            continue
-        range_parts = [part.strip() for part in item.split("-", 1)]
-        if len(range_parts) == 2 and range_parts[0].isdigit() and range_parts[1].isdigit():
-            start = int(range_parts[0])
-            end = int(range_parts[1])
-            step = 1 if end >= start else -1
-            for index in range(start, end + step, step):
-                episode_keys.append(f"episode_{index:03d}")
-            continue
-        normalized = item.lower().replace("-", "_")
-        if normalized.isdigit():
-            episode_keys.append(f"episode_{int(normalized):03d}")
-            continue
-        if normalized.startswith("episode_"):
-            suffix = normalized.rsplit("_", 1)[-1]
-            if suffix.isdigit():
-                episode_keys.append(f"episode_{int(suffix):03d}")
-                continue
-        episode_keys.append(item)
-    return episode_keys or None
+    return parse_episode_keys_value(value)
 
 
 def parse_shot_selectors(value: str | None) -> list[str] | None:
-    if not value:
-        return None
-
-    selectors: list[str] = []
-    for raw_item in value.replace("，", ",").split(","):
-        item = raw_item.strip()
-        if not item:
-            continue
-        range_parts = [part.strip() for part in item.split("-", 1)]
-        if len(range_parts) == 2 and range_parts[0].isdigit() and range_parts[1].isdigit():
-            start = int(range_parts[0])
-            end = int(range_parts[1])
-            step = 1 if end >= start else -1
-            for index in range(start, end + step, step):
-                selectors.append(str(index))
-            continue
-        selectors.append(item.lower().replace("-", "_"))
-    return selectors or None
+    return parse_shot_selectors_value(value)
 
 
 def build_parser() -> argparse.ArgumentParser:

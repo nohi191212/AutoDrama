@@ -11,17 +11,19 @@ from autodrama.config import Settings
 from autodrama.core.ids import make_project_id
 from autodrama.core.schemas import BudgetState, ProjectState, ScriptBundle
 from autodrama.core.visual_style import visual_style_metadata
+from autodrama.repositories.project_layout import ProjectLayout
 
 
 class ProjectRepository:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self.layout = ProjectLayout(settings)
 
     def resolve_project_dir(self, project: str) -> Path:
         candidate = Path(project).expanduser()
         if candidate.exists():
             return candidate.resolve()
-        return self.settings.project_dir(project).resolve()
+        return self.layout.project_dir(project).resolve()
 
     def resolve_active_project_dir(self, project: str | None = None) -> Path:
         if project:
@@ -29,13 +31,13 @@ class ProjectRepository:
 
         configured_project_id = self.settings.configured_project_id()
         if configured_project_id:
-            return self.settings.project_dir(configured_project_id).resolve()
+            return self.layout.project_dir(configured_project_id).resolve()
 
         current = self.load_current_project()
         if current and current.get("project_dir"):
             return Path(str(current["project_dir"])).resolve()
         if current and current.get("project_id"):
-            return self.settings.project_dir(str(current["project_id"])).resolve()
+            return self.layout.project_dir(str(current["project_id"])).resolve()
 
         raise ValueError("No project specified. Set project.id in config.yaml or run init first.")
 
@@ -78,7 +80,7 @@ class ProjectRepository:
         episode_duration_seconds: int | None = None,
     ) -> Path:
         project_id = project_id or make_project_id(title, self.settings.output.project_dir_template)
-        project_dir = self.settings.project_dir(project_id)
+        project_dir = self.layout.project_dir(project_id)
         self._create_project_dirs(project_dir)
         resolved_episode_count = episode_count or self.settings.project.episode_count
         resolved_episode_duration_seconds = episode_duration_seconds or self.settings.project.episode_duration_seconds
@@ -109,53 +111,37 @@ class ProjectRepository:
             },
         )
         self.save_state(project_dir, state)
-        self.write_json(project_dir / "project.json", {"project_id": project_id, "title": title})
+        self.write_json(self.layout.project_json_path(project_dir), {"project_id": project_id, "title": title})
         self.save_current_project(project_dir, state)
         return project_dir
 
     def _create_project_dirs(self, project_dir: Path) -> None:
         project_dir.mkdir(parents=True, exist_ok=True)
-        for subdir in self.settings.output.subdirs.values():
-            (project_dir / subdir).mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "json" / "nodes").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "json" / "scripts").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "json" / "scripts" / "outlines").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "json" / "scripts" / "novel_full").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "json" / "scripts" / "novel_extract").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "json" / "roles").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "json" / "props").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "images" / "roles").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "images" / "props").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "images" / "layouts").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "images" / "ref_frames").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "audios" / "bgms").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "audios" / "shot_dialogues").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "videos" / "roles").mkdir(parents=True, exist_ok=True)
-        (project_dir / "assets" / "videos" / "shots").mkdir(parents=True, exist_ok=True)
-        (project_dir / "shots").mkdir(parents=True, exist_ok=True)
+        for subdir in self.layout.required_subdirs(project_dir):
+            subdir.mkdir(parents=True, exist_ok=True)
 
     def load_state(self, project_dir: Path) -> ProjectState:
-        path = project_dir / "state.json"
+        path = self.layout.state_path(project_dir)
         return ProjectState.model_validate_json(path.read_text(encoding="utf-8"))
 
     def save_state(self, project_dir: Path, state: ProjectState) -> None:
         state.updated_at = datetime.now()
-        self.write_json(project_dir / "state.json", state)
+        self.write_json(self.layout.state_path(project_dir), state)
         self.save_current_project(project_dir, state)
 
     def save_node_output(self, project_dir: Path, node_name: str, data: BaseModel | dict[str, Any]) -> Path:
-        path = project_dir / "assets" / "json" / "nodes" / f"{node_name}.json"
+        path = self.layout.node_output_path(project_dir, node_name)
         self.write_json(path, data)
         return path
 
     def current_project_path(self) -> Path:
-        return self.settings.output.root_dir / "current_project.json"
+        return self.layout.current_project_path()
 
     def save_current_project(self, project_dir: Path, state: ProjectState) -> None:
         payload = {
             "project_id": state.project_id,
             "project_dir": str(project_dir.resolve()),
-            "state_path": str((project_dir / "state.json").resolve()),
+            "state_path": str(self.layout.state_path(project_dir).resolve()),
             "title": state.title,
             "current_node": state.current_node,
             "completed_nodes": state.completed_nodes,

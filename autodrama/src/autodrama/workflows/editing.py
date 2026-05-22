@@ -1,16 +1,21 @@
 from __future__ import annotations
 
-import asyncio
-import re
-import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from autodrama.core.schemas import ProjectState, StoryboardEpisodeOutput, StoryboardShot
+from autodrama.editing import ffmpeg as ffmpeg_tools
+from autodrama.editing import planner as edit_planner
+from autodrama.editing import subtitles as subtitle_tools
 from autodrama.logging import get_logger, setup_logging
-from autodrama.workflows.pregen import PregenWorkflow
+from autodrama.providers.router import ProviderRouter
+from autodrama.repositories.project_repo import ProjectRepository
+from autodrama.utils.prompts import PromptStore
+from autodrama.workflows.context import WorkflowRunContext
+from autodrama.workflows.delegation import PregenWorkflowDelegateMixin
+from autodrama.workflows.selection import select_episode_keys
 
 EDITING_NODES = [
     "edit_plan_generation",
@@ -110,7 +115,16 @@ class FinalVideoCompositionOutput(BaseModel):
     skipped_episodes: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class EditingWorkflow(PregenWorkflow):
+class EditingWorkflow(PregenWorkflowDelegateMixin):
+    def __init__(
+        self,
+        *,
+        repo: ProjectRepository,
+        router: ProviderRouter,
+        prompts: PromptStore | None = None,
+    ) -> None:
+        self._init_pregen_delegate(repo=repo, router=router, prompts=prompts)
+
     async def run(
         self,
         project_dir: Path,
@@ -140,6 +154,15 @@ class EditingWorkflow(PregenWorkflow):
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
         self._active_episode_keys = set(selected_episode_keys)
         previous_burn_subtitles = getattr(self, "_burn_subtitles", None)
+        previous_run_context = getattr(self, "_run_context", None)
+        self._run_context = WorkflowRunContext(
+            workflow_name="editing",
+            project_dir=project_dir,
+            until=until,
+            force=force,
+            selected_episode_keys=selected_episode_keys,
+            burn_subtitles=burn_subtitles,
+        )
         self._burn_subtitles = burn_subtitles
         try:
             for index, node_name in enumerate(target_nodes, start=1):
@@ -175,6 +198,11 @@ class EditingWorkflow(PregenWorkflow):
                 delattr(self, "_burn_subtitles")
             else:
                 self._burn_subtitles = previous_burn_subtitles
+            if previous_run_context is None:
+                if hasattr(self, "_run_context"):
+                    delattr(self, "_run_context")
+            else:
+                self._run_context = previous_run_context
 
         get_logger().info(
             "workflow=editing completed project_id=%s current_node=%s episodes=%s",
@@ -185,16 +213,7 @@ class EditingWorkflow(PregenWorkflow):
         return state
 
     def _select_episode_keys(self, state: ProjectState, episode_keys: list[str] | None) -> list[str]:
-        expected_episode_keys = self._expected_episode_keys(state)
-        if not episode_keys:
-            return expected_episode_keys
-
-        requested = [key for key in episode_keys if key]
-        unknown = sorted(set(requested).difference(expected_episode_keys))
-        if unknown:
-            raise ValueError(f"Unknown episode keys: {', '.join(unknown)}")
-        requested_set = set(requested)
-        return [key for key in expected_episode_keys if key in requested_set]
+        return select_episode_keys(state, episode_keys)
 
     def _node_outputs_exist(self, project_dir: Path, node_name: str, episode_keys: list[str]) -> bool:
         if node_name == "edit_plan_generation":
@@ -203,25 +222,20 @@ class EditingWorkflow(PregenWorkflow):
             return all(self._episode_output_path(project_dir, episode_key).exists() for episode_key in episode_keys)
         return False
 
-    @staticmethod
-    def _edit_plan_path(project_dir: Path, episode_key: str) -> Path:
-        return project_dir / "assets" / "json" / "edit_plans" / f"{episode_key}.json"
+    def _edit_plan_path(self, project_dir: Path, episode_key: str) -> Path:
+        return self.layout.edit_plan_path(project_dir, episode_key)
 
-    @staticmethod
-    def _episode_output_path(project_dir: Path, episode_key: str) -> Path:
-        return project_dir / "outputs" / "videos" / f"{episode_key}.mp4"
+    def _episode_output_path(self, project_dir: Path, episode_key: str) -> Path:
+        return self.layout.episode_output_path(project_dir, episode_key)
 
-    @staticmethod
-    def _subtitle_srt_path(project_dir: Path, episode_key: str) -> Path:
-        return project_dir / "outputs" / "subtitles" / f"{episode_key}.srt"
+    def _subtitle_srt_path(self, project_dir: Path, episode_key: str) -> Path:
+        return self.layout.subtitle_srt_path(project_dir, episode_key)
 
-    @staticmethod
-    def _subtitle_ass_path(project_dir: Path, episode_key: str) -> Path:
-        return project_dir / "outputs" / "subtitles" / f"{episode_key}.ass"
+    def _subtitle_ass_path(self, project_dir: Path, episode_key: str) -> Path:
+        return self.layout.subtitle_ass_path(project_dir, episode_key)
 
-    @staticmethod
-    def _editing_tmp_dir(project_dir: Path, episode_key: str) -> Path:
-        return project_dir / ".tmp" / "editing" / episode_key
+    def _editing_tmp_dir(self, project_dir: Path, episode_key: str) -> Path:
+        return self.layout.editing_tmp_dir(project_dir, episode_key)
 
     def _target_profile(self) -> tuple[int, int, int, str]:
         ratio = self._configured_video_ratio()
@@ -358,11 +372,7 @@ class EditingWorkflow(PregenWorkflow):
 
     @staticmethod
     def _positive_duration(value: float | int | None) -> float:
-        try:
-            duration = float(value or 0)
-        except (TypeError, ValueError):
-            duration = 0.0
-        return max(0.25, round(duration, 3))
+        return edit_planner.positive_duration(value)
 
     def _build_clip(
         self,
@@ -572,17 +582,7 @@ class EditingWorkflow(PregenWorkflow):
 
     @staticmethod
     def _parse_dialogue_line(raw_line: str) -> tuple[str | None, str]:
-        line = str(raw_line).strip()
-        if not line:
-            return None, ""
-        for separator in ("::", ":", "："):
-            if separator in line:
-                role_name, text = line.split(separator, 1)
-                role_name = role_name.strip()
-                text = text.strip()
-                if role_name and text:
-                    return role_name, text
-        return None, line
+        return edit_planner.parse_dialogue_line(raw_line)
 
     def _build_bgm_layer(
         self,
@@ -645,8 +645,7 @@ class EditingWorkflow(PregenWorkflow):
 
     @staticmethod
     def _select_bgm_id(state: ProjectState, episode: StoryboardEpisodeOutput) -> str | None:
-        del episode
-        return next(iter(state.bgms), None)
+        return edit_planner.select_bgm_id(state, episode)
 
     async def _run_final_video_composition(self, project_dir: Path, state: ProjectState) -> ProjectState:
         get_logger().info("node=final_video_composition provider=local model=ffmpeg")
@@ -674,6 +673,10 @@ class EditingWorkflow(PregenWorkflow):
         return state
 
     def _active_episode_keys_in_order(self, state: ProjectState) -> list[str]:
+        context = getattr(self, "_run_context", None)
+        if context is not None and context.selected_episode_keys is not None:
+            selected = context.selected_episode_key_set
+            return [episode_key for episode_key in self._expected_episode_keys(state) if episode_key in selected]
         active_episode_keys = getattr(self, "_active_episode_keys", None)
         expected = self._expected_episode_keys(state)
         if active_episode_keys is None:
@@ -791,21 +794,15 @@ class EditingWorkflow(PregenWorkflow):
 
     @staticmethod
     def _ffmpeg_seconds(value: float | int) -> str:
-        return f"{max(0.001, float(value)):.3f}"
+        return ffmpeg_tools.ffmpeg_seconds(value)
 
     @staticmethod
     def _safe_filename(value: str) -> str:
-        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
-        return safe.strip("._") or "clip"
+        return ffmpeg_tools.safe_filename(value)
 
     @staticmethod
     def _write_concat_file(path: Path, video_paths: list[Path]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        lines = []
-        for video_path in video_paths:
-            normalized = str(video_path.resolve()).replace("\\", "/").replace("'", "'\\''")
-            lines.append(f"file '{normalized}'")
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        ffmpeg_tools.write_concat_file(path, video_paths)
 
     async def _concat_videos(self, concat_path: Path, output_path: Path) -> None:
         command = [
@@ -920,132 +917,36 @@ class EditingWorkflow(PregenWorkflow):
         ]
 
     def _audio_filter(self, plan: EpisodeEditPlan, layers: list[EditAudioLayer]) -> str:
-        if not layers:
-            duration = self._ffmpeg_seconds(plan.estimated_duration_seconds)
-            return f"anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration={duration}[aout]"
-
-        chains: list[str] = []
-        labels: list[str] = []
-        for index, layer in enumerate(layers, start=1):
-            output_label = f"a{index}"
-            labels.append(f"[{output_label}]")
-            filters = ["aresample=44100", "aformat=channel_layouts=stereo", "asetpts=PTS-STARTPTS"]
-            if layer.duration_seconds is not None:
-                filters.insert(0, f"atrim=duration={self._ffmpeg_seconds(layer.duration_seconds)}")
-            filters.append(f"volume={max(0.0, min(float(layer.volume), 4.0)):.3f}")
-            if layer.fade_in_seconds > 0:
-                filters.append(f"afade=t=in:st=0:d={self._ffmpeg_seconds(layer.fade_in_seconds)}")
-            if layer.fade_out_seconds > 0 and layer.duration_seconds:
-                start = max(0.0, layer.duration_seconds - layer.fade_out_seconds)
-                filters.append(f"afade=t=out:st={self._ffmpeg_seconds(start)}:d={self._ffmpeg_seconds(layer.fade_out_seconds)}")
-            delay_ms = max(0, int(round(layer.start_time * 1000)))
-            if delay_ms:
-                filters.append(f"adelay={delay_ms}:all=1")
-            chains.append(f"[{index}:a]{','.join(filters)}[{output_label}]")
-
-        chains.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:dropout_transition=0[aout]")
-        return ";".join(chains)
+        return ffmpeg_tools.audio_filter(plan, layers)
 
     @staticmethod
     def _filter_path(path: Path) -> str:
-        value = str(path.resolve()).replace("\\", "/")
-        value = value.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-        return f"'{value}'"
+        return ffmpeg_tools.filter_path(path)
 
     def _ffmpeg_base_command(self) -> list[str]:
-        return [
-            self.repo.settings.runtime.ffmpeg_path,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-        ]
+        return ffmpeg_tools.ffmpeg_base_command(self.repo.settings.runtime.ffmpeg_path)
 
     @staticmethod
     def _srt_time(value: float) -> str:
-        milliseconds = int(round(max(0.0, value) * 1000))
-        hours, remainder = divmod(milliseconds, 3_600_000)
-        minutes, remainder = divmod(remainder, 60_000)
-        seconds, millis = divmod(remainder, 1000)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+        return subtitle_tools.srt_time(value)
 
     @staticmethod
     def _ass_time(value: float) -> str:
-        centiseconds = int(round(max(0.0, value) * 100))
-        hours, remainder = divmod(centiseconds, 360_000)
-        minutes, remainder = divmod(remainder, 6_000)
-        seconds, cents = divmod(remainder, 100)
-        return f"{hours:d}:{minutes:02d}:{seconds:02d}.{cents:02d}"
+        return subtitle_tools.ass_time(value)
 
     @staticmethod
     def _subtitle_text(cue: EditSubtitleCue) -> str:
-        text = cue.text.strip()
-        if cue.role_name:
-            return f"{cue.role_name}: {text}"
-        return text
+        return subtitle_tools.subtitle_text(cue)
 
     def _write_srt(self, path: Path, cues: list[EditSubtitleCue]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        blocks: list[str] = []
-        for index, cue in enumerate(cues, start=1):
-            blocks.append(
-                "\n".join(
-                    [
-                        str(index),
-                        f"{self._srt_time(cue.start_time)} --> {self._srt_time(cue.end_time)}",
-                        self._subtitle_text(cue),
-                    ]
-                )
-            )
-        path.write_text("\n\n".join(blocks) + ("\n" if blocks else ""), encoding="utf-8")
+        subtitle_tools.write_srt(path, cues)
 
     def _write_ass(self, path: Path, plan: EpisodeEditPlan) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        font_size = max(24, int(plan.height * 0.055))
-        margin_v = max(28, int(plan.height * 0.075))
-        lines = [
-            "[Script Info]",
-            "ScriptType: v4.00+",
-            f"PlayResX: {plan.width}",
-            f"PlayResY: {plan.height}",
-            "",
-            "[V4+ Styles]",
-            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
-            "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
-            "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            f"Style: Default,Microsoft YaHei,{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
-            f"0,0,0,0,100,100,0,0,1,2,1,2,60,60,{margin_v},1",
-            "",
-            "[Events]",
-            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-        ]
-        for cue in plan.subtitle_cues:
-            text = self._ass_escape(self._subtitle_text(cue))
-            lines.append(
-                "Dialogue: "
-                f"0,{self._ass_time(cue.start_time)},{self._ass_time(cue.end_time)},"
-                f"Default,,0,0,0,,{text}"
-            )
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+        subtitle_tools.write_ass(path, plan)
 
     @staticmethod
     def _ass_escape(value: str) -> str:
-        return value.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}").replace("\n", r"\N")
+        return subtitle_tools.ass_escape(value)
 
     async def _run_ffmpeg(self, command: list[str], *, cwd: Path) -> None:
-        get_logger().debug("ffmpeg command: %s", " ".join(command))
-        process = await asyncio.to_thread(
-            subprocess.run,
-            command,
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-        if process.returncode != 0:
-            detail = (process.stderr or process.stdout).strip()
-            if len(detail) > 4000:
-                detail = detail[-4000:]
-            raise RuntimeError(f"ffmpeg failed with exit code {process.returncode}: {detail}")
+        await ffmpeg_tools.run_ffmpeg(command, cwd=cwd)

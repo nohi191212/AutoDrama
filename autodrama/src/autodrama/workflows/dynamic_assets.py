@@ -36,30 +36,19 @@ from autodrama.workflows.generation_tasks import (
     upsert_generation_task,
 )
 from autodrama.workflows.storyboard_history import history_before_episode
+from autodrama.workflows.selection import (
+    active_shots_for_episode,
+    normalize_shot_selectors,
+    shot_matches_selectors,
+)
 
 
 class DynamicAssetNodeMixin:
     def _active_shots_for_episode(self, episode: StoryboardEpisodeOutput) -> list[StoryboardShot]:
-        selectors = getattr(self, "_active_shot_selectors", None)
-        if not selectors:
-            return list(episode.shots)
-
-        normalized_selectors = {
-            str(selector).strip().lower().replace("-", "_")
-            for selector in selectors
-            if str(selector).strip()
-        }
-        selected = [
-            shot
-            for shot in episode.shots
-            if self._shot_matches_selectors(episode, shot, normalized_selectors)
-        ]
-        if not selected:
-            raise ValueError(
-                f"No shots matched selectors {', '.join(sorted(normalized_selectors))} "
-                f"for {episode.episode_key}"
-            )
-        return selected
+        context = getattr(self, "_run_context", None)
+        if context is not None and getattr(context, "has_shot_selectors", False):
+            return active_shots_for_episode(episode, context.shot_selectors)
+        return active_shots_for_episode(episode, getattr(self, "_active_shot_selectors", None))
 
     @staticmethod
     def _shot_matches_selectors(
@@ -67,17 +56,7 @@ class DynamicAssetNodeMixin:
         shot: StoryboardShot,
         selectors: set[str],
     ) -> bool:
-        shot_id = str(shot.shot_id).lower().replace("-", "_")
-        keys = {
-            shot_id,
-            str(shot.index),
-            f"{shot.index:03d}",
-            f"shot_{shot.index}",
-            f"shot_{shot.index:03d}",
-            f"{episode.episode_key}_shot_{shot.index}",
-            f"{episode.episode_key}_shot_{shot.index:03d}",
-        }
-        return bool(keys.intersection(selectors))
+        return shot_matches_selectors(episode, shot, normalize_shot_selectors(selectors))
 
     async def _run_storyboard_generation_for_episode(
         self,

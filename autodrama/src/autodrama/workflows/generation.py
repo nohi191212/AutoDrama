@@ -16,32 +16,36 @@ from autodrama.core.schemas import (
     StoryboardShot,
 )
 from autodrama.logging import get_logger, log_context, setup_logging
+from autodrama.providers.router import ProviderRouter
+from autodrama.repositories.project_repo import ProjectRepository
+from autodrama.utils.prompts import PromptStore
+from autodrama.workflows.delegation import PregenWorkflowDelegateMixin
 from autodrama.workflows.generation_checklist import (
     selected_episode_keys_from_checklist,
     update_checklist_from_state,
 )
+from autodrama.workflows.context import WorkflowRunContext
 from autodrama.workflows.dynamic_assets import DynamicAssetNodeMixin
-from autodrama.workflows.pregen import PregenWorkflow
+from autodrama.workflows.nodes import GENERATION_NODE_NAMES, build_generation_episode_nodes
+from autodrama.workflows.selection import sort_episode_keys_in_story_order
 from autodrama.workflows.storyboard_history import update_storyboard_history_from_episode
 
-GENERATION_NODES = [
-    "storyboard_generation",
-    "shot_bgm_generation",
-    "ref_frame_generation",
-    "shot_video_generation",
-    "dynamic_asset_solidification",
-]
+GENERATION_NODES = GENERATION_NODE_NAMES
 
-DEFAULT_GENERATION_NODES = [
-    "storyboard_generation",
-    "shot_bgm_generation",
-    "ref_frame_generation",
-    "shot_video_generation",
-    "dynamic_asset_solidification",
-]
+DEFAULT_GENERATION_NODES = list(GENERATION_NODE_NAMES)
 
 
-class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
+class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
+    def __init__(
+        self,
+        *,
+        repo: ProjectRepository,
+        router: ProviderRouter,
+        prompts: PromptStore | None = None,
+    ) -> None:
+        self._init_pregen_delegate(repo=repo, router=router, prompts=prompts)
+        self.generation_episode_nodes = build_generation_episode_nodes(self)
+
     @staticmethod
     def _visual_style_prompt(state: ProjectState) -> str:
         prompt = str(state.metadata.get("visual_style_prompt", "")).strip()
@@ -148,7 +152,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         node_name: str,
         episode_key: str,
     ) -> BaseModel:
-        return await getattr(self, f"_run_{node_name}_for_episode")(project_dir, state, episode_key)
+        node_by_name = {node.name: node for node in self.generation_episode_nodes}
+        return await node_by_name[node_name].run(project_dir, state, episode_key)
 
     @staticmethod
     def _empty_run_outputs(target_nodes: list[str]) -> dict[str, BaseModel]:
@@ -206,18 +211,18 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         return GENERATION_NODES[: GENERATION_NODES.index(until) + 1]
 
     def _sort_episode_keys_in_story_order(self, state: ProjectState, episode_keys: list[str]) -> list[str]:
-        selected = set(episode_keys)
-        ordered = [
-            episode_key
-            for episode_key in self._expected_episode_keys(state)
-            if episode_key in selected
-        ]
-        ordered.extend(
-            episode_key
-            for episode_key in episode_keys
-            if episode_key not in set(ordered)
-        )
-        return ordered
+        return sort_episode_keys_in_story_order(state, episode_keys)
+
+    def _active_episode_keys_in_order(self, state: ProjectState) -> list[str]:
+        context = getattr(self, "_run_context", None)
+        if context is not None and context.selected_episode_keys is not None:
+            selected = context.selected_episode_key_set
+            return [episode_key for episode_key in self._expected_episode_keys(state) if episode_key in selected]
+        active_episode_keys = getattr(self, "_active_episode_keys", None)
+        expected = self._expected_episode_keys(state)
+        if active_episode_keys is None:
+            return expected
+        return [episode_key for episode_key in expected if episode_key in active_episode_keys]
 
     async def run(
         self,
@@ -277,6 +282,16 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
         previous_active_shot_selectors = getattr(self, "_active_shot_selectors", None)
         previous_force_generation = getattr(self, "_force_generation", None)
+        previous_run_context = getattr(self, "_run_context", None)
+        self._run_context = WorkflowRunContext(
+            workflow_name="generation",
+            project_dir=project_dir,
+            until=until,
+            only=only,
+            force=force,
+            selected_episode_keys=selected_episode_keys,
+            shot_selectors={str(selector).strip().lower() for selector in shot_selectors or [] if str(selector).strip()},
+        )
         self._force_generation = bool(force)
         if shot_selectors:
             self._active_shot_selectors = {str(selector).strip().lower() for selector in shot_selectors if str(selector).strip()}
@@ -375,6 +390,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflow):
                     delattr(self, "_force_generation")
             else:
                 self._force_generation = previous_force_generation
+            if previous_run_context is None:
+                if hasattr(self, "_run_context"):
+                    delattr(self, "_run_context")
+            else:
+                self._run_context = previous_run_context
 
         processed_episode_keys = selected_set if target_nodes[-1] == GENERATION_NODES[-1] else None
         update_checklist_from_state(

@@ -24,6 +24,7 @@ from autodrama.providers.local.mock.fake import (
     FakeVoiceDesignProvider,
 )
 from autodrama.providers.minimax.music.music_26 import MiniMaxMusicProvider
+from autodrama.providers.registry import ProviderRegistry
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
 from autodrama.providers.volcengine.audio.seed_icl import VolcengineVoiceProvider
 from autodrama.providers.volcengine.audio.seed_tts import VolcengineSeedTTSProvider
@@ -50,6 +51,121 @@ class ProviderRouter:
         self._fake_music = FakeMusicProvider()
         self._fake_video = FakeVideoProvider()
         self._fake_voice = FakeVoiceDesignProvider()
+        self.registry = ProviderRegistry()
+        self._register_provider_factories()
+
+    def _register_provider_factories(self) -> None:
+        self.registry.register("text", {"fake"}, lambda **_: self._fake)
+        self.registry.register(
+            "text",
+            {"deepseek"},
+            lambda **_: DeepSeekTextProvider(self.settings.providers["deepseek"], self.settings.runtime),
+        )
+        self.registry.register(
+            "text",
+            ALIYUN_TEXT_PROVIDER_NAMES,
+            lambda provider_name, **_: QwenTextProvider(
+                self._openai_compatible_settings(provider_name),
+                self.settings.runtime,
+            ),
+        )
+
+        self.registry.register("image", {"fake"}, lambda **_: self._fake_image)
+        self.registry.register(
+            "image",
+            {"rightcode"},
+            lambda provider_name, **_: RightCodeImageProvider(
+                self._settings_for(provider_name),
+                self.settings.runtime,
+            ),
+        )
+        self.registry.register(
+            "image",
+            VOLCENGINE_IMAGE_PROVIDER_NAMES,
+            lambda **_: VolcengineSeedreamImageProvider(
+                self._settings_for("volcengine"),
+                self.settings.runtime,
+            ),
+        )
+        self.registry.register(
+            "image",
+            ALIYUN_IMAGE_PROVIDER_NAMES,
+            lambda provider_name, **_: WanxiangImageProvider(
+                self._dashscope_api_v1_settings(provider_name),
+                self.settings.runtime,
+            ),
+        )
+
+        self.registry.register("video", {"fake"}, lambda **_: self._fake_video)
+        self.registry.register(
+            "video",
+            {"volcengine", "seedance", "volcengine_seedance"},
+            lambda **_: VolcengineSeedanceVideoProvider(
+                self._settings_for("volcengine"),
+                self.settings.runtime,
+            ),
+        )
+        self.registry.register(
+            "video",
+            ALIYUN_VIDEO_PROVIDER_NAMES,
+            lambda provider_name, **_: WanxiangVideoProvider(
+                self._dashscope_api_v1_settings(provider_name),
+                self.settings.runtime,
+            ),
+        )
+
+        self.registry.register("audio", {"fake"}, lambda **_: self._fake_voice)
+        self.registry.register(
+            "audio",
+            {"volcengine"},
+            lambda purpose, provider_name, **_: (
+                VolcengineVoiceProvider(self._settings_for(provider_name), self.settings.runtime)
+                if purpose in {"voice_design", "voice_clone", "seed_icl"}
+                else VolcengineSeedTTSProvider(self._settings_for(provider_name), self.settings.runtime)
+            ),
+        )
+        self.registry.register(
+            "audio",
+            {"volcengine_icl"},
+            lambda provider_name, **_: VolcengineVoiceProvider(
+                self._settings_for(provider_name),
+                self.settings.runtime,
+            ),
+        )
+        self.registry.register(
+            "audio",
+            ALIYUN_AUDIO_PROVIDER_NAMES,
+            lambda provider_name, **_: QwenVoiceDesignProvider(
+                self._dashscope_api_v1_settings(provider_name),
+                self.settings.runtime,
+            ),
+        )
+
+        self.registry.register("music", {"fake"}, lambda **_: self._fake_music)
+        self.registry.register(
+            "music",
+            MINIMAX_MUSIC_PROVIDER_NAMES,
+            lambda **_: MiniMaxMusicProvider(self._settings_for("minimax"), self.settings.runtime),
+        )
+        self.registry.register(
+            "music",
+            ELEVENLABS_MUSIC_PROVIDER_NAMES,
+            lambda **_: ElevenLabsMusicProvider(self._settings_for("elevenlabs"), self.settings.runtime),
+        )
+        self.registry.register(
+            "music",
+            ALIYUN_MUSIC_PROVIDER_NAMES,
+            lambda provider_name, **_: BailianMusicProvider(
+                self._dashscope_root_settings(provider_name),
+                self.settings.runtime,
+            ),
+        )
+
+    def _provider_from_registry(self, capability: str, provider_name: str, purpose: str):
+        factory = self.registry.factory_for(capability, provider_name)
+        if factory is None:
+            raise ValueError(f"Unsupported {capability} provider: {provider_name}")
+        return factory(provider_name=provider_name, purpose=purpose)
 
     def _settings_for(self, provider_name: str):
         if provider_name == "aliyun":
@@ -93,49 +209,19 @@ class ProviderRouter:
 
     def text(self, purpose: str) -> TextLLM:
         provider_name = self.provider_override or self.settings.provider_for("text", purpose)
-        if provider_name == "fake":
-            return self._fake
-        if provider_name == "deepseek":
-            return DeepSeekTextProvider(self.settings.providers["deepseek"], self.settings.runtime)
-        if provider_name in ALIYUN_TEXT_PROVIDER_NAMES:
-            return QwenTextProvider(self._openai_compatible_settings(provider_name), self.settings.runtime)
-        raise ValueError(f"Unsupported text provider: {provider_name}")
+        return self._provider_from_registry("text", provider_name, purpose)
 
     def image(self, purpose: str) -> ImageGenerator:
         provider_name = self.provider_override or self.settings.provider_for("image", purpose)
-        if provider_name == "fake":
-            return self._fake_image
-        if provider_name == "rightcode":
-            return RightCodeImageProvider(self._settings_for(provider_name), self.settings.runtime)
-        if provider_name in VOLCENGINE_IMAGE_PROVIDER_NAMES:
-            return VolcengineSeedreamImageProvider(self._settings_for("volcengine"), self.settings.runtime)
-        if provider_name in ALIYUN_IMAGE_PROVIDER_NAMES:
-            return WanxiangImageProvider(self._dashscope_api_v1_settings(provider_name), self.settings.runtime)
-        raise ValueError(f"Unsupported image provider: {provider_name}")
+        return self._provider_from_registry("image", provider_name, purpose)
 
     def video(self, purpose: str) -> VideoGenerator:
         provider_name = self.provider_override or self.settings.provider_for("video", purpose)
-        if provider_name == "fake":
-            return self._fake_video
-        if provider_name in {"volcengine", "seedance", "volcengine_seedance"}:
-            return VolcengineSeedanceVideoProvider(self._settings_for("volcengine"), self.settings.runtime)
-        if provider_name in ALIYUN_VIDEO_PROVIDER_NAMES:
-            return WanxiangVideoProvider(self._dashscope_api_v1_settings(provider_name), self.settings.runtime)
-        raise ValueError(f"Unsupported video provider: {provider_name}")
+        return self._provider_from_registry("video", provider_name, purpose)
 
     def audio(self, purpose: str) -> VoiceDesigner | SpeechSynthesizer:
         provider_name = self.provider_override or self.settings.provider_for("audio", purpose)
-        if provider_name == "fake":
-            return self._fake_voice
-        if provider_name == "volcengine":
-            if purpose in {"voice_design", "voice_clone", "seed_icl"}:
-                return VolcengineVoiceProvider(self._settings_for(provider_name), self.settings.runtime)
-            return VolcengineSeedTTSProvider(self._settings_for(provider_name), self.settings.runtime)
-        if provider_name == "volcengine_icl":
-            return VolcengineVoiceProvider(self._settings_for(provider_name), self.settings.runtime)
-        if provider_name in ALIYUN_AUDIO_PROVIDER_NAMES:
-            return QwenVoiceDesignProvider(self._dashscope_api_v1_settings(provider_name), self.settings.runtime)
-        raise ValueError(f"Unsupported audio provider: {provider_name}")
+        return self._provider_from_registry("audio", provider_name, purpose)
 
     def music(self, purpose: str) -> MusicGenerator:
         provider_name = self.provider_override
@@ -145,12 +231,4 @@ class ProviderRouter:
             except KeyError:
                 provider_name = self.settings.provider_for("audio", "music")
 
-        if provider_name == "fake":
-            return self._fake_music
-        if provider_name in MINIMAX_MUSIC_PROVIDER_NAMES:
-            return MiniMaxMusicProvider(self._settings_for("minimax"), self.settings.runtime)
-        if provider_name in ELEVENLABS_MUSIC_PROVIDER_NAMES:
-            return ElevenLabsMusicProvider(self._settings_for("elevenlabs"), self.settings.runtime)
-        if provider_name in ALIYUN_MUSIC_PROVIDER_NAMES:
-            return BailianMusicProvider(self._dashscope_root_settings(provider_name), self.settings.runtime)
-        raise ValueError(f"Unsupported music provider: {provider_name}")
+        return self._provider_from_registry("music", provider_name, purpose)

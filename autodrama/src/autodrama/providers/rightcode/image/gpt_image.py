@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import base64
 import json
-import mimetypes
 import re
 from pathlib import Path
 from typing import Any
@@ -12,6 +10,8 @@ import httpx
 from autodrama.config import ProviderSettings, RuntimeSettings
 from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError
 from autodrama.providers.base import AssetRef, ImageGenerationResult
+from autodrama.providers.http import request_id_from_response
+from autodrama.providers.media_refs import file_to_data_url
 
 
 class RightCodeImageProvider:
@@ -219,20 +219,11 @@ class RightCodeImageProvider:
 
     @staticmethod
     def _data_url(path: Path) -> str | None:
-        if not path.exists() or not path.is_file():
-            return None
-        mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
-        if not mime_type.startswith("image/"):
-            return None
-        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-        return f"data:{mime_type};base64,{encoded}"
+        return file_to_data_url(path, expected_type="image", default_mime="image/png")
 
     @staticmethod
     def _request_id(body: dict[str, Any], response: httpx.Response) -> str | None:
-        request_id = body.get("request_id") or body.get("requestId") or body.get("id")
-        if request_id:
-            return str(request_id)
-        return response.headers.get("x-request-id") or response.headers.get("x-requestid")
+        return request_id_from_response(body, response, "x-request-id", "x-requestid")
 
     @classmethod
     def _extract_images(cls, body: dict[str, Any]) -> tuple[list[str], list[str]]:
