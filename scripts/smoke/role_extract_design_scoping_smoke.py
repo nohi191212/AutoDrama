@@ -98,7 +98,7 @@ class RoleScopedTextProvider:
                                 "desc": f"{role_name}的稳定基础形象，五官清晰，气质克制。",
                                 "prompt": (
                                     f"真人电影质感，左侧为{role_name}的{gender_desc}全身形象，干净背景；"
-                                    "右侧为主要随身物品设计图，展示人物持握比例关系，无字幕、水印或文字标识。"
+                                    "右侧为主要随身物品设计图，与左侧人物同一比例尺直接对照，无手部细节、字幕、水印或文字标识。"
                                 ),
                                 "role_bound_props": [],
                                 "intro_video_prompt": (

@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -160,84 +159,6 @@ class PregenWorkflow:
             return None
         text = str(value).strip()
         return text or None
-
-    @staticmethod
-    def _role_appearance_image_prompt(prompt: str) -> str:
-        text = str(prompt or "").strip()
-        if not text:
-            return text
-
-        replacements = (
-            ("一丛细密的紫色根须从伤口伸出，微微蠕动", "一丛细密的紫色根须状纹理沿衣料破口静态延展"),
-            ("紫色根须从伤口伸出", "紫色根须状纹理沿衣料破口延展"),
-            ("从伤口伸出", "沿衣料破口延展"),
-            ("腹部有一处撕裂伤口", "腹部衣料有一处不规则破损"),
-            ("撕裂伤口", "衣料破损"),
-            ("开放性伤口", "暗色裂纹图案"),
-            ("伤口边缘", "衣料破口边缘"),
-            ("伤口", "衣料破损痕迹"),
-            ("创口", "衣料破损痕迹"),
-            ("刀伤", "旧痕纹理"),
-            ("枪伤", "旧痕纹理"),
-            ("烧伤", "灼色纹理"),
-            ("伤痕", "旧痕纹理"),
-            ("撕裂", "不规则破损"),
-            ("裂开", "呈裂纹状"),
-            ("明显的苍白和尸化痕迹", "明显的苍白和异化纹理"),
-            ("尸化痕迹", "病态苍白和异化纹理"),
-            ("尸化", "异化"),
-            ("尸体", "静态人形"),
-            ("死人", "苍白人物"),
-            ("死亡感", "冷峻感"),
-            ("腐烂", "陈旧斑驳"),
-            ("腐败", "陈旧斑驳"),
-            ("溃烂", "斑驳纹理"),
-            ("内脏", "内部暗色纹理"),
-            ("器官外露", "内部结构图案"),
-            ("骨骼外露", "骨色纹理"),
-            ("外露骨骼", "骨色纹理"),
-            ("断肢", "残缺剪影"),
-            ("断手", "手部轮廓示意"),
-            ("砍断", "破损"),
-            ("斩断", "破损"),
-            ("微微蠕动", "呈静态延展"),
-            ("蠕动", "静态延展"),
-            ("无血色", "苍白"),
-            ("暗紫色血渍", "暗紫色旧污渍"),
-            ("血迹", "泥污"),
-            ("血渍", "旧污渍"),
-            ("血污", "脏污"),
-            ("血痕", "暗色旧痕"),
-            ("血斑", "暗色斑驳污渍"),
-            ("血液", "暗色污痕"),
-            ("鲜血", "暗色污渍"),
-            ("流血", "沾有暗色污渍"),
-            ("出血", "出现暗色污痕"),
-            ("染血", "沾有尘土污渍"),
-            ("带血", "带旧污渍"),
-            ("血红", "深红"),
-            ("血色", "暗红色"),
-            ("成年男性手掌作为比例参照", "简化手掌轮廓作为比例参照"),
-            ("一只成年男性手掌", "简化手掌轮廓"),
-            ("一只简化手掌轮廓", "简化手掌轮廓"),
-            ("真实手掌作为比例参照", "简化手掌轮廓作为比例参照"),
-            ("放置手掌", "放置手掌轮廓示意"),
-        )
-        for source, target in replacements:
-            text = text.replace(source, target)
-
-        text = re.sub(r"\bblood(?:y)?\b", "old stains", text, flags=re.IGNORECASE)
-        text = re.sub(r"\bgore\b", "weathered texture", text, flags=re.IGNORECASE)
-        text = re.sub(r"\bwound(?:s)?\b", "worn fabric marks", text, flags=re.IGNORECASE)
-        text = re.sub(r"\bcorpse\b", "pale character", text, flags=re.IGNORECASE)
-        text = text.replace("血", "暗色污渍")
-
-        safety_note = (
-            "整体为克制的角色设定图，只表现服装磨损、尘土旧污渍、病态苍白气质和非写实异化纹理，不做惊悚特写。"
-        )
-        if "克制的角色设定图" not in text:
-            text = f"{text.rstrip('。')}。{safety_note}"
-        return text
 
     @classmethod
     def _role_voice_speaker(cls, item, speaker_lookup: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
@@ -2458,12 +2379,9 @@ class PregenWorkflow:
                 image_raw_response = {"resumed_from_existing_file": True}
                 get_logger().info("%s already exists, reused from %s", appearance.id, asset_path)
             else:
-                image_prompt = self._role_appearance_image_prompt(appearance.prompt)
-                if image_prompt != appearance.prompt:
-                    get_logger().info("%s role appearance prompt softened for image safety", appearance.id)
                 get_logger().info("%s generating role appearance image for %s/%s", appearance.id, role.name, appearance.name)
                 result = await provider.generate_image(
-                    image_prompt,
+                    appearance.prompt,
                     metadata={
                         "node_name": "role_appearance_generation",
                         "project_id": state.project_id,
@@ -2504,7 +2422,7 @@ class PregenWorkflow:
                     asset_type="role_appearance",
                     owner_id=role.id,
                     name=f"{role.name}/{appearance.name}",
-                    prompt=self._role_appearance_image_prompt(appearance.prompt),
+                    prompt=appearance.prompt,
                     asset_path=asset_path,
                     provider=image_provider,
                     model=image_model,
