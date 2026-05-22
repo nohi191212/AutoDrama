@@ -22,6 +22,7 @@ from autodrama.core.schemas import (
     ShotVideoGenerationOutput,
     StaticAssetGenerationOutput,
     StoryboardGenerationOutput,
+    StoryboardNextShotOutput,
     StoryboardShotGenerationOutput,
 )
 
@@ -49,5 +50,6 @@ __all__ = [
     "ShotVideoGenerationOutput",
     "StaticAssetGenerationOutput",
     "StoryboardGenerationOutput",
+    "StoryboardNextShotOutput",
     "StoryboardShotGenerationOutput",
 ]

@@ -175,7 +175,7 @@ class VolcengineSeedanceVideoProvider:
                 continue
 
             if ref.type == "video" and video_count < self.max_reference_videos:
-                url = ref.url or self._asset_uri(ref)
+                url = self._ref_url_or_data(ref, expected_type="video")
                 if not url:
                     continue
                 content.append({"type": "video_url", "video_url": {"url": url}, "role": "reference_video"})
@@ -203,7 +203,7 @@ class VolcengineSeedanceVideoProvider:
 
     @staticmethod
     def _data_url(path: Path, *, expected_type: str) -> str | None:
-        default_mime = {"image": "image/png", "audio": "audio/mpeg"}.get(expected_type)
+        default_mime = {"image": "image/png", "audio": "audio/mpeg", "video": "video/mp4"}.get(expected_type)
         return file_to_data_url(path, expected_type=expected_type, default_mime=default_mime)
 
     async def submit_video(

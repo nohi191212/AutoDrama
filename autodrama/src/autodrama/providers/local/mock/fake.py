@@ -21,6 +21,7 @@ from autodrama.core.schemas import (
     ScriptOutlineOutput,
     ShotBGMSoundDesignOutput,
     StoryboardEpisodeOutput,
+    StoryboardNextShotOutput,
     StoryboardShotGenerationOutput,
 )
 from autodrama.providers.base import (
@@ -44,6 +45,49 @@ def _extract_prompt_int(prompt: str, label: str, default: int) -> int:
 
 def _episode_keys(episode_count: int) -> list[str]:
     return [f"episode_{index:03d}" for index in range(1, episode_count + 1)]
+
+
+def _fake_source_anchor(text: str, start_offset: int, *, limit: int = 96) -> str:
+    cursor = max(0, start_offset)
+    while cursor < len(text) and text[cursor].isspace():
+        cursor += 1
+    end_offset = min(len(text), cursor + limit)
+    for index in range(min(len(text), cursor + 24), end_offset):
+        if text[index] in "。！？；\n":
+            end_offset = index + 1
+            break
+    return text[cursor:end_offset].strip()
+
+
+def _fake_sentence_end(text: str, start_offset: int) -> int:
+    for index in range(max(0, start_offset), len(text)):
+        if text[index] in "。！？；\n":
+            return index + 1
+    return len(text.rstrip())
+
+
+def _fake_source_coverage(source_text: str, start_text: str, generation_step: int) -> tuple[dict[str, Any], bool]:
+    start_anchor = start_text.strip() or _fake_source_anchor(source_text, 0)
+    start_offset = source_text.find(start_anchor)
+    if start_offset < 0:
+        start_offset = 0
+        start_anchor = _fake_source_anchor(source_text, start_offset)
+
+    source_end = len(source_text.rstrip())
+    end_offset = source_end if generation_step >= 3 else _fake_sentence_end(source_text, start_offset)
+    next_offset = end_offset
+    while next_offset < source_end and source_text[next_offset].isspace():
+        next_offset += 1
+    is_complete = end_offset >= source_end or next_offset >= source_end
+    next_start_text = None if is_complete else _fake_source_anchor(source_text, next_offset)
+    end_text = source_text[max(start_offset, end_offset - 64):end_offset].strip()
+    coverage = {
+        "start_text": start_anchor,
+        "end_text": end_text or start_anchor,
+        "next_start_text": next_start_text,
+        "note": f"fake provider covers source text from the supplied cursor at step {generation_step}.",
+    }
+    return coverage, is_complete
 
 
 class FakeTextProvider:
@@ -562,12 +606,12 @@ class FakeTextProvider:
                     "Final mix: keep dialogue range clear and end with a controlled cinematic tail."
                 )
             }
-        elif schema is StoryboardShotGenerationOutput:
+        elif schema in {StoryboardNextShotOutput, StoryboardShotGenerationOutput}:
             episode_key = str(metadata.get("episode_key") or episode_keys[0])
             try:
-                shot_index = int(metadata.get("shot_index") or 1)
+                generation_step = int(metadata.get("generation_step") or metadata.get("shot_index") or 1)
             except (TypeError, ValueError):
-                shot_index = 1
+                generation_step = 1
             shot_templates = [
                 {
                     "layout_id": "layout_雨夜办公室",
@@ -581,7 +625,7 @@ class FakeTextProvider:
                     "role_appearance_ids": ["role_林舟_appearance_base"],
                     "role_audio_ids": [],
                     "prop_ids": ["prop_被调包的合同"],
-                    "ref_frame_prompt": (
+                    "anchor_frame_prompt": (
                         "真人电影质感，雨夜现代办公室，16:9 横屏近景，50mm 镜头从办公桌斜侧拍向林舟。"
                         "林舟穿深灰衬衫坐在桌前，肩背微弯，右手停在被调包的合同关键页边缘，目光落在纸张色差处。"
                         "桌面前景有合同装订线、浅色关键页、黑色签字笔和半杯冷咖啡，背景电脑屏幕发出冷蓝光，"
@@ -589,7 +633,7 @@ class FakeTextProvider:
                         "单帧剧照，无字幕、水印、文字标识和无关人物。"
                     ),
                     "video_prompt": (
-                        "首帧为参考帧，从参考帧中的桌面斜侧 50mm 近景开始；0-3 秒：相机缓慢推近合同关键页，"
+                        "当前片段从桌面斜侧 50mm 近景开始；0-3 秒：相机缓慢推近合同关键页，"
                         "让浅色纸张、错位页码和装订孔依次进入焦点；窗外雨痕持续下滑，电脑冷蓝光在桌面反射轻微闪动，"
                         "空办公室低频电流声和雨声保持压低，全程不切镜；3-6 秒：林舟的右手指尖沿纸边停住，呼吸变轻，"
                         "视线从合同页码移到电脑屏幕邮件附件时间，再回到纸面；冷掉的咖啡表面几乎不动，片段节奏从深夜疲惫转为警觉确认，"
@@ -608,14 +652,14 @@ class FakeTextProvider:
                     "role_appearance_ids": ["role_林舟_appearance_base", "role_苏晚_appearance_base"],
                     "role_audio_ids": [],
                     "prop_ids": ["prop_邮件截图", "prop_被调包的合同"],
-                    "ref_frame_prompt": (
+                    "anchor_frame_prompt": (
                         "真人电影质感，雨夜办公室电脑屏幕近景，16:9 横屏，70mm 镜头压缩空间。"
                         "屏幕上旧邮件截图以冷蓝光显示，附件记录和时间线处于画面中心但不过曝，林舟的手停在键盘旁，"
                         "苏晚的手从画面右侧递来一份打印合同。桌面有散乱纸张、浅色合同关键页和低反光金属笔，"
                         "背景办公区虚化成冷白灯点与雨夜玻璃反射；单帧剧照，无字幕、水印、文字标识和无关人物。"
                     ),
                     "video_prompt": (
-                        "首帧为参考帧，70mm 近景锁在电脑屏幕与桌面证据之间；0-3 秒：镜头极慢推近邮件附件时间线，"
+                        "当前片段以 70mm 近景锁在电脑屏幕与桌面证据之间；0-3 秒：镜头极慢推近邮件附件时间线，"
                         "电脑屏幕亮度轻微脉动，雨水在远处玻璃上形成竖向光痕，空办公室低频电流声持续铺底，全程不切镜；"
                         "3-6 秒：镜头轻微向右平移，让苏晚递来的打印合同进入前景；林舟的手没有立刻接过，"
                         "指尖在键盘旁停顿半秒，随后用拇指压住合同边角，眼神从屏幕冷光中抬起，纸张摩擦声贴近，"
@@ -634,7 +678,7 @@ class FakeTextProvider:
                     "role_appearance_ids": ["role_林舟_appearance_base", "role_赵启_appearance_base"],
                     "role_audio_ids": ["role_林舟_audio_normal"],
                     "prop_ids": ["prop_邮件截图"],
-                    "ref_frame_prompt": (
+                    "anchor_frame_prompt": (
                         "真人电影质感，雨夜玻璃会议室，16:9 横屏中景，35mm 镜头从会议桌短边朝投影屏拍摄。"
                         "林舟站在投影屏左侧三分之一处，深灰衬衫袖口微皱，右手停在触控板旁，"
                         "赵启穿深色西装坐在长桌右侧阴影里，身体前倾但笑容僵住。投影屏上是邮件时间线和附件记录的冷白光块，"
@@ -642,7 +686,7 @@ class FakeTextProvider:
                         "投影冷光打亮林舟侧脸，窗外蓝色雨光勾出赵启轮廓；单帧剧照，无字幕、水印、文字标识和无关人物。"
                     ),
                     "video_prompt": (
-                        "首帧为参考帧，相机位于会议桌短边，35mm 中广角，贴着桌面低位观察；0-3 秒：镜头横移扫过被调包的合同、"
+                        "当前片段中相机位于会议桌短边，35mm 中广角，贴着桌面低位观察；0-3 秒：镜头横移扫过被调包的合同、"
                         "会议水杯和几只停住的手，投影冷光在纸面轻微频闪，会议室空调低频和投影电流声压住环境，全程不切镜；"
                         "3-6.5 秒：林舟站在投影屏左侧，说出“这份合同被换过，时间线就在这里”时没有夸张手势，"
                         "只把邮件时间线拖到最大，目光压向赵启；对白声线克制靠前，房间混响短促，形成 J-Cut 式声音衔接；"
@@ -651,15 +695,33 @@ class FakeTextProvider:
                     ),
                 },
             ]
-            shot = dict(shot_templates[min(max(shot_index, 1), len(shot_templates)) - 1])
-            shot["shot_id"] = f"{episode_key}_shot_{shot_index:03d}"
-            shot["index"] = shot_index
-            data = {
-                "episode_key": episode_key,
-                "shot": shot,
-                "is_episode_complete": shot_index >= len(shot_templates),
-                "completion_reason": "fake provider generated three storyboard shots.",
-            }
+            shot = dict(shot_templates[min(max(generation_step, 1), len(shot_templates)) - 1])
+            source_text = str(metadata.get("current_novel_full") or metadata.get("current_shot_start_text") or "").strip()
+            coverage, is_complete = _fake_source_coverage(
+                source_text,
+                str(metadata.get("current_shot_start_text") or ""),
+                generation_step,
+            )
+            shot["source_coverage"] = coverage
+            if schema is StoryboardNextShotOutput:
+                shot.pop("start_frame_source", None)
+                shot.pop("start_frame_inheritance_reason", None)
+                data = {
+                    "episode_key": episode_key,
+                    "shot": shot,
+                    "is_chapter_complete": is_complete,
+                    "completion_reason": "fake provider advanced the current novel source cursor.",
+                }
+            else:
+                shot["shot_id"] = f"{episode_key}_shot_{generation_step:03d}"
+                shot["index"] = generation_step
+                shot["ref_frame_prompt"] = shot.pop("anchor_frame_prompt")
+                data = {
+                    "episode_key": episode_key,
+                    "shot": shot,
+                    "is_episode_complete": is_complete,
+                    "completion_reason": "fake provider generated legacy storyboard shot output.",
+                }
         elif schema is StoryboardEpisodeOutput or node_name == "storyboard_generation":
             episode_key = str(metadata.get("episode_key") or episode_keys[0])
             data = {
@@ -687,7 +749,7 @@ class FakeTextProvider:
                             "单帧剧照，无字幕、水印、文字标识和无关人物。"
                         ),
                         "video_prompt": (
-                            "首帧为参考帧，从参考帧中的桌面斜侧 50mm 近景开始；0-3 秒：相机缓慢推近合同关键页，"
+                            "当前片段从桌面斜侧 50mm 近景开始；0-3 秒：相机缓慢推近合同关键页，"
                             "让浅色纸张、错位页码和装订孔依次进入焦点；窗外雨痕持续下滑，电脑冷蓝光在桌面反射轻微闪动，"
                             "空办公室低频电流声和雨声保持压低，全程不切镜；3-6 秒：林舟的右手指尖沿纸边停住，呼吸变轻，"
                             "视线从合同页码移到电脑屏幕邮件附件时间，再回到纸面；冷掉的咖啡表面几乎不动，片段节奏从深夜疲惫转为警觉确认，"
@@ -716,7 +778,7 @@ class FakeTextProvider:
                             "投影冷光打亮林舟侧脸，窗外蓝色雨光勾出赵启轮廓；单帧剧照，无字幕、水印、文字标识和无关人物。"
                         ),
                         "video_prompt": (
-                            "首帧为参考帧，相机位于会议桌短边，35mm 中广角，贴着桌面低位观察；0-3 秒：镜头横移扫过被调包的合同、"
+                            "当前片段中相机位于会议桌短边，35mm 中广角，贴着桌面低位观察；0-3 秒：镜头横移扫过被调包的合同、"
                             "会议水杯和几只停住的手，投影冷光在纸面轻微频闪，会议室空调低频和投影电流声压住环境，全程不切镜；"
                             "3-6.5 秒：林舟站在投影屏左侧，说出“这份合同被换过，时间线就在这里”时没有夸张手势，"
                             "只把邮件时间线拖到最大，目光压向赵启；对白声线克制靠前，房间混响短促，形成 J-Cut 式声音衔接；"

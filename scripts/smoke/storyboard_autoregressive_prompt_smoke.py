@@ -23,7 +23,7 @@ from autodrama.core.schemas import (  # noqa: E402
     RoleAppearance,
     RoleAudio,
     ScriptBundle,
-    StoryboardShotGenerationOutput,
+    StoryboardNextShotOutput,
 )
 from autodrama.providers.local.mock.fake import FakeTextProvider  # noqa: E402
 from autodrama.services.storyboard_service import StoryboardService  # noqa: E402
@@ -166,20 +166,22 @@ async def main_async() -> int:
     provider = RecordingFakeTextProvider()
     service = StoryboardService(PromptStore())
     progress_snapshots: list[tuple[str, str, int]] = []
+    state = build_state()
+    current_novel_full = (
+        "雨夜办公室，林舟发现合同关键页纸张颜色不对。苏晚递来旧邮件截图，"
+        "邮件附件时间线证明合同被调包。次日会议室，赵启试图压住议程，"
+        "林舟投屏证据并公开反击。"
+    )
 
     def record_progress(episode, shot) -> None:
         progress_snapshots.append((episode.episode_key, shot.shot_id, len(episode.shots)))
 
     output = await service.storyboard_episode(
-        build_state(),
+        state,
         provider,
         episode_key="episode_001",
-        episode_story=(
-            "雨夜办公室，林舟发现合同关键页纸张颜色不对。苏晚递来旧邮件截图，"
-            "邮件附件时间线证明合同被调包。次日会议室，赵启试图压住议程，"
-            "林舟投屏证据并公开反击。"
-        ),
-        previous_storyboard_history={"episodes": []},
+        novel_extract_all=dict(state.script.novel_extract),
+        current_novel_full=current_novel_full,
         on_shot_generated=record_progress,
     )
 
@@ -195,6 +197,7 @@ async def main_async() -> int:
             any(marker in shot.video_prompt for marker in ("全程不切镜", "可硬切", "J-Cut 式", "硬切到")),
             f"Shot {index} video_prompt missing natural cut/continuity wording",
         )
+        require(shot.source_coverage is not None, f"Shot {index} missing source coverage")
     require(
         progress_snapshots == [
             ("episode_001", "episode_001_shot_001", 1),
@@ -205,14 +208,15 @@ async def main_async() -> int:
     )
 
     schema_names = {call["schema"] for call in provider.calls}
-    require(schema_names == {StoryboardShotGenerationOutput.__name__}, f"Unexpected schemas: {schema_names}")
-    require("液态白银" in provider.calls[0]["prompt"], "Prompt missing cloud-sea quality example")
+    require(schema_names == {StoryboardNextShotOutput.__name__}, f"Unexpected schemas: {schema_names}")
+    require("已经生成并已覆盖的分镜" in provider.calls[0]["prompt"], "Prompt missing covered storyboard guidance")
+    require("当前 shot 起点原文" in provider.calls[0]["prompt"], "Prompt missing next shot source cursor")
     require("0-4 秒：" in provider.calls[0]["prompt"], "Prompt missing official-style timed video_prompt guidance/example")
     require("方括号标签" in provider.calls[0]["prompt"], "Prompt missing guidance against old bracketed style")
     require("硬切到" in provider.calls[0]["prompt"], "Prompt missing natural explicit cut guidance/example")
-    require('"shot_count": 1' in provider.calls[1]["prompt"], "Second prompt missing first generated shot context")
+    require('"source_coverage"' in provider.calls[1]["prompt"], "Second prompt missing first shot source coverage")
     require("episode_001_shot_001" in provider.calls[1]["prompt"], "Second prompt missing first shot id")
-    require('"shot_count": 2' in provider.calls[2]["prompt"], "Third prompt missing two generated shots context")
+    require("episode_001_shot_002" in provider.calls[2]["prompt"], "Third prompt missing two generated shots context")
 
     output_dir = ROOT_DIR / ".tmp" / "smoke" / "storyboard_autoregressive_prompt"
     output_dir.mkdir(parents=True, exist_ok=True)

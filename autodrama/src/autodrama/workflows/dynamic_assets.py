@@ -35,7 +35,6 @@ from autodrama.workflows.generation_tasks import (
     task_status,
     upsert_generation_task,
 )
-from autodrama.workflows.storyboard_history import history_before_episode
 from autodrama.workflows.selection import (
     active_shots_for_episode,
     normalize_shot_selectors,
@@ -88,8 +87,8 @@ class DynamicAssetNodeMixin:
             state,
             provider,
             episode_key=episode_key,
-            episode_story=self._episode_stories(project_dir, state).get(episode_key, ""),
-            previous_storyboard_history=history_before_episode(project_dir, state, episode_key),
+            novel_extract_all=self._episode_stories(project_dir, state),
+            current_novel_full=self._novel_full_contents(project_dir, state, [episode_key]).get(episode_key, ""),
             on_shot_generated=save_storyboard_progress,
         )
         if output.episode_key != episode_key:

@@ -93,7 +93,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         parts = [
             self._visual_style_prompt(state),
             f"剧集: {episode.episode_key}",
-            "参考帧生成要求:",
+            "静态锚点参考帧生成要求:",
             shot.ref_frame_prompt,
         ]
         if layout:
@@ -114,7 +114,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             )
         if shot.dialogue:
             parts.append("画面对白气氛: " + " / ".join(shot.dialogue))
-        parts.append("生成单帧剧照，必须是同一个视频片段里的关键帧；不要添加字幕、水印、文字标识或片段编号。")
+        parts.append(
+            "生成单帧锚点剧照，用于锁定本片段的静态资产表现；它不是视频首帧。"
+            "不要添加字幕、水印、文字标识或片段编号。"
+        )
         return "\n".join(item for item in parts if item)
 
     def _shot_video_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
@@ -134,11 +137,20 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     break
             parts.append(lead)
         else:
-            for prefix in ("首帧为参考帧，", "首帧为本片段参考帧，", "首帧为图片1，"):
+            for prefix in (
+                "首帧为参考帧，",
+                "首帧为本片段参考帧，",
+                "首帧为图片1，",
+                "首帧为锚点参考帧，",
+            ):
                 if body.startswith(prefix):
                     body = body.removeprefix(prefix).lstrip()
                     break
-            parts.append("首帧为图片1，即本片段参考帧，保持图片1中的人物、场景、道具、构图和光线基准。")
+            parts.append(
+                "参考图仅作为静态锚点，保持当前片段中人物外观、服装、道具造型和场景表现一致；"
+                "参考视频仅作为动态锚点，保持角色动态气质、动作节奏和动态特效表现一致。"
+                "不要把任何参考素材当作本片段首帧或尾帧，不要逐帧复刻参考素材。"
+            )
         parts.append(body)
         if style_prompt:
             parts.append(f"画面风格保持{style_prompt.rstrip('。')}。")

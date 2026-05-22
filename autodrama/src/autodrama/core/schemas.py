@@ -420,11 +420,34 @@ class ShotBGMAsset(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
+class StoryboardSourceCoverage(BaseModel):
+    start_text: str
+    end_text: str
+    next_start_text: str | None = None
+    note: str
+
+
+class StoryboardShotDraft(BaseModel):
+    layout_id: str
+    title: str
+    source_coverage: StoryboardSourceCoverage
+    duration_seconds: float
+    transition: str | None = None
+    dialogue: list[str] = Field(default_factory=list)
+    role_ids: list[str] = Field(default_factory=list)
+    role_appearance_ids: list[str] = Field(default_factory=list)
+    role_audio_ids: list[str] = Field(default_factory=list)
+    prop_ids: list[str] = Field(default_factory=list)
+    anchor_frame_prompt: str
+    video_prompt: str
+
+
 class StoryboardShot(BaseModel):
     shot_id: str
     index: int
     layout_id: str
     title: str
+    source_coverage: StoryboardSourceCoverage | None = None
     content: str | None = None
     scene_description: str | None = None
     composition: str | None = None
@@ -475,6 +498,13 @@ class StoryboardShotGenerationOutput(BaseModel):
     episode_key: str
     shot: StoryboardShot
     is_episode_complete: bool = False
+    completion_reason: str | None = None
+
+
+class StoryboardNextShotOutput(BaseModel):
+    episode_key: str
+    shot: StoryboardShotDraft
+    is_chapter_complete: bool = False
     completion_reason: str | None = None
 
 

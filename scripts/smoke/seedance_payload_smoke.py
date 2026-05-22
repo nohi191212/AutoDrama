@@ -33,11 +33,16 @@ def main(argv: list[str] | None = None) -> int:
     tmp_dir.mkdir(parents=True, exist_ok=True)
     image_path = tmp_dir / "reference.png"
     image_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/luz7XwAAAABJRU5ErkJggg=="))
+    video_path = tmp_dir / "reference.mp4"
+    video_path.write_bytes(b"fake local anchor video")
 
     metadata = {"ratio": args.ratio} if args.ratio else None
     payload = provider.build_payload(
         "测试 Seedance 2.0 视频生成 payload。镜头缓慢推进，人物保持一致。",
-        refs=[AssetRef(id="reference", type="image", path=str(image_path))],
+        refs=[
+            AssetRef(id="reference", type="image", path=str(image_path)),
+            AssetRef(id="anchor_video", type="video", path=str(video_path)),
+        ],
         duration=args.duration,
         metadata=metadata,
     )
@@ -51,6 +56,9 @@ def main(argv: list[str] | None = None) -> int:
     assert payload["content"][1]["type"] == "image_url"
     assert payload["content"][1]["role"] == "reference_image"
     assert payload["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert payload["content"][2]["type"] == "video_url"
+    assert payload["content"][2]["role"] == "reference_video"
+    assert payload["content"][2]["video_url"]["url"].startswith("data:video/mp4;base64,")
 
     first_frame_payload = provider.build_payload(
         "测试 Seedance 2.0 首帧模式。以上一镜头尾帧作为本镜头第一帧，从既有姿态继续动作。",

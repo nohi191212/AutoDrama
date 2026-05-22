@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
+from autodrama.config import Settings
 from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
-    BGM,
-    Layout,
     ProjectState,
     Prop,
     Role,
@@ -20,20 +18,19 @@ from autodrama.core.schemas import (
     RoleExtractOutput,
     RoleVoiceDesignOutput,
     RoleVoiceGenerationItem,
-    RoleVoiceGenerationOutput,
-    ScriptNovelExtractOutput,
-    ScriptNovelOutput,
     ShotDialogueAudioAsset,
-    StaticAssetGenerationItem,
-    StaticAssetGenerationOutput,
     StoryboardEpisodeOutput,
     StoryboardShot,
 )
 from autodrama.core.visual_style import visual_style_metadata
 from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
+from autodrama.repositories.prop_design_repo import PropDesignRepository
+from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.storyboard_repo import StoryboardRepository
 from autodrama.repositories.project_repo import ProjectRepository
+from autodrama.repositories.role_design_repo import RoleDesignRepository
+from autodrama.repositories.script_content_repo import ScriptContentRepository
 from autodrama.services.asset_service import AssetService
 from autodrama.services.media_store import MediaStore
 from autodrama.services.role_service import RoleService
@@ -42,13 +39,22 @@ from autodrama.services.storyboard_service import StoryboardService
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.context import WorkflowRunContext
 from autodrama.workflows.nodes import PREGEN_NODE_NAMES, build_pregen_nodes
+from autodrama.workflows.nodes.bgm_nodes import BGMNodeBase, build_bgm_node_runners
+from autodrama.workflows.nodes.script_nodes import (
+    ScriptNodeBase,
+    build_script_node_runners,
+)
+from autodrama.workflows.nodes.role_nodes import RoleNodeBase, build_role_node_runners
+from autodrama.workflows.nodes.static_asset_nodes import (
+    StaticAssetNodeBase,
+    build_static_asset_node_runners,
+)
+from autodrama.workflows.nodes.voice_nodes import VoiceNodeBase, build_voice_node_runners
 from autodrama.workflows.runner import WorkflowRunner
 from autodrama.workflows.selection import select_episode_keys
 
 
 PREGEN_NODES = PREGEN_NODE_NAMES
-
-SCRIPT_NOVEL_EXTRACT_BATCH_SIZE = 5
 
 
 class PregenWorkflow:
@@ -60,16 +66,20 @@ class PregenWorkflow:
         prompts: PromptStore | None = None,
     ) -> None:
         self.repo = repo
-        self.layout = repo.layout
+        self.settings = getattr(repo, "settings", Settings())
+        self.layout = getattr(repo, "layout", ProjectLayout(self.settings))
         self.router = router
         self.prompts = prompts or PromptStore()
         self.script_service = ScriptService(self.prompts)
         self.role_service = RoleService(self.prompts)
         self.asset_service = AssetService(self.prompts)
         self.storyboard_service = StoryboardService(self.prompts)
+        self.script_contents = ScriptContentRepository(self.repo, self.layout)
+        self.role_designs = RoleDesignRepository(self.repo, self.layout)
+        self.prop_designs = PropDesignRepository(self.repo, self.layout)
         self.media_store = MediaStore(
             self.layout,
-            timeout_seconds=self.repo.settings.runtime.request_timeout_seconds,
+            timeout_seconds=self.settings.runtime.request_timeout_seconds,
         )
         self.storyboards = StoryboardRepository(self.repo, self.layout)
         self.runner = WorkflowRunner(repo=self.repo, logger=get_logger())
@@ -320,13 +330,13 @@ class PregenWorkflow:
         state.metadata.update(visual_style_metadata(self.repo.settings.project.visual_style))
 
     def _script_content_path(self, project_dir: Path, category: str, episode_key: str) -> Path:
-        return self.layout.script_content_path(project_dir, category, episode_key)
+        return self.script_contents.content_path(project_dir, category, episode_key)
 
     def _script_novel_legacy_episode_path(self, project_dir: Path, episode_key: str) -> Path:
-        return self.layout.script_novel_legacy_episode_path(project_dir, episode_key)
+        return self.script_contents.novel_legacy_episode_path(project_dir, episode_key)
 
     def _script_novel_legacy_full_path(self, project_dir: Path, episode_key: str) -> Path:
-        return self.layout.script_novel_legacy_full_path(project_dir, episode_key)
+        return self.script_contents.novel_legacy_full_path(project_dir, episode_key)
 
     @staticmethod
     def _script_content_payload(
@@ -337,39 +347,17 @@ class PregenWorkflow:
         dependency_field: str | None = None,
         dependency_path: object | None = None,
     ) -> dict[str, object]:
-        payload: dict[str, object] = {
-            "node_name": node_name,
-            "episode_key": episode_key,
-            "content": content,
-        }
-        if dependency_field and dependency_path:
-            payload[dependency_field] = dependency_path
-        return payload
+        return ScriptContentRepository.content_payload(
+            node_name=node_name,
+            episode_key=episode_key,
+            content=content,
+            dependency_field=dependency_field,
+            dependency_path=dependency_path,
+        )
 
     @classmethod
     def _load_script_content_ref(cls, project_dir: Path, value: object) -> str | None:
-        if value is False or value is None:
-            return None
-        text = str(value).strip()
-        if not text:
-            return None
-
-        path = Path(text)
-        if not path.is_absolute():
-            path = project_dir / text
-        if path.exists() and path.is_file():
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict):
-                raise ValueError(f"Invalid script content JSON: {path}")
-            for key in ("content", "novel_full", "novel_text", "episode_outline"):
-                content = str(payload.get(key) or "").strip()
-                if content:
-                    return content
-            return None
-
-        if text.endswith(".json") or "/" in text or "\\" in text:
-            return None
-        return text
+        return ScriptContentRepository.load_content_ref(project_dir, value)
 
     def _load_script_contents(
         self,
@@ -380,14 +368,13 @@ class PregenWorkflow:
         label: str,
         allow_missing: bool = False,
     ) -> dict[str, str]:
-        contents: dict[str, str] = {}
-        for episode_key in episode_keys:
-            content = self._load_script_content_ref(project_dir, refs.get(episode_key))
-            if content:
-                contents[episode_key] = content
-            elif not allow_missing:
-                raise ValueError(f"{label} is missing content for {episode_key}")
-        return contents
+        return self.script_contents.load_contents(
+            project_dir,
+            refs,
+            episode_keys,
+            label=label,
+            allow_missing=allow_missing,
+        )
 
     def _episode_stories(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
         episode_keys = self._expected_episode_keys(state)
@@ -431,71 +418,26 @@ class PregenWorkflow:
         return result
 
     def _load_role_extract_output(self, project_dir: Path) -> RoleExtractOutput:
-        path = project_dir / "assets" / "json" / "nodes" / "role_extract.json"
-        if not path.exists():
-            raise FileNotFoundError(
-                "role_extract output is missing; run pregen --only role_extract before role_design"
-            )
-        return RoleExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        return self.role_designs.load_extract_output(project_dir)
 
     def _load_existing_role_design_output(self, project_dir: Path) -> RoleDesignOutput | None:
-        role_items: list[RoleDesignItem] = []
-        roles_dir = project_dir / "assets" / "json" / "roles"
-        if roles_dir.exists():
-            for path in sorted(roles_dir.glob("role_*.json")):
-                try:
-                    role_items.append(self._load_role_design_item(path))
-                except Exception as exc:
-                    get_logger().warning("role_design ignored invalid role design JSON %s: %s", path, exc)
-            if role_items:
-                return RoleDesignOutput(roles=role_items)
-
-        path = project_dir / "assets" / "json" / "nodes" / "role_design.json"
-        if not path.exists():
-            return None
-        return RoleDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        return self.role_designs.load_existing_output(project_dir)
 
     def _role_design_json_path(self, project_dir: Path, role_id: str) -> Path:
-        return self.layout.role_design_path(project_dir, role_id)
+        return self.role_designs.item_path(project_dir, role_id)
 
     def _role_design_relative_path(self, project_dir: Path, role_id: str) -> str:
-        return self._project_relative(project_dir, self._role_design_json_path(project_dir, role_id))
+        return self.role_designs.item_relative_path(project_dir, role_id)
 
     def _save_role_design_item(self, project_dir: Path, item: RoleDesignItem) -> str:
-        role_id = normalize_id("role", item.name)
-        path = self._role_design_json_path(project_dir, role_id)
-        self.repo.write_json(
-            path,
-            {
-                "node_name": "role_design",
-                "role_id": role_id,
-                "role_name": item.name,
-                "content": item.model_dump(mode="json"),
-                "source_role_extract_path": "assets/json/nodes/role_extract.json",
-            },
-        )
-        return self._project_relative(project_dir, path)
+        return self.role_designs.save_item(project_dir, item)
 
     @staticmethod
     def _load_role_design_item(path: Path) -> RoleDesignItem:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError(f"Invalid role design JSON: {path}")
-        content = payload.get("content", payload)
-        if not isinstance(content, dict):
-            raise ValueError(f"Invalid role design content JSON: {path}")
-        return RoleDesignItem.model_validate(content)
+        return RoleDesignRepository.load_item(path)
 
     def _load_role_design_item_for_role(self, project_dir: Path, role: Role) -> RoleDesignItem | None:
-        candidates: list[Path] = []
-        if role.design_path:
-            path = Path(role.design_path)
-            candidates.append(path if path.is_absolute() else project_dir / path)
-        candidates.append(self._role_design_json_path(project_dir, role.id))
-        for path in candidates:
-            if path.exists():
-                return self._load_role_design_item(path)
-        return None
+        return self.role_designs.load_item_for_role(project_dir, role)
 
     @staticmethod
     def _role_design_item_complete(item: RoleDesignItem) -> bool:
@@ -547,22 +489,11 @@ class PregenWorkflow:
 
     @staticmethod
     def _format_previous_novel_chapters(novel_full: dict[str, str], episode_keys: list[str]) -> str:
-        chunks: list[str] = []
-        for episode_key in episode_keys:
-            text = str(novel_full.get(episode_key) or "").strip()
-            if text:
-                chunks.append(f"## {episode_key}\n{text}")
-        return "\n\n".join(chunks) if chunks else "（暂无，当前是第一章。）"
+        return ScriptNodeBase.format_previous_novel_chapters(novel_full, episode_keys)
 
     @staticmethod
     def _load_script_novel_episode_text(path: Path) -> str | None:
-        if not path.exists():
-            return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError(f"Invalid script_novel episode JSON: {path}")
-        text = str(payload.get("content") or payload.get("novel_full") or payload.get("novel_text") or "").strip()
-        return text or None
+        return ScriptContentRepository.load_episode_text(path)
 
     async def run(
         self,
@@ -644,272 +575,17 @@ class PregenWorkflow:
     def _select_episode_keys(self, state: ProjectState, episode_keys: list[str] | None) -> list[str]:
         return select_episode_keys(state, episode_keys)
 
+    def _script_node_runner(self, node_name: str) -> ScriptNodeBase:
+        return build_script_node_runners(self)[node_name]
+
     async def _run_script_outline(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("script")
-        get_logger().info(
-            "node=script_outline provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        output = await self.script_service.script_outline(state, provider)
-        self._validate_script_outline(output.episode_count, output.target_duration_seconds, state)
-        self._validate_episode_keys("script_outline.episode_outlines", output.episode_outlines, state)
-        state.script.outline = output.outline
-        state.script.episode_outlines = {}
-        for episode_key, content in output.episode_outlines.items():
-            outline_path = self._script_content_path(project_dir, "outlines", episode_key)
-            self.repo.write_json(
-                outline_path,
-                self._script_content_payload(
-                    node_name="script_outline",
-                    episode_key=episode_key,
-                    content=str(content).strip(),
-                ),
-            )
-            state.script.episode_outlines[episode_key] = self._project_relative(project_dir, outline_path)
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(
-            project_dir,
-            "script_outline",
-            {
-                "logline": output.logline,
-                "outline": output.outline,
-                "episode_count": output.episode_count,
-                "target_duration_seconds": output.target_duration_seconds,
-                "episode_outlines": state.script.episode_outlines,
-            },
-        )
-        return state
+        return await self._script_node_runner("script_outline").run(project_dir, state)
 
     async def _run_script_novel(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("script")
-        get_logger().info(
-            "node=script_novel provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        episode_keys = self._expected_episode_keys(state)
-        outline_contents = self._load_script_contents(
-            project_dir,
-            state.script.episode_outlines,
-            episode_keys,
-            label="script_outline.episode_outlines",
-        )
-        target_char_count = self.script_service.episode_target_char_count(state)
-        force_pregen = bool(getattr(self, "_force_pregen", False))
-        if force_pregen:
-            state.script.novel_full = {episode_key: False for episode_key in episode_keys}
-        else:
-            state.script.novel_full = {
-                episode_key: state.script.novel_full.get(episode_key) or False
-                for episode_key in episode_keys
-            }
-        state.metadata["script_novel_target_char_count"] = target_char_count
-        expected_episode_keys = set(episode_keys)
-        state.metadata["script_novel_full_episode_paths"] = (
-            {
-                key: value
-                for key, value in dict(state.metadata.get("script_novel_full_episode_paths") or {}).items()
-                if key in expected_episode_keys
-            }
-            if not force_pregen
-            else {}
-        )
-
-        novel_contents: dict[str, str] = {}
-        for episode_index, episode_key in enumerate(episode_keys, start=1):
-            episode_path = self._script_content_path(project_dir, "novel_full", episode_key)
-            legacy_full_path = self._script_novel_legacy_full_path(project_dir, episode_key)
-            legacy_episode_path = self._script_novel_legacy_episode_path(project_dir, episode_key)
-            existing_text = None
-            if not force_pregen:
-                existing_text = self._load_script_content_ref(project_dir, state.script.novel_full.get(episode_key))
-                if not existing_text:
-                    existing_text = self._load_script_novel_episode_text(episode_path)
-                if not existing_text:
-                    existing_text = self._load_script_novel_episode_text(legacy_full_path)
-                if not existing_text:
-                    existing_text = self._load_script_novel_episode_text(legacy_episode_path)
-
-            if not force_pregen and existing_text:
-                if not episode_path.exists():
-                    self.repo.write_json(
-                        episode_path,
-                        self._script_content_payload(
-                            node_name="script_novel",
-                            episode_key=episode_key,
-                            content=existing_text,
-                            dependency_field="source_outline_path",
-                            dependency_path=state.script.episode_outlines.get(episode_key),
-                        ),
-                    )
-                novel_contents[episode_key] = existing_text
-                state.script.novel_full[episode_key] = self._project_relative(project_dir, episode_path)
-                state.metadata["script_novel_full_episode_paths"][episode_key] = self._project_relative(project_dir, episode_path)
-                self.repo.save_state(project_dir, state)
-                get_logger().info(
-                    "script_novel %s already exists, skipped; saved in %s",
-                    episode_key,
-                    self._project_relative(project_dir, episode_path),
-                )
-                continue
-
-            previous_chapters = self._format_previous_novel_chapters(
-                novel_contents,
-                episode_keys[: episode_index - 1],
-            )
-            output = await self.script_service.script_novel_episode(
-                state,
-                provider,
-                episode_key=episode_key,
-                episode_outlines=outline_contents,
-                current_episode_outline=outline_contents.get(episode_key, ""),
-                previous_chapters=previous_chapters,
-            )
-            if output.episode_key != episode_key:
-                raise ValueError(f"script_novel episode_key must be {episode_key}; got {output.episode_key}")
-            if output.target_char_count != target_char_count:
-                raise ValueError(
-                    f"script_novel target_char_count must be {target_char_count}; got {output.target_char_count}"
-                )
-            novel_full = output.novel_full.strip()
-            if not novel_full:
-                raise ValueError(f"script_novel novel_full is empty for {episode_key}")
-
-            novel_contents[episode_key] = novel_full
-            state.budget.used_text_calls += 1
-            self.repo.write_json(
-                episode_path,
-                self._script_content_payload(
-                    node_name="script_novel",
-                    episode_key=episode_key,
-                    content=novel_full,
-                    dependency_field="source_outline_path",
-                    dependency_path=state.script.episode_outlines.get(episode_key),
-                ),
-            )
-            state.script.novel_full[episode_key] = self._project_relative(project_dir, episode_path)
-            state.metadata["script_novel_full_episode_paths"][episode_key] = self._project_relative(project_dir, episode_path)
-            self.repo.save_state(project_dir, state)
-            get_logger().info(
-                "script_novel %s generated target_chars=%d saved in %s",
-                episode_key,
-                target_char_count,
-                self._project_relative(project_dir, episode_path),
-            )
-
-        self._validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
-        output = ScriptNovelOutput(novel_full=state.script.novel_full)
-        self.repo.save_node_output(project_dir, "script_novel", output)
-        return state
+        return await self._script_node_runner("script_novel").run(project_dir, state)
 
     async def _run_script_novel_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("script")
-        get_logger().info(
-            "node=script_novel_extract provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        episode_keys = self._expected_episode_keys(state)
-        self._validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
-        novel_contents = self._load_script_contents(
-            project_dir,
-            state.script.novel_full,
-            episode_keys,
-            label="script_novel.novel_full",
-        )
-        outline_contents = self._load_script_contents(
-            project_dir,
-            state.script.episode_outlines,
-            episode_keys,
-            label="script_outline.episode_outlines",
-            allow_missing=True,
-        )
-        force_pregen = bool(getattr(self, "_force_pregen", False))
-        if force_pregen:
-            state.script.novel_extract = {episode_key: False for episode_key in episode_keys}
-        else:
-            state.script.novel_extract = {
-                episode_key: state.script.novel_extract.get(episode_key) or False
-                for episode_key in episode_keys
-            }
-        state.metadata["script_novel_extract_batch_size"] = SCRIPT_NOVEL_EXTRACT_BATCH_SIZE
-
-        extract_contents = (
-            {}
-            if force_pregen
-            else self._load_script_contents(
-                project_dir,
-                state.script.novel_extract,
-                episode_keys,
-                label="script_novel_extract.novel_extract",
-                allow_missing=True,
-            )
-        )
-        for batch_start in range(0, len(episode_keys), SCRIPT_NOVEL_EXTRACT_BATCH_SIZE):
-            batch_keys = episode_keys[batch_start : batch_start + SCRIPT_NOVEL_EXTRACT_BATCH_SIZE]
-            if not force_pregen and all(extract_contents.get(episode_key) for episode_key in batch_keys):
-                get_logger().info(
-                    "script_novel_extract batch %s already exists, skipped",
-                    ",".join(batch_keys),
-                )
-                continue
-
-            previous_keys = episode_keys[:batch_start]
-            previous_extract = {
-                episode_key: extract_contents[episode_key]
-                for episode_key in previous_keys
-                if extract_contents.get(episode_key)
-            }
-            extract_hints = {
-                episode_key: outline_contents.get(episode_key, "")
-                for episode_key in batch_keys
-            }
-            output = await self.script_service.script_novel_extract_batch(
-                state,
-                provider,
-                batch_episode_keys=batch_keys,
-                novel_full=novel_contents,
-                previous_extract=previous_extract,
-                extract_hints=extract_hints,
-            )
-            actual_keys = set(output.novel_extract)
-            expected_keys = set(batch_keys)
-            if actual_keys != expected_keys:
-                raise ValueError(
-                    "script_novel_extract.novel_extract must contain exactly "
-                    f"{', '.join(batch_keys)}; got {', '.join(sorted(actual_keys)) or '-'}"
-                )
-            for episode_key in batch_keys:
-                extracted_text = str(output.novel_extract.get(episode_key) or "").strip()
-                if not extracted_text:
-                    raise ValueError(f"script_novel_extract novel_extract is empty for {episode_key}")
-                episode_path = self._script_content_path(project_dir, "novel_extract", episode_key)
-                self.repo.write_json(
-                    episode_path,
-                    self._script_content_payload(
-                        node_name="script_novel_extract",
-                        episode_key=episode_key,
-                        content=extracted_text,
-                        dependency_field="source_novel_full_path",
-                        dependency_path=state.script.novel_full.get(episode_key),
-                    ),
-                )
-                extract_contents[episode_key] = extracted_text
-                state.script.novel_extract[episode_key] = self._project_relative(project_dir, episode_path)
-
-            state.budget.used_text_calls += 1
-            self.repo.save_state(project_dir, state)
-            get_logger().info(
-                "script_novel_extract batch %s generated saved_count=%d",
-                ",".join(batch_keys),
-                len(batch_keys),
-            )
-
-        self._validate_episode_keys("script_novel_extract.novel_extract", state.script.novel_extract, state)
-        output = ScriptNovelExtractOutput(novel_extract=state.script.novel_extract)
-        self.repo.save_node_output(project_dir, "script_novel_extract", output)
-        return state
+        return await self._script_node_runner("script_novel_extract").run(project_dir, state)
 
     @staticmethod
     def _role_name_key(name: object) -> str:
@@ -1125,201 +801,20 @@ class PregenWorkflow:
                 preserve_assets=True,
             )
 
+    def _role_node_runner(self, node_name: str) -> RoleNodeBase:
+        return build_role_node_runners(self)[node_name]
+
     async def _run_role_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
-        get_logger().info(
-            "node=role_extract provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        episode_keys = self._expected_episode_keys(state)
-        self._validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
-        novel_full = self._novel_full_contents(project_dir, state, episode_keys)
-        output = await self.role_service.role_extract(
-            state,
-            provider,
-            novel_full=novel_full,
-        )
-        if not output.roles:
-            raise ValueError("role_extract must return at least one role")
-
-        expected = set(episode_keys)
-        seen_names: set[str] = set()
-        for item in output.roles:
-            item.name = str(item.name or "").strip()
-            if not item.name:
-                raise ValueError("role_extract returned a role with empty name")
-            name_key = self._role_name_key(item.name)
-            if name_key in seen_names:
-                raise ValueError(f"role_extract returned duplicated role name: {item.name}")
-            seen_names.add(name_key)
-            item.aliases = self._dedupe_texts(item.aliases)
-            item.source_chapters = self._dedupe_texts(item.source_chapters)
-            item.appearance_notes = self._dedupe_texts(item.appearance_notes)
-            item.episode_keys = self._dedupe_texts(item.episode_keys)
-            invalid_episode_keys = sorted(set(item.episode_keys).difference(expected))
-            if invalid_episode_keys:
-                raise ValueError(
-                    f"role_extract episode_keys for {item.name} must use existing keys; "
-                    f"got {', '.join(invalid_episode_keys)}"
-                )
-            if not item.episode_keys:
-                raise ValueError(f"role_extract must include episode_keys for {item.name}")
-
-        state.metadata["role_extract"] = output.model_dump(mode="json")
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "role_extract", output)
-        return state
+        return await self._role_node_runner("role_extract").run(project_dir, state)
 
     async def _run_role_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
-        speech_provider = None
-        available_voices: list[dict[str, Any]] = []
-        try:
-            speech_provider = self.router.audio("speech")
-            available_voices = self._available_speakers_for_prompt(speech_provider)
-        except Exception as exc:
-            get_logger().warning("node=role_design could not load speech voice catalog: %s", exc)
-        get_logger().info(
-            "node=role_design provider=%s model=%s available_voices=%d",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-            len(available_voices),
-        )
-        extract_output = self._load_role_extract_output(project_dir)
-        if not extract_output.roles:
-            raise ValueError("role_design requires at least one role from role_extract")
+        return await self._role_node_runner("role_design").run(project_dir, state)
 
-        active_episode_keys = self._active_episode_keys_in_order(state) if getattr(self, "_active_episode_keys", None) else []
-        target_extract_roles = self._role_design_target_extract_roles(extract_output.roles, state)
-        if active_episode_keys:
-            get_logger().info(
-                "role_design episode-scoped rerun episodes=%s target_roles=%s",
-                ",".join(active_episode_keys),
-                ",".join(item.name for item in target_extract_roles) or "-",
-            )
-            if not target_extract_roles:
-                get_logger().warning(
-                    "role_design found no roles appearing in selected episodes: %s",
-                    ",".join(active_episode_keys),
-                )
-
-        force_pregen = bool(getattr(self, "_force_pregen", False))
-        self._clear_role_design_state(state)
-
-        designed_by_key: dict[str, RoleDesignItem] = {}
-        existing_output = self._load_existing_role_design_output(project_dir)
-        if existing_output is not None:
-            should_keep_existing = not force_pregen or bool(active_episode_keys)
-            if should_keep_existing:
-                for existing_item in existing_output.roles:
-                    if not self._role_design_item_complete(existing_item):
-                        continue
-                    existing_key = self._role_name_key(existing_item.name)
-                    existing_design_path = self._save_role_design_item(project_dir, existing_item)
-                    designed_by_key[existing_key] = existing_item
-                    self._apply_role_design_item(
-                        project_dir,
-                        state,
-                        existing_item,
-                        speech_provider=speech_provider,
-                        design_path=existing_design_path,
-                        preserve_assets=True,
-                    )
-
-        all_role_extracts = [item.model_dump(mode="json") for item in extract_output.roles]
-        for extract_item in target_extract_roles:
-            role_key = self._role_name_key(extract_item.name)
-            if role_key in designed_by_key and not force_pregen:
-                get_logger().info("role_design %s already exists, skipped", extract_item.name)
-                continue
-
-            episode_keys = self._role_episode_keys(extract_item, state)
-            role_novel_full = self._novel_full_contents(project_dir, state, episode_keys)
-            get_logger().info(
-                "role_design generating %s from episodes=%s chapters=%s",
-                extract_item.name,
-                ",".join(episode_keys),
-                ",".join(extract_item.source_chapters) or "-",
-            )
-            output = await self.role_service.role_design(
-                state,
-                provider,
-                role_item=extract_item,
-                role_novel_full=role_novel_full,
-                all_role_extracts=all_role_extracts,
-                existing_role_designs=[
-                    item.model_dump(mode="json")
-                    for item in self._ordered_role_design_items(extract_output.roles, designed_by_key)
-                ],
-                available_voices=available_voices,
-            )
-            item = self._merge_role_extract_into_design(
-                self._select_role_design_item(output, extract_item),
-                extract_item,
-            )
-            design_path = self._save_role_design_item(project_dir, item)
-            self._apply_role_design_item(
-                project_dir,
-                state,
-                item,
-                speech_provider=speech_provider,
-                design_path=design_path,
-            )
-            designed_by_key[role_key] = item
-            state.budget.used_text_calls += 1
-            state.metadata["role_design_generation_mode"] = "per_role_recursive"
-            state.metadata["role_design_active_episode_keys"] = active_episode_keys
-            state.metadata["role_design_target_role_names"] = [
-                item.name for item in target_extract_roles
-            ]
-            state.metadata["role_design_designed_role_names"] = [
-                item.name for item in self._ordered_role_design_items(extract_output.roles, designed_by_key)
-            ]
-            self.repo.save_node_output(
-                project_dir,
-                "role_design",
-                RoleDesignOutput(roles=self._ordered_role_design_items(extract_output.roles, designed_by_key)),
-            )
-            self.repo.save_state(project_dir, state)
-
-        final_items = self._ordered_role_design_items(extract_output.roles, designed_by_key)
-        state.metadata["role_design_generation_mode"] = "per_role_recursive"
-        state.metadata["role_design_active_episode_keys"] = active_episode_keys
-        state.metadata["role_design_target_role_names"] = [item.name for item in target_extract_roles]
-        state.metadata["role_design_designed_role_names"] = [item.name for item in final_items]
-        self.repo.save_node_output(
-            project_dir,
-            "role_design",
-            RoleDesignOutput(roles=final_items),
-        )
-        return state
+    def _voice_node_runner(self, node_name: str) -> VoiceNodeBase:
+        return build_voice_node_runners(self)[node_name]
 
     async def _run_role_voice_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
-        speech_provider = None
-        available_voices: list[dict[str, Any]] = []
-        try:
-            speech_provider = self.router.audio("speech")
-            available_voices = self._available_speakers_for_prompt(speech_provider)
-        except Exception as exc:
-            get_logger().warning("node=role_voice_design could not load speech voice catalog: %s", exc)
-        get_logger().info(
-            "node=role_voice_design provider=%s model=%s available_voices=%d",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-            len(available_voices),
-        )
-        output = await self.role_service.role_voice_design(
-            state,
-            provider,
-            episode_stories=self._episode_stories(project_dir, state),
-            available_voices=available_voices,
-        )
-        self._apply_role_voice_design_output(state, output, speech_provider=speech_provider)
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "role_voice_design", output)
-        return state
+        return await self._voice_node_runner("role_voice_design").run(project_dir, state)
 
     def _voice_preferred_name(self, state: ProjectState, audio: RoleAudio) -> str:
         digest = hashlib.sha1(f"{state.project_id}:{audio.id}".encode("utf-8")).hexdigest()
@@ -1465,49 +960,13 @@ class PregenWorkflow:
         role: Role,
         audio: RoleAudio,
     ) -> RoleVoiceGenerationItem:
-        preview_text = self._preview_text(role, audio)
-        voice_prompt = self._voice_prompt(role, audio)
-        result = await provider.create_voice(
-            voice_prompt=voice_prompt,
-            preview_text=preview_text,
-            preferred_name=self._voice_preferred_name(state, audio),
-            metadata={
-                "node_name": "role_voice_generation",
-                "project_id": state.project_id,
-                "role_id": role.id,
-                "role_name": role.name,
-                "audio_id": audio.id,
-                "emotion": audio.emotion,
-                "generation_method": "design",
-            },
-        )
-        preview_audio_path = self._write_preview_audio(
-            project_dir,
+        node = self._voice_node_runner("role_voice_generation")
+        return await node.generate_designed_voice(
+            provider=provider,
+            project_dir=project_dir,
+            state=state,
+            role=role,
             audio=audio,
-            data=result.preview_audio_data,
-            response_format=result.preview_audio_format,
-        )
-        audio.asset_id = result.voice
-        audio.asset_path = preview_audio_path
-        audio.generation_status = "generated" if preview_audio_path or result.voice else "pending"
-        return RoleVoiceGenerationItem(
-            role_id=role.id,
-            role_name=role.name,
-            emotion=audio.emotion,
-            audio_id=audio.id,
-            generation_method="design",
-            voice=result.voice,
-            voice_prompt=voice_prompt,
-            preview_text=preview_text,
-            preview_audio_path=preview_audio_path,
-            provider=result.provider,
-            model=result.model,
-            target_model=result.target_model,
-            sample_rate=result.preview_audio_sample_rate,
-            response_format=result.preview_audio_format,
-            request_id=result.request_id,
-            usage=result.usage,
-            raw_response=result.raw_response,
         )
 
     async def _generate_cloned_voice(
@@ -1520,77 +979,14 @@ class PregenWorkflow:
         audio: RoleAudio,
         normal_audio: RoleAudio,
     ) -> RoleVoiceGenerationItem:
-        if not normal_audio.asset_path:
-            raise ValueError(f"Cannot clone {role.name}/{audio.emotion}: normal voice preview audio is missing")
-
-        preview_text = self._preview_text(role, audio)
-        voice_prompt = self._voice_prompt(role, audio)
-        clone_result = await provider.clone_voice_from_audio(
-            source_audio_path=self._absolute_project_path(project_dir, normal_audio.asset_path),
-            preferred_name=self._voice_preferred_name(state, audio),
-            metadata={
-                "node_name": "role_voice_generation",
-                "project_id": state.project_id,
-                "role_id": role.id,
-                "role_name": role.name,
-                "audio_id": audio.id,
-                "emotion": audio.emotion,
-                "generation_method": "clone",
-                "source_audio_id": normal_audio.id,
-                "source_audio_path": normal_audio.asset_path,
-            },
-        )
-        synthesis_result = await provider.synthesize_speech(
-            voice=clone_result.voice,
-            text=preview_text,
-            metadata={
-                "node_name": "role_voice_generation",
-                "project_id": state.project_id,
-                "role_id": role.id,
-                "role_name": role.name,
-                "audio_id": audio.id,
-                "emotion": audio.emotion,
-                "generation_method": "clone",
-                "source_audio_id": normal_audio.id,
-                "source_audio_path": normal_audio.asset_path,
-                "target_model": clone_result.target_model,
-            },
-        )
-        preview_audio_path = self._write_preview_audio(
-            project_dir,
+        node = self._voice_node_runner("role_voice_generation")
+        return await node.generate_cloned_voice(
+            provider=provider,
+            project_dir=project_dir,
+            state=state,
+            role=role,
             audio=audio,
-            data=synthesis_result.audio_data,
-            response_format=synthesis_result.audio_format,
-        )
-        audio.asset_id = clone_result.voice
-        audio.asset_path = preview_audio_path
-        audio.generation_status = "generated" if preview_audio_path or clone_result.voice else "pending"
-        return RoleVoiceGenerationItem(
-            role_id=role.id,
-            role_name=role.name,
-            emotion=audio.emotion,
-            audio_id=audio.id,
-            generation_method="clone",
-            voice=clone_result.voice,
-            source_audio_id=normal_audio.id,
-            source_audio_path=normal_audio.asset_path,
-            voice_prompt=voice_prompt,
-            preview_text=preview_text,
-            preview_audio_path=preview_audio_path,
-            provider=clone_result.provider,
-            model=clone_result.model,
-            target_model=clone_result.target_model,
-            sample_rate=synthesis_result.audio_sample_rate,
-            response_format=synthesis_result.audio_format,
-            request_id=clone_result.request_id,
-            usage={
-                "clone": clone_result.usage,
-                "synthesis": synthesis_result.usage,
-            },
-            raw_response={
-                "clone": clone_result.raw_response,
-                "synthesis": synthesis_result.raw_response,
-            },
+            normal_audio=normal_audio,
         )
 
     async def _generate_reused_voice(
@@ -1603,56 +999,14 @@ class PregenWorkflow:
         audio: RoleAudio,
         normal_audio: RoleAudio,
     ) -> RoleVoiceGenerationItem:
-        if not normal_audio.asset_id:
-            raise ValueError(f"Cannot reuse {role.name}/{audio.emotion}: normal voice id is missing")
-
-        preview_text = self._preview_text(role, audio)
-        voice_prompt = self._voice_prompt(role, audio)
-        synthesis_result = await provider.synthesize_speech(
-            voice=normal_audio.asset_id,
-            text=self._synthesis_text(provider, audio, preview_text),
-            metadata={
-                "node_name": "role_voice_generation",
-                "project_id": state.project_id,
-                "role_id": role.id,
-                "role_name": role.name,
-                "audio_id": audio.id,
-                "emotion": audio.emotion,
-                "generation_method": "reuse",
-                "source_audio_id": normal_audio.id,
-                "source_audio_path": normal_audio.asset_path,
-                "target_model": getattr(provider, "target_model", None),
-            },
-        )
-        preview_audio_path = self._write_preview_audio(
-            project_dir,
+        node = self._voice_node_runner("role_voice_generation")
+        return await node.generate_reused_voice(
+            provider=provider,
+            project_dir=project_dir,
+            state=state,
+            role=role,
             audio=audio,
-            data=synthesis_result.audio_data,
-            response_format=synthesis_result.audio_format,
-        )
-        audio.asset_id = normal_audio.asset_id
-        audio.asset_path = preview_audio_path
-        audio.generation_status = "generated" if preview_audio_path or normal_audio.asset_id else "pending"
-        return RoleVoiceGenerationItem(
-            role_id=role.id,
-            role_name=role.name,
-            emotion=audio.emotion,
-            audio_id=audio.id,
-            generation_method="reuse",
-            voice=normal_audio.asset_id,
-            source_audio_id=normal_audio.id,
-            source_audio_path=normal_audio.asset_path,
-            voice_prompt=voice_prompt,
-            preview_text=preview_text,
-            preview_audio_path=preview_audio_path,
-            provider=synthesis_result.provider,
-            model=synthesis_result.model,
-            target_model=synthesis_result.model,
-            sample_rate=synthesis_result.audio_sample_rate,
-            response_format=synthesis_result.audio_format,
-            request_id=synthesis_result.request_id,
-            usage=synthesis_result.usage,
-            raw_response=synthesis_result.raw_response,
+            normal_audio=normal_audio,
         )
 
     def _role_synthesis_voice(self, provider, role: Role) -> str:
@@ -1716,68 +1070,15 @@ class PregenWorkflow:
         voice: str,
         voice_resource_id: str | None = None,
     ) -> RoleVoiceGenerationItem:
-        preview_text = self._preview_text(role, audio)
-        voice_prompt = self._voice_prompt(role, audio)
-        emotion_instruction, emotion_params = self._role_emotion_synthesis_plan(provider, audio)
-        target_model = voice_resource_id or getattr(provider, "model", None)
-        synthesis_result = await provider.synthesize_speech(
-            voice=voice,
-            text=preview_text,
-            metadata={
-                "node_name": "role_voice_generation",
-                "project_id": state.project_id,
-                "role_id": role.id,
-                "role_name": role.name,
-                "audio_id": audio.id,
-                "emotion": audio.emotion,
-                "generation_method": "synthesis",
-                "voice_prompt": voice_prompt,
-                "emotion_instruction": emotion_instruction,
-                "emotion_params": emotion_params,
-                "resource_id": voice_resource_id,
-                "target_model": target_model,
-            },
-        )
-        preview_audio_path = self._write_preview_audio(
-            project_dir,
+        node = self._voice_node_runner("role_voice_generation")
+        return await node.generate_synthesized_voice(
+            provider=provider,
+            project_dir=project_dir,
+            state=state,
+            role=role,
             audio=audio,
-            data=synthesis_result.audio_data,
-            response_format=synthesis_result.audio_format,
-        )
-        resolved_voice = synthesis_result.voice or voice
-        audio.asset_id = resolved_voice
-        audio.voice_name = role.voice_name
-        audio.voice_type = resolved_voice
-        audio.voice_resource_id = voice_resource_id
-        audio.voice_model_family = role.voice_model_family
-        audio.asset_path = preview_audio_path
-        audio.emotion_instruction = emotion_instruction
-        audio.emotion_params = emotion_params
-        audio.generation_status = "generated" if preview_audio_path or resolved_voice else "pending"
-        return RoleVoiceGenerationItem(
-            role_id=role.id,
-            role_name=role.name,
-            emotion=audio.emotion,
-            audio_id=audio.id,
-            generation_method="synthesis",
-            voice=resolved_voice,
-            voice_name=role.voice_name,
+            voice=voice,
             voice_resource_id=voice_resource_id,
-            voice_model_family=role.voice_model_family,
-            voice_selection_reason=role.voice_selection_reason,
-            voice_prompt=voice_prompt,
-            preview_text=preview_text,
-            emotion_instruction=emotion_instruction,
-            emotion_params=emotion_params,
-            preview_audio_path=preview_audio_path,
-            provider=synthesis_result.provider,
-            model=synthesis_result.model,
-            target_model=voice_resource_id or synthesis_result.model,
-            sample_rate=synthesis_result.audio_sample_rate,
-            response_format=synthesis_result.audio_format,
-            request_id=synthesis_result.request_id,
-            usage=synthesis_result.usage,
-            raw_response=synthesis_result.raw_response,
         )
 
     def _shot_ref_asset_refs(self, project_dir: Path, state: ProjectState, shot: StoryboardShot) -> list:
@@ -1842,7 +1143,49 @@ class PregenWorkflow:
                         path=str(project_dir / prop.asset_path),
                         metadata={"asset_type": "prop", "name": prop.name},
                     )
+                    )
+        return refs
+
+    def _shot_anchor_video_refs(self, project_dir: Path, state: ProjectState, shot: StoryboardShot) -> list:
+        from autodrama.providers.base import AssetRef
+
+        refs: list[AssetRef] = []
+        appearance_ids = list(shot.role_appearance_ids)
+        seen_appearance_ids = set(appearance_ids)
+        for role_id in shot.role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            base_appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
+            if base_appearance and base_appearance.id not in seen_appearance_ids:
+                appearance_ids.append(base_appearance.id)
+                seen_appearance_ids.add(base_appearance.id)
+
+        for appearance_id in appearance_ids:
+            for role in state.roles.values():
+                appearance = next(
+                    (
+                        item
+                        for item in role.appearances.values()
+                        if item.id == appearance_id or item.name == appearance_id
+                    ),
+                    None,
                 )
+                if appearance and appearance.intro_video_asset_path:
+                    refs.append(
+                        AssetRef(
+                            id=appearance.intro_video_asset_id or appearance.id,
+                            type="video",
+                            path=str(project_dir / appearance.intro_video_asset_path),
+                            metadata={
+                                "asset_type": "role_appearance_video",
+                                "role_id": role.id,
+                                "role_name": role.name,
+                                "name": appearance.name,
+                            },
+                        )
+                    )
+                    break
         return refs
 
     @staticmethod
@@ -1922,6 +1265,7 @@ class PregenWorkflow:
             )
         if self._video_reference_mode(provider) not in {"ref_frame_only", "ref_frame"}:
             refs.extend(self._shot_ref_asset_refs(project_dir, state, shot))
+            refs.extend(self._shot_anchor_video_refs(project_dir, state, shot))
         for audio in shot.dialogue_audio_assets:
             if audio.asset_path:
                 refs.append(
@@ -2085,33 +1429,8 @@ class PregenWorkflow:
         project_dir: Path,
         state: ProjectState,
     ) -> ProjectState:
-        generated: list[RoleVoiceGenerationItem] = []
-        for role in state.roles.values():
-            if role.audio.get("normal") is None:
-                raise ValueError(f"Cannot generate role voice for {role.name}: missing normal voice design")
-            role_voice = self._role_synthesis_voice(provider, role)
-            role_resource_id = self._role_synthesis_resource_id(provider, role, role_voice)
-            if not role.voice_type:
-                role.voice_type = role_voice
-            if role_resource_id and not role.voice_resource_id:
-                role.voice_resource_id = role_resource_id
-            for audio in role.audio.values():
-                self._copy_role_voice_to_audio(role, audio)
-                generated.append(
-                    await self._generate_synthesized_voice(
-                        provider=provider,
-                        project_dir=project_dir,
-                        state=state,
-                        role=role,
-                        audio=audio,
-                        voice=role_voice,
-                        voice_resource_id=role_resource_id,
-                    )
-                )
-
-        output = RoleVoiceGenerationOutput(generated_voices=generated)
-        self.repo.save_node_output(project_dir, "role_voice_generation", output)
-        return state
+        node = self._voice_node_runner("role_voice_generation")
+        return await node.run_synthesis_generation(provider=provider, project_dir=project_dir, state=state)
 
     async def _run_role_voice_design_clone_generation(
         self,
@@ -2120,326 +1439,26 @@ class PregenWorkflow:
         project_dir: Path,
         state: ProjectState,
     ) -> ProjectState:
-        generated: list[RoleVoiceGenerationItem] = []
-        for role in state.roles.values():
-            normal_audio = role.audio.get("normal")
-            if normal_audio is None:
-                raise ValueError(f"Cannot generate role voice for {role.name}: missing normal voice design")
-
-            generated.append(
-                await self._generate_designed_voice(
-                    provider=provider,
-                    project_dir=project_dir,
-                    state=state,
-                    role=role,
-                    audio=normal_audio,
-                )
-            )
-
-            for emotion, audio in role.audio.items():
-                if emotion == "normal":
-                    continue
-                if not getattr(provider, "supports_local_voice_clone", True):
-                    generated.append(
-                        await self._generate_reused_voice(
-                            provider=provider,
-                            project_dir=project_dir,
-                            state=state,
-                            role=role,
-                            audio=audio,
-                            normal_audio=normal_audio,
-                        )
-                    )
-                    continue
-                generated.append(
-                    await self._generate_cloned_voice(
-                        provider=provider,
-                        project_dir=project_dir,
-                        state=state,
-                        role=role,
-                        audio=audio,
-                        normal_audio=normal_audio,
-                    )
-                )
-
-        output = RoleVoiceGenerationOutput(generated_voices=generated)
-        self.repo.save_node_output(project_dir, "role_voice_generation", output)
-        return state
+        node = self._voice_node_runner("role_voice_generation")
+        return await node.run_design_clone_generation(provider=provider, project_dir=project_dir, state=state)
 
     async def _run_role_voice_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.audio("speech")
-        get_logger().info(
-            "node=role_voice_generation provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        self._hydrate_roles_from_design_files(project_dir, state, speech_provider=provider)
-        self._repair_role_voice_design_if_needed(project_dir, state, speech_provider=provider)
+        return await self._voice_node_runner("role_voice_generation").run(project_dir, state)
 
-        if getattr(provider, "supports_direct_emotion_synthesis", False):
-            return await self._run_role_voice_synthesis_generation(
-                provider=provider,
-                project_dir=project_dir,
-                state=state,
-            )
-
-        return await self._run_role_voice_design_clone_generation(
-            provider=provider,
-            project_dir=project_dir,
-            state=state,
-        )
+    def _static_asset_node_runner(self, node_name: str) -> StaticAssetNodeBase:
+        return build_static_asset_node_runners(self)[node_name]
 
     async def _run_role_appearance_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
-        get_logger().info(
-            "node=role_appearance_design provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        output = await self.asset_service.role_appearance_design(
-            state,
-            provider,
-            episode_stories=self._episode_stories(project_dir, state),
-        )
-        roles_by_key = self._role_lookup(state)
-        unmatched_role_names: list[str] = []
-        for item in output.appearances:
-            role = self._resolve_role(roles_by_key, item.role_name)
-            if role is None:
-                unmatched_role_names.append(item.role_name)
-                continue
-            appearance_id = normalize_id(f"{role.id}_appearance", item.name)
-            role_bound_prop_ids: list[str] = []
-            for prop_item in item.role_bound_props:
-                prop_id = normalize_id(f"{role.id}_prop", prop_item.name)
-                status_key = self._prop_status_key(prop_item.status)
-                if status_key != "normal" and not prop_id.endswith(f"_{status_key}"):
-                    prop_id = f"{prop_id}_{status_key}"
-                desc_parts = [prop_item.desc]
-                if prop_item.scale_relation:
-                    desc_parts.append(f"比例关系：{prop_item.scale_relation}")
-                if prop_item.usage:
-                    desc_parts.append(f"使用方式：{prop_item.usage}")
-                prop = Prop(
-                    id=prop_id,
-                    name=prop_item.name,
-                    desc="；".join(part.strip("；") for part in desc_parts if part),
-                    prompt=prop_item.prompt,
-                    status=prop_item.status,
-                    episode_keys=role.episode_keys,
-                    owner_role_id=role.id,
-                    owner_role_name=role.name,
-                    source="role_appearance_design",
-                )
-                prop.design_path = self._save_prop_design_record(
-                    project_dir,
-                    prop,
-                    prompt=prop_item.prompt,
-                    node_name="role_appearance_design",
-                    extra_content={
-                        "scale_relation": prop_item.scale_relation,
-                        "usage": prop_item.usage,
-                    },
-                )
-                state.props[prop_id] = prop
-                role_bound_prop_ids.append(prop_id)
-            role.appearances[item.name] = RoleAppearance(
-                id=appearance_id,
-                role_id=role.id,
-                name=item.name,
-                desc=item.desc,
-                prompt=item.prompt,
-                role_bound_prop_ids=role_bound_prop_ids,
-                intro_video_prompt=item.intro_video_prompt,
-            )
-        if unmatched_role_names:
-            get_logger().warning(
-                "node=role_appearance_design ignored unmatched role_name values: %s",
-                ", ".join(unmatched_role_names),
-            )
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "role_appearance_design", output)
-        return state
+        return await self._static_asset_node_runner("role_appearance_design").run(project_dir, state)
 
     async def _run_role_appearance_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("role")
-        try:
-            video_provider = self.router.video("role")
-        except Exception:
-            video_provider = self.router.video("shot")
-        get_logger().info(
-            "node=role_appearance_generation image_provider=%s image_model=%s video_provider=%s video_model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-            getattr(video_provider, "name", "unknown"),
-            getattr(video_provider, "model", "-"),
-        )
-        self._hydrate_roles_from_design_files(project_dir, state)
-        generated: list[StaticAssetGenerationItem] = []
-        appearances = [
-            (role, appearance)
-            for role in state.roles.values()
-            for appearance in role.appearances.values()
-        ]
-        get_logger().info(
-            "node=role_appearance_generation total_images=%d",
-            len(appearances),
-        )
-        reuse_existing_assets = not bool(getattr(self, "_force_pregen", False))
-        for role, appearance in appearances:
-            if not appearance.prompt:
-                raise ValueError(
-                    f"Cannot generate role appearance for {role.name}/{appearance.name}: "
-                    "missing prompt in role design JSON"
-                )
-            image_output_path = self._image_asset_path(project_dir, "roles", appearance.id)
-            existing_image_path = self._existing_project_file(project_dir, appearance.design_image_asset_path)
-            if existing_image_path is None:
-                existing_image_path = self._existing_project_file(project_dir, image_output_path)
-            if reuse_existing_assets and existing_image_path is not None:
-                asset_path = existing_image_path
-                image_provider = str(appearance.provider or getattr(provider, "name", "unknown"))
-                image_model = str(appearance.model or getattr(provider, "model", ""))
-                image_request_id = appearance.request_id
-                image_usage = appearance.usage
-                image_raw_response = {"resumed_from_existing_file": True}
-                get_logger().info("%s already exists, reused from %s", appearance.id, asset_path)
-            else:
-                get_logger().info("%s generating role appearance image for %s/%s", appearance.id, role.name, appearance.name)
-                result = await provider.generate_image(
-                    appearance.prompt,
-                    metadata={
-                        "node_name": "role_appearance_generation",
-                        "project_id": state.project_id,
-                        "role_id": role.id,
-                        "appearance_id": appearance.id,
-                        "asset_id": appearance.id,
-                        "asset_type": "role_appearance",
-                    },
-                )
-                asset_path = await self._write_first_generated_image(project_dir, image_output_path, result)
-                image_provider = result.provider
-                image_model = result.model
-                image_request_id = result.request_id
-                image_usage = result.usage
-                image_raw_response = result.raw_response
-                get_logger().info("%s generated successfully, saved in %s", appearance.id, asset_path)
-            appearance.asset_id = appearance.id
-            appearance.asset_path = asset_path
-            appearance.design_image_asset_id = appearance.id
-            appearance.design_image_asset_path = asset_path
-            appearance.design_image_generation_status = "generated"
-            appearance.provider = image_provider
-            appearance.model = image_model
-            appearance.request_id = image_request_id
-            appearance.usage = image_usage
-            for prop_id in appearance.role_bound_prop_ids:
-                prop = state.props.get(prop_id)
-                if prop is not None:
-                    prop.asset_id = appearance.id
-                    prop.asset_path = asset_path
-                    prop.provider = image_provider
-                    prop.model = image_model
-                    prop.request_id = image_request_id
-                    prop.usage = image_usage
-            generated.append(
-                StaticAssetGenerationItem(
-                    asset_id=appearance.id,
-                    asset_type="role_appearance",
-                    owner_id=role.id,
-                    name=f"{role.name}/{appearance.name}",
-                    prompt=appearance.prompt,
-                    asset_path=asset_path,
-                    provider=image_provider,
-                    model=image_model,
-                    request_id=image_request_id,
-                    usage=image_usage,
-                    raw_response=image_raw_response,
-                )
-            )
-
-            intro_video_asset_id = f"{appearance.id}_intro_video"
-            intro_prompt = appearance.intro_video_prompt or (
-                f"参考图片1中的人物外观和绑定物品设计，{role.name}站在洁净、亮度适中的虚空圆台上；"
-                f"0-2 秒：圆台缓慢转动，人物保持{appearance.desc}的稳定外观，镜头以中景平稳观察；"
-                "2-5 秒：人物做几个符合身份和性格的常见动作，如有随身物品，展示佩戴、握持或使用方式；"
-                "5-8 秒：镜头轻微推近并停在人物稳定识别角度，背景保持干净抽象，无其他人物、无字幕、水印或文字标识。"
-            )
-            video_output_path = self._video_asset_path(project_dir, "roles", intro_video_asset_id)
-            existing_video_path = self._existing_project_file(project_dir, appearance.intro_video_asset_path)
-            if existing_video_path is None:
-                existing_video_path = self._existing_project_file(project_dir, video_output_path)
-            if reuse_existing_assets and existing_video_path is not None:
-                video_asset_path = existing_video_path
-                video_provider_name = str(getattr(video_provider, "name", "unknown"))
-                video_model = str(getattr(video_provider, "model", ""))
-                video_request_id = None
-                video_usage: dict[str, Any] = {}
-                video_raw_response = {"resumed_from_existing_file": True}
-                get_logger().info("%s already exists, reused from %s", intro_video_asset_id, video_asset_path)
-            else:
-                from autodrama.providers.base import AssetRef
-
-                refs = [
-                    AssetRef(
-                        id=appearance.id,
-                        type="image",
-                        path=str(project_dir / asset_path),
-                        metadata={
-                            "asset_type": "role_appearance",
-                            "role_id": role.id,
-                            "role_name": role.name,
-                            "reference_for": intro_video_asset_id,
-                        },
-                    )
-                ]
-                video_result = await video_provider.generate_video(
-                    intro_prompt,
-                    refs=refs,
-                    duration=8,
-                    wait=True,
-                    metadata={
-                        "node_name": "role_appearance_generation",
-                        "project_id": state.project_id,
-                        "role_id": role.id,
-                        "appearance_id": appearance.id,
-                        "asset_id": intro_video_asset_id,
-                        "asset_type": "role_appearance_video",
-                    },
-                )
-                video_asset_path = await self._write_generated_video(project_dir, video_output_path, video_result)
-                video_provider_name = video_result.provider
-                video_model = video_result.model
-                video_request_id = video_result.request_id
-                video_usage = video_result.usage
-                video_raw_response = video_result.raw_response
-                get_logger().info("%s generated successfully, saved in %s", intro_video_asset_id, video_asset_path)
-            appearance.intro_video_asset_id = intro_video_asset_id
-            appearance.intro_video_asset_path = video_asset_path
-            appearance.intro_video_generation_status = "generated"
-            generated.append(
-                StaticAssetGenerationItem(
-                    asset_id=intro_video_asset_id,
-                    asset_type="role_appearance_video",
-                    owner_id=role.id,
-                    name=f"{role.name}/{appearance.name}/intro_video",
-                    prompt=intro_prompt,
-                    asset_path=video_asset_path,
-                    provider=video_provider_name,
-                    model=video_model,
-                    request_id=video_request_id,
-                    usage=video_usage,
-                    raw_response=video_raw_response,
-                )
-            )
-        self.repo.save_node_output(project_dir, "role_appearance_generation", StaticAssetGenerationOutput(generated_assets=generated))
-        return state
+        return await self._static_asset_node_runner("role_appearance_generation").run(project_dir, state)
 
     def _prop_design_json_path(self, project_dir: Path, prop_id: str) -> Path:
-        return self.layout.prop_design_path(project_dir, prop_id)
+        return self.prop_designs.item_path(project_dir, prop_id)
 
     def _prop_design_relative_path(self, project_dir: Path, prop_id: str) -> str:
-        return self._project_relative(project_dir, self._prop_design_json_path(project_dir, prop_id))
+        return self.prop_designs.item_relative_path(project_dir, prop_id)
 
     def _prop_episode_keys(self, name: str, episode_keys: list[str], state: ProjectState) -> list[str]:
         expected_keys = self._expected_episode_keys(state)
@@ -2466,54 +1485,17 @@ class PregenWorkflow:
         extra_content: dict[str, Any] | None = None,
         extra_payload: dict[str, Any] | None = None,
     ) -> str:
-        content: dict[str, Any] = {
-            "name": prop.name,
-            "desc": prop.desc,
-            "prompt": prompt,
-            "status": prop.status,
-            "episode_keys": prop.episode_keys,
-        }
-        if prop.asset_path:
-            content["image_asset_path"] = prop.asset_path
-        if extra_content:
-            content.update({key: value for key, value in extra_content.items() if value not in (None, "", [])})
-
-        payload: dict[str, Any] = {
-            "node_name": node_name,
-            "prop_id": prop.id,
-            "prop_name": prop.name,
-            "source": prop.source,
-            "owner_role_id": prop.owner_role_id,
-            "owner_role_name": prop.owner_role_name,
-            "content": content,
-        }
-        if extra_payload:
-            payload.update(extra_payload)
-
-        path = self._prop_design_json_path(project_dir, prop.id)
-        self.repo.write_json(path, payload)
-        return self._project_relative(project_dir, path)
+        return self.prop_designs.save_record(
+            project_dir,
+            prop,
+            prompt=prompt,
+            node_name=node_name,
+            extra_content=extra_content,
+            extra_payload=extra_payload,
+        )
 
     def _load_prop_design_content(self, project_dir: Path, prop: Prop) -> dict[str, Any]:
-        candidates: list[Path] = []
-        if prop.design_path:
-            design_path = Path(prop.design_path)
-            candidates.append(design_path if design_path.is_absolute() else project_dir / design_path)
-        default_path = self._prop_design_json_path(project_dir, prop.id)
-        if default_path not in candidates:
-            candidates.append(default_path)
-
-        for path in candidates:
-            if not path.exists():
-                continue
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict):
-                raise ValueError(f"Invalid prop design JSON: {path}")
-            content = payload.get("content", payload)
-            if not isinstance(content, dict):
-                raise ValueError(f"Invalid prop design content JSON: {path}")
-            return content
-        return {}
+        return self.prop_designs.load_content(project_dir, prop)
 
     def _prop_prompt_for_generation(self, project_dir: Path, prop: Prop) -> str:
         prompt = str(prop.prompt or "").strip()
@@ -2527,113 +1509,10 @@ class PregenWorkflow:
         return prompt
 
     def _update_prop_design_image_result(self, project_dir: Path, prop: Prop, result, asset_path: str) -> None:
-        path = self._prop_design_json_path(project_dir, prop.id)
-        if prop.design_path:
-            design_path = Path(prop.design_path)
-            path = design_path if design_path.is_absolute() else project_dir / design_path
-
-        payload: dict[str, Any] = {}
-        if path.exists():
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                payload = loaded
-        content = payload.get("content")
-        if not isinstance(content, dict):
-            content = {
-                "name": prop.name,
-                "desc": prop.desc,
-                "prompt": str(prop.prompt or ""),
-                "status": prop.status,
-                "episode_keys": prop.episode_keys,
-            }
-            payload["content"] = content
-
-        content["image_asset_path"] = asset_path
-        payload.update(
-            {
-                "prop_id": prop.id,
-                "prop_name": prop.name,
-                "source": prop.source,
-                "owner_role_id": prop.owner_role_id,
-                "owner_role_name": prop.owner_role_name,
-                "image_generation": {
-                    "asset_id": prop.asset_id or prop.id,
-                    "asset_path": asset_path,
-                    "provider": result.provider,
-                    "model": result.model,
-                    "request_id": result.request_id,
-                    "usage": result.usage,
-                    "raw_response": result.raw_response,
-                },
-            }
-        )
-        self.repo.write_json(path, payload)
-        prop.design_path = self._project_relative(project_dir, path)
+        self.prop_designs.update_image_result(project_dir, prop, result, asset_path)
 
     async def _run_prop_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("prop")
-        get_logger().info(
-            "node=prop_design provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        output = await self.asset_service.prop_design(
-            state,
-            provider,
-            novel_full=self._novel_full_contents(project_dir, state),
-        )
-        existing_props = dict(state.props)
-        role_bound_props = {
-            prop_id: prop
-            for prop_id, prop in state.props.items()
-            if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
-        }
-        for prop in role_bound_props.values():
-            if not prop.design_path and prop.prompt:
-                prop.design_path = self._save_prop_design_record(
-                    project_dir,
-                    prop,
-                    prompt=prop.prompt,
-                    node_name=prop.source or "prop_design",
-                )
-        global_props: dict[str, Prop] = {}
-        for item in output.props:
-            item.episode_keys = self._prop_episode_keys(item.name, item.episode_keys, state)
-            prop_id = self._prop_asset_id(item.name, item.status)
-            prop = Prop(
-                id=prop_id,
-                name=item.name,
-                desc=item.desc,
-                prompt=item.prompt,
-                status=item.status,
-                episode_keys=item.episode_keys,
-                source="prop_design",
-            )
-            existing_prop = existing_props.get(prop_id)
-            if existing_prop is not None:
-                prop.asset_id = existing_prop.asset_id
-                prop.asset_path = existing_prop.asset_path
-                prop.provider = existing_prop.provider
-                prop.model = existing_prop.model
-                prop.request_id = existing_prop.request_id
-                prop.usage = existing_prop.usage
-            prop.design_path = self._save_prop_design_record(
-                project_dir,
-                prop,
-                prompt=item.prompt,
-                node_name="prop_design",
-                extra_payload={
-                    "source_novel_full_paths": {
-                        episode_key: state.script.novel_full.get(episode_key)
-                        for episode_key in item.episode_keys
-                    }
-                },
-            )
-            global_props[prop_id] = prop
-        state.props = {**role_bound_props, **global_props}
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "prop_design", output)
-        return state
+        return await self._static_asset_node_runner("prop_design").run(project_dir, state)
 
     @staticmethod
     def _prop_status_key(value: object) -> str:
@@ -2769,264 +1648,25 @@ class PregenWorkflow:
         ]
 
     async def _run_prop_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("prop")
-        get_logger().info(
-            "node=prop_image_generation provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        generated: list[StaticAssetGenerationItem] = []
-        props = self._ordered_props_for_generation(list(state.props.values()))
-        normal_props_by_base = self._normal_props_by_variant_base(props)
-        get_logger().info(
-            "node=prop_image_generation total_images=%d",
-            len(props),
-        )
-        for prop in props:
-            prompt = self._prop_prompt_for_generation(project_dir, prop)
-            refs = None
-            if getattr(provider, "supports_reference_images", False):
-                refs = self._role_bound_prop_reference_refs(project_dir, state, prop)
-                if refs is None:
-                    refs = self._prop_reference_refs(project_dir, prop, normal_props_by_base)
-            result = await provider.generate_image(
-                prompt,
-                refs=refs,
-                metadata={
-                    "node_name": "prop_image_generation",
-                    "project_id": state.project_id,
-                    "prop_id": prop.id,
-                    "asset_id": prop.id,
-                },
-            )
-            asset_path = await self._write_first_generated_image(
-                project_dir,
-                self._image_asset_path(project_dir, "props", prop.id),
-                result,
-            )
-            prop.asset_id = prop.id
-            prop.asset_path = asset_path
-            prop.provider = result.provider
-            prop.model = result.model
-            prop.request_id = result.request_id
-            prop.usage = result.usage
-            self._update_prop_design_image_result(project_dir, prop, result, asset_path)
-            generated.append(
-                StaticAssetGenerationItem(
-                    asset_id=prop.id,
-                    asset_type="prop",
-                    owner_id=prop.id,
-                    name=prop.name,
-                    prompt=prompt,
-                    asset_path=asset_path,
-                    provider=result.provider,
-                    model=result.model,
-                    request_id=result.request_id,
-                    usage=result.usage,
-                    raw_response=result.raw_response,
-                )
-            )
-            get_logger().info("%s generated successfully, saved in %s", prop.id, asset_path)
-        self.repo.save_node_output(project_dir, "prop_image_generation", StaticAssetGenerationOutput(generated_assets=generated))
-        return state
+        return await self._static_asset_node_runner("prop_image_generation").run(project_dir, state)
 
     async def _run_script_compress(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("script")
-        get_logger().info(
-            "node=script_compress provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        output = await self.asset_service.script_compress(
-            state,
-            provider,
-            episode_stories=self._episode_stories(project_dir, state),
-        )
-        self._validate_episode_keys("script_compress.simple_script", output.simple_script, state)
-        state.metadata["simple_script"] = output.simple_script
-        state.metadata["global_script"] = output.global_script
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "script_compress", output)
-        return state
+        return await self._static_asset_node_runner("script_compress").run(project_dir, state)
 
     async def _run_layout_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("layout")
-        get_logger().info(
-            "node=layout_design provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        output = await self.asset_service.layout_design(
-            state,
-            provider,
-            episode_stories=self._episode_stories(project_dir, state),
-        )
-        state.layouts = {
-            normalize_id("layout", item.name): Layout(
-                id=normalize_id("layout", item.name),
-                name=item.name,
-                desc=item.desc,
-                prompt=item.prompt,
-                episode_keys=item.episode_keys,
-            )
-            for item in output.layouts
-        }
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "layout_design", output)
-        return state
+        return await self._static_asset_node_runner("layout_design").run(project_dir, state)
 
     async def _run_layout_dedupe_review(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("layout")
-        get_logger().info(
-            "node=layout_dedupe_review provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        output = await self.asset_service.layout_dedupe_review(state, provider)
-        state.layouts = {
-            normalize_id("layout", item.name): Layout(
-                id=normalize_id("layout", item.name),
-                name=item.name,
-                desc=item.desc,
-                prompt=item.prompt,
-                episode_keys=item.episode_keys,
-            )
-            for item in output.layouts
-        }
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "layout_dedupe_review", output)
-        return state
+        return await self._static_asset_node_runner("layout_dedupe_review").run(project_dir, state)
 
     async def _run_layout_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("layout")
-        get_logger().info(
-            "node=layout_image_generation provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        generated: list[StaticAssetGenerationItem] = []
-        layouts = list(state.layouts.values())
-        get_logger().info(
-            "node=layout_image_generation total_images=%d",
-            len(layouts),
-        )
-        for layout in layouts:
-            result = await provider.generate_image(
-                layout.prompt,
-                metadata={
-                    "node_name": "layout_image_generation",
-                    "project_id": state.project_id,
-                    "layout_id": layout.id,
-                    "asset_id": layout.id,
-                },
-            )
-            asset_path = await self._write_first_generated_image(
-                project_dir,
-                self._image_asset_path(project_dir, "layouts", layout.id),
-                result,
-            )
-            layout.asset_id = layout.id
-            layout.asset_path = asset_path
-            layout.provider = result.provider
-            layout.model = result.model
-            layout.request_id = result.request_id
-            layout.usage = result.usage
-            generated.append(
-                StaticAssetGenerationItem(
-                    asset_id=layout.id,
-                    asset_type="layout",
-                    owner_id=layout.id,
-                    name=layout.name,
-                    prompt=layout.prompt,
-                    asset_path=asset_path,
-                    provider=result.provider,
-                    model=result.model,
-                    request_id=result.request_id,
-                    usage=result.usage,
-                    raw_response=result.raw_response,
-                )
-            )
-            get_logger().info("%s generated successfully, saved in %s", layout.id, asset_path)
-        self.repo.save_node_output(project_dir, "layout_image_generation", StaticAssetGenerationOutput(generated_assets=generated))
-        return state
+        return await self._static_asset_node_runner("layout_image_generation").run(project_dir, state)
+
+    def _bgm_node_runner(self, node_name: str) -> BGMNodeBase:
+        return build_bgm_node_runners(self)[node_name]
 
     async def _run_bgm_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("bgm_plan")
-        get_logger().info(
-            "node=bgm_design provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        output = await self.asset_service.bgm_design(
-            state,
-            provider,
-            episode_stories=self._episode_stories(project_dir, state),
-        )
-        expected_bgm_count = self.repo.settings.project.bgm_count
-        if len(output.bgms) != expected_bgm_count:
-            raise ValueError(f"bgm_design must generate exactly {expected_bgm_count} BGM items; got {len(output.bgms)}")
-        bgm_ids = [normalize_id("bgm", item.name) for item in output.bgms]
-        if len(set(bgm_ids)) != expected_bgm_count:
-            raise ValueError("bgm_design generated duplicate BGM names after id normalization")
-        state.bgms = {
-            bgm_id: BGM(
-                id=bgm_id,
-                name=item.name,
-                mood=item.mood,
-                prompt=item.prompt,
-                usage_hint=item.usage_hint,
-            )
-            for bgm_id, item in zip(bgm_ids, output.bgms, strict=True)
-        }
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, "bgm_design", output)
-        return state
+        return await self._bgm_node_runner("bgm_design").run(project_dir, state)
 
     async def _run_bgm_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.music("bgm")
-        get_logger().info(
-            "node=bgm_generation provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        generated: list[StaticAssetGenerationItem] = []
-        for bgm in state.bgms.values():
-            result = await provider.generate_music(
-                bgm.prompt,
-                metadata={
-                    "node_name": "bgm_generation",
-                    "project_id": state.project_id,
-                    "bgm_id": bgm.id,
-                    "asset_id": bgm.id,
-                },
-            )
-            asset_path = await self._write_generated_music(
-                project_dir,
-                self._music_asset_path(project_dir, bgm.id, result.audio_format),
-                result,
-            )
-            bgm.asset_id = result.audio_id or bgm.id
-            bgm.asset_path = asset_path
-            bgm.provider = result.provider
-            bgm.model = result.model
-            bgm.request_id = result.request_id
-            bgm.duration_seconds = result.duration_seconds
-            bgm.lyrics = result.lyrics
-            bgm.usage = result.usage
-            generated.append(
-                StaticAssetGenerationItem(
-                    asset_id=bgm.id,
-                    asset_type="bgm",
-                    owner_id=bgm.id,
-                    name=bgm.name,
-                    prompt=bgm.prompt,
-                    asset_path=asset_path,
-                    provider=result.provider,
-                    model=result.model,
-                    request_id=result.request_id,
-                    usage=result.usage,
-                    raw_response=result.raw_response,
-                )
-            )
-        self.repo.save_node_output(project_dir, "bgm_generation", StaticAssetGenerationOutput(generated_assets=generated))
-        return state
+        return await self._bgm_node_runner("bgm_generation").run(project_dir, state)
