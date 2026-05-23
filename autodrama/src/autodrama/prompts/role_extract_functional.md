@@ -20,10 +20,6 @@
 
 全集 episode_key 列表：{{episode_keys}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
-
 # 判定顺序
 
 先判断是否主要角色，再判断是否功能角色，最后判断是否背景存在。

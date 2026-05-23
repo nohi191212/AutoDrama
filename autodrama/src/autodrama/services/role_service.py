@@ -92,8 +92,6 @@ class RoleService:
             novel_full=self.format_json(novel_full),
             existing_primary_roles=self.format_json(existing_primary_roles),
             episode_keys=", ".join(novel_full),
-            visual_style_label=self.visual_style_label(state),
-            visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,
@@ -125,8 +123,6 @@ class RoleService:
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(existing_functional_roles),
             episode_keys=", ".join(novel_full),
-            visual_style_label=self.visual_style_label(state),
-            visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,

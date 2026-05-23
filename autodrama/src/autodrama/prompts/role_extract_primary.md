@@ -17,10 +17,6 @@
 
 全集 episode_key 列表：{{episode_keys}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
-
 # 主要角色定义
 
 主要角色是对剧情结构、人物关系、阵营冲突或长期情节推进具有持续影响的人。
@@ -65,5 +61,4 @@
 - `appearance_notes` 只写原文或可稳妥推断出的稳定外观、服装、法器、气质信息。
 - `has_dialogue` 表示此角色在已给正文中是否有明确对白、喊话、传音或旁白式台词。
 - `visual_reuse_required` 对主要角色应为 `true`。
-- 不要输出 `importance` 字段，不要使用 `lead/main/supporting/minor/background` 五级分类。
 - 输出必须符合调用方提供的 JSON schema。
