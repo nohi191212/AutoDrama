@@ -18,6 +18,7 @@ from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
 class NoCallImageProvider:
     name = "no_call_image"
     model = "no_call_image_model"
+    supports_reference_images = True
 
     async def generate_image(self, *_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("Existing role appearance image should be reused")
@@ -49,12 +50,12 @@ async def main() -> None:
     if tmp_root.exists():
         shutil.rmtree(tmp_root)
     project_dir = tmp_root / "project"
-    portrait_path = project_dir / "assets" / "images" / "roles" / "role_hero_appearance_base_portrait.png"
+    full_body_path = project_dir / "assets" / "images" / "roles" / "role_hero_appearance_base_full_body.png"
     image_path = project_dir / "assets" / "images" / "roles" / "role_hero_appearance_base.png"
     video_path = project_dir / "assets" / "videos" / "roles" / "role_hero_appearance_base_intro_video.mp4"
     image_path.parent.mkdir(parents=True, exist_ok=True)
     video_path.parent.mkdir(parents=True, exist_ok=True)
-    portrait_path.write_bytes(b"fake portrait")
+    full_body_path.write_bytes(b"fake full body")
     image_path.write_bytes(b"fake image")
     video_path.write_bytes(b"fake video")
 
@@ -83,8 +84,8 @@ async def main() -> None:
     state = await workflow._run_role_appearance_generation(project_dir, state)
     appearance = state.roles[role.id].appearances["base"]
     require(
-        appearance.portrait_image_asset_path == "assets/images/roles/role_hero_appearance_base_portrait.png",
-        f"Unexpected portrait path: {appearance.portrait_image_asset_path}",
+        appearance.full_body_image_asset_path == "assets/images/roles/role_hero_appearance_base_full_body.png",
+        f"Unexpected full body path: {appearance.full_body_image_asset_path}",
     )
     require(
         appearance.design_image_asset_path == "assets/images/roles/role_hero_appearance_base.png",

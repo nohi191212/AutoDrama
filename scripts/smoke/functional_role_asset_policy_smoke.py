@@ -78,10 +78,14 @@ async def main_async() -> int:
                 role_name="山门守卫",
                 name="base",
                 desc="灰袍青年弟子，腰悬山门令牌，佩剑，神情谨慎。",
-                portrait_prompt="真人电影质感，灰袍青年弟子半身近景，腰悬山门令牌，干净背景。",
+                full_body_prompt=(
+                    "真人电影质感，单人正面全身照，灰袍青年守山弟子从头到脚完整入画，"
+                    "腰悬山门令牌，佩剑，身体重心自然，干净背景，无字幕水印。"
+                ),
                 prompt=(
-                    "真人电影质感，左侧为灰袍青年守山弟子全身形象，腰悬山门令牌，佩剑，"
-                    "右侧为山门令牌设计图，与左侧人物保持同一比例尺，干净背景，无字幕水印。"
+                    "真人电影质感，左侧为同一灰袍青年守山弟子正面、侧面、背面三视图，"
+                    "统一身高比例和服装细节，腰悬山门令牌，佩剑；右侧为山门令牌设计图，"
+                    "与左侧人物保持同一比例尺，干净背景，无字幕水印。"
                 ),
                 role_bound_props=[],
                 intro_video_prompt=None,
@@ -106,18 +110,35 @@ async def main_async() -> int:
     )
     repo.save_state(project_dir, state)
 
-    state = await workflow._static_asset_node_runner("role_appearance_generation").run(project_dir, state)
+    state = await workflow._static_asset_node_runner("role_full_body_generation").run(project_dir, state)
     role = state.roles["role_山门守卫"]
     appearance = role.appearances["base"]
-    require(appearance.portrait_image_asset_path, "functional role portrait image should be generated")
-    require(appearance.design_image_asset_path, "functional role appearance image should be generated")
+    require(appearance.full_body_image_asset_path, "functional role full-body image should be generated")
+    full_body_output = json.loads(
+        (project_dir / "assets" / "json" / "nodes" / "role_full_body_generation.json").read_text(encoding="utf-8")
+    )
+    full_body_asset_types = [item["asset_type"] for item in full_body_output["generated_assets"]]
+    require(full_body_asset_types == ["role_full_body"], "functional role should emit one full-body asset")
+
+    state = await workflow._static_asset_node_runner("role_multiview_generation").run(project_dir, state)
+    role = state.roles["role_山门守卫"]
+    appearance = role.appearances["base"]
+    require(appearance.design_image_asset_path, "functional role multiview image should be generated")
+    multiview_output = json.loads(
+        (project_dir / "assets" / "json" / "nodes" / "role_multiview_generation.json").read_text(encoding="utf-8")
+    )
+    multiview_asset_types = [item["asset_type"] for item in multiview_output["generated_assets"]]
+    require(multiview_asset_types == ["role_multiview"], "functional role should emit one multiview asset")
+
+    state = await workflow._static_asset_node_runner("role_intro_video_generation").run(project_dir, state)
+    role = state.roles["role_山门守卫"]
+    appearance = role.appearances["base"]
     require(appearance.intro_video_generation_status == "skipped", "functional intro video should be skipped")
     require(appearance.intro_video_asset_path is None, "functional intro video path should remain empty")
-    appearance_output = json.loads(
-        (project_dir / "assets" / "json" / "nodes" / "role_appearance_generation.json").read_text(encoding="utf-8")
+    intro_output = json.loads(
+        (project_dir / "assets" / "json" / "nodes" / "role_intro_video_generation.json").read_text(encoding="utf-8")
     )
-    asset_types = [item["asset_type"] for item in appearance_output["generated_assets"]]
-    require("role_appearance_video" not in asset_types, "functional role should not emit intro video asset")
+    require(intro_output["generated_assets"] == [], "functional role should not emit intro video asset")
 
     state = await workflow._voice_node_runner("role_voice_generation").run(project_dir, state)
     voice_output = json.loads(

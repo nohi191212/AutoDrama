@@ -28,15 +28,18 @@ def main() -> int:
         models={
             "image": "gpt-image-2",
             "role_design": "gpt-image-2",
-            "role_portrait": "gpt-image-2",
+            "role_full_body": "gpt-image-full-body",
+            "role_multiview": "gpt-image-multiview",
         },
         options={
             "resolution": "4K",
             "size": "16:9",
             "role_design_size": "16:9",
             "role_design_resolution": "4K",
-            "role_portrait_size": "1:2",
-            "role_portrait_resolution": "4K",
+            "role_full_body_size": "1:2",
+            "role_full_body_resolution": "2K",
+            "role_multiview_size": "16:9",
+            "role_multiview_resolution": "4K",
             "prop_size": "1:1",
             "prop_resolution": "2K",
             "layout_size": "16:9",
@@ -48,23 +51,25 @@ def main() -> int:
     )
     provider = ToAPIImageProvider(settings, RuntimeSettings())
 
-    portrait_payload = provider.build_payload(
-        "portrait prompt",
-        metadata={"node_name": "role_portrait_generation"},
+    full_body_payload = provider.build_payload(
+        "full body prompt",
+        metadata={"node_name": "role_full_body_generation"},
     )
-    require(portrait_payload["size"] == "1:2", f"Unexpected portrait size: {portrait_payload['size']}")
-    require(portrait_payload["resolution"] == "4K", f"Unexpected portrait resolution: {portrait_payload['resolution']}")
+    require(full_body_payload["model"] == "gpt-image-full-body", f"Unexpected full-body model: {full_body_payload['model']}")
+    require(full_body_payload["size"] == "1:2", f"Unexpected full-body size: {full_body_payload['size']}")
+    require(full_body_payload["resolution"] == "2K", f"Unexpected full-body resolution: {full_body_payload['resolution']}")
 
-    design_payload = provider.build_payload(
-        "design prompt",
-        refs=[AssetRef(id="portrait", type="image", url="https://example.invalid/portrait.png")],
-        metadata={"node_name": "role_appearance_generation"},
+    multiview_payload = provider.build_payload(
+        "multiview prompt",
+        refs=[AssetRef(id="full_body", type="image", url="https://example.invalid/full-body.png")],
+        metadata={"node_name": "role_multiview_generation"},
     )
-    require(design_payload["size"] == "16:9", f"Unexpected role design size: {design_payload['size']}")
-    require(design_payload["resolution"] == "4K", f"Unexpected role design resolution: {design_payload['resolution']}")
+    require(multiview_payload["model"] == "gpt-image-multiview", f"Unexpected multiview model: {multiview_payload['model']}")
+    require(multiview_payload["size"] == "16:9", f"Unexpected multiview size: {multiview_payload['size']}")
+    require(multiview_payload["resolution"] == "4K", f"Unexpected multiview resolution: {multiview_payload['resolution']}")
     require(
-        design_payload.get("reference_images") == ["https://example.invalid/portrait.png"],
-        f"Unexpected role design refs: {design_payload.get('reference_images')}",
+        multiview_payload.get("reference_images") == ["https://example.invalid/full-body.png"],
+        f"Unexpected multiview refs: {multiview_payload.get('reference_images')}",
     )
 
     prop_payload = provider.build_payload(
@@ -99,8 +104,8 @@ def main() -> int:
     output_path.write_text(
         json.dumps(
             {
-                "portrait": portrait_payload,
-                "design": design_payload,
+                "full_body": full_body_payload,
+                "multiview": multiview_payload,
                 "prop": prop_payload,
                 "layout": layout_payload,
                 "ref_frame": ref_frame_payload,
@@ -112,8 +117,8 @@ def main() -> int:
     )
 
     print("toapi_image_payload_smoke=ok")
-    print(f"portrait={portrait_payload['size']} {portrait_payload['resolution']}")
-    print(f"design={design_payload['size']} {design_payload['resolution']}")
+    print(f"full_body={full_body_payload['model']} {full_body_payload['size']} {full_body_payload['resolution']}")
+    print(f"multiview={multiview_payload['model']} {multiview_payload['size']} {multiview_payload['resolution']}")
     print(f"prop={prop_payload['size']} {prop_payload['resolution']}")
     print(f"layout={layout_payload['size']} {layout_payload['resolution']}")
     print(f"ref_frame={ref_frame_payload['size']} {ref_frame_payload['resolution']}")

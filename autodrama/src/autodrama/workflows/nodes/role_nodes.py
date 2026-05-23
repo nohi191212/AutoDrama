@@ -81,6 +81,23 @@ class RoleNodeBase:
             allow_missing=allow_missing,
         )
 
+    def novel_extract_contents(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        episode_keys: list[str] | None = None,
+        *,
+        allow_missing: bool = False,
+    ) -> dict[str, str]:
+        selected_keys = episode_keys or self.expected_episode_keys(state)
+        return self.script_contents.load_contents(
+            project_dir,
+            state.script.novel_extract,
+            selected_keys,
+            label="script_novel_extract.novel_extract",
+            allow_missing=allow_missing,
+        )
+
     @staticmethod
     def role_name_key(name: object) -> str:
         return str(name or "").strip().casefold()
@@ -564,7 +581,8 @@ class RoleDesignNode(RoleNodeBase):
                         bound_props=self._role_bound_props(state, role.id),
                     )
 
-        all_role_extracts = [item.model_dump(mode="json") for item in extract_output.roles]
+        role_index = self._role_index_items(extract_output.roles)
+        role_novel_extract: dict[str, str] | None = None
         for extract_item in target_extract_roles:
             role_key = self.workflow._role_name_key(extract_item.name)
             if role_key in designed_by_key and not force_pregen:
@@ -572,6 +590,8 @@ class RoleDesignNode(RoleNodeBase):
                 continue
 
             episode_keys = self.workflow._role_episode_keys(extract_item, state)
+            if role_novel_extract is None:
+                role_novel_extract = self.novel_extract_contents(project_dir, state)
             role_novel_full = self.novel_full_contents(project_dir, state, episode_keys)
             self.logger.info(
                 "role_design generating %s from episodes=%s chapters=%s",
@@ -583,12 +603,14 @@ class RoleDesignNode(RoleNodeBase):
                 state,
                 provider,
                 role_item=extract_item,
+                role_novel_extract=role_novel_extract,
                 role_novel_full=role_novel_full,
-                all_role_extracts=all_role_extracts,
-                existing_role_designs=[
-                    item.model_dump(mode="json")
-                    for item in self.workflow._ordered_role_design_items(extract_output.roles, designed_by_key)
-                ],
+                role_index=role_index,
+                designed_role_voices=self._designed_role_voice_refs(
+                    extract_output.roles,
+                    designed_by_key,
+                    exclude_role_name=extract_item.name,
+                ),
                 available_voices=available_voices,
             )
             selected_item = self.workflow._select_role_design_item(output, extract_item)
@@ -646,6 +668,55 @@ class RoleDesignNode(RoleNodeBase):
             for prop in state.props.values()
             if prop.owner_role_id == role_id
         ]
+
+    @staticmethod
+    def _role_index_items(extract_roles: list[RoleExtractItem]) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": item.name,
+                "aliases": item.aliases,
+                "role_tier": item.role_tier,
+                "episode_keys": item.episode_keys,
+                "source_chapters": item.source_chapters,
+                "brief": item.brief,
+            }
+            for item in extract_roles
+        ]
+
+    def _designed_role_voice_refs(
+        self,
+        extract_roles: list[RoleExtractItem],
+        designed_by_key: dict[str, RoleDesignItem],
+        *,
+        exclude_role_name: str,
+    ) -> list[dict[str, Any]]:
+        excluded_key = self.workflow._role_name_key(exclude_role_name)
+        refs: list[dict[str, Any]] = []
+        for item in self.workflow._ordered_role_design_items(extract_roles, designed_by_key):
+            if self.workflow._role_name_key(item.name) == excluded_key:
+                continue
+            voices = [
+                {
+                    "emotion": voice.emotion,
+                    "voice_name": voice.voice_name,
+                    "voice_type": voice.voice_type,
+                    "voice_resource_id": voice.voice_resource_id,
+                    "desc": voice.desc,
+                    "voice_selection_reason": voice.voice_selection_reason,
+                }
+                for voice in item.voices
+            ]
+            if not voices:
+                continue
+            refs.append(
+                {
+                    "role_name": item.name,
+                    "role_tier": item.role_tier,
+                    "has_dialogue": item.has_dialogue,
+                    "voices": voices,
+                }
+            )
+        return refs
 
 
 def build_role_node_runners(workflow: Any) -> dict[str, RoleNodeBase]:

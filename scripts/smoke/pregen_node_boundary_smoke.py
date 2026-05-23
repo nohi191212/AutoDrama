@@ -41,6 +41,9 @@ from autodrama.workflows.nodes.static_asset_nodes import (  # noqa: E402
     PropExtractNode,
     PropGenerationNode,
     RoleAppearanceGenerationNode,
+    RoleFullBodyGenerationNode,
+    RoleIntroVideoGenerationNode,
+    RoleMultiviewGenerationNode,
 )
 from autodrama.workflows.nodes.voice_nodes import (  # noqa: E402
     VOICE_NODE_NAMES,
@@ -114,7 +117,9 @@ def main() -> int:
         require(owner.asset_service is workflow.asset_service, f"{node_name} asset service dependency drifted")
 
     expected_static_asset_owners = {
-        "role_appearance_generation": RoleAppearanceGenerationNode,
+        "role_full_body_generation": RoleFullBodyGenerationNode,
+        "role_multiview_generation": RoleMultiviewGenerationNode,
+        "role_intro_video_generation": RoleIntroVideoGenerationNode,
         "prop_extract": PropExtractNode,
         "prop_design": PropDesignNode,
         "prop_generation": PropGenerationNode,

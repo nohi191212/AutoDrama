@@ -98,8 +98,8 @@ def main() -> int:
                 role_name="韩默",
                 name="base",
                 desc="清瘦青年，灰布短褐，腰间带短匕。",
+                full_body_prompt="正面全身照，清瘦青年，灰布短褐，腰间短匕，神情克制。",
                 prompt="角色设定图，清瘦青年，灰布短褐，腰间短匕，干净背景。",
-                portrait_prompt="正面半身 portrait，清瘦青年，神情克制。",
                 role_bound_props=[
                     RoleBoundPropDesignItem(
                         name="短匕",

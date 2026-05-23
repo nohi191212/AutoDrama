@@ -96,13 +96,18 @@ providers:
     api_key_env: RIGHTCODE_API_KEY
     models:
       image: gpt-image-2
-      # Used by role_appearance_generation for role design images.
-      role_design: gpt-image-2-vip
+      # Used by role_multiview_generation for role multiview design images.
+      role_multiview: gpt-image-2-vip
+      # Used by role_full_body_generation for the 1:2 full-body reference image.
+      role_full_body: gpt-image-2
     options:
       size: 1024x1024
-      # Used by role_appearance_generation for role design images.
-      role_design_size: 3840x2160
-      role_design_quality: high
+      # Used by role_multiview_generation for role multiview design images.
+      role_multiview_size: 3840x2160
+      role_multiview_quality: high
+      # Used by role_full_body_generation for the 1:2 full-body reference image.
+      role_full_body_size: 1024x1536
+      role_full_body_quality: high
       # Used when routing.image.ref_frame is rightcode.
       ref_frame_size: 1024x1536
       n: 1
@@ -112,17 +117,17 @@ providers:
     api_key_env: TOAPI_API_KEY
     models:
       image: gpt-image-2
-      # Used by role_appearance_generation for the final 16:9 role design sheet.
-      role_design: gpt-image-2
-      # Used by role_appearance_generation for the 1:2 portrait reference image.
-      role_portrait: gpt-image-2
+      # Used by role_multiview_generation for the final 16:9 role design sheet.
+      role_multiview: gpt-image-2
+      # Used by role_full_body_generation for the 1:2 full-body reference image.
+      role_full_body: gpt-image-2
     options:
       resolution: 4K
       size: "16:9"
-      role_design_size: "16:9"
-      role_design_resolution: 4K
-      role_portrait_size: "1:2"
-      role_portrait_resolution: 4K
+      role_multiview_size: "16:9"
+      role_multiview_resolution: 4K
+      role_full_body_size: "1:2"
+      role_full_body_resolution: 4K
       prop_size: "1:1"
       prop_resolution: 2K
       layout_size: "16:9"

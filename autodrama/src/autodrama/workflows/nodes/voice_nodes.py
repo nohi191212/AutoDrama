@@ -82,6 +82,36 @@ class VoiceNodeBase:
     def absolute_project_path(self, project_dir: Path, relative_path: str) -> str:
         return self.layout.absolute_project_path(project_dir, relative_path)
 
+    def active_episode_keys(self, state: ProjectState) -> list[str]:
+        context = getattr(self.workflow, "_run_context", None)
+        has_selected_context = context is not None and getattr(context, "selected_episode_keys", None) is not None
+        if not has_selected_context and getattr(self.workflow, "_active_episode_keys", None) is None:
+            return []
+        getter = getattr(self.workflow, "_active_episode_keys_in_order", None)
+        if callable(getter):
+            return list(getter(state))
+        active_episode_keys = getattr(self.workflow, "_active_episode_keys", None)
+        if active_episode_keys is None:
+            return []
+        active = {str(key) for key in active_episode_keys}
+        return [episode_key for episode_key in self.expected_episode_keys(state) if episode_key in active]
+
+    @staticmethod
+    def role_matches_active_episode_keys(role: Role, active_episode_keys: list[str], *, label: str) -> bool:
+        if not active_episode_keys:
+            return True
+        role_episode_keys = [str(key).strip() for key in role.episode_keys if str(key).strip()]
+        if not role_episode_keys:
+            raise ValueError(f"{label} cannot scope role {role.name}: missing episode_keys")
+        return bool(set(role_episode_keys).intersection(active_episode_keys))
+
+    def target_roles(self, state: ProjectState, active_episode_keys: list[str], *, label: str) -> list[Role]:
+        return [
+            role
+            for role in state.roles.values()
+            if self.role_matches_active_episode_keys(role, active_episode_keys, label=label)
+        ]
+
 
 class RoleVoiceDesignNode(VoiceNodeBase):
     name = "role_voice_design"
@@ -483,9 +513,11 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         provider,
         project_dir: Path,
         state: ProjectState,
+        roles: list[Role] | None = None,
     ) -> ProjectState:
         generated: list[RoleVoiceGenerationItem] = []
-        for role in state.roles.values():
+        target_roles = roles if roles is not None else list(state.roles.values())
+        for role in target_roles:
             if not self.workflow._role_needs_voice(role):
                 self.logger.info("role_voice_generation skipped functional role without dialogue: %s", role.name)
                 continue
@@ -521,9 +553,11 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         provider,
         project_dir: Path,
         state: ProjectState,
+        roles: list[Role] | None = None,
     ) -> ProjectState:
         generated: list[RoleVoiceGenerationItem] = []
-        for role in state.roles.values():
+        target_roles = roles if roles is not None else list(state.roles.values())
+        for role in target_roles:
             if not self.workflow._role_needs_voice(role):
                 self.logger.info("role_voice_generation skipped functional role without dialogue: %s", role.name)
                 continue
@@ -580,18 +614,28 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         )
         self.workflow._hydrate_roles_from_design_files(project_dir, state, speech_provider=provider)
         self.workflow._repair_role_voice_design_if_needed(project_dir, state, speech_provider=provider)
+        active_episode_keys = self.active_episode_keys(state)
+        roles = self.target_roles(state, active_episode_keys, label=self.name)
+        if active_episode_keys:
+            self.logger.info(
+                "node=role_voice_generation episode-scoped rerun episodes=%s target_roles=%s",
+                ",".join(active_episode_keys),
+                ",".join(role.name for role in roles) or "-",
+            )
 
         if getattr(provider, "supports_direct_emotion_synthesis", False):
             return await self.run_synthesis_generation(
                 provider=provider,
                 project_dir=project_dir,
                 state=state,
+                roles=roles,
             )
 
         return await self.run_design_clone_generation(
             provider=provider,
             project_dir=project_dir,
             state=state,
+            roles=roles,
         )
 
 

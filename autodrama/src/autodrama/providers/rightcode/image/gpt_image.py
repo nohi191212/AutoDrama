@@ -326,29 +326,60 @@ class RightCodeImageProvider:
         return re.sub(r"\s+", "", text)
 
     def _purpose_model(self, metadata: dict[str, Any]) -> str | None:
+        if self._is_role_full_body_image(metadata):
+            return self.settings.models.get("rightcode_role_full_body") or self.settings.models.get("role_full_body")
         if self._is_role_design_image(metadata):
-            return self.settings.models.get("rightcode_role_design") or self.settings.models.get("role_design")
+            return (
+                self.settings.models.get("rightcode_role_multiview")
+                or self.settings.models.get("role_multiview")
+                or self.settings.models.get("rightcode_role_design")
+                or self.settings.models.get("role_design")
+            )
         if str(metadata.get("node_name") or "") == "ref_frame_generation":
             return self.settings.models.get("rightcode_ref_frame") or self.settings.models.get("ref_frame")
         return None
 
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
+        if self._is_role_full_body_image(metadata):
+            return (
+                self.settings.options.get("rightcode_role_full_body_size")
+                or self.settings.options.get("role_full_body_size")
+                or "1024x1536"
+            )
         if self._is_role_design_image(metadata):
-            return self.settings.options.get("rightcode_role_design_size") or self.settings.options.get("role_design_size")
+            return (
+                self.settings.options.get("rightcode_role_multiview_size")
+                or self.settings.options.get("role_multiview_size")
+                or self.settings.options.get("rightcode_role_design_size")
+                or self.settings.options.get("role_design_size")
+            )
         if str(metadata.get("node_name") or "") == "ref_frame_generation":
             return self.settings.options.get("rightcode_ref_frame_size") or self.settings.options.get("ref_frame_size")
         return None
 
     def _purpose_parameter(self, key: str, metadata: dict[str, Any]) -> object | None:
-        if key == "quality" and self._is_role_design_image(metadata):
-            return self.settings.options.get("rightcode_role_design_quality") or self.settings.options.get(
-                "role_design_quality"
-            )
+        if key == "quality":
+            if self._is_role_full_body_image(metadata):
+                return (
+                    self.settings.options.get("rightcode_role_full_body_quality")
+                    or self.settings.options.get("role_full_body_quality")
+                )
+            if self._is_role_design_image(metadata):
+                return (
+                    self.settings.options.get("rightcode_role_multiview_quality")
+                    or self.settings.options.get("role_multiview_quality")
+                    or self.settings.options.get("rightcode_role_design_quality")
+                    or self.settings.options.get("role_design_quality")
+                )
         return None
 
     @staticmethod
     def _is_role_design_image(metadata: dict[str, Any]) -> bool:
-        return str(metadata.get("node_name") or "") == "role_appearance_generation"
+        return str(metadata.get("node_name") or "") in {"role_appearance_generation", "role_multiview_generation"}
+
+    @staticmethod
+    def _is_role_full_body_image(metadata: dict[str, Any]) -> bool:
+        return str(metadata.get("node_name") or "") == "role_full_body_generation"
 
     def _build_chat_payload(
         self,

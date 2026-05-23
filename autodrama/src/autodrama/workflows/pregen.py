@@ -55,7 +55,15 @@ from autodrama.workflows.selection import select_episode_keys
 
 
 PREGEN_NODES = PREGEN_NODE_NAMES
-EPISODE_SCOPED_PREGEN_ONLY_NODES = {"role_design", "prop_design", "prop_generation"}
+EPISODE_SCOPED_PREGEN_ONLY_NODES = {
+    "role_design",
+    "role_voice_generation",
+    "role_full_body_generation",
+    "role_multiview_generation",
+    "role_intro_video_generation",
+    "prop_design",
+    "prop_generation",
+}
 PREGEN_ONLY_ALIASES = {"prop_image_generation": "prop_generation"}
 
 
@@ -500,7 +508,13 @@ class PregenWorkflow:
         expected = set(self._expected_episode_keys(state))
         keys: list[str] = []
         invalid_keys: list[str] = []
-        for key in item.episode_keys:
+        raw_keys = self._dedupe_texts(item.episode_keys)
+        if not raw_keys:
+            raise ValueError(
+                f"role_extract missing episode_keys for {item.name}; "
+                "role_design requires role-scoped episode_keys and will not load all novel_full episodes"
+            )
+        for key in raw_keys:
             text = str(key or "").strip()
             if not text:
                 continue
@@ -517,11 +531,10 @@ class PregenWorkflow:
             )
         if keys:
             return keys
-        get_logger().warning(
-            "role_extract missing episode_keys for %s; role_design will load all novel_full episodes",
-            item.name,
+        raise ValueError(
+            f"role_extract episode_keys for {item.name} do not match existing episodes; "
+            f"got {', '.join(raw_keys) or '-'}"
         )
-        return self._expected_episode_keys(state)
 
     def _role_design_target_extract_roles(
         self,
@@ -571,7 +584,9 @@ class PregenWorkflow:
         selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
-                "--episodes is only supported for pregen --only role_design, prop_design, or prop_generation. "
+                "--episodes is only supported for pregen --only role_design, role_voice_generation, "
+                "role_full_body_generation, role_multiview_generation, role_intro_video_generation, "
+                "prop_design, or prop_generation. "
                 "Use run generation --only storyboard_generation --episodes ... for storyboard shots."
             )
         logger.info(
@@ -950,26 +965,26 @@ class PregenWorkflow:
                 name=appearance_name,
                 desc=appearance_item.desc,
                 prompt=appearance_item.prompt,
-                portrait_prompt=appearance_item.portrait_prompt,
+                full_body_prompt=appearance_item.full_body_prompt,
                 role_bound_prop_ids=role_bound_prop_ids,
                 intro_video_prompt=appearance_item.intro_video_prompt,
             )
             if preserve_assets and existing_appearance is not None:
-                appearance.portrait_image_generation_status = existing_appearance.portrait_image_generation_status
+                appearance.full_body_image_generation_status = existing_appearance.full_body_image_generation_status
                 appearance.design_image_generation_status = existing_appearance.design_image_generation_status
                 appearance.intro_video_generation_status = existing_appearance.intro_video_generation_status
-                appearance.portrait_image_asset_id = existing_appearance.portrait_image_asset_id
-                appearance.portrait_image_asset_path = existing_appearance.portrait_image_asset_path
+                appearance.full_body_image_asset_id = existing_appearance.full_body_image_asset_id
+                appearance.full_body_image_asset_path = existing_appearance.full_body_image_asset_path
                 appearance.design_image_asset_id = existing_appearance.design_image_asset_id
                 appearance.design_image_asset_path = existing_appearance.design_image_asset_path
                 appearance.intro_video_asset_id = existing_appearance.intro_video_asset_id
                 appearance.intro_video_asset_path = existing_appearance.intro_video_asset_path
                 appearance.asset_id = existing_appearance.asset_id
                 appearance.asset_path = existing_appearance.asset_path
-                appearance.portrait_provider = existing_appearance.portrait_provider
-                appearance.portrait_model = existing_appearance.portrait_model
-                appearance.portrait_request_id = existing_appearance.portrait_request_id
-                appearance.portrait_usage = existing_appearance.portrait_usage
+                appearance.full_body_provider = existing_appearance.full_body_provider
+                appearance.full_body_model = existing_appearance.full_body_model
+                appearance.full_body_request_id = existing_appearance.full_body_request_id
+                appearance.full_body_usage = existing_appearance.full_body_usage
                 appearance.provider = existing_appearance.provider
                 appearance.model = existing_appearance.model
                 appearance.request_id = existing_appearance.request_id
@@ -1382,7 +1397,7 @@ class PregenWorkflow:
                             type="video",
                             path=str(project_dir / appearance.intro_video_asset_path),
                             metadata={
-                                "asset_type": "role_appearance_video",
+                                "asset_type": "role_intro_video",
                                 "role_id": role.id,
                                 "role_name": role.name,
                                 "name": appearance.name,
@@ -1657,6 +1672,15 @@ class PregenWorkflow:
 
     async def _run_role_appearance_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("role_appearance_generation").run(project_dir, state)
+
+    async def _run_role_full_body_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("role_full_body_generation").run(project_dir, state)
+
+    async def _run_role_multiview_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("role_multiview_generation").run(project_dir, state)
+
+    async def _run_role_intro_video_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("role_intro_video_generation").run(project_dir, state)
 
     def _prop_design_json_path(self, project_dir: Path, prop_id: str) -> Path:
         return self.prop_designs.item_path(project_dir, prop_id)

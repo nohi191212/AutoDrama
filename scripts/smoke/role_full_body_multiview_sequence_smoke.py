@@ -83,7 +83,7 @@ def require(condition: bool, message: str) -> None:
 
 
 async def main_async() -> int:
-    tmp_root = ROOT_DIR / ".tmp" / "smoke" / "role_appearance_portrait_sequence"
+    tmp_root = ROOT_DIR / ".tmp" / "smoke" / "role_full_body_multiview_sequence"
     if tmp_root.exists():
         shutil.rmtree(tmp_root)
 
@@ -100,50 +100,51 @@ async def main_async() -> int:
         role_id=role.id,
         name="base",
         desc="stable hero look",
-        prompt="draw the original role design sheet",
-        portrait_prompt="draw the close portrait",
+        prompt="draw the original role multiview sheet",
+        full_body_prompt="draw the front full body reference",
         intro_video_prompt="show the hero",
     )
     state = ProjectState(
-        project_id="role-appearance-portrait-sequence",
-        title="Role Appearance Portrait Sequence",
+        project_id="role-full-body-multiview-sequence",
+        title="Role Full Body Multiview Sequence",
         raw_script="",
         script=ScriptBundle(raw_script=""),
         roles={role.id: role},
     )
 
-    state = await workflow._run_role_appearance_generation(project_dir, state)
+    state = await workflow._run_role_full_body_generation(project_dir, state)
+    state = await workflow._run_role_multiview_generation(project_dir, state)
     appearance = state.roles[role.id].appearances["base"]
 
-    require(len(image_provider.calls) == 2, f"Expected portrait and design image calls, got {len(image_provider.calls)}")
+    require(len(image_provider.calls) == 2, f"Expected full body and multiview image calls, got {len(image_provider.calls)}")
     require(
-        image_provider.calls[0]["metadata"]["asset_id"] == "role_hero_appearance_base_portrait",
-        f"Portrait should be generated first: {image_provider.calls}",
+        image_provider.calls[0]["metadata"]["asset_id"] == "role_hero_appearance_base_full_body",
+        f"Full body should be generated first: {image_provider.calls}",
     )
     require(
         image_provider.calls[1]["metadata"]["asset_id"] == "role_hero_appearance_base",
-        f"Design sheet should be generated second: {image_provider.calls}",
+        f"Multiview sheet should be generated second: {image_provider.calls}",
     )
     design_refs = image_provider.calls[1]["refs"]
-    require(len(design_refs) == 1, "Design sheet generation should receive the portrait as one reference")
+    require(len(design_refs) == 1, "Multiview generation should receive the full body as one reference")
     require(
-        Path(str(design_refs[0].path)).name == "role_hero_appearance_base_portrait.png",
+        Path(str(design_refs[0].path)).name == "role_hero_appearance_base_full_body.png",
         f"Unexpected design reference path: {design_refs[0].path}",
     )
     require(
-        appearance.portrait_image_asset_path == "assets/images/roles/role_hero_appearance_base_portrait.png",
-        f"Unexpected portrait path: {appearance.portrait_image_asset_path}",
+        appearance.full_body_image_asset_path == "assets/images/roles/role_hero_appearance_base_full_body.png",
+        f"Unexpected full body path: {appearance.full_body_image_asset_path}",
     )
     require(
         appearance.design_image_asset_path == "assets/images/roles/role_hero_appearance_base.png",
         f"Unexpected design path: {appearance.design_image_asset_path}",
     )
 
-    output_path = project_dir / "assets" / "json" / "nodes" / "role_appearance_generation.json"
-    require(output_path.is_file(), "role_appearance_generation node output was not written")
-    print("role_appearance_portrait_sequence_smoke=ok")
-    print("image_call_order=portrait,design")
-    print(f"portrait_path={appearance.portrait_image_asset_path}")
+    output_path = project_dir / "assets" / "json" / "nodes" / "role_multiview_generation.json"
+    require(output_path.is_file(), "role_multiview_generation node output was not written")
+    print("role_full_body_multiview_sequence_smoke=ok")
+    print("image_call_order=full_body,multiview")
+    print(f"full_body_path={appearance.full_body_image_asset_path}")
     print(f"design_path={appearance.design_image_asset_path}")
     return 0
 

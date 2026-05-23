@@ -95,6 +95,13 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - `providers`: 各 Provider 的 base URL、模型名和选项。
 - `routing`: 不同能力和用途的 Provider 路由。
 
+角色静态图像现在只使用 `role_full_body` 和 `role_multiview` 两类配置：
+
+- `role_full_body`: 正面全身参考图，建议竖幅比例，例如 ToAPI `role_full_body_size: "1:2"` 或 RightCode `role_full_body_size: 1024x1536`。
+- `role_multiview`: 三视图 + 绑定道具设计图，使用 full body 作为参考图，建议 16:9 横幅比例。
+
+旧的 `role_portrait` / `portrait_prompt` 已移除，不再作为角色资产配置项或 prompt 字段。
+
 编辑 `apikeys.yaml` 填入真实密钥。该文件应只保存在本地，不要提交到代码仓库。
 
 支持的主要密钥项：
@@ -168,7 +175,9 @@ role_extract
 ambient_entity_extract
 role_design
 role_voice_generation
-role_appearance_generation
+role_full_body_generation
+role_multiview_generation
+role_intro_video_generation
 prop_extract
 prop_design
 prop_generation
@@ -178,6 +187,18 @@ layout_image_generation
 bgm_design
 bgm_generation
 ```
+
+角色链的关键依赖顺序：
+
+```text
+role_design
+role_voice_generation
+role_full_body_generation
+role_multiview_generation
+role_intro_video_generation
+```
+
+`role_design` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并输出声音设计、`full_body_prompt`、三视图 + 道具 prompt、介绍视频 prompt 和角色绑定道具。`role_full_body_generation` 先生成自然正面全身参考图；`role_multiview_generation` 必须使用 full body 图作为参考，生成三视图 + 道具设计图；`role_intro_video_generation` 再使用 multiview 图作为参考生成角色介绍视频。功能角色如果 `has_dialogue=false` 不生成声音；功能角色默认跳过介绍视频。
 
 ### 3. 运行动态资产生成流程
 
@@ -243,17 +264,27 @@ run\start.cmd --generation --config config.yaml --project <project_id> --until r
 
 ```powershell
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation
+run\start.cmd --config config.yaml --project <project_id> --only role_full_body_generation
+run\start.cmd --config config.yaml --project <project_id> --only role_multiview_generation
+run\start.cmd --config config.yaml --project <project_id> --only role_intro_video_generation
 run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1
 ```
 
 按剧集选择：
 
 ```powershell
+run\start.cmd --config config.yaml --project <project_id> --only role_design --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only role_full_body_generation --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only role_multiview_generation --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only role_intro_video_generation --episodes 1 --force
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1,3
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1-3
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
+
+`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `role_design`、`role_voice_generation`、`role_full_body_generation`、`role_multiview_generation`、`role_intro_video_generation`、`prop_design` 和 `prop_generation`。角色相关节点会按角色 `episode_keys` 过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。
 
 按镜头选择：
 
@@ -344,8 +375,10 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/metadata_convergence_smoke
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_iterative_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_partial_persistence_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_design_scoping_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_design_missing_episode_keys_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_generation_episode_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/functional_role_asset_policy_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_appearance_portrait_sequence_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_full_body_multiview_sequence_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 ```
 
