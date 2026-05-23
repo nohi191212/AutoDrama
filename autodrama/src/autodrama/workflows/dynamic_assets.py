@@ -26,6 +26,7 @@ from autodrama.core.schemas import (
 )
 from autodrama.logging import get_logger, log_context
 from autodrama.providers.base import ImageGenerationResult, VideoGenerationResult
+from autodrama.repositories.dynamic_asset_repo import DynamicAssetRepository
 from autodrama.workflows.generation_tasks import (
     find_generation_task,
     generation_tasks_path,
@@ -1071,15 +1072,14 @@ class DynamicAssetNodeMixin:
             solidified.extend(output.solidified_assets)
 
         active_episode_keys = set(self._active_episode_keys_in_order(state))
-        existing_dynamic_assets = [
-            item
-            for item in state.metadata.get("dynamic_assets", [])
-            if str(item.get("episode_key")) not in active_episode_keys
-        ]
-        state.metadata["dynamic_assets"] = [
-            *existing_dynamic_assets,
-            *[item.model_dump(mode="json") for item in solidified],
-        ]
+        dynamic_assets = getattr(self, "dynamic_assets", None)
+        if dynamic_assets is None:
+            dynamic_assets = DynamicAssetRepository(self.repo, self.layout)
+        dynamic_assets.merge_assets(
+            project_dir,
+            solidified,
+            replace_episode_keys=active_episode_keys,
+        )
         self.repo.save_node_output(
             project_dir,
             "dynamic_asset_solidification",

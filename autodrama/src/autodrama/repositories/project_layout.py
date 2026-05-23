@@ -31,6 +31,9 @@ class ProjectLayout:
     def node_output_path(self, project_dir: Path, node_name: str) -> Path:
         return project_dir / "assets" / "json" / "nodes" / f"{node_name}.json"
 
+    def dynamic_assets_index_path(self, project_dir: Path) -> Path:
+        return project_dir / "assets" / "json" / "assets" / "dynamic_assets.json"
+
     def script_content_path(self, project_dir: Path, category: str, episode_key: str) -> Path:
         return project_dir / "assets" / "json" / "scripts" / category / f"{episode_key}.json"
 
@@ -107,6 +110,7 @@ class ProjectLayout:
             project_dir / "assets" / "json" / "scripts" / "outlines",
             project_dir / "assets" / "json" / "scripts" / "novel_full",
             project_dir / "assets" / "json" / "scripts" / "novel_extract",
+            project_dir / "assets" / "json" / "assets",
             project_dir / "assets" / "json" / "roles",
             project_dir / "assets" / "json" / "props",
             project_dir / "assets" / "images" / "roles",

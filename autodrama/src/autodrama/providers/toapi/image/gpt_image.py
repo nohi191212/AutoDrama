@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -9,6 +10,7 @@ import httpx
 
 from autodrama.config import ProviderSettings, RuntimeSettings
 from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError
+from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef, ImageGenerationResult
 from autodrama.providers.http import request_id_from_response
 
@@ -18,6 +20,24 @@ class ToAPIImageProvider:
 
     name = "toapi"
     supports_reference_images = True
+    DEFAULT_MAX_REFERENCE_UPLOAD_BYTES = 10_000_000
+    DEFAULT_MIN_REFERENCE_UPLOAD_BYTES = 5_000_000
+    DEFAULT_MAX_ATTEMPTS = 10
+    RETRYABLE_HTTP_STATUS_CODES = {
+        408,
+        409,
+        425,
+        429,
+        500,
+        502,
+        503,
+        504,
+        520,
+        521,
+        522,
+        523,
+        524,
+    }
 
     PIXEL_SIZE_TO_RATIO = {
         "1024x1024": "1:1",
@@ -61,6 +81,23 @@ class ToAPIImageProvider:
         self.poll_interval_seconds = float(settings.options.get("poll_interval_seconds") or 3)
         self.max_wait_seconds = float(settings.options.get("max_wait_seconds") or 900)
         self.max_reference_images = int(settings.options.get("max_reference_images") or 16)
+        self.max_reference_upload_bytes = int(
+            settings.options.get("max_reference_upload_bytes")
+            or settings.options.get("reference_upload_max_bytes")
+            or self.DEFAULT_MAX_REFERENCE_UPLOAD_BYTES
+        )
+        self.min_reference_upload_bytes = int(
+            settings.options.get("min_reference_upload_bytes")
+            or settings.options.get("reference_upload_min_bytes")
+            or self.DEFAULT_MIN_REFERENCE_UPLOAD_BYTES
+        )
+        if self.min_reference_upload_bytes >= self.max_reference_upload_bytes:
+            self.min_reference_upload_bytes = self.max_reference_upload_bytes // 2
+        self.max_attempts = self._int_option(
+            "toapi_max_attempts",
+            "max_attempts",
+            default=self.DEFAULT_MAX_ATTEMPTS,
+        )
 
     @property
     def generation_endpoint(self) -> str:
@@ -218,13 +255,22 @@ class ToAPIImageProvider:
         if not path.exists() or not path.is_file():
             raise ProviderBadResponseError(f"ToAPI reference image does not exist: {path}")
 
-        with path.open("rb") as file:
+        upload = self._prepare_reference_upload(path)
+        if upload.get("data") is not None:
             response = await client.post(
                 self.upload_endpoint,
                 headers=self._headers(),
-                files={"file": (path.name, file, self._mime_type(path))},
+                files={"file": (str(upload["filename"]), upload["data"], str(upload["mime_type"]))},
                 data={"purpose": "generation"},
             )
+        else:
+            with path.open("rb") as file:
+                response = await client.post(
+                    self.upload_endpoint,
+                    headers=self._headers(),
+                    files={"file": (str(upload["filename"]), file, str(upload["mime_type"]))},
+                    data={"purpose": "generation"},
+                )
         body = self._json_response(response, label=f"ToAPI image upload {path.name}")
         self._raise_for_error(response, body, label=f"ToAPI image upload {path.name}")
         data = body.get("data") if isinstance(body, dict) else None
@@ -236,7 +282,192 @@ class ToAPIImageProvider:
             "id": data.get("id"),
             "mime_type": data.get("mime_type"),
             "size": data.get("size"),
+            "upload_filename": upload.get("filename"),
+            "original_size": upload.get("original_size"),
+            "upload_size": upload.get("upload_size"),
+            "resized_for_upload": upload.get("resized_for_upload", False),
+            "resize_scale": upload.get("resize_scale"),
+            "original_dimensions": upload.get("original_dimensions"),
+            "upload_dimensions": upload.get("upload_dimensions"),
         }
+
+    def _prepare_reference_upload(self, path: Path) -> dict[str, Any]:
+        original_size = path.stat().st_size
+        if original_size <= self.max_reference_upload_bytes:
+            return {
+                "filename": path.name,
+                "mime_type": self._mime_type(path),
+                "original_size": original_size,
+                "upload_size": original_size,
+                "resized_for_upload": False,
+                "data": None,
+            }
+
+        upload = self._resize_reference_image_for_upload(path, original_size)
+        get_logger().info(
+            "ToAPI reference image resized for upload path=%s original_size=%.2fMB upload_size=%.2fMB "
+            "scale=%.4f dimensions=%s->%s",
+            path,
+            original_size / (1024 * 1024),
+            int(upload["upload_size"]) / (1024 * 1024),
+            float(upload["resize_scale"]),
+            upload["original_dimensions"],
+            upload["upload_dimensions"],
+        )
+        return upload
+
+    def _resize_reference_image_for_upload(self, path: Path, original_size: int) -> dict[str, Any]:
+        try:
+            from PIL import Image, ImageOps
+        except ImportError as exc:
+            raise ProviderBadResponseError(
+                f"ToAPI reference image is larger than {self.max_reference_upload_bytes} bytes and Pillow is not installed: {path}"
+            ) from exc
+
+        with Image.open(path) as opened:
+            image = ImageOps.exif_transpose(opened)
+            image.load()
+
+        output_format = self._reference_upload_format(path, image.format)
+        candidates: list[dict[str, Any]] = []
+        for save_options in self._reference_upload_save_options(output_format):
+            candidate = self._largest_reference_upload_candidate(image, output_format, save_options)
+            if candidate is not None:
+                candidates.append(candidate)
+
+        if not candidates:
+            raise ProviderBadResponseError(
+                f"Could not resize ToAPI reference image below {self.max_reference_upload_bytes} bytes: {path}"
+            )
+
+        in_range = [
+            candidate
+            for candidate in candidates
+            if self.min_reference_upload_bytes <= len(candidate["data"]) <= self.max_reference_upload_bytes
+        ]
+        if in_range:
+            selected = max(in_range, key=lambda item: (float(item["scale"]), len(item["data"])))
+        else:
+            selected = max(candidates, key=lambda item: (float(item["scale"]), len(item["data"])))
+            if len(selected["data"]) < self.min_reference_upload_bytes:
+                get_logger().warning(
+                    "ToAPI reference image resized below target minimum path=%s upload_size=%.2fMB minimum=%.2fMB",
+                    path,
+                    len(selected["data"]) / (1024 * 1024),
+                    self.min_reference_upload_bytes / (1024 * 1024),
+                )
+
+        suffix = self._reference_upload_suffix(output_format)
+        return {
+            "filename": f"{path.stem}_toapi_ref{suffix}",
+            "mime_type": self._mime_type(Path(f"image{suffix}")),
+            "original_size": original_size,
+            "upload_size": len(selected["data"]),
+            "resized_for_upload": True,
+            "resize_scale": selected["scale"],
+            "original_dimensions": [image.width, image.height],
+            "upload_dimensions": [selected["width"], selected["height"]],
+            "data": selected["data"],
+        }
+
+    def _largest_reference_upload_candidate(
+        self,
+        image,
+        output_format: str,
+        save_options: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        best: dict[str, Any] | None = None
+        low = 0.01
+        high = 1.0
+        for _ in range(18):
+            scale = (low + high) / 2
+            candidate = self._encode_reference_upload_image(image, output_format, scale, save_options)
+            if len(candidate["data"]) <= self.max_reference_upload_bytes:
+                best = candidate
+                low = scale
+            else:
+                high = scale
+        return best
+
+    @staticmethod
+    def _reference_upload_format(path: Path, image_format: str | None) -> str:
+        suffix = path.suffix.lower()
+        if suffix in {".jpg", ".jpeg"} or str(image_format or "").upper() == "JPEG":
+            return "JPEG"
+        if suffix == ".webp" or str(image_format or "").upper() == "WEBP":
+            return "WEBP"
+        return "PNG"
+
+    @staticmethod
+    def _reference_upload_suffix(output_format: str) -> str:
+        if output_format == "JPEG":
+            return ".jpg"
+        if output_format == "WEBP":
+            return ".webp"
+        return ".png"
+
+    @staticmethod
+    def _reference_upload_save_options(output_format: str) -> list[dict[str, Any]]:
+        if output_format == "PNG":
+            return [
+                {"optimize": True, "compress_level": 6},
+                {"optimize": True, "compress_level": 4},
+                {"optimize": True, "compress_level": 2},
+                {"optimize": False, "compress_level": 0},
+            ]
+        if output_format == "JPEG":
+            return [
+                {"quality": 95, "optimize": True, "subsampling": 0},
+                {"quality": 98, "optimize": True, "subsampling": 0},
+                {"quality": 100, "optimize": True, "subsampling": 0},
+            ]
+        if output_format == "WEBP":
+            return [
+                {"quality": 95, "method": 6},
+                {"quality": 98, "method": 6},
+                {"quality": 100, "method": 6},
+            ]
+        return [{}]
+
+    def _encode_reference_upload_image(
+        self,
+        image,
+        output_format: str,
+        scale: float,
+        save_options: dict[str, Any],
+    ) -> dict[str, Any]:
+        from PIL import Image
+
+        width = max(1, round(image.width * scale))
+        height = max(1, round(image.height * scale))
+        resized = image
+        if width != image.width or height != image.height:
+            resized = image.resize((width, height), Image.Resampling.LANCZOS)
+        output_image = self._image_for_reference_upload_format(resized, output_format)
+        buffer = BytesIO()
+        output_image.save(buffer, format=output_format, **save_options)
+        return {
+            "data": buffer.getvalue(),
+            "scale": scale,
+            "width": width,
+            "height": height,
+        }
+
+    @staticmethod
+    def _image_for_reference_upload_format(image, output_format: str):
+        if output_format != "JPEG":
+            return image
+        if image.mode == "RGB":
+            return image
+
+        from PIL import Image
+
+        if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+            rgba = image.convert("RGBA")
+            background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+            background.alpha_composite(rgba)
+            return background.convert("RGB")
+        return image.convert("RGB")
 
     @staticmethod
     def _mime_type(path: Path) -> str:
@@ -261,6 +492,53 @@ class ToAPIImageProvider:
         if not self.api_key:
             raise ProviderAuthError("Missing ToAPI API key environment variable")
 
+        max_attempts = max(1, self.max_attempts)
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await self._generate_image_once(prompt, refs=refs, size=size, metadata=metadata)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                if attempt < max_attempts:
+                    await self._retry_after_failure(
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        metadata=metadata,
+                        reason=f"{exc.__class__.__name__}: {self._format_exception(exc)}",
+                    )
+                    continue
+                raise ProviderBadResponseError(
+                    "ToAPI image generation failed after "
+                    f"{attempt} attempt(s) for asset={metadata.get('asset_id') or '-'}: "
+                    f"{exc.__class__.__name__}: {self._format_exception(exc)}"
+                ) from exc
+            except ProviderBadResponseError as exc:
+                if attempt < max_attempts and self._is_retryable_provider_error(exc):
+                    await self._retry_after_failure(
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        metadata=metadata,
+                        reason=self._format_exception(exc),
+                    )
+                    continue
+                if attempt > 1 and self._is_retryable_provider_error(exc):
+                    raise ProviderBadResponseError(
+                        "ToAPI image generation failed after "
+                        f"{attempt} attempt(s) for asset={metadata.get('asset_id') or '-'}: {exc}"
+                    ) from exc
+                raise
+
+        raise ProviderBadResponseError(
+            f"ToAPI image generation failed after {max_attempts} attempt(s): no response received"
+        )
+
+    async def _generate_image_once(
+        self,
+        prompt: str,
+        refs: list[AssetRef] | None = None,
+        *,
+        size: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ImageGenerationResult:
+        metadata = metadata or {}
         async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
             reference_images, uploaded_refs = await self._reference_images(client, refs or [])
             payload = self.build_payload(
@@ -308,6 +586,99 @@ class ToAPIImageProvider:
             usage=self._usage(final_body, create_body),
             raw_response=raw_response,
         )
+
+    async def _retry_after_failure(
+        self,
+        *,
+        attempt: int,
+        max_attempts: int,
+        metadata: dict[str, Any],
+        reason: str,
+    ) -> None:
+        delay_seconds = self._retry_delay_seconds(attempt)
+        get_logger().warning(
+            "ToAPI image generation attempt %d/%d failed for asset=%s node=%s: %s; retrying in %.1fs",
+            attempt,
+            max_attempts,
+            metadata.get("asset_id") or "-",
+            metadata.get("node_name") or "-",
+            reason,
+            delay_seconds,
+        )
+        if delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+
+    def _retry_delay_seconds(self, attempt: int) -> float:
+        initial_delay = self._float_option(
+            "toapi_retry_initial_delay_seconds",
+            "retry_initial_delay_seconds",
+            default=2.0,
+        )
+        max_delay = self._float_option(
+            "toapi_retry_max_delay_seconds",
+            "retry_max_delay_seconds",
+            default=30.0,
+        )
+        delay = max(0.0, initial_delay) * (2 ** max(0, attempt - 1))
+        return min(max(0.0, max_delay), delay)
+
+    def _int_option(self, primary_key: str, fallback_key: str, *, default: int) -> int:
+        raw_value = self.settings.options.get(primary_key, self.settings.options.get(fallback_key, default))
+        try:
+            return max(1, int(raw_value))
+        except (TypeError, ValueError):
+            return max(1, int(default))
+
+    def _float_option(self, primary_key: str, fallback_key: str, *, default: float) -> float:
+        raw_value = self.settings.options.get(primary_key, self.settings.options.get(fallback_key, default))
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            return default
+
+    @classmethod
+    def _is_retryable_provider_error(cls, exc: ProviderBadResponseError) -> bool:
+        text = str(exc).lower()
+        non_retryable_markers = (
+            "missing toapi api key",
+            "reference image does not exist",
+            "pillow is not installed",
+            "could not resize toapi reference image",
+            "image too large",
+        )
+        if any(marker in text for marker in non_retryable_markers):
+            return False
+        for status_code in cls.RETRYABLE_HTTP_STATUS_CODES:
+            if f"http {status_code}" in text:
+                return True
+        return any(
+            marker in text
+            for marker in (
+                "generation_failed",
+                "call upstream api failed",
+                "upstream",
+                "decode response failed",
+                "unexpected end of json input",
+                "non-json response",
+                "json response is not an object",
+                "response missing data.url",
+                "has no image url or base64 data",
+                "did not complete after",
+                "timeout",
+                "temporarily",
+                "too many requests",
+                "rate limit",
+                "server error",
+                "bad gateway",
+                "service unavailable",
+                "gateway timeout",
+            )
+        )
+
+    @staticmethod
+    def _format_exception(exc: Exception) -> str:
+        text = str(exc).strip()
+        return text or exc.__class__.__name__
 
     def _http_timeout(self) -> httpx.Timeout:
         timeout = float(self.runtime.request_timeout_seconds)

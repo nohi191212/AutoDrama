@@ -38,7 +38,6 @@ from autodrama.workflows.nodes.static_asset_nodes import (  # noqa: E402
     PropExtractNode,
     PropGenerationNode,
     RoleAppearanceGenerationNode,
-    ScriptCompressNode,
 )
 from autodrama.workflows.nodes.voice_nodes import (  # noqa: E402
     VOICE_NODE_NAMES,
@@ -113,7 +112,6 @@ def main() -> int:
         "prop_extract": PropExtractNode,
         "prop_design": PropDesignNode,
         "prop_generation": PropGenerationNode,
-        "script_compress": ScriptCompressNode,
         "layout_design": LayoutDesignNode,
         "layout_dedupe_review": LayoutDedupeReviewNode,
         "layout_image_generation": LayoutImageGenerationNode,

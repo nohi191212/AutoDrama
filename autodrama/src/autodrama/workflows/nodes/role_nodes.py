@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import ProjectState, RoleDesignItem, RoleDesignOutput
 from autodrama.logging import get_logger
 from autodrama.repositories.project_repo import ProjectRepository
@@ -131,7 +132,11 @@ class RoleExtractNode(RoleNodeBase):
             if not item.episode_keys:
                 raise ValueError(f"role_extract must include episode_keys for {item.name}")
 
-        state.metadata["role_extract"] = output.model_dump(mode="json")
+        state.roles = {}
+        role_refs: dict[str, str] = {}
+        for item in output.roles:
+            role_refs[item.name] = self.role_designs.save_extract_item(project_dir, item)
+        state.metadata["role_refs"] = role_refs
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, self.name, output)
         return state
@@ -178,6 +183,12 @@ class RoleDesignNode(RoleNodeBase):
                 )
 
         force_pregen = bool(getattr(self.workflow, "_force_pregen", False))
+        previous_roles = dict(state.roles)
+        previous_role_props = {
+            prop_id: prop
+            for prop_id, prop in state.props.items()
+            if prop.owner_role_id
+        }
         self.workflow._clear_role_design_state(state)
 
         designed_by_key: dict[str, RoleDesignItem] = {}
@@ -185,12 +196,43 @@ class RoleDesignNode(RoleNodeBase):
         if existing_output is not None:
             should_keep_existing = not force_pregen or bool(active_episode_keys)
             if should_keep_existing:
+                extract_by_key = {
+                    self.workflow._role_name_key(item.name): item
+                    for item in extract_output.roles
+                }
                 for existing_item in existing_output.roles:
                     if not self.workflow._role_design_item_complete(existing_item):
                         continue
                     existing_key = self.workflow._role_name_key(existing_item.name)
-                    existing_design_path = self.role_designs.save_item(project_dir, existing_item)
+                    extract_item = extract_by_key.get(existing_key)
+                    if extract_item is not None:
+                        try:
+                            self.workflow._validate_role_design_item_identity(
+                                existing_item,
+                                extract_item,
+                                extract_output.roles,
+                            )
+                        except ValueError as exc:
+                            self.logger.warning(
+                                "role_design ignored existing design for %s: %s",
+                                existing_item.name,
+                                exc,
+                            )
+                            continue
+                    else:
+                        continue
+                    existing_design_path = self.role_designs.item_relative_path_for_name(
+                        project_dir,
+                        existing_item.name,
+                    )
                     designed_by_key[existing_key] = existing_item
+                    role_id = normalize_id("role", existing_item.name)
+                    previous_role = previous_roles.get(role_id)
+                    if previous_role is not None:
+                        state.roles[role_id] = previous_role
+                    for prop_id, prop in previous_role_props.items():
+                        if prop.owner_role_id == role_id:
+                            state.props[prop_id] = prop
                     self.workflow._apply_role_design_item(
                         project_dir,
                         state,
@@ -198,6 +240,14 @@ class RoleDesignNode(RoleNodeBase):
                         speech_provider=speech_provider,
                         design_path=existing_design_path,
                         preserve_assets=True,
+                    )
+                    role = state.roles[role_id]
+                    self.role_designs.save_design_item(
+                        project_dir,
+                        extract_item=extract_item,
+                        design_item=existing_item,
+                        role=role,
+                        bound_props=self._role_bound_props(state, role.id),
                     )
 
         all_role_extracts = [item.model_dump(mode="json") for item in extract_output.roles]
@@ -227,17 +277,24 @@ class RoleDesignNode(RoleNodeBase):
                 ],
                 available_voices=available_voices,
             )
-            item = self.workflow._merge_role_extract_into_design(
-                self.workflow._select_role_design_item(output, extract_item),
-                extract_item,
-            )
-            design_path = self.role_designs.save_item(project_dir, item)
+            selected_item = self.workflow._select_role_design_item(output, extract_item)
+            self.workflow._validate_role_design_item_identity(selected_item, extract_item, extract_output.roles)
+            item = self.workflow._merge_role_extract_into_design(selected_item, extract_item)
+            design_path = self.role_designs.item_relative_path_for_name(project_dir, item.name)
             self.workflow._apply_role_design_item(
                 project_dir,
                 state,
                 item,
                 speech_provider=speech_provider,
                 design_path=design_path,
+            )
+            role = state.roles[normalize_id("role", item.name)]
+            design_path = self.role_designs.save_design_item(
+                project_dir,
+                extract_item=extract_item,
+                design_item=item,
+                role=role,
+                bound_props=self._role_bound_props(state, role.id),
             )
             designed_by_key[role_key] = item
             state.budget.used_text_calls += 1
@@ -267,6 +324,14 @@ class RoleDesignNode(RoleNodeBase):
             RoleDesignOutput(roles=final_items),
         )
         return state
+
+    @staticmethod
+    def _role_bound_props(state: ProjectState, role_id: str) -> list[Any]:
+        return [
+            prop
+            for prop in state.props.values()
+            if prop.owner_role_id == role_id
+        ]
 
 
 def build_role_node_runners(workflow: Any) -> dict[str, RoleNodeBase]:

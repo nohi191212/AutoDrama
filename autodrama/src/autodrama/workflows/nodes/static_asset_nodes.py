@@ -30,7 +30,6 @@ STATIC_ASSET_NODE_NAMES = [
     "prop_extract",
     "prop_design",
     "prop_generation",
-    "script_compress",
     "layout_design",
     "layout_dedupe_review",
     "layout_image_generation",
@@ -735,11 +734,22 @@ class RoleAppearanceGenerationNode(StaticAssetNodeBase):
             )
 
             intro_video_asset_id = f"{appearance.id}_intro_video"
-            intro_prompt = appearance.intro_video_prompt or (
-                f"参考图片1中的人物外观和绑定物品设计，{role.name}站在洁净、亮度适中的虚空圆台上；"
+            base_intro_prompt = appearance.intro_video_prompt or (
+                f"{role.name}站在洁净、亮度适中的虚空圆台上；"
                 f"0-2 秒：圆台缓慢转动，人物保持{appearance.desc}的稳定外观，镜头以中景平稳观察；"
                 "2-5 秒：人物做几个符合身份和性格的常见动作，如有随身物品，展示佩戴、握持或使用方式；"
                 "5-8 秒：镜头轻微推近并停在人物稳定识别角度，背景保持干净抽象，无其他人物、无字幕、水印或文字标识。"
+            )
+            visual_style_prompt = str(state.metadata.get("visual_style_prompt") or "").strip()
+            intro_prompt = "\n".join(
+                part
+                for part in (
+                    "参考图片1中的人物外观和绑定物品设计，保持形象一致性。",
+                    f"画面风格要求：{visual_style_prompt}" if visual_style_prompt else "",
+                    base_intro_prompt,
+                    "全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。",
+                )
+                if part
             )
             video_output_path = self.layout.video_asset_path(project_dir, "roles", intro_video_asset_id)
             existing_video_path = self.layout.existing_project_file(project_dir, appearance.intro_video_asset_path)
@@ -769,6 +779,12 @@ class RoleAppearanceGenerationNode(StaticAssetNodeBase):
                         },
                     )
                 ]
+                self.logger.info(
+                    "%s generating role intro video for %s/%s",
+                    intro_video_asset_id,
+                    role.name,
+                    appearance.name,
+                )
                 video_result = await video_provider.generate_video(
                     intro_prompt,
                     refs=refs,
@@ -854,7 +870,6 @@ class PropExtractNode(StaticAssetNodeBase):
             seen_keys.add(key)
             self.prop_designs.save_extract_item(project_dir, item)
 
-        state.metadata["prop_extract"] = output.model_dump(mode="json")
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, self.name, output)
         return state
@@ -1073,29 +1088,6 @@ class PropGenerationNode(StaticAssetNodeBase):
         return state
 
 
-class ScriptCompressNode(StaticAssetNodeBase):
-    name = "script_compress"
-
-    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("script")
-        self.logger.info(
-            "node=script_compress provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        output = await self.asset_service.script_compress(
-            state,
-            provider,
-            episode_stories=self.episode_stories(project_dir, state),
-        )
-        self.validate_episode_keys("script_compress.simple_script", output.simple_script, state)
-        state.metadata["simple_script"] = output.simple_script
-        state.metadata["global_script"] = output.global_script
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, self.name, output)
-        return state
-
-
 class LayoutDesignNode(StaticAssetNodeBase):
     name = "layout_design"
 
@@ -1231,7 +1223,6 @@ def build_static_asset_node_runners(workflow: Any) -> dict[str, StaticAssetNodeB
         PropExtractNode.name: PropExtractNode(**deps),
         PropDesignNode.name: PropDesignNode(**deps),
         PropGenerationNode.name: PropGenerationNode(**deps),
-        ScriptCompressNode.name: ScriptCompressNode(**deps),
         LayoutDesignNode.name: LayoutDesignNode(**deps),
         LayoutDedupeReviewNode.name: LayoutDedupeReviewNode(**deps),
         LayoutImageGenerationNode.name: LayoutImageGenerationNode(**deps),
@@ -1256,7 +1247,6 @@ __all__ = [
     "PropGenerationNode",
     "RoleAppearanceDesignNode",
     "RoleAppearanceGenerationNode",
-    "ScriptCompressNode",
     "StaticAssetNodeBase",
     "build_static_asset_node_runners",
     "build_static_asset_nodes",

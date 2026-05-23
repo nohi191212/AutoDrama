@@ -11,7 +11,6 @@ from autodrama.core.schemas import (
     PropExtractItem,
     PropExtractOutput,
     RoleAppearanceDesignOutput,
-    ScriptCompressOutput,
 )
 from autodrama.providers.base import TextLLM
 from autodrama.utils.prompts import PromptStore
@@ -157,32 +156,6 @@ class AssetService:
             },
         )
 
-    async def script_compress(
-        self,
-        state: ProjectState,
-        provider: TextLLM,
-        *,
-        episode_stories: dict[str, str],
-    ) -> ScriptCompressOutput:
-        episode_keys = list(episode_stories)
-        prompt = self.prompts.render(
-            "script_compress",
-            title=state.title,
-            episode_stories=self.format_json(episode_stories),
-            episode_keys=", ".join(episode_keys),
-        )
-        return await provider.generate_json(
-            prompt,
-            ScriptCompressOutput,
-            temperature=0.4,
-            metadata={
-                "node_name": "script_compress",
-                "project_id": state.project_id,
-                "required_mapping_field": "simple_script",
-                "expected_keys": episode_keys,
-            },
-        )
-
     async def layout_design(
         self,
         state: ProjectState,
@@ -194,8 +167,6 @@ class AssetService:
             "layout_design",
             title=state.title,
             episode_stories=self.format_json(episode_stories),
-            simple_script=self.format_json(state.metadata.get("simple_script", {})),
-            global_script=state.metadata.get("global_script", ""),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
             props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),
             visual_style_label=self.visual_style_label(state),
@@ -235,8 +206,6 @@ class AssetService:
             "bgm_design",
             title=state.title,
             episode_stories=self.format_json(episode_stories),
-            simple_script=self.format_json(state.metadata.get("simple_script", {})),
-            global_script=state.metadata.get("global_script", ""),
             visual_style_label=self.visual_style_label(state),
             bgm_count=bgm_count,
         )

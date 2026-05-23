@@ -17,6 +17,7 @@ from autodrama.core.schemas import (
 )
 from autodrama.logging import get_logger, log_context, setup_logging
 from autodrama.providers.router import ProviderRouter
+from autodrama.repositories.dynamic_asset_repo import DynamicAssetRepository
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.delegation import PregenWorkflowDelegateMixin
@@ -44,6 +45,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         prompts: PromptStore | None = None,
     ) -> None:
         self._init_pregen_delegate(repo=repo, router=router, prompts=prompts)
+        self.dynamic_assets = DynamicAssetRepository(self.repo, self.layout)
         self.generation_episode_nodes = build_generation_episode_nodes(self)
 
     @staticmethod
@@ -154,7 +156,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         parts.append(body)
         if style_prompt:
             parts.append(f"画面风格保持{style_prompt.rstrip('。')}。")
-        parts.append("全片不要出现字幕、水印、文字标识或片段编号。")
+        parts.append("全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。")
         return " ".join(item for item in parts if item)
 
     async def _run_generation_node_for_episode(
@@ -344,18 +346,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                                     self._load_storyboard_episode(project_dir, episode_key),
                                 )
                             if node_name == "dynamic_asset_solidification":
-                                existing_dynamic_assets = [
-                                    item
-                                    for item in state.metadata.get("dynamic_assets", [])
-                                    if str(item.get("episode_key")) != episode_key
-                                ]
                                 if not isinstance(output, DynamicAssetSolidificationOutput):
                                     raise TypeError("dynamic_asset_solidification output type mismatch")
                                 output = cast(DynamicAssetSolidificationOutput, output)
-                                state.metadata["dynamic_assets"] = existing_dynamic_assets + [
-                                    item.model_dump(mode="json")
-                                    for item in output.solidified_assets
-                                ]
+                                self.dynamic_assets.merge_episode_assets(
+                                    project_dir,
+                                    episode_key,
+                                    output.solidified_assets,
+                                )
                             state.mark_completed(node_name)
                             self.repo.save_state(project_dir, state)
                             self._save_run_outputs(project_dir, run_outputs)

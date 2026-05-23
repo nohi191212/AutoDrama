@@ -4,14 +4,16 @@ import json
 from pathlib import Path
 
 from autodrama.core.ids import normalize_id
-from autodrama.core.schemas import Role, RoleDesignItem, RoleDesignOutput, RoleExtractOutput
+from autodrama.core.schemas import Prop, Role, RoleDesignItem, RoleDesignOutput, RoleExtractItem, RoleExtractOutput
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
 
 
 class RoleDesignRepository:
-    """Persistence helper for role extract/design JSON compatibility."""
+    """Persistence helper for per-role extract/design records."""
+
+    SCHEMA_VERSION = 1
 
     def __init__(self, repo: ProjectRepository, layout: ProjectLayout) -> None:
         self.repo = repo
@@ -29,6 +31,9 @@ class RoleDesignRepository:
     def item_relative_path(self, project_dir: Path, role_id: str) -> str:
         return self.layout.project_relative(project_dir, self.item_path(project_dir, role_id))
 
+    def item_relative_path_for_name(self, project_dir: Path, role_name: str) -> str:
+        return self.item_relative_path(project_dir, normalize_id("role", role_name))
+
     def load_extract_output(self, project_dir: Path) -> RoleExtractOutput:
         path = self.extract_output_path(project_dir)
         if not path.exists():
@@ -43,38 +48,76 @@ class RoleDesignRepository:
         if roles_dir.exists():
             for path in sorted(roles_dir.glob("role_*.json")):
                 try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(payload, dict):
+                        raise ValueError(f"Invalid role JSON: {path}")
+                    if payload.get("design") is None:
+                        continue
                     role_items.append(self.load_item(path))
                 except Exception as exc:
                     get_logger().warning("role_design ignored invalid role design JSON %s: %s", path, exc)
             if role_items:
                 return RoleDesignOutput(roles=role_items)
+        return None
 
-        path = self.design_output_path(project_dir)
-        if not path.exists():
-            return None
-        return RoleDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
-
-    def save_item(self, project_dir: Path, item: RoleDesignItem) -> str:
+    def save_extract_item(self, project_dir: Path, item: RoleExtractItem) -> str:
         role_id = normalize_id("role", item.name)
         path = self.item_path(project_dir, role_id)
         self.repo.write_json(
             path,
             {
-                "node_name": "role_design",
+                "schema_version": self.SCHEMA_VERSION,
                 "role_id": role_id,
                 "role_name": item.name,
-                "content": item.model_dump(mode="json"),
-                "source_role_extract_path": "assets/json/nodes/role_extract.json",
+                "extract": item.model_dump(mode="json"),
+                "design": None,
+                "state_role": None,
+                "bound_props": [],
+                "source": {
+                    "role_extract_path": self.layout.project_relative(project_dir, self.extract_output_path(project_dir)),
+                    "role_design_path": None,
+                },
             },
         )
         return self.layout.project_relative(project_dir, path)
+
+    def save_design_item(
+        self,
+        project_dir: Path,
+        *,
+        extract_item: RoleExtractItem,
+        design_item: RoleDesignItem,
+        role: Role,
+        bound_props: list[Prop],
+    ) -> str:
+        role_id = normalize_id("role", extract_item.name)
+        path = self.item_path(project_dir, role_id)
+        relative_path = self.layout.project_relative(project_dir, path)
+        role.design_path = relative_path
+        self.repo.write_json(
+            path,
+            {
+                "schema_version": self.SCHEMA_VERSION,
+                "role_id": role_id,
+                "role_name": extract_item.name,
+                "extract": extract_item.model_dump(mode="json"),
+                "design": design_item.model_dump(mode="json"),
+                "state_role": role.model_dump(mode="json"),
+                "bound_props": [prop.model_dump(mode="json") for prop in bound_props],
+                "source": {
+                    "role_extract_path": self.layout.project_relative(project_dir, self.extract_output_path(project_dir)),
+                    "role_design_path": self.layout.project_relative(project_dir, self.design_output_path(project_dir)),
+                },
+            },
+        )
+        return relative_path
 
     @staticmethod
     def load_item(path: Path) -> RoleDesignItem:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError(f"Invalid role design JSON: {path}")
-        content = payload.get("content", payload)
+        content = payload.get("design")
         if not isinstance(content, dict):
             raise ValueError(f"Invalid role design content JSON: {path}")
         return RoleDesignItem.model_validate(content)

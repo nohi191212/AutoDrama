@@ -27,6 +27,7 @@ def main() -> int:
 
     expected_paths = {
         "node_output": "assets/json/nodes/script_outline.json",
+        "dynamic_assets_index": "assets/json/assets/dynamic_assets.json",
         "script_outline": "assets/json/scripts/outlines/episode_001.json",
         "script_novel_full": "assets/json/scripts/novel_full/episode_001.json",
         "script_novel_extract": "assets/json/scripts/novel_extract/episode_001.json",
@@ -45,6 +46,7 @@ def main() -> int:
     }
     actual_paths = {
         "node_output": layout.node_output_path(project_dir, "script_outline"),
+        "dynamic_assets_index": layout.dynamic_assets_index_path(project_dir),
         "script_outline": layout.script_content_path(project_dir, "outlines", "episode_001"),
         "script_novel_full": layout.script_content_path(project_dir, "novel_full", "episode_001"),
         "script_novel_extract": layout.script_content_path(project_dir, "novel_extract", "episode_001"),

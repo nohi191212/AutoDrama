@@ -169,7 +169,6 @@ role_appearance_generation
 prop_extract
 prop_design
 prop_generation
-script_compress
 layout_design
 layout_dedupe_review
 layout_image_generation
@@ -309,6 +308,8 @@ outputs/<project_id>/
 │   │   ├── roles/
 │   │   └── shots/
 │   └── json/
+│       ├── assets/
+│       │   └── dynamic_assets.json
 │       ├── nodes/
 │       ├── roles/
 │       ├── props/
@@ -336,6 +337,7 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/toapi_image_payload_smoke.
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_router_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/shot_selector_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/prop_episode_scoping_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/metadata_convergence_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_appearance_portrait_sequence_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 ```

@@ -86,10 +86,38 @@ async def main_async() -> int:
         project_dir / "assets" / "json" / "nodes" / "ref_frame_generation.json",
         project_dir / "assets" / "json" / "nodes" / "shot_video_generation.json",
         project_dir / "assets" / "json" / "nodes" / "dynamic_asset_solidification.json",
+        project_dir / "assets" / "json" / "assets" / "dynamic_assets.json",
     ]
     for path in required_paths:
         if not path.exists():
             raise AssertionError(f"Expected output missing: {path}")
+
+    state_payload = json.loads((project_dir / "state.json").read_text(encoding="utf-8"))
+    metadata = state_payload.get("metadata", {})
+    if "dynamic_assets" in metadata:
+        raise AssertionError("state.json metadata should not contain dynamic_assets")
+
+    dynamic_asset_index_path = project_dir / "assets" / "json" / "assets" / "dynamic_assets.json"
+    dynamic_asset_index = json.loads(dynamic_asset_index_path.read_text(encoding="utf-8"))
+    if dynamic_asset_index.get("schema_version") != 1:
+        raise AssertionError("dynamic asset index schema_version should be 1")
+    indexed_assets = dynamic_asset_index.get("assets", [])
+    if not indexed_assets:
+        raise AssertionError("dynamic asset index should contain generated assets")
+    if {item.get("episode_key") for item in indexed_assets} != {"episode_001"}:
+        raise AssertionError("dynamic asset index should only contain selected episode assets")
+
+    checklist = json.loads(checklist_path.read_text(encoding="utf-8"))
+    for episode in checklist["episodes"]:
+        episode["generate"] = episode["episode_key"] == "episode_001"
+    checklist_path.write_text(json.dumps(checklist, ensure_ascii=False, indent=2), encoding="utf-8")
+    await generation_workflow.run(project_dir, until="dynamic_asset_solidification", only="dynamic_asset_solidification")
+    rerun_index = json.loads(dynamic_asset_index_path.read_text(encoding="utf-8"))
+    rerun_assets = rerun_index.get("assets", [])
+    if len(rerun_assets) != len(indexed_assets):
+        raise AssertionError("rerunning dynamic_asset_solidification should replace episode assets, not duplicate them")
+    if sorted(item.get("asset_id") for item in rerun_assets) != sorted(item.get("asset_id") for item in indexed_assets):
+        raise AssertionError("rerunning dynamic_asset_solidification changed the indexed asset set unexpectedly")
 
     updated_checklist = json.loads(checklist_path.read_text(encoding="utf-8"))
     items = {item["episode_key"]: item for item in updated_checklist["episodes"]}

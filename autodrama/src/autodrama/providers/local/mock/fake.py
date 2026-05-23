@@ -16,7 +16,6 @@ from autodrama.core.schemas import (
     RoleDesignOutput,
     RoleExtractOutput,
     RoleVoiceDesignOutput,
-    ScriptCompressOutput,
     ScriptNovelExtractBatchOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
@@ -532,14 +531,6 @@ class FakeTextProvider:
             if prop_name:
                 selected_props = [prop for prop in data["props"] if prop.get("name") == prop_name]
                 data["props"] = selected_props or data["props"][:1]
-        elif schema is ScriptCompressOutput or node_name == "script_compress":
-            data = {
-                "simple_script": {
-                    key: f"第{index}集：林舟发现合同异常，在苏晚帮助下整理证据，并在会议上反击赵启。"
-                    for index, key in enumerate(episode_keys, start=1)
-                },
-                "global_script": "林舟被赵启陷害后发现合同调包线索，在苏晚帮助下用邮件时间线完成反击。",
-            }
         elif schema is LayoutDesignOutput or node_name == "layout_design":
             data = {
                 "layouts": [

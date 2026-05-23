@@ -8,6 +8,7 @@ import httpx
 
 from autodrama.config import ProviderSettings, RuntimeSettings
 from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError, ProviderError
+from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef, VideoGenerationResult
 from autodrama.providers.http import request_id_from_response
 from autodrama.providers.media_refs import asset_uri, file_to_data_url
@@ -257,18 +258,45 @@ class VolcengineSeedanceVideoProvider:
         wait: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> VideoGenerationResult:
+        metadata = metadata or {}
+        logger = get_logger()
+        asset_id = str(metadata.get("asset_id") or "-")
         result = await self.submit_video(prompt, refs, duration=duration, metadata=metadata)
+        logger.info(
+            "Seedance video task submitted asset=%s task_id=%s status=%s wait=%s",
+            asset_id,
+            result.task_id or "-",
+            result.task_status or "-",
+            wait,
+        )
         if not wait:
             return result
         if not result.task_id:
             raise ProviderBadResponseError("Seedance submit result has no task_id")
 
         task_id = result.task_id
-        for _ in range(self.max_polls):
+        last_status = (result.task_status or "").lower()
+        for poll_index in range(1, self.max_polls + 1):
             await asyncio.sleep(self.poll_interval_seconds)
             result = await self.query_video_task(task_id)
             status = (result.task_status or "").lower()
+            if status != last_status or poll_index == 1 or poll_index % 5 == 0:
+                logger.info(
+                    "Seedance video task polling asset=%s task_id=%s status=%s poll=%d/%d",
+                    asset_id,
+                    task_id,
+                    result.task_status or "-",
+                    poll_index,
+                    self.max_polls,
+                )
+                last_status = status
             if status in self._TERMINAL_SUCCESS:
+                logger.info(
+                    "Seedance video task completed asset=%s task_id=%s status=%s",
+                    asset_id,
+                    task_id,
+                    result.task_status or "-",
+                )
                 return result
             if status in self._TERMINAL_FAILURE:
                 raise ProviderError(f"Seedance task {task_id} ended with status {result.task_status}")

@@ -356,11 +356,6 @@ class PropDesignOutput(BaseModel):
     props: list[PropDesignItem]
 
 
-class ScriptCompressOutput(BaseModel):
-    simple_script: dict[str, str] = Field(default_factory=dict)
-    global_script: str
-
-
 class LayoutDesignItem(BaseModel):
     name: str
     desc: str
@@ -610,3 +605,8 @@ class DynamicAssetSolidificationItem(BaseModel):
 
 class DynamicAssetSolidificationOutput(BaseModel):
     solidified_assets: list[DynamicAssetSolidificationItem]
+
+
+class DynamicAssetIndex(BaseModel):
+    schema_version: int = 1
+    assets: list[DynamicAssetSolidificationItem] = Field(default_factory=list)

@@ -431,8 +431,22 @@ class PregenWorkflow:
     def _role_design_relative_path(self, project_dir: Path, role_id: str) -> str:
         return self.role_designs.item_relative_path(project_dir, role_id)
 
-    def _save_role_design_item(self, project_dir: Path, item: RoleDesignItem) -> str:
-        return self.role_designs.save_item(project_dir, item)
+    def _save_role_design_item(
+        self,
+        project_dir: Path,
+        *,
+        extract_item: RoleExtractItem,
+        design_item: RoleDesignItem,
+        role: Role,
+        bound_props: list[Prop],
+    ) -> str:
+        return self.role_designs.save_design_item(
+            project_dir,
+            extract_item=extract_item,
+            design_item=design_item,
+            role=role,
+            bound_props=bound_props,
+        )
 
     @staticmethod
     def _load_role_design_item(path: Path) -> RoleDesignItem:
@@ -608,11 +622,126 @@ class PregenWorkflow:
                 return item
 
         if len(output.roles) == 1:
-            return output.roles[0]
+            item = output.roles[0]
+            raise ValueError(
+                f"role_design returned a single mismatched role for {extract_item.name}: "
+                f"{item.name or '-'}; refusing to relabel it as {extract_item.name}"
+            )
         raise ValueError(
             f"role_design must return only {extract_item.name}; got "
             f"{', '.join(item.name for item in output.roles)}"
         )
+
+    @staticmethod
+    def _role_design_text_claims_identity(text: object, name: str) -> bool:
+        value = str(text or "").strip().lstrip("「“\"' ")
+        if not value or not name:
+            return False
+        identity_starts = (
+            name,
+            f"在下{name}",
+            f"我叫{name}",
+            f"我是{name}",
+            f"角色为{name}",
+        )
+        if any(value.startswith(prefix) for prefix in identity_starts):
+            return True
+        identity_claims = (
+            f"符合{name}",
+            f"表现{name}",
+            f"体现{name}",
+            f"用于{name}",
+            f"属于{name}",
+            f"{name}的核心",
+        )
+        return any(claim in value for claim in identity_claims)
+
+    def _validate_role_design_item_identity(
+        self,
+        item: RoleDesignItem,
+        extract_item: RoleExtractItem,
+        extract_roles: list[RoleExtractItem],
+    ) -> None:
+        expected_keys = {self._role_name_key(extract_item.name)}
+        expected_keys.update(self._role_name_key(alias) for alias in extract_item.aliases)
+        expected_keys.discard("")
+
+        if self._role_name_key(item.name) not in expected_keys:
+            raise ValueError(
+                f"role_design for {extract_item.name} returned name={item.name or '-'}; "
+                "the design identity must match the target role before merging"
+            )
+
+        other_identity_names: list[str] = []
+        other_identity_by_key: dict[str, str] = {}
+        for other in extract_roles:
+            if self._role_name_key(other.name) in expected_keys:
+                continue
+            for name in self._dedupe_texts([other.name, *other.aliases]):
+                key = self._role_name_key(name)
+                if not key or key in expected_keys or key in other_identity_by_key:
+                    continue
+                other_identity_names.append(name)
+                other_identity_by_key[key] = other.name
+
+        bad_aliases = [
+            alias
+            for alias in item.aliases
+            if self._role_name_key(alias) in other_identity_by_key
+        ]
+        if bad_aliases:
+            raise ValueError(
+                f"role_design for {extract_item.name} contains aliases from another role: "
+                f"{', '.join(bad_aliases)}"
+            )
+
+        bad_role_fields: list[str] = []
+        for appearance in item.appearances:
+            role_key = self._role_name_key(appearance.role_name)
+            if role_key and role_key not in expected_keys:
+                bad_role_fields.append(f"appearances[{appearance.name or 'base'}].role_name={appearance.role_name}")
+        for voice in item.voices:
+            role_key = self._role_name_key(voice.role_name)
+            if role_key and role_key not in expected_keys:
+                bad_role_fields.append(f"voices[{voice.emotion or 'normal'}].role_name={voice.role_name}")
+        if bad_role_fields:
+            raise ValueError(
+                f"role_design for {extract_item.name} contains mismatched role_name fields: "
+                f"{'; '.join(bad_role_fields)}"
+            )
+
+        identity_fields: list[tuple[str, object]] = [
+            ("intro", item.intro),
+            ("design_notes", item.design_notes),
+        ]
+        for appearance in item.appearances:
+            label = f"appearances[{appearance.name or 'base'}]"
+            identity_fields.extend(
+                [
+                    (f"{label}.desc", appearance.desc),
+                    (f"{label}.intro_video_prompt", appearance.intro_video_prompt),
+                ]
+            )
+        for voice in item.voices:
+            label = f"voices[{voice.emotion or 'normal'}]"
+            identity_fields.extend(
+                [
+                    (f"{label}.voice_selection_reason", voice.voice_selection_reason),
+                    (f"{label}.sample_text", voice.sample_text),
+                ]
+            )
+
+        bad_text_fields: list[str] = []
+        for label, text in identity_fields:
+            for other_name in other_identity_names:
+                if self._role_design_text_claims_identity(text, other_name):
+                    bad_text_fields.append(f"{label} appears to describe {other_name}")
+                    break
+        if bad_text_fields:
+            raise ValueError(
+                f"role_design for {extract_item.name} appears to describe another role: "
+                f"{'; '.join(bad_text_fields)}"
+            )
 
     def _merge_role_extract_into_design(self, item: RoleDesignItem, extract_item: RoleExtractItem) -> RoleDesignItem:
         item.name = extract_item.name
@@ -1667,9 +1796,6 @@ class PregenWorkflow:
 
     async def _run_prop_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._run_prop_generation(project_dir, state)
-
-    async def _run_script_compress(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("script_compress").run(project_dir, state)
 
     async def _run_layout_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("layout_design").run(project_dir, state)
