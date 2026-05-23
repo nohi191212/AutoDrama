@@ -25,9 +25,12 @@ from autodrama.workflows.nodes.script_nodes import (  # noqa: E402
     ScriptOutlineNode,
 )
 from autodrama.workflows.nodes.role_nodes import (  # noqa: E402
+    AmbientEntityExtractNode,
     ROLE_NODE_NAMES,
     RoleDesignNode,
     RoleExtractNode,
+    RoleFunctionalExtractNode,
+    RolePrimaryExtractNode,
 )
 from autodrama.workflows.nodes.static_asset_nodes import (  # noqa: E402
     STATIC_ASSET_NODE_NAMES,
@@ -80,7 +83,10 @@ def main() -> int:
         require(owner.script_service is workflow.script_service, f"{node_name} script service dependency drifted")
 
     expected_role_owners = {
+        "role_extract_primary": RolePrimaryExtractNode,
+        "role_extract_functional": RoleFunctionalExtractNode,
         "role_extract": RoleExtractNode,
+        "ambient_entity_extract": AmbientEntityExtractNode,
         "role_design": RoleDesignNode,
     }
     for node_name in ROLE_NODE_NAMES:

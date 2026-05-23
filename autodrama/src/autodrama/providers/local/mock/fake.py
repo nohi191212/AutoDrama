@@ -7,6 +7,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from autodrama.core.schemas import (
+    AmbientEntityOutput,
     BGMDesignOutput,
     LayoutDedupeReviewOutput,
     LayoutDesignOutput,
@@ -150,38 +151,56 @@ class FakeTextProvider:
                     for index, key in enumerate(batch_keys, start=1)
                 }
             }
-        elif schema is RoleExtractOutput or node_name == "role_extract":
-            data = {
-                "roles": [
-                    {
-                        "name": "林舟",
-                        "aliases": ["男主"],
-                        "importance": "lead",
-                        "episode_keys": episode_keys,
-                        "source_chapters": ["第1章-第2章"],
-                        "brief": "二十八岁职场青年，合同调包事件中的被陷害者和反击者。",
-                        "appearance_notes": ["青年男性", "短发", "身形偏瘦", "眼神疲惫但冷静"],
-                    },
-                    {
-                        "name": "苏晚",
-                        "aliases": ["女主"],
-                        "importance": "main",
-                        "episode_keys": episode_keys,
-                        "source_chapters": ["第1章-第2章"],
-                        "brief": "二十六岁数据分析师，提供证据线索并帮助林舟理清时间线。",
-                        "appearance_notes": ["青年女性", "气质清冷", "身形修长"],
-                    },
-                    {
-                        "name": "赵启",
-                        "aliases": ["反派"],
-                        "importance": "main",
-                        "episode_keys": episode_keys,
-                        "source_chapters": ["第1章-第2章"],
-                        "brief": "三十五岁部门主管，操控会议节奏并压制林舟。",
-                        "appearance_notes": ["成熟男性", "体型中等偏壮", "神情强势"],
-                    },
-                ]
-            }
+        elif schema is RoleExtractOutput or node_name in {
+            "role_extract",
+            "role_extract_primary",
+            "role_extract_functional",
+        }:
+            if node_name == "role_extract_functional":
+                data = {"roles": []}
+            else:
+                data = {
+                    "roles": [
+                        {
+                            "name": "林舟",
+                            "role_tier": "primary",
+                            "aliases": ["男主"],
+                            "importance": "lead",
+                            "episode_keys": episode_keys,
+                            "source_chapters": ["第1章-第2章"],
+                            "brief": "二十八岁职场青年，合同调包事件中的被陷害者和反击者。",
+                            "appearance_notes": ["青年男性", "短发", "身形偏瘦", "眼神疲惫但冷静"],
+                            "has_dialogue": True,
+                            "visual_reuse_required": True,
+                        },
+                        {
+                            "name": "苏晚",
+                            "role_tier": "primary",
+                            "aliases": ["女主"],
+                            "importance": "main",
+                            "episode_keys": episode_keys,
+                            "source_chapters": ["第1章-第2章"],
+                            "brief": "二十六岁数据分析师，提供证据线索并帮助林舟理清时间线。",
+                            "appearance_notes": ["青年女性", "气质清冷", "身形修长"],
+                            "has_dialogue": True,
+                            "visual_reuse_required": True,
+                        },
+                        {
+                            "name": "赵启",
+                            "role_tier": "primary",
+                            "aliases": ["反派"],
+                            "importance": "main",
+                            "episode_keys": episode_keys,
+                            "source_chapters": ["第1章-第2章"],
+                            "brief": "三十五岁部门主管，操控会议节奏并压制林舟。",
+                            "appearance_notes": ["成熟男性", "体型中等偏壮", "神情强势"],
+                            "has_dialogue": True,
+                            "visual_reuse_required": True,
+                        },
+                    ]
+                }
+        elif schema is AmbientEntityOutput or node_name == "ambient_entity_extract":
+            data = {"entities": []}
         elif schema is RoleDesignOutput or node_name == "role_design":
             if "爱死机写实CG风" in prompt or "爱死机风格写实CG" in prompt or "CG动画电影风" in prompt or "cg_animation" in prompt:
                 appearance_style = "爱死机写实CG风"
@@ -203,6 +222,9 @@ class FakeTextProvider:
                         "intro": "二十八岁职场青年，长期被压制但观察细致，外表疲惫，关键时刻冷静锋利。",
                         "personality": "隐忍、敏锐、爆发力强",
                         "aliases": ["男主"],
+                        "role_tier": "primary",
+                        "has_dialogue": True,
+                        "visual_reuse_required": True,
                         "importance": "lead",
                         "episode_keys": episode_keys,
                         "source_chapters": ["第1章-第2章"],
@@ -271,6 +293,9 @@ class FakeTextProvider:
                         "intro": "二十六岁数据分析师，理性克制，善于发现证据，是男主反击的关键助力。",
                         "personality": "冷静、聪明、行动果断",
                         "aliases": ["女主"],
+                        "role_tier": "primary",
+                        "has_dialogue": True,
+                        "visual_reuse_required": True,
                         "importance": "main",
                         "episode_keys": episode_keys,
                         "source_chapters": ["第1章-第2章"],
@@ -314,6 +339,9 @@ class FakeTextProvider:
                         "intro": "三十五岁部门主管，精致强势，擅长操控会议节奏，害怕证据曝光。",
                         "personality": "自负、控制欲强、心虚时急躁",
                         "aliases": ["反派"],
+                        "role_tier": "primary",
+                        "has_dialogue": True,
+                        "visual_reuse_required": True,
                         "importance": "main",
                         "episode_keys": episode_keys,
                         "source_chapters": ["第1章-第2章"],

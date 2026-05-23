@@ -9,19 +9,21 @@ Implemented scope:
 1. `script_outline`
 2. `script_novel`
 3. `script_novel_extract`
-4. `role_extract`
-5. `role_design`
-6. `role_voice_generation`
-7. `role_appearance_generation`
-8. `prop_extract`
-9. `prop_design`
-10. `prop_generation`
-11. `script_compress`
-12. `layout_design`
-13. `layout_dedupe_review`
-14. `layout_image_generation`
-15. `bgm_design`
-16. `bgm_generation`
+4. `role_extract_primary`
+5. `role_extract_functional`
+6. `role_extract`
+7. `ambient_entity_extract`
+8. `role_design`
+9. `role_voice_generation`
+10. `role_appearance_generation`
+11. `prop_extract`
+12. `prop_design`
+13. `prop_generation`
+14. `layout_design`
+15. `layout_dedupe_review`
+16. `layout_image_generation`
+17. `bgm_design`
+18. `bgm_generation`
 
 `run pregen` covers script, reusable static assets, BGM design, and BGM audio generation. It stops at `bgm_generation` by default.
 
@@ -33,7 +35,7 @@ Script episode content is stored as per-episode JSON files:
 
 Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at most one direct source path such as `source_novel_full_path`. The state stores the JSON path when an episode is generated, or `false` when it is not generated yet.
 
-`role_extract` reads the complete `novel_full` set and records each role's `episode_keys` and source chapter references. `role_design` then runs one role at a time, loading only that role's `novel_full` episodes, and writes identity, relationships, voice design, appearance prompt, intro video prompt, and role-bound prop design into the active role state.
+`role_extract_primary` reads the complete `novel_full` set and recursively extracts only primary roles. `role_extract_functional` then receives separated `primary_roles` and `functional_roles` lists and recursively extracts short-lived functional roles outside the primary set. `role_extract` merges those outputs in stable order, with primary roles first and background/ambient entities excluded from `roles`. `ambient_entity_extract` writes background entities to `assets/json/assets/ambient_entities.json` for scene/storyboard use without entering the role asset chain. `role_design` then runs one role at a time, loading only that role's `novel_full` episodes, and writes identity, relationships, voice design, appearance prompt, intro video prompt, and role-bound prop design into the active role state. Functional roles use a lighter asset policy: no voice when `has_dialogue=false`, and no intro video by default.
 
 `prop_extract` reads the complete `novel_full` set and records global prop candidates/statuses without image prompts. Each extracted prop/status is written to its own `assets/json/props/{prop_id}.json` file. `prop_design` then runs one prop/status at a time, loading only the relevant `novel_full` episodes and updating that per-prop JSON with design content while preserving `extract_content`. `prop_generation` renders the final prop images from those saved prompts.
 
@@ -332,7 +334,9 @@ Do not use pytest in this repository. Use compile checks and focused smoke scrip
 ```powershell
 D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/refactor_boundaries_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_iterative_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_design_scoping_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/functional_role_asset_policy_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/prop_episode_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/only_node_episode_smoke.py

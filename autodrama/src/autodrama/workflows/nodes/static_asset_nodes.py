@@ -733,6 +733,18 @@ class RoleAppearanceGenerationNode(StaticAssetNodeBase):
                 )
             )
 
+            if not self.workflow._role_needs_intro_video(role):
+                appearance.intro_video_generation_status = "skipped"
+                appearance.intro_video_asset_id = None
+                appearance.intro_video_asset_path = None
+                self.logger.info(
+                    "%s skipped role intro video for functional role %s/%s",
+                    appearance.id,
+                    role.name,
+                    appearance.name,
+                )
+                continue
+
             intro_video_asset_id = f"{appearance.id}_intro_video"
             base_intro_prompt = appearance.intro_video_prompt or (
                 f"{role.name}站在洁净、亮度适中的虚空圆台上；"

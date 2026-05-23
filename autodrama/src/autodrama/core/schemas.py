@@ -72,6 +72,9 @@ class Role(BaseModel):
     intro: str
     design_path: str | None = None
     personality: str | None = None
+    role_tier: Literal["primary", "functional"] | str = "primary"
+    has_dialogue: bool = True
+    visual_reuse_required: bool = True
     importance: str | None = None
     episode_keys: list[str] = Field(default_factory=list)
     source_chapters: list[str] = Field(default_factory=list)
@@ -205,12 +208,27 @@ class ScriptNovelEpisodeOutput(BaseModel):
 
 class RoleExtractItem(BaseModel):
     name: str
+    role_tier: Literal["primary", "functional"] | str = "primary"
     aliases: list[str] = Field(default_factory=list)
-    importance: Literal["lead", "main", "supporting", "minor", "background"] | str = "supporting"
     episode_keys: list[str] = Field(default_factory=list)
     source_chapters: list[str] = Field(default_factory=list)
     brief: str | None = None
     appearance_notes: list[str] = Field(default_factory=list)
+    has_dialogue: bool = False
+    visual_reuse_required: bool = False
+
+
+class AmbientEntityItem(BaseModel):
+    name: str
+    entity_type: Literal["crowd", "faction_presence", "background_actor_group"] | str
+    episode_keys: list[str] = Field(default_factory=list)
+    description: str
+    visual_notes: list[str] = Field(default_factory=list)
+    usage: str | None = None
+
+
+class AmbientEntityOutput(BaseModel):
+    entities: list[AmbientEntityItem]
 
 
 class RoleBoundPropDesignItem(BaseModel):
@@ -286,6 +304,9 @@ class RoleDesignItem(BaseModel):
     intro: str
     personality: str | None = None
     aliases: list[str] = Field(default_factory=list)
+    role_tier: Literal["primary", "functional"] | str | None = None
+    has_dialogue: bool = True
+    visual_reuse_required: bool = True
     importance: Literal["lead", "main", "supporting", "minor", "background"] | str | None = None
     episode_keys: list[str] = Field(default_factory=list)
     source_chapters: list[str] = Field(default_factory=list)

@@ -259,6 +259,8 @@ class PregenWorkflow:
             if role is None:
                 unmatched_role_names.append(item.role_name)
                 continue
+            if not self._role_needs_voice(role):
+                continue
             speaker = self._role_voice_speaker(item, speaker_lookup)
             if getattr(item, "voice_type", None) and speaker is None:
                 invalid_voice_types.append(f"{role.name}:{item.voice_type}")
@@ -296,12 +298,24 @@ class PregenWorkflow:
                 ", ".join(invalid_voice_types),
             )
         for role in state.roles.values():
+            if not self._role_needs_voice(role):
+                role.voice_summary = None
+                role.voice_name = None
+                role.voice_type = None
+                role.voice_resource_id = None
+                role.voice_model_family = None
+                role.voice_selection_reason = None
+                role.audio = {}
+                continue
             self._ensure_normal_role_audio(role)
             for audio in role.audio.values():
                 self._copy_role_voice_to_audio(role, audio)
 
     def _repair_role_voice_design_if_needed(self, project_dir: Path, state: ProjectState, *, speech_provider=None) -> None:
-        if all("normal" in role.audio and role.voice_type for role in state.roles.values()):
+        if all(
+            not self._role_needs_voice(role) or ("normal" in role.audio and role.voice_type)
+            for role in state.roles.values()
+        ):
             return
 
         path = project_dir / "assets" / "json" / "nodes" / "role_voice_design.json"
@@ -311,7 +325,8 @@ class PregenWorkflow:
             return
 
         for role in state.roles.values():
-            self._ensure_normal_role_audio(role)
+            if self._role_needs_voice(role):
+                self._ensure_normal_role_audio(role)
 
     def _validate_script_outline(self, output_episode_count: int, output_duration: int, state: ProjectState) -> None:
         expected_episode_count = self.script_service.episode_count(state)
@@ -457,7 +472,29 @@ class PregenWorkflow:
 
     @staticmethod
     def _role_design_item_complete(item: RoleDesignItem) -> bool:
-        return bool(str(item.intro or "").strip() and item.appearances and item.voices)
+        return bool(
+            str(item.intro or "").strip()
+            and item.appearances
+            and (not PregenWorkflow._role_design_item_needs_voice(item) or item.voices)
+        )
+
+    @staticmethod
+    def _role_design_item_needs_voice(item: RoleDesignItem) -> bool:
+        role_tier = str(item.role_tier or "primary").strip().lower()
+        if role_tier == "functional" and not item.has_dialogue:
+            return False
+        return True
+
+    @staticmethod
+    def _role_needs_voice(role: Role) -> bool:
+        role_tier = str(role.role_tier or "primary").strip().lower()
+        if role_tier == "functional" and not role.has_dialogue:
+            return False
+        return True
+
+    @staticmethod
+    def _role_needs_intro_video(role: Role) -> bool:
+        return str(role.role_tier or "primary").strip().lower() == "primary"
 
     def _role_episode_keys(self, item: RoleExtractItem, state: ProjectState) -> list[str]:
         expected = set(self._expected_episode_keys(state))
@@ -746,9 +783,14 @@ class PregenWorkflow:
     def _merge_role_extract_into_design(self, item: RoleDesignItem, extract_item: RoleExtractItem) -> RoleDesignItem:
         item.name = extract_item.name
         item.aliases = self._dedupe_texts([*extract_item.aliases, *item.aliases])
-        item.importance = item.importance or extract_item.importance
+        item.role_tier = extract_item.role_tier
+        item.has_dialogue = extract_item.has_dialogue
+        item.visual_reuse_required = extract_item.visual_reuse_required
+        item.importance = item.importance or getattr(extract_item, "importance", None)
         item.episode_keys = self._dedupe_texts([*extract_item.episode_keys, *item.episode_keys])
         item.source_chapters = self._dedupe_texts([*extract_item.source_chapters, *item.source_chapters])
+        if not self._role_design_item_needs_voice(item):
+            item.voices = []
         for voice in item.voices:
             voice.role_name = extract_item.name
         for appearance in item.appearances:
@@ -798,7 +840,7 @@ class PregenWorkflow:
                 missing.append("intro")
             if not item.appearances:
                 missing.append("appearances")
-            if not item.voices:
+            if self._role_design_item_needs_voice(item) and not item.voices:
                 missing.append("voices")
             raise ValueError(f"role_design for {item.name} is missing required fields: {', '.join(missing)}")
 
@@ -819,6 +861,9 @@ class PregenWorkflow:
         role.intro = item.intro
         role.design_path = design_path or role.design_path
         role.personality = item.personality
+        role.role_tier = item.role_tier or role.role_tier
+        role.has_dialogue = item.has_dialogue
+        role.visual_reuse_required = item.visual_reuse_required
         role.importance = item.importance
         role.aliases = self._dedupe_texts(item.aliases)
         role.episode_keys = self._dedupe_texts(item.episode_keys)
@@ -833,12 +878,21 @@ class PregenWorkflow:
             if prop.owner_role_id != role_id
         }
 
-        self._apply_role_voice_design_output(
-            state,
-            RoleVoiceDesignOutput(role_voices=item.voices),
-            speech_provider=speech_provider,
-            preserve_assets=preserve_assets,
-        )
+        if self._role_design_item_needs_voice(item):
+            self._apply_role_voice_design_output(
+                state,
+                RoleVoiceDesignOutput(role_voices=item.voices),
+                speech_provider=speech_provider,
+                preserve_assets=preserve_assets,
+            )
+        else:
+            role.voice_summary = None
+            role.voice_name = None
+            role.voice_type = None
+            role.voice_resource_id = None
+            role.voice_model_family = None
+            role.voice_selection_reason = None
+            role.audio = {}
         role = state.roles[role_id]
 
         for appearance_item in item.appearances:
@@ -945,8 +999,17 @@ class PregenWorkflow:
     def _role_node_runner(self, node_name: str) -> RoleNodeBase:
         return build_role_node_runners(self)[node_name]
 
+    async def _run_role_extract_primary(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._role_node_runner("role_extract_primary").run(project_dir, state)
+
+    async def _run_role_extract_functional(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._role_node_runner("role_extract_functional").run(project_dir, state)
+
     async def _run_role_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._role_node_runner("role_extract").run(project_dir, state)
+
+    async def _run_ambient_entity_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._role_node_runner("ambient_entity_extract").run(project_dir, state)
 
     async def _run_role_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._role_node_runner("role_design").run(project_dir, state)

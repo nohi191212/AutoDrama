@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import json
 
-from autodrama.core.schemas import ProjectState, RoleDesignOutput, RoleExtractItem, RoleExtractOutput, RoleVoiceDesignOutput
+from autodrama.core.schemas import (
+    AmbientEntityOutput,
+    ProjectState,
+    RoleDesignOutput,
+    RoleExtractItem,
+    RoleExtractOutput,
+    RoleVoiceDesignOutput,
+)
 from autodrama.providers.base import TextLLM
 from autodrama.utils.prompts import PromptStore
 
@@ -44,12 +51,15 @@ class RoleService:
         provider: TextLLM,
         *,
         novel_full: dict[str, str],
+        existing_roles: list[tuple[str, str]] | None = None,
     ) -> RoleExtractOutput:
+        existing_roles = existing_roles or []
         prompt = self.prompts.render(
             "role_extract",
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            existing_roles=self.format_json(existing_roles),
             episode_keys=", ".join(novel_full),
             visual_style_label=self.visual_style_label(state),
             visual_style_prompt=self.visual_style_prompt(state),
@@ -60,6 +70,99 @@ class RoleService:
             temperature=0.4,
             metadata={
                 "node_name": "role_extract",
+                "project_id": state.project_id,
+                "expected_keys": list(novel_full),
+                "existing_roles": existing_roles,
+            },
+        )
+
+    async def role_extract_primary(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        novel_full: dict[str, str],
+        existing_primary_roles: list[tuple[str, str]] | None = None,
+    ) -> RoleExtractOutput:
+        existing_primary_roles = existing_primary_roles or []
+        prompt = self.prompts.render(
+            "role_extract_primary",
+            title=state.title,
+            raw_script=state.raw_script,
+            novel_full=self.format_json(novel_full),
+            existing_primary_roles=self.format_json(existing_primary_roles),
+            episode_keys=", ".join(novel_full),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
+        )
+        return await provider.generate_json(
+            prompt,
+            RoleExtractOutput,
+            temperature=0.35,
+            metadata={
+                "node_name": "role_extract_primary",
+                "project_id": state.project_id,
+                "expected_keys": list(novel_full),
+                "existing_primary_roles": existing_primary_roles,
+            },
+        )
+
+    async def role_extract_functional(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        novel_full: dict[str, str],
+        primary_roles: list[tuple[str, str]],
+        existing_functional_roles: list[tuple[str, str]] | None = None,
+    ) -> RoleExtractOutput:
+        existing_functional_roles = existing_functional_roles or []
+        prompt = self.prompts.render(
+            "role_extract_functional",
+            title=state.title,
+            raw_script=state.raw_script,
+            novel_full=self.format_json(novel_full),
+            primary_roles=self.format_json(primary_roles),
+            functional_roles=self.format_json(existing_functional_roles),
+            episode_keys=", ".join(novel_full),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
+        )
+        return await provider.generate_json(
+            prompt,
+            RoleExtractOutput,
+            temperature=0.35,
+            metadata={
+                "node_name": "role_extract_functional",
+                "project_id": state.project_id,
+                "expected_keys": list(novel_full),
+                "primary_roles": primary_roles,
+                "functional_roles": existing_functional_roles,
+            },
+        )
+
+    async def ambient_entity_extract(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        novel_full: dict[str, str],
+    ) -> AmbientEntityOutput:
+        prompt = self.prompts.render(
+            "ambient_entity_extract",
+            title=state.title,
+            raw_script=state.raw_script,
+            novel_full=self.format_json(novel_full),
+            episode_keys=", ".join(novel_full),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
+        )
+        return await provider.generate_json(
+            prompt,
+            AmbientEntityOutput,
+            temperature=0.35,
+            metadata={
+                "node_name": "ambient_entity_extract",
                 "project_id": state.project_id,
                 "expected_keys": list(novel_full),
             },
@@ -122,6 +225,9 @@ class RoleService:
                         "name": role.name,
                         "intro": role.intro,
                         "personality": role.personality,
+                        "role_tier": role.role_tier,
+                        "has_dialogue": role.has_dialogue,
+                        "visual_reuse_required": role.visual_reuse_required,
                         "aliases": role.aliases,
                     }
                     for role in state.roles.values()

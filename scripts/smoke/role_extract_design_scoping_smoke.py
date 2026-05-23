@@ -43,30 +43,39 @@ class RoleScopedTextProvider:
     ):
         metadata = metadata or {}
         node_name = metadata.get("node_name")
-        if node_name not in {"role_extract", "role_design"}:
+        if node_name not in {"role_extract_primary", "role_extract_functional", "role_design"}:
             return await self.fake.generate_json(prompt, schema, temperature=temperature, metadata=metadata)
 
-        if node_name == "role_extract":
+        if node_name == "role_extract_functional":
+            return schema.model_validate({"roles": []})
+
+        if node_name == "role_extract_primary":
             return schema.model_validate(
                 {
                     "roles": [
                         {
                             "name": "林舟",
+                            "role_tier": "primary",
                             "aliases": ["男主"],
                             "importance": "lead",
                             "episode_keys": ["episode_001"],
                             "source_chapters": ["第1章"],
                             "brief": "二十八岁职场青年，合同事件中的反击者。",
                             "appearance_notes": ["短发", "身形偏瘦"],
+                            "has_dialogue": True,
+                            "visual_reuse_required": True,
                         },
                         {
                             "name": "苏晚",
+                            "role_tier": "primary",
                             "aliases": ["女主"],
                             "importance": "main",
                             "episode_keys": ["episode_002"],
                             "source_chapters": ["第2章"],
                             "brief": "二十六岁数据分析师，提供证据线索。",
                             "appearance_notes": ["气质清冷", "身形修长"],
+                            "has_dialogue": True,
+                            "visual_reuse_required": True,
                         },
                     ]
                 }
@@ -87,6 +96,9 @@ class RoleScopedTextProvider:
                         "intro": f"{role_name}是{gender_desc}，在对应章节中承担明确剧情功能。",
                         "personality": "冷静、敏锐、克制",
                         "aliases": ["男主"] if role_name == "林舟" else ["女主"],
+                        "role_tier": "primary",
+                        "has_dialogue": True,
+                        "visual_reuse_required": True,
                         "importance": "lead" if role_name == "林舟" else "main",
                         "episode_keys": episode_keys,
                         "source_chapters": source_chapters,
@@ -154,7 +166,11 @@ async def main_async() -> int:
     require("episode_001，雨夜办公室" not in su_prompt, "苏晚 prompt leaked episode_001 full text")
 
     role_extract = json.loads((project_dir / "assets" / "json" / "nodes" / "role_extract.json").read_text(encoding="utf-8"))
+    require((project_dir / "assets" / "json" / "nodes" / "role_extract_primary.json").exists(), "primary role output missing")
+    require((project_dir / "assets" / "json" / "nodes" / "role_extract_functional.json").exists(), "functional role output missing")
+    require((project_dir / "assets" / "json" / "nodes" / "ambient_entity_extract.json").exists(), "ambient entity output missing")
     require(role_extract["roles"][0]["source_chapters"] == ["第1章"], "role_extract missing source_chapters")
+    require(role_extract["roles"][0]["role_tier"] == "primary", "role_extract missing primary role_tier")
     require(state.roles["role_林舟"].episode_keys == ["episode_001"], "林舟 episode_keys mismatch")
     require(state.roles["role_苏晚"].episode_keys == ["episode_002"], "苏晚 episode_keys mismatch")
     require(state.roles["role_林舟"].source_chapters == ["第1章"], "林舟 source_chapters mismatch")
@@ -162,11 +178,15 @@ async def main_async() -> int:
     lin_role_path = project_dir / "assets" / "json" / "roles" / "role_林舟.json"
     require(lin_role_path.exists(), "Per-role design JSON was not written")
     lin_role_payload = json.loads(lin_role_path.read_text(encoding="utf-8"))
-    require(lin_role_payload["node_name"] == "role_design", "Unexpected per-role node_name")
-    require(lin_role_payload["content"]["name"] == "林舟", "Per-role content name mismatch")
-    require(lin_role_payload["content"]["appearances"][0]["prompt"], "Per-role appearance prompt missing")
+    require(lin_role_payload["role_name"] == "林舟", "Per-role role_name mismatch")
+    require(lin_role_payload["design"]["name"] == "林舟", "Per-role design name mismatch")
+    require(lin_role_payload["design"]["appearances"][0]["prompt"], "Per-role appearance prompt missing")
     state_payload = json.loads((project_dir / "state.json").read_text(encoding="utf-8"))
-    state_role = state_payload["roles"]["role_林舟"]
+    require(
+        state_payload["roles"]["林舟"] == "assets/json/roles/role_林舟.json",
+        "State role ref mismatch",
+    )
+    state_role = lin_role_payload["state_role"]
     require(state_role["design_path"] == "assets/json/roles/role_林舟.json", "State role design_path mismatch")
     require("prompt" not in state_role["appearances"]["base"], "State role appearance should not keep prompt")
     require("intro_video_prompt" not in state_role["appearances"]["base"], "State role appearance should not keep video prompt")

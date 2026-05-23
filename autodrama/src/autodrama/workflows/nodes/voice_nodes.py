@@ -486,6 +486,9 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
     ) -> ProjectState:
         generated: list[RoleVoiceGenerationItem] = []
         for role in state.roles.values():
+            if not self.workflow._role_needs_voice(role):
+                self.logger.info("role_voice_generation skipped functional role without dialogue: %s", role.name)
+                continue
             if role.audio.get("normal") is None:
                 raise ValueError(f"Cannot generate role voice for {role.name}: missing normal voice design")
             role_voice = self.role_synthesis_voice(provider, role)
@@ -521,6 +524,9 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
     ) -> ProjectState:
         generated: list[RoleVoiceGenerationItem] = []
         for role in state.roles.values():
+            if not self.workflow._role_needs_voice(role):
+                self.logger.info("role_voice_generation skipped functional role without dialogue: %s", role.name)
+                continue
             normal_audio = role.audio.get("normal")
             if normal_audio is None:
                 raise ValueError(f"Cannot generate role voice for {role.name}: missing normal voice design")

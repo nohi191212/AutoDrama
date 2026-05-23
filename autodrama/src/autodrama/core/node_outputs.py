@@ -1,4 +1,5 @@
 from autodrama.core.schemas import (
+    AmbientEntityOutput,
     BGMDesignOutput,
     DynamicAssetSolidificationOutput,
     LayoutDedupeReviewOutput,
@@ -27,6 +28,7 @@ from autodrama.core.schemas import (
 )
 
 __all__ = [
+    "AmbientEntityOutput",
     "BGMDesignOutput",
     "DynamicAssetSolidificationOutput",
     "LayoutDedupeReviewOutput",

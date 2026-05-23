@@ -34,6 +34,9 @@ class ProjectLayout:
     def dynamic_assets_index_path(self, project_dir: Path) -> Path:
         return project_dir / "assets" / "json" / "assets" / "dynamic_assets.json"
 
+    def ambient_entities_path(self, project_dir: Path) -> Path:
+        return project_dir / "assets" / "json" / "assets" / "ambient_entities.json"
+
     def script_content_path(self, project_dir: Path, category: str, episode_key: str) -> Path:
         return project_dir / "assets" / "json" / "scripts" / category / f"{episode_key}.json"
 

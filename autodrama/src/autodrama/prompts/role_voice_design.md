@@ -18,7 +18,9 @@
 # 要求
 
 - `role_name` 必须填写角色设定中的 `name` 原文，例如“林浩”；不要填写角色 ID、字典键、`role_林浩` 这类内部标识。
-- 每个主要角色至少生成 `normal` 音色。
+- `role_tier=primary` 的主要角色至少生成 `normal` 音色。
+- `role_tier=functional` 且 `has_dialogue=false` 的功能角色不要生成声音。
+- `role_tier=functional` 且 `has_dialogue=true` 的功能角色只生成必要的基础音色，通常一个 `normal` 即可。
 - 如果剧本中存在明显情绪变化，可以为角色额外生成 `angry`、`sad`、`happy`、`tense`、`whisper` 或 `other`。
 - 每个角色必须从“可用音色列表”里选择一个最适合的音色，并在该角色的每条声音设计中填写同一个 `voice_name`、`voice_type`、`voice_resource_id` 和 `voice_selection_reason`。
 - `voice_type` 必须逐字复制可用音色列表中的 `voice_type`，`voice_resource_id` 必须逐字复制同一条音色的 `resource_id`；不能修改、翻译、缩写或自造。
