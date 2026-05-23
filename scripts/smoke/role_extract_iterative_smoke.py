@@ -44,6 +44,8 @@ class SplitRoleExtractProvider:
         self.primary_existing_by_call: list[list[tuple[str, str]]] = []
         self.functional_primary_by_call: list[list[tuple[str, str]]] = []
         self.functional_existing_by_call: list[list[tuple[str, str]]] = []
+        self.ambient_primary_by_call: list[list[tuple[str, str]]] = []
+        self.ambient_functional_by_call: list[list[tuple[str, str]]] = []
         self.prompts_by_node: dict[str, list[str]] = {
             "role_extract_primary": [],
             "role_extract_functional": [],
@@ -124,6 +126,8 @@ class SplitRoleExtractProvider:
 
         self.prompts_by_node[node_name].append(prompt)
         if node_name == "ambient_entity_extract":
+            self.ambient_primary_by_call.append(tuple_list(metadata.get("primary_roles", [])))
+            self.ambient_functional_by_call.append(tuple_list(metadata.get("functional_roles", [])))
             return schema.model_validate(
                 {
                     "entities": [
@@ -238,6 +242,23 @@ async def main_async() -> int:
     require(
         [item["name"] for item in ambient_entities["entities"]] == ["围观修士"],
         f"unexpected ambient entities: {ambient_entities}",
+    )
+    require(
+        provider.ambient_primary_by_call
+        == [
+            [
+                ("沈烬", "被逐出宗门的少年剑修，在山门禁阵前寻找师父失踪线索。"),
+                ("云蘅", "灵药峰弟子，暗中把禁阵残片交给沈烬。"),
+                ("玄霄真人", "沈烬失踪的师父，其线索牵动山门禁阵和后续冲突。"),
+                ("赤焰魔君", "暗中设局的核心反派，持续影响沈烬与青霄宗的冲突。"),
+            ]
+        ],
+        f"ambient extract did not receive primary roles: {provider.ambient_primary_by_call}",
+    )
+    require(
+        provider.ambient_functional_by_call
+        == [[("山门守卫", "守在青霄宗山门前的无名弟子，持令牌阻拦沈烬入山。")]],
+        f"ambient extract did not receive functional roles: {provider.ambient_functional_by_call}",
     )
     require(state.budget.used_text_calls >= 8, "split role/ambient extraction calls were not counted as text calls")
 

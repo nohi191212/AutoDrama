@@ -198,6 +198,14 @@ class RoleNodeBase:
             raise FileNotFoundError(f"{node_name} output is missing; run pregen until role_extract first")
         return RoleExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
+    def save_role_extract_progress(
+        self,
+        project_dir: Path,
+        node_name: str,
+        roles: list[RoleExtractItem],
+    ) -> None:
+        self.repo.save_node_output(project_dir, node_name, RoleExtractOutput(roles=roles))
+
 
 class RolePrimaryExtractNode(RoleNodeBase):
     name = "role_extract_primary"
@@ -238,6 +246,7 @@ class RolePrimaryExtractNode(RoleNodeBase):
                 output_roles=output_roles,
                 episode_keys=episode_keys,
             )
+            self.save_role_extract_progress(project_dir, self.name, roles)
             self.logger.info(
                 "role_extract_primary iteration %d/%d returned=%d new=%d total=%d",
                 iteration,
@@ -320,6 +329,7 @@ class RoleFunctionalExtractNode(RoleNodeBase):
                 output_roles=output_roles,
                 episode_keys=episode_keys,
             )
+            self.save_role_extract_progress(project_dir, self.name, roles)
             self.logger.info(
                 "role_extract_functional iteration %d/%d returned=%d new=%d total=%d",
                 iteration,
@@ -407,10 +417,14 @@ class AmbientEntityExtractNode(RoleNodeBase):
         episode_keys = self.expected_episode_keys(state)
         expected = set(episode_keys)
         self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        primary_output = self.load_role_extract_node_output(project_dir, "role_extract_primary")
+        functional_output = self.load_role_extract_node_output(project_dir, "role_extract_functional")
         output = await self.role_service.ambient_entity_extract(
             state,
             provider,
             novel_full=self.novel_full_contents(project_dir, state, episode_keys),
+            primary_roles=self._role_tuples(primary_output.roles),
+            functional_roles=self._role_tuples(functional_output.roles),
         )
 
         seen_names: set[str] = set()

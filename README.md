@@ -342,6 +342,7 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/shot_selector_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/prop_episode_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/metadata_convergence_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_iterative_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_partial_persistence_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_design_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/functional_role_asset_policy_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_appearance_portrait_sequence_smoke.py

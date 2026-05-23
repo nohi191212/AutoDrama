@@ -143,12 +143,16 @@ class RoleService:
         provider: TextLLM,
         *,
         novel_full: dict[str, str],
+        primary_roles: list[tuple[str, str]],
+        functional_roles: list[tuple[str, str]],
     ) -> AmbientEntityOutput:
         prompt = self.prompts.render(
             "ambient_entity_extract",
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            primary_roles=self.format_json(primary_roles),
+            functional_roles=self.format_json(functional_roles),
             episode_keys=", ".join(novel_full),
             visual_style_label=self.visual_style_label(state),
             visual_style_prompt=self.visual_style_prompt(state),
@@ -161,6 +165,8 @@ class RoleService:
                 "node_name": "ambient_entity_extract",
                 "project_id": state.project_id,
                 "expected_keys": list(novel_full),
+                "primary_roles": primary_roles,
+                "functional_roles": functional_roles,
             },
         )
 

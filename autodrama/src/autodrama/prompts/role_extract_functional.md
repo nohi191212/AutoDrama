@@ -74,11 +74,15 @@
 - 如果全本完整小说中已经没有新增功能角色，输出空的 `roles` 数组。
 - `role_tier` 固定为 `functional`。
 - `name` 必须使用小说原名或稳定身份称谓；不要用“路人”“众人”“某修士”“一个人”这类泛称。
-- `episode_keys` 必须填写该角色实际出现或被明确提到并影响剧情的集，只能使用输入中存在的 episode_key。
+- `episode_keys` 是必填字段，必须是非空数组；数组值只能从“全集 episode_key 列表”逐字复制，例如 `episode_001`。
+- 判断 `episode_keys` 时只依据“完整小说正文”这个 JSON 的外层 episode key；功能角色出现在哪个 episode 的正文里，就填写哪个 episode key。
+- 如果无法从完整小说正文中确定某个功能角色对应的 episode_key，不要输出这个角色，留到后续轮次或人工处理；不要输出空数组、`null`、中文章节名或自造 key。
+- 如果功能角色跨多集出现，按输入 episode_key 顺序列出所有实际出现或被明确提到并影响剧情的集。
 - `source_chapters` 填写该角色出现的源章节范围或章节号；无法判断时填空数组。
 - `brief` 用一句话说明该人物的短期场景功能和与主要角色的互动。
 - `appearance_notes` 只写短期分镜需要稳定识别的基础外观、身份装束、持物或动作特征。
 - `has_dialogue` 表示此角色在已给正文中是否有明确对白、喊话、传音或命令。
 - `visual_reuse_required` 只在该功能角色需要跨镜头保持稳定外观时为 `true`，否则为 `false`。
 - 不要输出 `importance` 字段，不要使用 `lead/main/supporting/minor/background` 五级分类。
+- 输出前自检：每个 `roles[]` 条目都必须有非空 `name`、`role_tier="functional"`、非空 `episode_keys`，且 `episode_keys` 全部属于全集 episode_key 列表；不满足就删除该条目。
 - 输出必须符合调用方提供的 JSON schema。
