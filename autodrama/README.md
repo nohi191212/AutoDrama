@@ -35,9 +35,9 @@ Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at m
 
 `role_extract` reads the complete `novel_full` set and records each role's `episode_keys` and source chapter references. `role_design` then runs one role at a time, loading only that role's `novel_full` episodes, and writes identity, relationships, voice design, appearance prompt, intro video prompt, and role-bound prop design into the active role state.
 
-`prop_extract` reads the complete `novel_full` set and records global prop candidates/statuses without image prompts. `prop_design` then runs one prop/status at a time, loading only the relevant `novel_full` episodes and writing per-prop design JSON. `prop_generation` renders the final prop images from those saved prompts.
+`prop_extract` reads the complete `novel_full` set and records global prop candidates/statuses without image prompts. Each extracted prop/status is written to its own `assets/json/props/{prop_id}.json` file. `prop_design` then runs one prop/status at a time, loading only the relevant `novel_full` episodes and updating that per-prop JSON with design content while preserving `extract_content`. `prop_generation` renders the final prop images from those saved prompts.
 
-`run pregen --only role_design --episodes ...` is supported for role-scoped reruns. It only regenerates roles whose `role_extract.episode_keys` include the selected episode(s), while preserving existing role designs outside that episode when `assets/json/nodes/role_design.json` exists.
+`run pregen --only role_design --episodes ...` is supported for role-scoped reruns. It only regenerates roles whose `role_extract.episode_keys` include the selected episode(s), while preserving existing role designs outside that episode when `assets/json/nodes/role_design.json` exists. `prop_design` and `prop_generation` also support `--episodes`; they rerun only props whose `episode_keys` intersect the selected episode(s). The legacy `--only prop_image_generation` name is accepted as an alias for `prop_generation`.
 
 Dynamic shot-level assets now live in a separate workflow:
 
@@ -60,8 +60,8 @@ The default production routing in `config.yaml` is:
 - `music.bgm: minimax` for `bgm_generation` with MiniMax `music-2.6`.
 - `music.shot_bgm: elevenlabs` for per-shot ElevenLabs Music Compose audio.
 - `audio.speech: volcengine` for role TTS.
-- `image.role`, `image.prop`, `image.layout`, and `image.ref_frame`: `rightcode` for GPT Image 2 static assets and shot-level reference frames with reference images.
-- Set `image.ref_frame: volcengine` to switch shot-level reference frames back to Seedream 5.0 lite.
+- `image.role`, `image.prop`, `image.layout`, and `image.ref_frame`: `toapi` for GPT Image 2 static assets and shot-level reference frames with reference images. ToAPI defaults to role design sheets at `16:9`/`4K`, role portraits at `1:2`/`4K`, props at `1:1`/`2K`, layouts at `16:9`/`4K`, and reference frames at `16:9`/`4K`; role generation creates the portrait first, then uses it as the reference for the role design sheet.
+- Set `image.ref_frame: volcengine` to switch shot-level reference frames back to Seedream 5.0 lite, or set image routes to `rightcode` to use the older RightCode GPT Image path.
 - `video.shot: volcengine` for shot videos.
 
 Volcengine TTS should keep `instruction_mode: none` unless a provider-level instruction carrier is verified. This prevents instruction-prefix text from being synthesized as speech.
@@ -210,6 +210,8 @@ Run exactly one node:
 
 ```powershell
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only role_voice_generation
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only prop_design --episodes 1 --force
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only prop_generation --episodes 1 --force
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only bgm_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only shot_bgm_generation --episodes 1
@@ -229,7 +231,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --episode
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
 
-`--episodes` is only meaningful for generation. Pregen currently rejects episode-scoped runs because static assets are project-level.
+For pregen, `--episodes` is supported only with `--only role_design`, `--only prop_design`, and `--only prop_generation` (or legacy alias `--only prop_image_generation`). Other static asset nodes are still project-level. For generation, `--episodes` selects the dynamic episodes to process.
 
 `--shots` accepts shot indexes, ranges, and shot ids inside selected episodes:
 
@@ -331,6 +333,7 @@ Do not use pytest in this repository. Use compile checks and focused smoke scrip
 D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/refactor_boundaries_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_design_scoping_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/prop_episode_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/only_node_episode_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/episode_serial_generation_smoke.py

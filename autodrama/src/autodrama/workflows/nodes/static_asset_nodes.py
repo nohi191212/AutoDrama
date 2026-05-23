@@ -156,6 +156,49 @@ class StaticAssetNodeBase:
         selected = set(cleaned)
         return [episode_key for episode_key in expected_keys if episode_key in selected]
 
+    def active_episode_keys(self, state: ProjectState) -> list[str]:
+        context = getattr(self.workflow, "_run_context", None)
+        has_selected_context = context is not None and getattr(context, "selected_episode_keys", None) is not None
+        if not has_selected_context and getattr(self.workflow, "_active_episode_keys", None) is None:
+            return []
+        getter = getattr(self.workflow, "_active_episode_keys_in_order", None)
+        if callable(getter):
+            return list(getter(state))
+        active_episode_keys = getattr(self.workflow, "_active_episode_keys", None)
+        if active_episode_keys is None:
+            return []
+        active = {str(key) for key in active_episode_keys}
+        return [episode_key for episode_key in self.expected_episode_keys(state) if episode_key in active]
+
+    @staticmethod
+    def intersects_active_episode_keys(episode_keys: list[str], active_episode_keys: list[str]) -> bool:
+        if not active_episode_keys:
+            return True
+        return bool(set(episode_keys).intersection(active_episode_keys))
+
+    def prop_matches_active_episode_keys(self, prop: Prop, active_episode_keys: list[str]) -> bool:
+        if not active_episode_keys:
+            return True
+        return self.intersects_active_episode_keys(self.dedupe_texts(prop.episode_keys), active_episode_keys)
+
+    def target_prop_extract_items(
+        self,
+        extract_items: list[PropExtractItem],
+        state: ProjectState,
+        active_episode_keys: list[str],
+    ) -> list[PropExtractItem]:
+        if not active_episode_keys:
+            return extract_items
+        target_items: list[PropExtractItem] = []
+        for item in extract_items:
+            try:
+                episode_keys = self.prop_episode_keys(item.name, item.episode_keys, state, label="prop_extract")
+            except ValueError:
+                continue
+            if self.intersects_active_episode_keys(episode_keys, active_episode_keys):
+                target_items.append(item)
+        return target_items
+
     @classmethod
     def prop_extract_key(cls, item: PropExtractItem | PropDesignItem) -> str:
         return cls.prop_asset_id(item.name, item.status)
@@ -472,6 +515,7 @@ class RoleAppearanceDesignNode(StaticAssetNodeBase):
                 name=item.name,
                 desc=item.desc,
                 prompt=item.prompt,
+                portrait_prompt=item.portrait_prompt,
                 role_bound_prop_ids=role_bound_prop_ids,
                 intro_video_prompt=item.intro_video_prompt,
             )
@@ -487,6 +531,28 @@ class RoleAppearanceDesignNode(StaticAssetNodeBase):
 
 class RoleAppearanceGenerationNode(StaticAssetNodeBase):
     name = "role_appearance_generation"
+
+    @staticmethod
+    def role_portrait_asset_id(appearance: RoleAppearance) -> str:
+        return f"{appearance.id}_portrait"
+
+    @staticmethod
+    def role_portrait_prompt(role, appearance: RoleAppearance) -> str:
+        prompt = str(appearance.portrait_prompt or "").strip()
+        if prompt:
+            return prompt
+
+        desc = str(appearance.desc or "").strip()
+        design_prompt = str(appearance.prompt or "").strip()
+        return (
+            "生成单人竖幅人物特写，1:2 构图，只展示头部、肩颈到上胸的近景或半身近景，"
+            "保持后续角色设计图需要复用的稳定身份、年龄感、性别呈现、脸型、五官、眼神、发型、肤色、"
+            "基础服装领口和材质气质。干净背景，无其他人物，无右侧道具设计图，无三视图拼版，"
+            "无字幕、水印或文字标识，不要夸张畸变。"
+            f"\n角色：{role.name}。"
+            f"\n人物稳定外观：{desc or '-'}"
+            f"\n原角色设计图提示词依据：{design_prompt}"
+        )
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("role")
@@ -508,7 +574,7 @@ class RoleAppearanceGenerationNode(StaticAssetNodeBase):
             for role in state.roles.values()
             for appearance in role.appearances.values()
         ]
-        self.logger.info("node=role_appearance_generation total_images=%d", len(appearances))
+        self.logger.info("node=role_appearance_generation total_images=%d", len(appearances) * 2)
         reuse_existing_assets = not bool(getattr(self.workflow, "_force_pregen", False))
         for role, appearance in appearances:
             if not appearance.prompt:
@@ -516,6 +582,74 @@ class RoleAppearanceGenerationNode(StaticAssetNodeBase):
                     f"Cannot generate role appearance for {role.name}/{appearance.name}: "
                     "missing prompt in role design JSON"
                 )
+            portrait_asset_id = self.role_portrait_asset_id(appearance)
+            portrait_prompt = self.role_portrait_prompt(role, appearance)
+            portrait_output_path = self.layout.image_asset_path(project_dir, "roles", portrait_asset_id)
+            existing_portrait_path = self.layout.existing_project_file(project_dir, appearance.portrait_image_asset_path)
+            if existing_portrait_path is None:
+                existing_portrait_path = self.layout.existing_project_file(project_dir, portrait_output_path)
+            if reuse_existing_assets and existing_portrait_path is not None:
+                portrait_asset_path = existing_portrait_path
+                portrait_provider = str(appearance.portrait_provider or getattr(provider, "name", "unknown"))
+                portrait_model = str(appearance.portrait_model or getattr(provider, "model", ""))
+                portrait_request_id = appearance.portrait_request_id
+                portrait_usage = appearance.portrait_usage
+                portrait_raw_response = {"resumed_from_existing_file": True}
+                self.logger.info("%s already exists, reused from %s", portrait_asset_id, portrait_asset_path)
+            else:
+                self.logger.info(
+                    "%s generating role portrait image for %s/%s",
+                    portrait_asset_id,
+                    role.name,
+                    appearance.name,
+                )
+                portrait_result = await provider.generate_image(
+                    portrait_prompt,
+                    metadata={
+                        "node_name": "role_portrait_generation",
+                        "project_id": state.project_id,
+                        "role_id": role.id,
+                        "appearance_id": appearance.id,
+                        "asset_id": portrait_asset_id,
+                        "asset_type": "role_portrait",
+                    },
+                )
+                portrait_asset_path = await self.media_store.write_first_generated_image(
+                    project_dir,
+                    portrait_output_path,
+                    portrait_result,
+                )
+                portrait_provider = portrait_result.provider
+                portrait_model = portrait_result.model
+                portrait_request_id = portrait_result.request_id
+                portrait_usage = portrait_result.usage
+                portrait_raw_response = portrait_result.raw_response
+                self.logger.info("%s generated successfully, saved in %s", portrait_asset_id, portrait_asset_path)
+
+            appearance.portrait_prompt = portrait_prompt
+            appearance.portrait_image_asset_id = portrait_asset_id
+            appearance.portrait_image_asset_path = portrait_asset_path
+            appearance.portrait_image_generation_status = "generated"
+            appearance.portrait_provider = portrait_provider
+            appearance.portrait_model = portrait_model
+            appearance.portrait_request_id = portrait_request_id
+            appearance.portrait_usage = portrait_usage
+            generated.append(
+                StaticAssetGenerationItem(
+                    asset_id=portrait_asset_id,
+                    asset_type="role_portrait",
+                    owner_id=role.id,
+                    name=f"{role.name}/{appearance.name}/portrait",
+                    prompt=portrait_prompt,
+                    asset_path=portrait_asset_path,
+                    provider=portrait_provider,
+                    model=portrait_model,
+                    request_id=portrait_request_id,
+                    usage=portrait_usage,
+                    raw_response=portrait_raw_response,
+                )
+            )
+
             image_output_path = self.layout.image_asset_path(project_dir, "roles", appearance.id)
             existing_image_path = self.layout.existing_project_file(project_dir, appearance.design_image_asset_path)
             if existing_image_path is None:
@@ -530,8 +664,26 @@ class RoleAppearanceGenerationNode(StaticAssetNodeBase):
                 self.logger.info("%s already exists, reused from %s", appearance.id, asset_path)
             else:
                 self.logger.info("%s generating role appearance image for %s/%s", appearance.id, role.name, appearance.name)
+                from autodrama.providers.base import AssetRef
+
+                refs = None
+                if getattr(provider, "supports_reference_images", False) and portrait_asset_path:
+                    refs = [
+                        AssetRef(
+                            id=portrait_asset_id,
+                            type="image",
+                            path=str(project_dir / portrait_asset_path),
+                            metadata={
+                                "asset_type": "role_portrait",
+                                "role_id": role.id,
+                                "role_name": role.name,
+                                "reference_for": appearance.id,
+                            },
+                        )
+                    ]
                 result = await provider.generate_image(
                     appearance.prompt,
+                    refs=refs,
                     metadata={
                         "node_name": self.name,
                         "project_id": state.project_id,
@@ -700,6 +852,7 @@ class PropExtractNode(StaticAssetNodeBase):
             if key in seen_keys:
                 raise ValueError(f"prop_extract returned duplicated prop/status: {item.name} ({item.status})")
             seen_keys.add(key)
+            self.prop_designs.save_extract_item(project_dir, item)
 
         state.metadata["prop_extract"] = output.model_dump(mode="json")
         state.budget.used_text_calls += 1
@@ -719,6 +872,20 @@ class PropDesignNode(StaticAssetNodeBase):
         )
         extract_output = self.prop_designs.load_extract_output(project_dir)
 
+        active_episode_keys = self.active_episode_keys(state)
+        target_extract_items = self.target_prop_extract_items(extract_output.props, state, active_episode_keys)
+        if active_episode_keys:
+            self.logger.info(
+                "prop_design episode-scoped rerun episodes=%s target_props=%s",
+                ",".join(active_episode_keys),
+                ",".join(item.name for item in target_extract_items) or "-",
+            )
+            if not target_extract_items:
+                self.logger.warning(
+                    "prop_design found no props appearing in selected episodes: %s",
+                    ",".join(active_episode_keys),
+                )
+
         existing_props = dict(state.props)
         role_bound_props = self.role_bound_props(state)
         for prop in role_bound_props.values():
@@ -734,7 +901,8 @@ class PropDesignNode(StaticAssetNodeBase):
         force_pregen = bool(getattr(self.workflow, "_force_pregen", False))
         designed_by_key: dict[str, PropDesignItem] = {}
         existing_output = self.prop_designs.load_existing_output(project_dir)
-        if existing_output is not None and not force_pregen:
+        should_keep_existing = existing_output is not None and (not force_pregen or bool(active_episode_keys))
+        if existing_output is not None and should_keep_existing:
             for existing_item in existing_output.props:
                 try:
                     existing_item.episode_keys = self.prop_episode_keys(
@@ -750,7 +918,7 @@ class PropDesignNode(StaticAssetNodeBase):
                 self.apply_prop_design_item(project_dir, state, existing_item, existing_props=existing_props)
 
         all_prop_extracts = [item.model_dump(mode="json") for item in extract_output.props]
-        for extract_item in extract_output.props:
+        for extract_item in target_extract_items:
             key = self.prop_extract_key(extract_item)
             if key in designed_by_key and not force_pregen:
                 self.logger.info("prop_design %s already exists, skipped", extract_item.name)
@@ -798,6 +966,8 @@ class PropDesignNode(StaticAssetNodeBase):
 
         final_items = self.ordered_prop_design_items(extract_output.props, designed_by_key)
         state.metadata["prop_design_generation_mode"] = "per_prop_recursive"
+        state.metadata["prop_design_active_episode_keys"] = active_episode_keys
+        state.metadata["prop_design_target_prop_names"] = [item.name for item in target_extract_items]
         state.metadata["prop_design_designed_prop_names"] = [item.name for item in final_items]
         self.repo.save_node_output(project_dir, self.name, PropDesignOutput(props=final_items))
         return state
@@ -814,9 +984,33 @@ class PropGenerationNode(StaticAssetNodeBase):
             getattr(provider, "model", "-"),
         )
         generated: list[StaticAssetGenerationItem] = []
-        props = self.ordered_props_for_generation(list(state.props.values()))
-        normal_props_by_base = self.normal_props_by_variant_base(props)
+        active_episode_keys = self.active_episode_keys(state)
+        all_props = self.ordered_props_for_generation(list(state.props.values()))
+        props = [
+            prop
+            for prop in all_props
+            if self.prop_matches_active_episode_keys(prop, active_episode_keys)
+        ]
+        normal_props_by_base = self.normal_props_by_variant_base(all_props)
+        if active_episode_keys:
+            self.logger.info(
+                "node=prop_generation episode-scoped rerun episodes=%s target_images=%d",
+                ",".join(active_episode_keys),
+                len(props),
+            )
         self.logger.info("node=prop_generation total_images=%d", len(props))
+        generated_by_asset_id: dict[str, StaticAssetGenerationItem] = {}
+        if active_episode_keys:
+            path = self.layout.node_output_path(project_dir, self.name)
+            if path.exists():
+                try:
+                    existing_output = StaticAssetGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
+                    generated_by_asset_id = {
+                        item.asset_id: item
+                        for item in existing_output.generated_assets
+                    }
+                except Exception as exc:
+                    self.logger.warning("prop_generation ignored invalid existing node output %s: %s", path, exc)
         for prop in props:
             prompt = self.prop_prompt_for_generation(project_dir, prop)
             refs = None
@@ -861,8 +1055,21 @@ class PropGenerationNode(StaticAssetNodeBase):
                     raw_response=result.raw_response,
                 )
             )
+            generated_by_asset_id[prop.id] = generated[-1]
             self.logger.info("%s generated successfully, saved in %s", prop.id, asset_path)
-        self.repo.save_node_output(project_dir, self.name, StaticAssetGenerationOutput(generated_assets=generated))
+        if active_episode_keys and generated_by_asset_id:
+            ordered_generated = [
+                generated_by_asset_id[prop.id]
+                for prop in all_props
+                if prop.id in generated_by_asset_id
+            ]
+        else:
+            ordered_generated = generated
+        self.repo.save_node_output(
+            project_dir,
+            self.name,
+            StaticAssetGenerationOutput(generated_assets=ordered_generated),
+        )
         return state
 
 

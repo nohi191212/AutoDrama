@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+SRC_DIR = ROOT_DIR / "autodrama" / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from autodrama.config import ProviderSettings, RuntimeSettings, load_settings  # noqa: E402
+from autodrama.providers.base import AssetRef  # noqa: E402
+from autodrama.providers.router import ProviderRouter  # noqa: E402
+from autodrama.providers.toapi.image.gpt_image import ToAPIImageProvider  # noqa: E402
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def main() -> int:
+    settings = ProviderSettings(
+        base_url="https://toapis.com",
+        api_key_env="sk-smoke-test",
+        models={
+            "image": "gpt-image-2",
+            "role_design": "gpt-image-2",
+            "role_portrait": "gpt-image-2",
+        },
+        options={
+            "resolution": "4K",
+            "size": "16:9",
+            "role_design_size": "16:9",
+            "role_design_resolution": "4K",
+            "role_portrait_size": "1:2",
+            "role_portrait_resolution": "4K",
+            "prop_size": "1:1",
+            "prop_resolution": "2K",
+            "layout_size": "16:9",
+            "layout_resolution": "4K",
+            "ref_frame_size": "16:9",
+            "ref_frame_resolution": "4K",
+            "n": 1,
+        },
+    )
+    provider = ToAPIImageProvider(settings, RuntimeSettings())
+
+    portrait_payload = provider.build_payload(
+        "portrait prompt",
+        metadata={"node_name": "role_portrait_generation"},
+    )
+    require(portrait_payload["size"] == "1:2", f"Unexpected portrait size: {portrait_payload['size']}")
+    require(portrait_payload["resolution"] == "4K", f"Unexpected portrait resolution: {portrait_payload['resolution']}")
+
+    design_payload = provider.build_payload(
+        "design prompt",
+        refs=[AssetRef(id="portrait", type="image", url="https://example.invalid/portrait.png")],
+        metadata={"node_name": "role_appearance_generation"},
+    )
+    require(design_payload["size"] == "16:9", f"Unexpected role design size: {design_payload['size']}")
+    require(design_payload["resolution"] == "4K", f"Unexpected role design resolution: {design_payload['resolution']}")
+    require(
+        design_payload.get("reference_images") == ["https://example.invalid/portrait.png"],
+        f"Unexpected role design refs: {design_payload.get('reference_images')}",
+    )
+
+    prop_payload = provider.build_payload(
+        "prop prompt",
+        metadata={"node_name": "prop_generation"},
+    )
+    require(prop_payload["size"] == "1:1", f"Unexpected prop size: {prop_payload['size']}")
+    require(prop_payload["resolution"] == "2K", f"Unexpected prop resolution: {prop_payload['resolution']}")
+
+    layout_payload = provider.build_payload(
+        "layout prompt",
+        metadata={"node_name": "layout_image_generation"},
+    )
+    require(layout_payload["size"] == "16:9", f"Unexpected layout size: {layout_payload['size']}")
+    require(layout_payload["resolution"] == "4K", f"Unexpected layout resolution: {layout_payload['resolution']}")
+
+    ref_frame_payload = provider.build_payload(
+        "ref frame prompt",
+        refs=[AssetRef(id="reference", type="image", url="https://example.invalid/reference.png")],
+        metadata={"node_name": "ref_frame_generation"},
+    )
+    require(ref_frame_payload["size"] == "16:9", f"Unexpected ref frame size: {ref_frame_payload['size']}")
+    require(ref_frame_payload["resolution"] == "4K", f"Unexpected ref frame resolution: {ref_frame_payload['resolution']}")
+
+    app_settings = load_settings(ROOT_DIR / "config.yaml.example")
+    routed_provider = ProviderRouter(app_settings).image("role")
+    require(isinstance(routed_provider, ToAPIImageProvider), f"Expected ToAPI role image provider; got {type(routed_provider)}")
+
+    output_dir = ROOT_DIR / ".tmp" / "smoke" / "toapi_image_payload"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "payloads.json"
+    output_path.write_text(
+        json.dumps(
+            {
+                "portrait": portrait_payload,
+                "design": design_payload,
+                "prop": prop_payload,
+                "layout": layout_payload,
+                "ref_frame": ref_frame_payload,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    print("toapi_image_payload_smoke=ok")
+    print(f"portrait={portrait_payload['size']} {portrait_payload['resolution']}")
+    print(f"design={design_payload['size']} {design_payload['resolution']}")
+    print(f"prop={prop_payload['size']} {prop_payload['resolution']}")
+    print(f"layout={layout_payload['size']} {layout_payload['resolution']}")
+    print(f"ref_frame={ref_frame_payload['size']} {ref_frame_payload['resolution']}")
+    print(f"payloads_path={output_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from autodrama.core.schemas import Prop, PropDesignItem, PropDesignOutput, PropExtractOutput
+from autodrama.core.ids import normalize_id, slugify
+from autodrama.core.schemas import Prop, PropDesignItem, PropDesignOutput, PropExtractItem, PropExtractOutput
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
@@ -29,6 +30,19 @@ class PropDesignRepository:
     def item_relative_path(self, project_dir: Path, prop_id: str) -> str:
         return self.layout.project_relative(project_dir, self.item_path(project_dir, prop_id))
 
+    @staticmethod
+    def prop_status_key(value: object) -> str:
+        status = str(value or "normal").strip().lower()
+        return slugify(status, fallback="normal").lower() or "normal"
+
+    @classmethod
+    def prop_asset_id(cls, name: str, status: object) -> str:
+        prop_id = normalize_id("prop", name)
+        status_key = cls.prop_status_key(status)
+        if status_key != "normal" and not prop_id.endswith(f"_{status_key}"):
+            prop_id = f"{prop_id}_{status_key}"
+        return prop_id
+
     def load_extract_output(self, project_dir: Path) -> PropExtractOutput:
         path = self.extract_output_path(project_dir)
         if not path.exists():
@@ -36,6 +50,40 @@ class PropDesignRepository:
                 "prop_extract output is missing; run pregen --only prop_extract before prop_design"
             )
         return PropExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def save_extract_item(self, project_dir: Path, item: PropExtractItem) -> str:
+        prop_id = self.prop_asset_id(item.name, item.status)
+        path = self.item_path(project_dir, prop_id)
+        extract_content = item.model_dump(mode="json")
+
+        payload: dict[str, Any] = {}
+        if path.exists():
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+
+        is_design_payload = payload.get("node_name") == "prop_design" or payload.get("source") == "prop_design"
+        if is_design_payload:
+            payload.update(
+                {
+                    "prop_id": prop_id,
+                    "prop_name": item.name,
+                    "source_prop_extract_path": "assets/json/nodes/prop_extract.json",
+                    "extract_content": extract_content,
+                }
+            )
+        else:
+            payload = {
+                "node_name": "prop_extract",
+                "prop_id": prop_id,
+                "prop_name": item.name,
+                "source": "prop_extract",
+                "content": extract_content,
+                "source_prop_extract_path": "assets/json/nodes/prop_extract.json",
+            }
+
+        self.repo.write_json(path, payload)
+        return self.layout.project_relative(project_dir, path)
 
     @staticmethod
     def load_design_item(path: Path) -> PropDesignItem:
@@ -104,6 +152,20 @@ class PropDesignRepository:
             payload.update(extra_payload)
 
         path = self.item_path(project_dir, prop.id)
+        extract_content: dict[str, Any] | None = None
+        if path.exists():
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing_extract = loaded.get("extract_content")
+                if isinstance(existing_extract, dict):
+                    extract_content = existing_extract
+                elif loaded.get("node_name") == "prop_extract":
+                    existing_content = loaded.get("content")
+                    if isinstance(existing_content, dict):
+                        extract_content = existing_content
+        if extract_content is not None:
+            payload["extract_content"] = extract_content
+
         self.repo.write_json(path, payload)
         return self.layout.project_relative(project_dir, path)
 

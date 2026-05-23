@@ -14,14 +14,14 @@ if str(SRC_DIR) not in sys.path:
 
 from autodrama.config import load_settings  # noqa: E402
 from autodrama.providers.base import AssetRef  # noqa: E402
-from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider  # noqa: E402
 from autodrama.providers.router import ProviderRouter  # noqa: E402
+from autodrama.providers.toapi.image.gpt_image import ToAPIImageProvider  # noqa: E402
 from autodrama.providers.volcengine.image.seedream import VolcengineSeedreamImageProvider  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Verify ref-frame image routing supports RightCode GPT Image 2 and Seedream payloads."
+        description="Verify ref-frame image routing supports ToAPI GPT Image 2 and Seedream payloads."
     )
     parser.add_argument("--config", default=str(ROOT_DIR / "config.yaml.example"))
     return parser
@@ -43,24 +43,27 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = load_settings(args.config)
     image_path = write_reference_image()
-    refs = [AssetRef(id="reference", type="image", path=str(image_path))]
+    toapi_refs = [AssetRef(id="reference", type="image", url="https://example.invalid/reference.png")]
+    local_refs = [AssetRef(id="reference", type="image", path=str(image_path))]
     metadata = {"node_name": "ref_frame_generation"}
 
     default_provider = ProviderRouter(settings).image("ref_frame")
-    if not isinstance(default_provider, RightCodeImageProvider):
-        raise AssertionError(f"Expected default ref_frame provider to be RightCode; got {type(default_provider)}")
-    rightcode_payload = default_provider.build_payload(
+    if not isinstance(default_provider, ToAPIImageProvider):
+        raise AssertionError(f"Expected default ref_frame provider to be ToAPI; got {type(default_provider)}")
+    toapi_payload = default_provider.build_payload(
         "生成 9:16 竖屏短剧参考帧，保持人物、场景和道具与参考图一致。",
-        refs=refs,
+        refs=toapi_refs,
         metadata=metadata,
     )
-    if rightcode_payload["model"] != settings.providers["rightcode"].models["image"]:
-        raise AssertionError(f"Unexpected RightCode model: {rightcode_payload['model']}")
-    if rightcode_payload["size"] != settings.providers["rightcode"].options["ref_frame_size"]:
-        raise AssertionError(f"Unexpected RightCode ref frame size: {rightcode_payload['size']}")
-    rightcode_images = rightcode_payload.get("image")
-    if not isinstance(rightcode_images, list) or not rightcode_images[0].startswith("data:image/png;base64,"):
-        raise AssertionError("RightCode ref-frame reference image was not encoded as data URL list")
+    if toapi_payload["model"] != settings.providers["toapi"].models["image"]:
+        raise AssertionError(f"Unexpected ToAPI model: {toapi_payload['model']}")
+    if toapi_payload["size"] != settings.providers["toapi"].options["ref_frame_size"]:
+        raise AssertionError(f"Unexpected ToAPI ref frame size: {toapi_payload['size']}")
+    if toapi_payload["resolution"] != settings.providers["toapi"].options["ref_frame_resolution"]:
+        raise AssertionError(f"Unexpected ToAPI ref frame resolution: {toapi_payload['resolution']}")
+    toapi_images = toapi_payload.get("reference_images")
+    if toapi_images != ["https://example.invalid/reference.png"]:
+        raise AssertionError(f"ToAPI ref-frame reference image was not sent as URL list: {toapi_images}")
 
     seedream_settings = settings.model_copy(deep=True)
     seedream_settings.routing.setdefault("image", {})["ref_frame"] = "volcengine"
@@ -69,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         raise AssertionError(f"Expected Seedream ref_frame provider; got {type(seedream_provider)}")
     seedream_payload = seedream_provider.build_payload(
         "生成 9:16 竖屏短剧参考帧，保持人物、场景和道具与参考图一致。",
-        refs=refs,
+        refs=local_refs,
         metadata=metadata,
     )
     if seedream_payload["model"] != settings.providers["volcengine"].models["seedream_5_lite"]:
@@ -83,9 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     output_path.write_text(
         json.dumps(
             {
-                "rightcode": {
-                    **rightcode_payload,
-                    "image": ["<base64 data URL omitted>"],
+                "toapi": {
+                    **toapi_payload,
                 },
                 "seedream": {
                     **seedream_payload,
@@ -99,7 +101,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print("ref_frame_image_provider_payload_smoke=ok")
-    print(f"default_provider={default_provider.name} model={rightcode_payload['model']} size={rightcode_payload['size']}")
+    print(
+        f"default_provider={default_provider.name} model={toapi_payload['model']} "
+        f"size={toapi_payload['size']} resolution={toapi_payload['resolution']}"
+    )
     print(f"alternate_provider={seedream_provider.name} model={seedream_payload['model']} size={seedream_payload['size']}")
     print(f"payloads_path={output_path}")
     return 0

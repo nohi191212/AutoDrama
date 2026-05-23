@@ -97,6 +97,17 @@ async def run_smoke() -> None:
     provider = RecordingTextProvider()
     workflow = PregenWorkflow(repo=Repo(), router=Router(provider))
     state = await workflow._run_prop_extract(project_dir, state)
+
+    extract_item_path = project_dir / "assets" / "json" / "props" / "prop_被调包的合同.json"
+    extract_payload = json.loads(extract_item_path.read_text(encoding="utf-8"))
+    if extract_payload.get("node_name") != "prop_extract":
+        raise AssertionError(f"Prop extract JSON has wrong node_name: {extract_payload}")
+    extract_content = extract_payload.get("content") or {}
+    if extract_content.get("name") != "被调包的合同":
+        raise AssertionError(f"Prop extract JSON has wrong content: {extract_payload}")
+    if "prompt" in extract_content:
+        raise AssertionError(f"Prop extract JSON unexpectedly contains prompt: {extract_payload}")
+
     state = await workflow._run_prop_design(project_dir, state)
 
     prop_extract_prompt = provider.prompts_by_node.get("prop_extract", "")
@@ -129,6 +140,10 @@ async def run_smoke() -> None:
     design_path = project_dir / prop.design_path
     payload = json.loads(design_path.read_text(encoding="utf-8"))
     content = payload.get("content") or {}
+    if payload.get("node_name") != "prop_design":
+        raise AssertionError(f"Prop design JSON has wrong node_name: {payload}")
+    if (payload.get("extract_content") or {}).get("name") != "被调包的合同":
+        raise AssertionError(f"Prop design JSON did not preserve extract_content: {payload}")
     if not content.get("prompt"):
         raise AssertionError(f"Prop design JSON did not keep prompt: {payload}")
     if content.get("episode_keys") != [episode_key]:

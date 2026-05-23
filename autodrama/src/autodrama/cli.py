@@ -25,6 +25,10 @@ def parse_shot_selectors(value: str | None) -> list[str] | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    pregen_only_choices = [*PREGEN_NODES]
+    if "prop_image_generation" not in pregen_only_choices:
+        pregen_only_choices.append("prop_image_generation")
+
     parser = argparse.ArgumentParser(prog="autodrama")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -44,14 +48,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--only",
         "--node",
         dest="only",
-        choices=PREGEN_NODES,
+        choices=pregen_only_choices,
         help="Run exactly one pre-generation node, even if it is already completed.",
     )
     pregen_parser.add_argument(
         "--episodes",
         "--episode",
         dest="episodes",
-        help="Only supported with pregen --only role_design; rerun roles whose role_extract episode_keys include these episodes.",
+        help=(
+            "Supported with pregen --only role_design, prop_design, or prop_generation "
+            "(legacy alias: prop_image_generation)."
+        ),
     )
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     pregen_parser.add_argument("--force", action="store_true")

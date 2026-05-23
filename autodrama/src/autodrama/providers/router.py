@@ -26,6 +26,7 @@ from autodrama.providers.local.mock.fake import (
 from autodrama.providers.minimax.music.music_26 import MiniMaxMusicProvider
 from autodrama.providers.registry import ProviderRegistry
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
+from autodrama.providers.toapi.image.gpt_image import ToAPIImageProvider
 from autodrama.providers.volcengine.audio.seed_icl import VolcengineVoiceProvider
 from autodrama.providers.volcengine.audio.seed_tts import VolcengineSeedTTSProvider
 from autodrama.providers.volcengine.image.seedream import VolcengineSeedreamImageProvider
@@ -76,6 +77,14 @@ class ProviderRouter:
             {"rightcode"},
             lambda provider_name, **_: RightCodeImageProvider(
                 self._settings_for(provider_name),
+                self.settings.runtime,
+            ),
+        )
+        self.registry.register(
+            "image",
+            {"toapi", "toapis"},
+            lambda provider_name, **_: ToAPIImageProvider(
+                self._settings_for("toapi" if provider_name == "toapis" else provider_name),
                 self.settings.runtime,
             ),
         )

@@ -55,6 +55,8 @@ from autodrama.workflows.selection import select_episode_keys
 
 
 PREGEN_NODES = PREGEN_NODE_NAMES
+EPISODE_SCOPED_PREGEN_ONLY_NODES = {"role_design", "prop_design", "prop_generation"}
+PREGEN_ONLY_ALIASES = {"prop_image_generation": "prop_generation"}
 
 
 class PregenWorkflow:
@@ -504,6 +506,8 @@ class PregenWorkflow:
         only: str | None = None,
         episode_keys: list[str] | None = None,
     ) -> ProjectState:
+        if only is not None:
+            only = PREGEN_ONLY_ALIASES.get(only, only)
         if until not in PREGEN_NODES:
             raise ValueError(f"Unsupported pregen stop node: {until}")
         if only is not None and only not in PREGEN_NODES:
@@ -514,9 +518,9 @@ class PregenWorkflow:
         self._apply_script_plan_settings(state)
         target_nodes = [only] if only else PREGEN_NODES[: PREGEN_NODES.index(until) + 1]
         selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
-        if selected_episode_keys and target_nodes != ["role_design"]:
+        if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
-                "--episodes is only supported for pregen --only role_design. "
+                "--episodes is only supported for pregen --only role_design, prop_design, or prop_generation. "
                 "Use run generation --only storyboard_generation --episodes ... for storyboard shots."
             )
         logger.info(
@@ -763,18 +767,26 @@ class PregenWorkflow:
                 name=appearance_name,
                 desc=appearance_item.desc,
                 prompt=appearance_item.prompt,
+                portrait_prompt=appearance_item.portrait_prompt,
                 role_bound_prop_ids=role_bound_prop_ids,
                 intro_video_prompt=appearance_item.intro_video_prompt,
             )
             if preserve_assets and existing_appearance is not None:
+                appearance.portrait_image_generation_status = existing_appearance.portrait_image_generation_status
                 appearance.design_image_generation_status = existing_appearance.design_image_generation_status
                 appearance.intro_video_generation_status = existing_appearance.intro_video_generation_status
+                appearance.portrait_image_asset_id = existing_appearance.portrait_image_asset_id
+                appearance.portrait_image_asset_path = existing_appearance.portrait_image_asset_path
                 appearance.design_image_asset_id = existing_appearance.design_image_asset_id
                 appearance.design_image_asset_path = existing_appearance.design_image_asset_path
                 appearance.intro_video_asset_id = existing_appearance.intro_video_asset_id
                 appearance.intro_video_asset_path = existing_appearance.intro_video_asset_path
                 appearance.asset_id = existing_appearance.asset_id
                 appearance.asset_path = existing_appearance.asset_path
+                appearance.portrait_provider = existing_appearance.portrait_provider
+                appearance.portrait_model = existing_appearance.portrait_model
+                appearance.portrait_request_id = existing_appearance.portrait_request_id
+                appearance.portrait_usage = existing_appearance.portrait_usage
                 appearance.provider = existing_appearance.provider
                 appearance.model = existing_appearance.model
                 appearance.request_id = existing_appearance.request_id

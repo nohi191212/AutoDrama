@@ -42,16 +42,24 @@ class RoleAppearance(BaseModel):
     name: str = "base"
     desc: str | None = Field(default=None, exclude=True)
     prompt: str | None = Field(default=None, exclude=True)
+    portrait_prompt: str | None = Field(default=None, exclude=True)
     role_bound_prop_ids: list[str] = Field(default_factory=list)
     intro_video_prompt: str | None = Field(default=None, exclude=True)
+    portrait_image_generation_status: str = "pending"
     design_image_generation_status: str = "pending"
     intro_video_generation_status: str = "pending"
+    portrait_image_asset_id: str | None = None
+    portrait_image_asset_path: str | None = None
     design_image_asset_id: str | None = None
     design_image_asset_path: str | None = None
     intro_video_asset_id: str | None = None
     intro_video_asset_path: str | None = None
     asset_id: str | None = None
     asset_path: str | None = None
+    portrait_provider: str | None = None
+    portrait_model: str | None = None
+    portrait_request_id: str | None = None
+    portrait_usage: dict[str, Any] = Field(default_factory=dict)
     provider: str | None = None
     model: str | None = None
     request_id: str | None = None
@@ -219,6 +227,7 @@ class RoleAppearanceDesignItem(BaseModel):
     name: str = "base"
     desc: str
     prompt: str
+    portrait_prompt: str | None = None
     role_bound_props: list[RoleBoundPropDesignItem] = Field(default_factory=list)
     intro_video_prompt: str | None = None
 
@@ -381,7 +390,7 @@ class BGMDesignOutput(BaseModel):
 
 class StaticAssetGenerationItem(BaseModel):
     asset_id: str
-    asset_type: Literal["role_appearance", "role_appearance_video", "prop", "layout", "bgm"]
+    asset_type: Literal["role_portrait", "role_appearance", "role_appearance_video", "prop", "layout", "bgm"]
     owner_id: str
     name: str
     prompt: str
