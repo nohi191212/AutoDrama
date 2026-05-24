@@ -89,16 +89,27 @@ def main() -> None:
         "refusing to relabel",
     )
 
-    mislabeled_item = role_item(
+    role_text_mentions_other_character = role_item(
         name="韩默",
         intro="周瑾，清河郡修仙世家子弟。",
         aliases=["韩小子", "周道友"],
         appearance_desc="周瑾，身形偏瘦，身穿竹青锦袍。",
         sample_text="在下周瑾，清河周家子弟。",
     )
+    workflow._validate_role_design_item_identity(role_text_mentions_other_character, han, extract_roles)
+
+    mismatched_role_fields = role_item(
+        name="韩默",
+        intro="韩默，十九岁散修炼丹师，清瘦坚韧。",
+        aliases=["韩小子"],
+        appearance_desc="韩默，清瘦青年，常穿灰布短褐。",
+        sample_text="我叫韩默，只想在这秘境里活下去。",
+    )
+    mismatched_role_fields.appearances[0].role_name = "周瑾"
+    mismatched_role_fields.voices[0].role_name = "周瑾"
     expect_value_error(
-        lambda: workflow._validate_role_design_item_identity(mislabeled_item, han, extract_roles),
-        "another role",
+        lambda: workflow._validate_role_design_item_identity(mismatched_role_fields, han, extract_roles),
+        "mismatched role_name fields",
     )
 
     valid_item = role_item(

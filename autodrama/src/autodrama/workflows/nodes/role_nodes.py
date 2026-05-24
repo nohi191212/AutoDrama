@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import (
@@ -20,6 +20,9 @@ from autodrama.services.role_service import RoleService
 from autodrama.services.script_service import ScriptService
 from autodrama.workflows.runner import WorkflowNode
 
+if TYPE_CHECKING:
+    from autodrama.workflows.pregen import PregenWorkflow
+
 ROLE_NODE_NAMES = [
     "role_extract_primary",
     "role_extract_functional",
@@ -33,7 +36,7 @@ class RoleNodeBase:
     def __init__(
         self,
         *,
-        workflow: Any,
+        workflow: PregenWorkflow,
         repo: ProjectRepository,
         router: Any,
         script_service: ScriptService,
