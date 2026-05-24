@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -9,6 +11,12 @@ from autodrama.core.schemas import (
     ProjectState,
     RoleDesignItem,
     RoleDesignOutput,
+    RoleDuplicateAuditOutput,
+    RoleDuplicateAuditReviewOutput,
+    RoleDuplicateMergeItem,
+    RoleEpisodeKeyAuditItem,
+    RoleEpisodeKeyAuditOutput,
+    RoleEpisodeKeyAuditReviewOutput,
     RoleExtractItem,
     RoleExtractOutput,
 )
@@ -27,6 +35,8 @@ ROLE_NODE_NAMES = [
     "role_extract_primary",
     "role_extract_functional",
     "role_extract",
+    "role_episode_key_audit",
+    "role_duplicate_audit",
     "ambient_entity_extract",
     "role_design",
 ]
@@ -424,6 +434,673 @@ class RoleExtractNode(RoleNodeBase):
         return state
 
 
+class RoleEpisodeKeyAuditNode(RoleNodeBase):
+    name = "role_episode_key_audit"
+    max_concurrency = 30
+
+    @staticmethod
+    def _merge_episode_keys(
+        existing: list[object],
+        additions: list[object],
+        expected_order: list[str],
+    ) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for value in existing:
+            episode_key = str(value or "").strip()
+            if not episode_key or episode_key in seen:
+                continue
+            merged.append(episode_key)
+            seen.add(episode_key)
+        pending_additions: list[str] = []
+        pending_seen: set[str] = set()
+        for value in additions:
+            episode_key = str(value or "").strip()
+            if not episode_key or episode_key in pending_seen:
+                continue
+            pending_additions.append(episode_key)
+            pending_seen.add(episode_key)
+        pending_addition_set = set(pending_additions)
+        for episode_key in expected_order:
+            if episode_key in pending_addition_set and episode_key not in seen:
+                merged.append(episode_key)
+                seen.add(episode_key)
+        for episode_key in pending_additions:
+            if episode_key not in seen:
+                merged.append(episode_key)
+                seen.add(episode_key)
+        return merged
+
+    @staticmethod
+    def _merge_texts(existing: list[object], additions: list[object]) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for value in [*existing, *additions]:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                continue
+            merged.append(text)
+            seen.add(text)
+        return merged
+
+    @staticmethod
+    def _role_item_key(item: RoleExtractItem) -> str:
+        return RoleNodeBase.role_name_key(item.name)
+
+    def _load_role_json(self, project_dir: Path, item: RoleExtractItem) -> tuple[Path, dict[str, Any]]:
+        role_id = normalize_id("role", item.name)
+        path = self.role_designs.item_path(project_dir, role_id)
+        if path.exists():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return path, payload
+        relative_path = self.role_designs.save_extract_item(project_dir, item)
+        path = project_dir / relative_path
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return path, payload
+
+    def _role_json_for_prompt(self, payload: dict[str, Any], item: RoleExtractItem) -> dict[str, Any]:
+        role_json = dict(payload)
+        role_json.setdefault("role_name", item.name)
+        role_json.setdefault("extract", item.model_dump(mode="json"))
+        return role_json
+
+    async def _audit_role(
+        self,
+        *,
+        provider: Any,
+        project_dir: Path,
+        state: ProjectState,
+        item: RoleExtractItem,
+        novel_full: dict[str, str],
+        expected_episode_keys: list[str],
+        semaphore: asyncio.Semaphore,
+    ) -> RoleEpisodeKeyAuditItem:
+        role_id = normalize_id("role", item.name)
+        role_path, role_payload = self._load_role_json(project_dir, item)
+        role_json = self._role_json_for_prompt(role_payload, item)
+        async with semaphore:
+            review = await self.role_service.role_episode_key_audit(
+                state,
+                provider,
+                role_json=role_json,
+                novel_full=novel_full,
+                episode_keys=expected_episode_keys,
+            )
+        return self._audit_item_from_review(
+            project_dir=project_dir,
+            role_id=role_id,
+            role_name=item.name,
+            role_path=role_path,
+            item=item,
+            review=review,
+            expected_episode_keys=expected_episode_keys,
+        )
+
+    def _audit_item_from_review(
+        self,
+        *,
+        project_dir: Path,
+        role_id: str,
+        role_name: str,
+        role_path: Path,
+        item: RoleExtractItem,
+        review: RoleEpisodeKeyAuditReviewOutput,
+        expected_episode_keys: list[str],
+    ) -> RoleEpisodeKeyAuditItem:
+        expected = set(expected_episode_keys)
+        existing_episode_keys = [str(key) for key in item.episode_keys]
+        existing_episode_set = set(existing_episode_keys)
+        missing_episode_keys = self.dedupe_texts(review.missing_episode_keys)
+        missing_episode_set = set(missing_episode_keys)
+        ignored_episode_keys = [
+            episode_key
+            for episode_key in missing_episode_keys
+            if episode_key not in expected or episode_key in existing_episode_set
+        ]
+        added_episode_keys = [
+            episode_key
+            for episode_key in expected_episode_keys
+            if episode_key in missing_episode_set
+            and episode_key not in existing_episode_set
+        ]
+        existing_source_chapters = [str(value) for value in item.source_chapters]
+        existing_source_chapter_set = set(existing_source_chapters)
+        added_source_chapters = []
+        if added_episode_keys:
+            added_source_chapters = [
+                text
+                for text in self.dedupe_texts(review.missing_source_chapters)
+                if text not in existing_source_chapter_set
+            ]
+        return RoleEpisodeKeyAuditItem(
+            role_id=role_id,
+            role_name=role_name,
+            role_json_path=self.repo.layout.project_relative(project_dir, role_path),
+            original_episode_keys=existing_episode_keys,
+            missing_episode_keys=missing_episode_keys,
+            added_episode_keys=added_episode_keys,
+            final_episode_keys=self._merge_episode_keys(existing_episode_keys, added_episode_keys, expected_episode_keys),
+            original_source_chapters=existing_source_chapters,
+            added_source_chapters=added_source_chapters,
+            final_source_chapters=self._merge_texts(existing_source_chapters, added_source_chapters),
+            ignored_episode_keys=ignored_episode_keys,
+            evidence=review.evidence,
+            confidence=review.confidence,
+        )
+
+    def _apply_audit_item_to_role_json(
+        self,
+        project_dir: Path,
+        audit_item: RoleEpisodeKeyAuditItem,
+        expected_episode_keys: list[str],
+    ) -> None:
+        if not audit_item.added_episode_keys:
+            return
+        if not audit_item.role_json_path:
+            return
+        path = project_dir / audit_item.role_json_path
+        if not path.exists():
+            return
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return
+        for key in ("extract", "design", "state_role"):
+            section = payload.get(key)
+            if not isinstance(section, dict):
+                continue
+            section["episode_keys"] = self._merge_episode_keys(
+                list(section.get("episode_keys") or []),
+                audit_item.added_episode_keys,
+                expected_episode_keys,
+            )
+            section["source_chapters"] = self._merge_texts(
+                list(section.get("source_chapters") or []),
+                audit_item.added_source_chapters,
+            )
+        self.repo.write_json(path, payload)
+
+    def _apply_audit_items_to_extract_output(
+        self,
+        output: RoleExtractOutput,
+        audit_by_name: dict[str, RoleEpisodeKeyAuditItem],
+        expected_episode_keys: list[str],
+    ) -> RoleExtractOutput:
+        updated_roles: list[RoleExtractItem] = []
+        for item in output.roles:
+            audit_item = audit_by_name.get(self.role_name_key(item.name))
+            if audit_item is None:
+                updated_roles.append(item)
+                continue
+            updated_roles.append(
+                item.model_copy(
+                    update={
+                        "episode_keys": self._merge_episode_keys(
+                            item.episode_keys,
+                            audit_item.added_episode_keys,
+                            expected_episode_keys,
+                        ),
+                        "source_chapters": self._merge_texts(
+                            item.source_chapters,
+                            audit_item.added_source_chapters,
+                        ),
+                    }
+                )
+            )
+        return RoleExtractOutput(roles=updated_roles)
+
+    def _update_extract_node_output_if_exists(
+        self,
+        project_dir: Path,
+        node_name: str,
+        audit_by_name: dict[str, RoleEpisodeKeyAuditItem],
+        expected_episode_keys: list[str],
+    ) -> None:
+        path = self.repo.layout.node_output_path(project_dir, node_name)
+        if not path.exists():
+            return
+        output = RoleExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        self.repo.save_node_output(
+            project_dir,
+            node_name,
+            self._apply_audit_items_to_extract_output(output, audit_by_name, expected_episode_keys),
+        )
+
+    def _update_role_design_output_if_exists(
+        self,
+        project_dir: Path,
+        audit_by_name: dict[str, RoleEpisodeKeyAuditItem],
+        expected_episode_keys: list[str],
+    ) -> None:
+        path = self.role_designs.design_output_path(project_dir)
+        if not path.exists():
+            return
+        output = RoleDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        updated_items: list[RoleDesignItem] = []
+        for item in output.roles:
+            audit_item = audit_by_name.get(self.role_name_key(item.name))
+            if audit_item is None:
+                updated_items.append(item)
+                continue
+            updated_items.append(
+                item.model_copy(
+                    update={
+                        "episode_keys": self._merge_episode_keys(
+                            item.episode_keys,
+                            audit_item.added_episode_keys,
+                            expected_episode_keys,
+                        ),
+                        "source_chapters": self._merge_texts(
+                            item.source_chapters,
+                            audit_item.added_source_chapters,
+                        ),
+                    }
+                )
+            )
+        self.repo.save_node_output(project_dir, "role_design", RoleDesignOutput(roles=updated_items))
+
+    def _apply_audit_items(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        audit_items: list[RoleEpisodeKeyAuditItem],
+        expected_episode_keys: list[str],
+    ) -> None:
+        audit_by_name = {
+            self.role_name_key(item.role_name): item
+            for item in audit_items
+            if item.added_episode_keys
+        }
+        if not audit_by_name:
+            return
+
+        self._update_extract_node_output_if_exists(project_dir, "role_extract_primary", audit_by_name, expected_episode_keys)
+        self._update_extract_node_output_if_exists(project_dir, "role_extract_functional", audit_by_name, expected_episode_keys)
+        self._update_extract_node_output_if_exists(project_dir, "role_extract", audit_by_name, expected_episode_keys)
+        self._update_role_design_output_if_exists(project_dir, audit_by_name, expected_episode_keys)
+
+        for audit_item in audit_items:
+            if not audit_item.added_episode_keys:
+                continue
+            self._apply_audit_item_to_role_json(project_dir, audit_item, expected_episode_keys)
+            role = state.roles.get(audit_item.role_id)
+            if role is not None:
+                role.episode_keys = self._merge_episode_keys(role.episode_keys, audit_item.added_episode_keys, expected_episode_keys)
+                role.source_chapters = self._merge_texts(role.source_chapters, audit_item.added_source_chapters)
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("role")
+        self.logger.info(
+            "node=role_episode_key_audit provider=%s model=%s concurrency=%d",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+            self.max_concurrency,
+        )
+        expected_episode_keys = self.expected_episode_keys(state)
+        self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        novel_full = self.novel_full_contents(project_dir, state, expected_episode_keys)
+        extract_output = self.load_role_extract_node_output(project_dir, "role_extract")
+        if not extract_output.roles:
+            raise ValueError("role_episode_key_audit requires at least one role from role_extract")
+
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+        audit_items = await asyncio.gather(
+            *[
+                self._audit_role(
+                    provider=provider,
+                    project_dir=project_dir,
+                    state=state,
+                    item=item,
+                    novel_full=novel_full,
+                    expected_episode_keys=expected_episode_keys,
+                    semaphore=semaphore,
+                )
+                for item in extract_output.roles
+            ]
+        )
+        state.budget.used_text_calls += len(audit_items)
+        self._apply_audit_items(project_dir, state, list(audit_items), expected_episode_keys)
+        output = RoleEpisodeKeyAuditOutput(
+            concurrency=self.max_concurrency,
+            audited_roles=list(audit_items),
+        )
+        self.repo.save_node_output(project_dir, self.name, output)
+        state.metadata["role_episode_key_audit"] = {
+            "checked_roles": len(audit_items),
+            "updated_roles": sum(1 for item in audit_items if item.added_episode_keys),
+        }
+        self.repo.save_state(project_dir, state)
+        return state
+
+
+class RoleDuplicateAuditNode(RoleNodeBase):
+    name = "role_duplicate_audit"
+
+    @staticmethod
+    def _role_index_items(roles: list[RoleExtractItem]) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": item.name,
+                "aliases": item.aliases,
+                "role_tier": item.role_tier,
+                "episode_keys": item.episode_keys,
+                "source_chapters": item.source_chapters,
+                "brief": item.brief,
+                "appearance_notes": item.appearance_notes,
+                "has_dialogue": item.has_dialogue,
+                "visual_reuse_required": item.visual_reuse_required,
+            }
+            for item in roles
+        ]
+
+    @staticmethod
+    def _merge_episode_keys(existing: list[object], additions: list[object], expected_order: list[str]) -> list[str]:
+        return RoleEpisodeKeyAuditNode._merge_episode_keys(existing, additions, expected_order)
+
+    def _review_components(
+        self,
+        review: RoleDuplicateAuditReviewOutput,
+        roles: list[RoleExtractItem],
+    ) -> list[tuple[list[str], list[str], list[float]]]:
+        roles_by_key = {self.role_name_key(item.name): item for item in roles}
+        parent: dict[str, str] = {}
+        records: list[tuple[list[str], str | None, float | None]] = []
+
+        def find(key: str) -> str:
+            parent.setdefault(key, key)
+            if parent[key] != key:
+                parent[key] = find(parent[key])
+            return parent[key]
+
+        def union(left: str, right: str) -> None:
+            left_root = find(left)
+            right_root = find(right)
+            if left_root != right_root:
+                parent[right_root] = left_root
+
+        for group in review.duplicate_groups:
+            group_keys: list[str] = []
+            seen: set[str] = set()
+            for role_name in self.dedupe_texts(group.role_names):
+                role_key = self.role_name_key(role_name)
+                if role_key not in roles_by_key or role_key in seen:
+                    continue
+                group_keys.append(role_key)
+                seen.add(role_key)
+            if len(group_keys) < 2:
+                continue
+            records.append((group_keys, group.evidence, group.confidence))
+            for role_key in group_keys[1:]:
+                union(group_keys[0], role_key)
+
+        components: dict[str, set[str]] = {}
+        evidence_by_root: dict[str, list[str]] = {}
+        confidence_by_root: dict[str, list[float]] = {}
+        for group_keys, evidence, confidence in records:
+            root = find(group_keys[0])
+            bucket = components.setdefault(root, set())
+            bucket.update(group_keys)
+            if evidence:
+                evidence_by_root.setdefault(root, []).append(str(evidence).strip())
+            if confidence is not None:
+                confidence_by_root.setdefault(root, []).append(float(confidence))
+
+        result: list[tuple[list[str], list[str], list[float]]] = []
+        for root, keys in components.items():
+            if len(keys) < 2:
+                continue
+            result.append((list(keys), evidence_by_root.get(root, []), confidence_by_root.get(root, [])))
+        return result
+
+    def _merge_plan_from_review(
+        self,
+        review: RoleDuplicateAuditReviewOutput,
+        roles: list[RoleExtractItem],
+        expected_episode_keys: list[str],
+    ) -> tuple[dict[str, RoleExtractItem], set[str], list[RoleDuplicateMergeItem]]:
+        roles_by_key = {self.role_name_key(item.name): item for item in roles}
+        role_order = {self.role_name_key(item.name): index for index, item in enumerate(roles)}
+        merge_by_key: dict[str, RoleExtractItem] = {}
+        removed_keys: set[str] = set()
+        merge_items: list[RoleDuplicateMergeItem] = []
+
+        for group_keys, evidences, confidences in self._review_components(review, roles):
+            ordered_group_keys = sorted(group_keys, key=lambda key: role_order.get(key, 10**9))
+            base_key = min(
+                ordered_group_keys,
+                key=lambda key: (
+                    -len(self.dedupe_texts(roles_by_key[key].episode_keys)),
+                    role_order.get(key, 10**9),
+                ),
+            )
+            group_episode_keys: list[str] = []
+            original_episode_keys_by_role: dict[str, list[str]] = {}
+            for role_key in ordered_group_keys:
+                item = roles_by_key[role_key]
+                original_episode_keys_by_role[item.name] = list(item.episode_keys)
+                group_episode_keys.extend(item.episode_keys)
+            final_episode_keys = self._merge_episode_keys([], group_episode_keys, expected_episode_keys)
+            base_item = roles_by_key[base_key]
+            merge_by_key[base_key] = base_item.model_copy(update={"episode_keys": final_episode_keys})
+            for role_key in ordered_group_keys:
+                if role_key != base_key:
+                    removed_keys.add(role_key)
+            merge_items.append(
+                RoleDuplicateMergeItem(
+                    kept_role_name=base_item.name,
+                    removed_role_names=[roles_by_key[key].name for key in ordered_group_keys if key != base_key],
+                    original_episode_keys_by_role=original_episode_keys_by_role,
+                    final_episode_keys=final_episode_keys,
+                    evidence="；".join(self.dedupe_texts(evidences)) or None,
+                    confidence=min(confidences) if confidences else None,
+                )
+            )
+        return merge_by_key, removed_keys, merge_items
+
+    def _apply_merge_to_extract_output(
+        self,
+        output: RoleExtractOutput,
+        merge_by_key: dict[str, RoleExtractItem],
+        removed_keys: set[str],
+    ) -> RoleExtractOutput:
+        updated_roles: list[RoleExtractItem] = []
+        for item in output.roles:
+            role_key = self.role_name_key(item.name)
+            if role_key in removed_keys:
+                continue
+            updated_roles.append(merge_by_key.get(role_key, item))
+        return RoleExtractOutput(roles=updated_roles)
+
+    def _update_extract_node_output_if_exists(
+        self,
+        project_dir: Path,
+        node_name: str,
+        merge_by_key: dict[str, RoleExtractItem],
+        removed_keys: set[str],
+    ) -> RoleExtractOutput | None:
+        path = self.repo.layout.node_output_path(project_dir, node_name)
+        if not path.exists():
+            return None
+        output = RoleExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        updated_output = self._apply_merge_to_extract_output(output, merge_by_key, removed_keys)
+        self.repo.save_node_output(project_dir, node_name, updated_output)
+        return updated_output
+
+    def _update_role_design_output_if_exists(
+        self,
+        project_dir: Path,
+        merge_by_key: dict[str, RoleExtractItem],
+        removed_keys: set[str],
+    ) -> None:
+        path = self.role_designs.design_output_path(project_dir)
+        if not path.exists():
+            return
+        output = RoleDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        updated_items: list[RoleDesignItem] = []
+        for item in output.roles:
+            role_key = self.role_name_key(item.name)
+            if role_key in removed_keys:
+                continue
+            merged_extract = merge_by_key.get(role_key)
+            if merged_extract is None:
+                updated_items.append(item)
+                continue
+            updated_items.append(item.model_copy(update={"episode_keys": merged_extract.episode_keys}))
+        self.repo.save_node_output(project_dir, "role_design", RoleDesignOutput(roles=updated_items))
+
+    def _role_json_path_for_item(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: RoleExtractItem,
+    ) -> Path:
+        existing_refs = state.metadata.get("role_refs")
+        if isinstance(existing_refs, dict):
+            path_ref = existing_refs.get(item.name)
+            if isinstance(path_ref, str) and path_ref.strip():
+                path = Path(path_ref)
+                if not path.is_absolute():
+                    path = project_dir / path
+                if path.exists():
+                    return path
+        role_id = normalize_id("role", item.name)
+        path = self.role_designs.item_path(project_dir, role_id)
+        if path.exists():
+            return path
+        relative_path = self.role_designs.save_extract_item(project_dir, item)
+        return project_dir / relative_path
+
+    def _write_merged_role_json(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: RoleExtractItem,
+    ) -> str:
+        role_id = normalize_id("role", item.name)
+        path = self._role_json_path_for_item(project_dir, state, item)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Invalid role JSON: {path}")
+        payload["role_id"] = role_id
+        payload["role_name"] = item.name
+        payload["extract"] = item.model_dump(mode="json")
+        for section_name in ("design", "state_role"):
+            section = payload.get(section_name)
+            if isinstance(section, dict):
+                section["episode_keys"] = list(item.episode_keys)
+        self.repo.write_json(path, payload)
+        return self.repo.layout.project_relative(project_dir, path)
+
+    def _sync_state_after_merge(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        *,
+        final_roles: list[RoleExtractItem],
+        merge_by_key: dict[str, RoleExtractItem],
+        removed_keys: set[str],
+        removed_role_names: list[str],
+    ) -> None:
+        removed_roles = [
+            role
+            for role in state.roles.values()
+            if self.role_name_key(role.name) in removed_keys
+        ]
+        removed_role_ids = {role.id for role in removed_roles}
+        removed_role_ids.update(normalize_id("role", name) for name in removed_role_names)
+        removed_names = {role.name for role in removed_roles}
+        removed_names.update(removed_role_names)
+        for merge_item in merge_by_key.values():
+            role = state.roles.get(normalize_id("role", merge_item.name))
+            if role is not None:
+                role.episode_keys = list(merge_item.episode_keys)
+
+        for removed_name in removed_names:
+            state.roles.pop(normalize_id("role", removed_name), None)
+        if removed_role_ids:
+            state.props = {
+                prop_id: prop
+                for prop_id, prop in state.props.items()
+                if prop.owner_role_id not in removed_role_ids
+            }
+
+        role_refs: dict[str, str] = {}
+        for item in final_roles:
+            role_key = self.role_name_key(item.name)
+            if role_key in merge_by_key:
+                role_refs[item.name] = self._write_merged_role_json(project_dir, state, merge_by_key[role_key])
+            else:
+                role_refs[item.name] = self.repo.layout.project_relative(
+                    project_dir,
+                    self._role_json_path_for_item(project_dir, state, item),
+                )
+        state.metadata["role_refs"] = role_refs
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("role")
+        self.logger.info(
+            "node=role_duplicate_audit provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        expected_episode_keys = self.expected_episode_keys(state)
+        self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        novel_full = self.novel_full_contents(project_dir, state, expected_episode_keys)
+        extract_output = self.load_role_extract_node_output(project_dir, "role_extract")
+        if not extract_output.roles:
+            raise ValueError("role_duplicate_audit requires at least one role from role_extract")
+
+        review = await self.role_service.role_duplicate_audit(
+            state,
+            provider,
+            novel_full=novel_full,
+            role_index=self._role_index_items(extract_output.roles),
+        )
+        state.budget.used_text_calls += 1
+        merge_by_key, removed_keys, merge_items = self._merge_plan_from_review(
+            review,
+            extract_output.roles,
+            expected_episode_keys,
+        )
+
+        if merge_items:
+            self._update_extract_node_output_if_exists(project_dir, "role_extract_primary", merge_by_key, removed_keys)
+            self._update_extract_node_output_if_exists(project_dir, "role_extract_functional", merge_by_key, removed_keys)
+            final_extract = self._update_extract_node_output_if_exists(project_dir, "role_extract", merge_by_key, removed_keys)
+            if final_extract is None:
+                final_extract = self._apply_merge_to_extract_output(extract_output, merge_by_key, removed_keys)
+                self.repo.save_node_output(project_dir, "role_extract", final_extract)
+            self._update_role_design_output_if_exists(project_dir, merge_by_key, removed_keys)
+            self._sync_state_after_merge(
+                project_dir,
+                state,
+                final_roles=final_extract.roles,
+                merge_by_key=merge_by_key,
+                removed_keys=removed_keys,
+                removed_role_names=[
+                    role_name
+                    for item in merge_items
+                    for role_name in item.removed_role_names
+                ],
+            )
+        else:
+            final_extract = extract_output
+
+        output = RoleDuplicateAuditOutput(
+            checked_roles=len(extract_output.roles),
+            merged_groups=merge_items,
+            remaining_role_names=[item.name for item in final_extract.roles],
+        )
+        self.repo.save_node_output(project_dir, self.name, output)
+        state.metadata["role_duplicate_audit"] = {
+            "checked_roles": len(extract_output.roles),
+            "merged_groups": len(merge_items),
+            "removed_roles": sum(len(item.removed_role_names) for item in merge_items),
+        }
+        self.repo.save_state(project_dir, state)
+        return state
+
+
 class AmbientEntityExtractNode(RoleNodeBase):
     name = "ambient_entity_extract"
 
@@ -483,16 +1160,10 @@ class RoleDesignNode(RoleNodeBase):
         provider = self.router.text("role")
         speech_provider = None
         available_voices: list[dict[str, Any]] = []
-        try:
-            speech_provider = self.router.audio("speech")
-            available_voices = self.workflow._available_speakers_for_prompt(speech_provider)
-        except Exception as exc:
-            self.logger.warning("node=role_design could not load speech voice catalog: %s", exc)
         self.logger.info(
-            "node=role_design provider=%s model=%s available_voices=%d",
+            "node=role_design provider=%s model=%s voice_selection=deferred",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
-            len(available_voices),
         )
         extract_output = self.role_designs.load_extract_output(project_dir)
         if not extract_output.roles:
@@ -754,6 +1425,8 @@ def build_role_node_runners(workflow: Any) -> dict[str, RoleNodeBase]:
         RolePrimaryExtractNode.name: RolePrimaryExtractNode(**deps),
         RoleFunctionalExtractNode.name: RoleFunctionalExtractNode(**deps),
         RoleExtractNode.name: RoleExtractNode(**deps),
+        RoleEpisodeKeyAuditNode.name: RoleEpisodeKeyAuditNode(**deps),
+        RoleDuplicateAuditNode.name: RoleDuplicateAuditNode(**deps),
         AmbientEntityExtractNode.name: AmbientEntityExtractNode(**deps),
         RoleDesignNode.name: RoleDesignNode(**deps),
     }
@@ -771,6 +1444,8 @@ __all__ = [
     "AmbientEntityExtractNode",
     "ROLE_NODE_NAMES",
     "RoleDesignNode",
+    "RoleDuplicateAuditNode",
+    "RoleEpisodeKeyAuditNode",
     "RoleExtractNode",
     "RoleFunctionalExtractNode",
     "RolePrimaryExtractNode",

@@ -10,6 +10,7 @@ apikeys.yaml
 config.yaml
 outputs/
 .tmp/
+.assets/
 intpus/
 provider_docs/
 

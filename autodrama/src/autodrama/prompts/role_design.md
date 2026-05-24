@@ -19,7 +19,7 @@
 已完成角色的声音设计（仅用于保持音色区分度；不要把这里的内容当作剧情事实来源）：
 {{designed_role_voices}}
 
-可用音色列表（如果非空，必须从这里选择，不要编造）：
+可用音色列表（兼容旧输入；本节点不要从中选择具体 `voice_type`）：
 {{available_voices}}
 
 画面风格：{{visual_style_label}}
@@ -34,11 +34,11 @@
 - `name` 必须和“当前角色提取结果”的 `name` 完全一致；不要填写角色 ID 或内部标识。
 - 必须继承当前角色提取结果中的 `aliases`、`role_tier`、`has_dialogue`、`visual_reuse_required`、`episode_keys`、`source_chapters`，可以补充但不能删掉已知信息。
 - 只依据当前角色对应集/章节的完整小说正文、全部集/章节的小说剧情提要和全角色索引建立身份、关系、外观和道具；已完成角色的声音设计仅作为音色区分参考，不要引入与故事无关的新身份、新关系或新道具。
-- `role_tier=primary` 的主要角色要做完整设计：具体身份介绍、性格、人物关系、声音设计、外观设计、和角色强绑定的主要道具。
+- `role_tier=primary` 的主要角色要做完整设计：具体身份介绍、性格、人物关系、声音需求、外观设计、和角色强绑定的主要道具。
 - `role_tier=functional` 的功能角色要做轻量设计：重点说明短期场景功能、基础外观、必要持物或制服；不要扩写长期人物线、复杂关系网或过重道具系统。
 - 功能角色如果 `has_dialogue=false`，`voices` 可以输出空数组；如果 `has_dialogue=true`，至少输出一个 `normal` 音色。
 - 全角色索引用于确认其他角色的标准原名和边界；`relationships[].target_role_name` 必须使用索引中的原名，不要使用角色 ID。
-- 已完成角色的声音设计只用于避免当前角色音色、年龄感、性别感、语速和表演方式重复；不要复制其他角色的 `sample_text` 或身份描述。
+- 已完成角色的声音设计只用于避免当前角色声音需求、年龄感、性别感、语速和表演方式重复；不要复制其他角色的 `sample_text` 或身份描述。
 - 避免后期关键反转、结局、胜负结果或关键证据剧透；可以描述角色在故事前中期能稳定呈现的身份、气质和功能。
 - 输出必须符合调用方提供的 JSON schema。
 
@@ -53,9 +53,8 @@
 - `role_tier=primary` 的主要角色至少生成一个 `normal` 音色；如果剧情需要，可以额外生成 `angry`、`sad`、`happy`、`tense`、`whisper` 或 `other`。
 - `role_tier=functional` 且 `has_dialogue=false` 的功能角色不要生成声音，`voices` 输出空数组。
 - `role_tier=functional` 且 `has_dialogue=true` 的功能角色只生成必要的基础音色，通常一个 `normal` 即可，不要扩展多情绪音色，除非原文明确需要。
-- 如果“可用音色列表”非空，每条声音设计必须从列表中选择同一个最适合该角色的音色，并逐字复制 `voice_name`、`voice_type`、`voice_resource_id`；`voice_resource_id` 对应列表里的 `resource_id`。
-- 如果“可用音色列表”为空，不要编造 `voice_name`、`voice_type`、`voice_resource_id`，这些字段可以为空，但仍需写 `desc` 和 `sample_text`。
-- `desc` 面向 TTS/音色模型，描述年龄感、性别感、音色、语速、情绪、咬字特点。
+- 不要选择具体 provider 音色，不要填写或编造 `voice_name`、`voice_type`、`voice_resource_id`；这些字段可以为空。最终官方音色由后续 `voice_select` 节点根据全局音色画像和试听样例决定。
+- `desc` 面向后续 `voice_select` 和 TTS/音色模型，描述角色需要什么样的年龄感、性别感、音色、语速、情绪稳定性、咬字特点和表演方式。
 - `sample_text` 使用第一人称，格式为“身份自我介绍 + 可说出口的前期目标/态度”，约 60-120 个中文字符，不能涉及后期关键剧情、最终反转、关键证据、结局或胜负结果。
 - `sample_text` 必须像角色在试音时直接说出的一段话，不要写内心独白、心理活动、旁白说明或舞台提示；不要包含任何括号类字符，例如 `()`、`（）`、`[]`、`【】`、`{}`、`《》`。
 

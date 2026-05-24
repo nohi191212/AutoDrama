@@ -28,6 +28,8 @@ from autodrama.workflows.nodes.role_nodes import (  # noqa: E402
     AmbientEntityExtractNode,
     ROLE_NODE_NAMES,
     RoleDesignNode,
+    RoleDuplicateAuditNode,
+    RoleEpisodeKeyAuditNode,
     RoleExtractNode,
     RoleFunctionalExtractNode,
     RolePrimaryExtractNode,
@@ -49,6 +51,7 @@ from autodrama.workflows.nodes.static_asset_nodes import (  # noqa: E402
 from autodrama.workflows.nodes.voice_nodes import (  # noqa: E402
     VOICE_NODE_NAMES,
     RoleVoiceGenerationNode,
+    VoiceSelectNode,
 )
 from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow  # noqa: E402
 
@@ -90,6 +93,8 @@ def main() -> int:
         "role_extract_primary": RolePrimaryExtractNode,
         "role_extract_functional": RoleFunctionalExtractNode,
         "role_extract": RoleExtractNode,
+        "role_episode_key_audit": RoleEpisodeKeyAuditNode,
+        "role_duplicate_audit": RoleDuplicateAuditNode,
         "ambient_entity_extract": AmbientEntityExtractNode,
         "role_design": RoleDesignNode,
     }
@@ -140,6 +145,7 @@ def main() -> int:
         require(owner.asset_service is workflow.asset_service, f"{node_name} asset service dependency drifted")
 
     expected_voice_owners = {
+        "voice_select": VoiceSelectNode,
         "role_voice_generation": RoleVoiceGenerationNode,
     }
     for node_name in VOICE_NODE_NAMES:

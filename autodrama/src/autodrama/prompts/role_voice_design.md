@@ -12,9 +12,6 @@
 角色设定：
 {{roles}}
 
-可用音色列表（共 {{available_voice_count}} 个，必须从这里选择，不要编造）：
-{{available_voices}}
-
 # 要求
 
 - `role_name` 必须填写角色设定中的 `name` 原文，例如“林浩”；不要填写角色 ID、字典键、`role_林浩` 这类内部标识。
@@ -22,10 +19,9 @@
 - `role_tier=functional` 且 `has_dialogue=false` 的功能角色不要生成声音。
 - `role_tier=functional` 且 `has_dialogue=true` 的功能角色只生成必要的基础音色，通常一个 `normal` 即可。
 - 如果剧本中存在明显情绪变化，可以为角色额外生成 `angry`、`sad`、`happy`、`tense`、`whisper` 或 `other`。
-- 每个角色必须从“可用音色列表”里选择一个最适合的音色，并在该角色的每条声音设计中填写同一个 `voice_name`、`voice_type`、`voice_resource_id` 和 `voice_selection_reason`。
-- `voice_type` 必须逐字复制可用音色列表中的 `voice_type`，`voice_resource_id` 必须逐字复制同一条音色的 `resource_id`；不能修改、翻译、缩写或自造。
-- 音色选择要匹配角色年龄感、性别感、人物身份、性格、剧情语气和表演场景；如果角色有明显情绪样例，优先选择 `emotion_capable=true` 或 `supported_emotions` 覆盖需求的音色。
-- 同一角色的不同情绪样例仍然使用同一个音色；情绪差异只体现在 `emotion`、`desc` 和 `sample_text` 中。
+- 不要选择具体 provider 音色，不要填写或编造 `voice_name`、`voice_type`、`voice_resource_id`、`voice_selection_reason`；这些字段应为空或 null。
+- 具体官方音色由后续 `voice_select` 节点根据全局音色画像和试听样例决定，本节点只描述角色需要什么样的声音。
+- 同一角色的不同情绪样例应保持同一基础声音设定；情绪差异只体现在 `emotion`、`desc` 和 `sample_text` 中。
 - `desc` 应该直接面向音色/TTS 模型，例如年龄感、性别感、音色、语速、情绪、咬字特点。
 - `sample_text` 是后续声音设计/音色生成的参考文本，不是剧本对白。
 - `sample_text` 必须使用第一人称，格式为“身份自我介绍 + 可说出口的前期目标/态度”，参考：

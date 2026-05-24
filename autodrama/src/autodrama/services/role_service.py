@@ -6,6 +6,8 @@ from autodrama.core.schemas import (
     AmbientEntityOutput,
     ProjectState,
     RoleDesignOutput,
+    RoleDuplicateAuditReviewOutput,
+    RoleEpisodeKeyAuditReviewOutput,
     RoleExtractItem,
     RoleExtractOutput,
     RoleVoiceDesignOutput,
@@ -134,6 +136,60 @@ class RoleService:
                 "expected_keys": list(novel_full),
                 "primary_roles": primary_roles,
                 "functional_roles": existing_functional_roles,
+            },
+        )
+
+    async def role_episode_key_audit(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        role_json: dict[str, object],
+        novel_full: dict[str, str],
+        episode_keys: list[str],
+    ) -> RoleEpisodeKeyAuditReviewOutput:
+        prompt = self.prompts.render(
+            "role_episode_key_audit",
+            title=state.title,
+            role_json=self.format_json(role_json),
+            novel_full=self.format_json(novel_full),
+            episode_keys=", ".join(episode_keys),
+        )
+        return await provider.generate_json(
+            prompt,
+            RoleEpisodeKeyAuditReviewOutput,
+            temperature=0.2,
+            metadata={
+                "node_name": "role_episode_key_audit",
+                "project_id": state.project_id,
+                "expected_keys": episode_keys,
+                "role_name": role_json.get("role_name") or role_json.get("name"),
+            },
+        )
+
+    async def role_duplicate_audit(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        novel_full: dict[str, str],
+        role_index: list[dict[str, object]],
+    ) -> RoleDuplicateAuditReviewOutput:
+        prompt = self.prompts.render(
+            "role_duplicate_audit",
+            title=state.title,
+            novel_full=self.format_json(novel_full),
+            role_index=self.format_json(role_index),
+        )
+        return await provider.generate_json(
+            prompt,
+            RoleDuplicateAuditReviewOutput,
+            temperature=0.2,
+            metadata={
+                "node_name": "role_duplicate_audit",
+                "project_id": state.project_id,
+                "expected_keys": list(novel_full),
+                "role_count": len(role_index),
             },
         )
 

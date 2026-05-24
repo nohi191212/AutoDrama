@@ -266,19 +266,19 @@ class RoleVoiceItem(BaseModel):
     emotion: Literal["normal", "angry", "sad", "happy", "tense", "whisper", "other"] | str
     voice_name: str | None = Field(
         default=None,
-        description="The display name of the selected provider voice, copied from the available voice list.",
+        description="Legacy display name for a provider voice. New role_design output should usually leave this empty; voice_select binds the final provider voice.",
     )
     voice_type: str | None = Field(
         default=None,
-        description="The exact provider voice_type selected for this role. It must be copied from the available voice list.",
+        description="Legacy provider voice_type. New role_design output should usually leave this empty; voice_select binds the final provider voice_type.",
     )
     voice_resource_id: str | None = Field(
         default=None,
-        description="The resource_id/model resource for the selected voice_type, copied from the available voice list.",
+        description="Legacy resource_id for a selected provider voice. New role_design output should usually leave this empty.",
     )
     voice_selection_reason: str | None = Field(
         default=None,
-        description="Short reason why this voice fits the role identity, age, gender, personality, and dramatic tone.",
+        description="Legacy reason for provider voice selection. New role_design output should describe voice needs in desc instead.",
     )
     desc: str
     sample_text: str | None = Field(
@@ -297,6 +297,60 @@ class RoleVoiceDesignOutput(BaseModel):
 
 class RoleExtractOutput(BaseModel):
     roles: list[RoleExtractItem]
+
+
+class RoleEpisodeKeyAuditReviewOutput(BaseModel):
+    role_name: str
+    missing_episode_keys: list[str] = Field(default_factory=list)
+    missing_source_chapters: list[str] = Field(default_factory=list)
+    evidence: str | None = None
+    confidence: float | None = None
+
+
+class RoleEpisodeKeyAuditItem(BaseModel):
+    role_id: str
+    role_name: str
+    role_json_path: str | None = None
+    original_episode_keys: list[str] = Field(default_factory=list)
+    missing_episode_keys: list[str] = Field(default_factory=list)
+    added_episode_keys: list[str] = Field(default_factory=list)
+    final_episode_keys: list[str] = Field(default_factory=list)
+    original_source_chapters: list[str] = Field(default_factory=list)
+    added_source_chapters: list[str] = Field(default_factory=list)
+    final_source_chapters: list[str] = Field(default_factory=list)
+    ignored_episode_keys: list[str] = Field(default_factory=list)
+    evidence: str | None = None
+    confidence: float | None = None
+
+
+class RoleEpisodeKeyAuditOutput(BaseModel):
+    concurrency: int
+    audited_roles: list[RoleEpisodeKeyAuditItem] = Field(default_factory=list)
+
+
+class RoleDuplicateGroupReviewOutput(BaseModel):
+    role_names: list[str] = Field(default_factory=list)
+    evidence: str | None = None
+    confidence: float | None = None
+
+
+class RoleDuplicateAuditReviewOutput(BaseModel):
+    duplicate_groups: list[RoleDuplicateGroupReviewOutput] = Field(default_factory=list)
+
+
+class RoleDuplicateMergeItem(BaseModel):
+    kept_role_name: str
+    removed_role_names: list[str] = Field(default_factory=list)
+    original_episode_keys_by_role: dict[str, list[str]] = Field(default_factory=dict)
+    final_episode_keys: list[str] = Field(default_factory=list)
+    evidence: str | None = None
+    confidence: float | None = None
+
+
+class RoleDuplicateAuditOutput(BaseModel):
+    checked_roles: int
+    merged_groups: list[RoleDuplicateMergeItem] = Field(default_factory=list)
+    remaining_role_names: list[str] = Field(default_factory=list)
 
 
 class RoleDesignItem(BaseModel):

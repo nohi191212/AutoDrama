@@ -172,8 +172,10 @@ script_novel_extract
 role_extract_primary
 role_extract_functional
 role_extract
+role_episode_key_audit
 ambient_entity_extract
 role_design
+voice_select
 role_voice_generation
 role_full_body_generation
 role_multiview_generation
@@ -191,14 +193,19 @@ bgm_generation
 角色链的关键依赖顺序：
 
 ```text
+role_extract
+role_episode_key_audit
 role_design
+voice_select
 role_voice_generation
 role_full_body_generation
 role_multiview_generation
 role_intro_video_generation
 ```
 
-`role_design` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并输出声音设计、`full_body_prompt`、三视图 + 道具 prompt、介绍视频 prompt 和角色绑定道具。`role_full_body_generation` 先生成自然正面全身参考图；`role_multiview_generation` 必须使用 full body 图作为参考，生成三视图 + 道具设计图；`role_intro_video_generation` 再使用 multiview 图作为参考生成角色介绍视频。功能角色如果 `has_dialogue=false` 不生成声音；功能角色默认跳过介绍视频。
+`role_design` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并输出声音需求、`sample_text`、`full_body_prompt`、三视图 + 道具 prompt、介绍视频 prompt 和角色绑定道具。`voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，按手工覆盖、有效缓存、文本 top 5 初筛、音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；`role_voice_generation` 再使用该 `voice_type` 合成人物样例音频。`role_full_body_generation` 先生成自然正面全身参考图；`role_multiview_generation` 必须使用 full body 图作为参考，生成三视图 + 道具设计图；`role_intro_video_generation` 再使用 multiview 图作为参考生成角色介绍视频。功能角色如果 `has_dialogue=false` 不生成声音；功能角色默认跳过介绍视频。
+
+`role_episode_key_audit` 在 `role_extract` 之后运行，会以 30 并发逐个检查角色 JSON 的 `episode_keys` 覆盖情况；如果发现遗漏，只向 `role_extract*`、已有 `role_design`、角色 JSON 和 state 角色记录追加缺失的 `episode_keys/source_chapters`，不会删除或重排原有条目。
 
 ### 3. 运行动态资产生成流程
 
@@ -263,6 +270,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --until r
 只运行一个节点：
 
 ```powershell
+run\start.cmd --config config.yaml --project <project_id> --only voice_select
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation
 run\start.cmd --config config.yaml --project <project_id> --only role_full_body_generation
 run\start.cmd --config config.yaml --project <project_id> --only role_multiview_generation
@@ -274,6 +282,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --only re
 
 ```powershell
 run\start.cmd --config config.yaml --project <project_id> --only role_design --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only voice_select --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only role_full_body_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only role_multiview_generation --episodes 1 --force
@@ -284,7 +293,19 @@ run\start.cmd --generation --config config.yaml --project <project_id> --episode
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
 
-`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `role_design`、`role_voice_generation`、`role_full_body_generation`、`role_multiview_generation`、`role_intro_video_generation`、`prop_design` 和 `prop_generation`。角色相关节点会按角色 `episode_keys` 过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。
+`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `role_design`、`voice_select`、`role_voice_generation`、`role_full_body_generation`、`role_multiview_generation`、`role_intro_video_generation`、`prop_design` 和 `prop_generation`。角色相关节点会按角色 `episode_keys` 过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。
+
+全局音色 catalog 命令：
+
+```powershell
+D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider volcengine
+D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider volcengine --force-samples
+D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider volcengine --force-samples --sample-emotion all
+D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider volcengine --force-profiles
+D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --config config.yaml --provider volcengine
+```
+
+`voice-catalog build` 会刷新 provider speaker manifest；`--force-samples` 默认只为目标音色生成 `normal` 样例，避免全量 catalog 触发过多 TTS 请求；如果确实需要五情绪样例，可以加 `--sample-emotion all` 生成 `normal/angry/sad/happy/low`。`--force-profiles` 会调用 `routing.judge.voice_catalog_profile` 配置的 audio judge 生成自然语言听感画像，每个音色会单独落盘到 `.assets/voice_catalog/<provider>/<model>/profiles/<voice_type>.json`，同时回写 manifest；如需临时覆盖 judge，可加 `--judge-provider fake` 或其他已注册 judge。调试时可以加 `--voice-type <voice_type>` 或 `--limit 5` 控制范围。项目内 `voice_select` 会先用 `routing.text.voice_select` 根据角色和音色画像筛 top 5（未配置时复用 `routing.text.role`，失败时退回 catalog 启发式），样例齐全时再调用 `routing.judge.voice_select` 听音频终选。`voice_label` 只作为人类可读展示字段，落盘和合成 API 始终使用官方 `voice_type`。
 
 按镜头选择：
 
@@ -375,14 +396,23 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/metadata_convergence_smoke
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_iterative_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_partial_persistence_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_design_scoping_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_episode_key_audit_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_design_missing_episode_keys_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_catalog_manifest_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_catalog_label_lookup_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_catalog_build_samples_profiles_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_cache_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_episode_scoping_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_manual_override_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_audio_judge_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_voice_generation_uses_voice_select_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_generation_episode_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/functional_role_asset_policy_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_full_body_multiview_sequence_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 ```
 
-Smoke 脚本应把临时输出写到仓库 `.tmp/` 目录下。
+Smoke 脚本应把临时输出写到仓库 `.tmp/` 目录下。全局 voice catalog 的本地缓存写到 `.assets/voice_catalog/`，该目录默认不纳入版本控制。
 
 ## 常见问题
 

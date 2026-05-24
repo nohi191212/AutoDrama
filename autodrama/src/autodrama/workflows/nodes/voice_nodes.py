@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -11,16 +12,28 @@ from autodrama.core.schemas import (
     RoleVoiceGenerationItem,
     RoleVoiceGenerationOutput,
 )
+from autodrama.core.voice_catalog import (
+    RoleVoiceSelectionItem,
+    VoiceCandidateItem,
+    VoiceCatalogManifest,
+    VoiceSelectAudioJudgeOutput,
+    VoiceSelectOutput,
+    VoiceSelectShortlistOutput,
+)
+from autodrama.providers.base import AssetRef
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
+from autodrama.repositories.voice_catalog_repo import VoiceCatalogRepository
 from autodrama.repositories.script_content_repo import ScriptContentRepository
 from autodrama.services.media_store import MediaStore
+from autodrama.services.voice_catalog_service import VoiceCatalogService
 from autodrama.services.role_service import RoleService
 from autodrama.services.script_service import ScriptService
 from autodrama.workflows.runner import WorkflowNode
 
 VOICE_NODE_NAMES = [
+    "voice_select",
     "role_voice_generation",
 ]
 
@@ -113,6 +126,615 @@ class VoiceNodeBase:
         ]
 
 
+class VoiceSelectNode(VoiceNodeBase):
+    name = "voice_select"
+    selection_prompt_version = "voice_select.text_shortlist.chunked.v1"
+    text_shortlist_batch_size = 80
+
+    @classmethod
+    def role_design_hash(cls, role: Role) -> str:
+        payload = {
+            "role_id": role.id,
+            "role_name": role.name,
+            "intro": role.intro,
+            "personality": role.personality,
+            "role_tier": role.role_tier,
+            "has_dialogue": role.has_dialogue,
+            "importance": role.importance,
+            "episode_keys": role.episode_keys,
+            "voice_summary": role.voice_summary,
+            "audio": {
+                emotion: {
+                    "id": audio.id,
+                    "emotion": audio.emotion,
+                    "desc": audio.desc,
+                    "sample_text": audio.sample_text,
+                }
+                for emotion, audio in sorted(role.audio.items())
+            },
+        }
+        data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+    def load_existing_output(self, project_dir: Path) -> VoiceSelectOutput | None:
+        path = self.layout.node_output_path(project_dir, self.name)
+        if not path.exists():
+            return None
+        return VoiceSelectOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def existing_by_role(output: VoiceSelectOutput | None) -> dict[str, RoleVoiceSelectionItem]:
+        if output is None:
+            return {}
+        return {
+            item.role_id: item
+            for item in output.selected_voices
+            if item.role_id
+        }
+
+    @staticmethod
+    def bind_selection_to_role(role: Role, selection: RoleVoiceSelectionItem) -> None:
+        role.voice_name = selection.selected_voice_label
+        role.voice_type = selection.selected_voice_type
+        role.voice_resource_id = selection.selected_voice_resource_id
+        role.voice_model_family = selection.selected_voice_model_family
+        role.voice_selection_reason = selection.selected_reason
+        for audio in role.audio.values():
+            audio.voice_name = role.voice_name
+            audio.voice_type = role.voice_type
+            audio.voice_resource_id = role.voice_resource_id
+            audio.voice_model_family = role.voice_model_family
+
+    def cached_selection(
+        self,
+        *,
+        existing: RoleVoiceSelectionItem | None,
+        role_design_hash: str,
+        manifest: VoiceCatalogManifest,
+        catalog_hash: str,
+        force: bool,
+        catalog_repo: VoiceCatalogRepository,
+    ) -> RoleVoiceSelectionItem | None:
+        if force or existing is None:
+            return None
+        if existing.role_design_hash != role_design_hash:
+            return None
+        if existing.catalog_version != manifest.catalog_version:
+            return None
+        if existing.catalog_hash != catalog_hash:
+            return None
+        if catalog_repo.voice_by_type(manifest, existing.selected_voice_type) is None:
+            return None
+        if existing.raw_response.get("selection_prompt_version") != self.selection_prompt_version:
+            return None
+        if existing.raw_response.get("selection_model") != self.selection_model(manifest):
+            return None
+        if existing.raw_response.get("text_shortlist_error") or existing.raw_response.get("audio_judge_error"):
+            return None
+        return existing.model_copy(update={"selection_source": "cache"})
+
+    @staticmethod
+    def provider_model_label(provider: Any) -> str:
+        name = str(getattr(provider, "name", "unknown") or "unknown")
+        model = (
+            getattr(provider, "model", None)
+            or getattr(provider, "target_model", None)
+            or getattr(provider, "resource_id", None)
+            or "-"
+        )
+        return f"{name}:{model}"
+
+    def text_shortlist_provider(self) -> tuple[Any | None, str | None]:
+        text_getter = getattr(self.router, "text", None)
+        if not callable(text_getter):
+            return None, "router has no text provider"
+
+        errors: list[str] = []
+        for purpose in ("voice_select", "role"):
+            try:
+                return text_getter(purpose), None
+            except Exception as exc:
+                errors.append(f"{purpose}: {exc!r}")
+        return None, "; ".join(errors)
+
+    def selection_model(self, manifest: VoiceCatalogManifest) -> str:
+        text_provider, text_error = self.text_shortlist_provider()
+        if text_provider is not None:
+            text_model = self.provider_model_label(text_provider)
+        else:
+            text_model = f"unavailable:{text_error or '-'}"
+
+        judge_getter = getattr(self.router, "judge", None)
+        if callable(judge_getter):
+            try:
+                judge_model = self.provider_model_label(judge_getter("voice_select"))
+            except Exception as exc:
+                judge_model = f"unavailable:{exc!r}"
+        else:
+            judge_model = "unavailable:router has no judge provider"
+
+        return (
+            f"catalog={manifest.provider}:{manifest.model}|"
+            f"text_shortlist={text_model}|audio_judge={judge_model}"
+        )
+
+    def with_selection_metadata(
+        self,
+        selection: RoleVoiceSelectionItem,
+        manifest: VoiceCatalogManifest,
+        *,
+        extra_raw_response: dict[str, Any] | None = None,
+    ) -> RoleVoiceSelectionItem:
+        raw_response = dict(selection.raw_response)
+        raw_response.setdefault("selection_prompt_version", self.selection_prompt_version)
+        raw_response.setdefault("selection_model", self.selection_model(manifest))
+        if extra_raw_response:
+            raw_response.update(extra_raw_response)
+        return selection.model_copy(update={"raw_response": raw_response})
+
+    @staticmethod
+    def role_design_for_prompt(role: Role) -> dict[str, Any]:
+        return {
+            "role_id": role.id,
+            "role_name": role.name,
+            "intro": role.intro,
+            "personality": role.personality,
+            "role_tier": role.role_tier,
+            "importance": role.importance,
+            "voice_summary": role.voice_summary,
+            "audio": [
+                {
+                    "emotion": audio.emotion,
+                    "desc": audio.desc,
+                    "sample_text": audio.sample_text,
+                }
+                for audio in role.audio.values()
+            ],
+        }
+
+    async def text_shortlist(
+        self,
+        *,
+        service: VoiceCatalogService,
+        manifest: VoiceCatalogManifest,
+        role: Role,
+        heuristic_candidates: list[VoiceCandidateItem],
+        limit: int = 5,
+    ) -> tuple[list[VoiceCandidateItem], dict[str, Any]]:
+        provider, provider_error = self.text_shortlist_provider()
+        if provider is None:
+            return heuristic_candidates, {
+                "text_shortlist_skipped": provider_error or "text provider is unavailable",
+            }
+
+        prompts = getattr(self.workflow, "prompts", None)
+        if prompts is None:
+            return heuristic_candidates, {
+                "text_shortlist_skipped": "workflow prompt store is unavailable",
+            }
+
+        role_design = service.role_design_for_shortlist(role)
+        voice_profiles = service.voice_profiles_for_prompt(role, manifest)
+        chunk_size = max(1, int(self.text_shortlist_batch_size))
+        chunks = [
+            voice_profiles[index:index + chunk_size]
+            for index in range(0, len(voice_profiles), chunk_size)
+        ] or [[]]
+        chunk_outputs: list[dict[str, Any]] = []
+        chunk_candidates: list[VoiceCandidateItem] = []
+        seen_voice_types: set[str] = set()
+
+        for chunk_index, chunk in enumerate(chunks, start=1):
+            prompt = prompts.render(
+                "voice_select_shortlist",
+                role_design=json.dumps(role_design, ensure_ascii=False, indent=2),
+                voice_profiles=json.dumps(chunk, ensure_ascii=False, indent=2),
+            )
+            output = await provider.generate_json(
+                prompt,
+                VoiceSelectShortlistOutput,
+                temperature=0.25,
+                metadata={
+                    "node_name": "voice_select_shortlist",
+                    "role_id": role.id,
+                    "role_name": role.name,
+                    "provider": manifest.provider,
+                    "model": manifest.model,
+                    "voice_count": len(manifest.voices),
+                    "limit": limit,
+                    "chunk_index": chunk_index,
+                    "chunk_count": len(chunks),
+                    "heuristic_candidates": [
+                        candidate.model_dump(mode="json")
+                        for candidate in heuristic_candidates
+                    ],
+                    "voice_profiles": chunk,
+                },
+            )
+            chunk_outputs.append(
+                {
+                    "chunk_index": chunk_index,
+                    "candidate_count": len(chunk),
+                    "output": output.model_dump(mode="json"),
+                }
+            )
+            for candidate in service.candidates_from_shortlist_output(
+                output,
+                manifest,
+                fallback_candidates=[],
+                limit=limit,
+            ):
+                if candidate.voice_type in seen_voice_types:
+                    continue
+                chunk_candidates.append(candidate)
+                seen_voice_types.add(candidate.voice_type)
+
+        final_output: VoiceSelectShortlistOutput | None = None
+        if len(chunk_candidates) > limit:
+            merged_profiles = [
+                {
+                    "voice_label": candidate.voice_label,
+                    "voice_type": candidate.voice_type,
+                    "voice_resource_id": candidate.voice_resource_id,
+                    "voice_model_family": candidate.voice_model_family,
+                    "voice_catalog_key": candidate.voice_catalog_key,
+                    "score": candidate.score,
+                    "reason": candidate.reason,
+                    "profile_summary": candidate.profile_summary,
+                    "sample_paths": candidate.sample_paths,
+                }
+                for candidate in chunk_candidates
+            ]
+            prompt = prompts.render(
+                "voice_select_shortlist",
+                role_design=json.dumps(role_design, ensure_ascii=False, indent=2),
+                voice_profiles=json.dumps(merged_profiles, ensure_ascii=False, indent=2),
+            )
+            final_output = await provider.generate_json(
+                prompt,
+                VoiceSelectShortlistOutput,
+                temperature=0.2,
+                metadata={
+                    "node_name": "voice_select_shortlist",
+                    "role_id": role.id,
+                    "role_name": role.name,
+                    "provider": manifest.provider,
+                    "model": manifest.model,
+                    "voice_count": len(chunk_candidates),
+                    "limit": limit,
+                    "chunk_index": "final",
+                    "chunk_count": len(chunks),
+                    "heuristic_candidates": [
+                        candidate.model_dump(mode="json")
+                        for candidate in chunk_candidates
+                    ],
+                    "voice_profiles": merged_profiles,
+                },
+            )
+            candidates = service.candidates_from_shortlist_output(
+                final_output,
+                manifest,
+                fallback_candidates=chunk_candidates,
+                limit=limit,
+            )
+        else:
+            candidates = service.candidates_from_shortlist_output(
+                VoiceSelectShortlistOutput(
+                    candidates=[
+                        {
+                            "voice_label": candidate.voice_label,
+                            "voice_type": candidate.voice_type,
+                            "score": candidate.score,
+                            "reason": candidate.reason,
+                        }
+                        for candidate in chunk_candidates
+                    ]
+                ),
+                manifest,
+                fallback_candidates=heuristic_candidates,
+                limit=limit,
+            )
+
+        raw_shortlist: dict[str, Any]
+        if len(chunk_outputs) == 1 and final_output is None:
+            raw_shortlist = chunk_outputs[0]["output"]
+        else:
+            raw_shortlist = {
+                "chunks": chunk_outputs,
+                "final": final_output.model_dump(mode="json") if final_output is not None else None,
+            }
+        if not candidates:
+            return heuristic_candidates, {
+                "text_shortlist": raw_shortlist,
+                "text_shortlist_error": "text shortlist returned no valid catalog voice_type",
+                "text_shortlist_provider": self.provider_model_label(provider),
+            }
+        return candidates, {
+            "text_shortlist": raw_shortlist,
+            "text_shortlist_provider": self.provider_model_label(provider),
+        }
+
+    def audio_judge_refs(
+        self,
+        *,
+        service: VoiceCatalogService,
+        manifest: VoiceCatalogManifest,
+        top_candidates: list,
+    ) -> list[AssetRef]:
+        refs: list[AssetRef] = []
+        for candidate in top_candidates:
+            voice = service.repo.voice_by_type(manifest, candidate.voice_type)
+            if voice is None:
+                continue
+            refs.extend(service.sample_refs_for_voice(voice, manifest.sample_emotions))
+        return refs
+
+    async def audio_judge_selection(
+        self,
+        *,
+        role: Role,
+        service: VoiceCatalogService,
+        manifest: VoiceCatalogManifest,
+        top_candidates: list,
+    ) -> tuple[Any, VoiceSelectAudioJudgeOutput] | None:
+        if not top_candidates:
+            return None
+        refs = self.audio_judge_refs(
+            service=service,
+            manifest=manifest,
+            top_candidates=top_candidates,
+        )
+        expected_ref_count = len(top_candidates) * len(manifest.sample_emotions)
+        if len(refs) < expected_ref_count:
+            return None
+        judge_getter = getattr(self.router, "judge", None)
+        if not callable(judge_getter):
+            return None
+        judge = judge_getter("voice_select")
+        prompts = getattr(self.workflow, "prompts", None)
+        if prompts is None:
+            return None
+        candidate_profiles = [
+            {
+                "voice_label": candidate.voice_label,
+                "voice_type": candidate.voice_type,
+                "score": candidate.score,
+                "reason": candidate.reason,
+                "profile_summary": candidate.profile_summary,
+                "sample_paths": candidate.sample_paths,
+            }
+            for candidate in top_candidates
+        ]
+        prompt = prompts.render(
+            "voice_select_audio_judge",
+            role_design=json.dumps(self.role_design_for_prompt(role), ensure_ascii=False, indent=2),
+            candidate_profiles=json.dumps(candidate_profiles, ensure_ascii=False, indent=2),
+            sample_refs=json.dumps(
+                [
+                    {
+                        "id": ref.id,
+                        "voice_type": ref.metadata.get("voice_type"),
+                        "voice_label": ref.metadata.get("voice_label"),
+                        "emotion": ref.metadata.get("emotion"),
+                        "sample_text": ref.metadata.get("sample_text"),
+                        "path": ref.path,
+                    }
+                    for ref in refs
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
+        judge_output = await judge.judge_audio_json(
+            prompt,
+            VoiceSelectAudioJudgeOutput,
+            refs=refs,
+            temperature=0.2,
+            metadata={
+                "node_name": self.name,
+                "role_id": role.id,
+                "role_name": role.name,
+                "candidates": candidate_profiles,
+            },
+        )
+        by_type = {candidate.voice_type: candidate for candidate in top_candidates}
+        selected = by_type.get(judge_output.selected_voice_type)
+        if selected is None:
+            return None
+        return selected, judge_output
+
+    async def select_role_voice(
+        self,
+        *,
+        provider: Any,
+        service: VoiceCatalogService,
+        manifest: VoiceCatalogManifest,
+        catalog_hash: str,
+        role: Role,
+        existing: RoleVoiceSelectionItem | None,
+        force: bool,
+    ) -> RoleVoiceSelectionItem:
+        role_hash = self.role_design_hash(role)
+        manual_candidate = service.manual_override_candidate(
+            provider=provider,
+            manifest=manifest,
+            role=role,
+        )
+        if manual_candidate is not None:
+            selection = service.selection_from_candidate(
+                role=role,
+                candidate=manual_candidate,
+                top_candidates=[manual_candidate],
+                role_design_hash=role_hash,
+                manifest=manifest,
+                catalog_hash=catalog_hash,
+                selection_source="manual_override",
+                selected_reason=manual_candidate.reason,
+            )
+            return self.with_selection_metadata(selection, manifest)
+
+        cached = self.cached_selection(
+            existing=existing,
+            role_design_hash=role_hash,
+            manifest=manifest,
+            catalog_hash=catalog_hash,
+            force=force,
+            catalog_repo=service.repo,
+        )
+        if cached is not None:
+            return cached
+
+        heuristic_candidates = service.shortlist(role, manifest, limit=5)
+        top_candidates = heuristic_candidates
+        shortlist_response: dict[str, Any] = {}
+        try:
+            top_candidates, shortlist_response = await self.text_shortlist(
+                service=service,
+                manifest=manifest,
+                role=role,
+                heuristic_candidates=heuristic_candidates,
+                limit=5,
+            )
+        except Exception as exc:
+            shortlist_response = {
+                "text_shortlist_error": repr(exc),
+            }
+
+        if top_candidates:
+            selected_candidate = top_candidates[0]
+            raw_response = dict(shortlist_response)
+            text_shortlist_used = (
+                "text_shortlist" in raw_response
+                and "text_shortlist_error" not in raw_response
+            )
+            try:
+                judged = await self.audio_judge_selection(
+                    role=role,
+                    service=service,
+                    manifest=manifest,
+                    top_candidates=top_candidates,
+                )
+            except Exception as exc:
+                judged = None
+                raw_response["audio_judge_error"] = repr(exc)
+            if judged is not None:
+                selected_candidate, judged_output = judged
+                raw_response["audio_judge"] = judged_output.model_dump(mode="json")
+            selection = service.selection_from_candidate(
+                role=role,
+                candidate=selected_candidate,
+                top_candidates=top_candidates,
+                role_design_hash=role_hash,
+                manifest=manifest,
+                catalog_hash=catalog_hash,
+                selection_source=(
+                    "omni_judge"
+                    if judged is not None
+                    else ("text_shortlist" if text_shortlist_used else "catalog_heuristic")
+                ),
+                selected_reason=(
+                    judged_output.selected_reason if judged is not None else selected_candidate.reason
+                ),
+            )
+            return self.with_selection_metadata(selection, manifest, extra_raw_response=raw_response)
+
+        fallback_candidate = service.fallback_candidate(
+            provider=provider,
+            manifest=manifest,
+            role=role,
+        )
+        if fallback_candidate is None:
+            raise ValueError(f"voice_select cannot select a voice for {role.name}: catalog is empty")
+        selection = service.selection_from_candidate(
+            role=role,
+            candidate=fallback_candidate,
+            top_candidates=[fallback_candidate],
+            role_design_hash=role_hash,
+            manifest=manifest,
+            catalog_hash=catalog_hash,
+            selection_source="provider_fallback",
+            selected_reason=fallback_candidate.reason,
+        )
+        return self.with_selection_metadata(selection, manifest)
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.audio("speech")
+        self.logger.info(
+            "node=voice_select provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+
+        hydrate = getattr(self.workflow, "_hydrate_roles_from_design_files", None)
+        if callable(hydrate):
+            hydrate(project_dir, state, speech_provider=None)
+        ensure_normal_audio = getattr(self.workflow, "_ensure_normal_role_audio", None)
+        if callable(ensure_normal_audio):
+            for role in state.roles.values():
+                if self.workflow._role_needs_voice(role) and "normal" not in role.audio:
+                    ensure_normal_audio(role)
+
+        catalog_repo = VoiceCatalogRepository.from_settings(self.repo.settings)
+        service = VoiceCatalogService(catalog_repo)
+        manifest = service.load_or_bootstrap_manifest(provider)
+        catalog_hash = catalog_repo.manifest_hash(manifest)
+        manifest_path = catalog_repo.manifest_path(manifest.provider, manifest.model)
+        self.logger.info(
+            "node=voice_select catalog=%s voices=%d catalog_version=%s",
+            manifest_path,
+            len(manifest.voices),
+            manifest.catalog_version,
+        )
+
+        active_episode_keys = self.active_episode_keys(state)
+        target_roles = [
+            role
+            for role in self.target_roles(state, active_episode_keys, label=self.name)
+            if self.workflow._role_needs_voice(role)
+        ]
+        if active_episode_keys:
+            self.logger.info(
+                "node=voice_select episode-scoped rerun episodes=%s target_roles=%s",
+                ",".join(active_episode_keys),
+                ",".join(role.name for role in target_roles) or "-",
+            )
+
+        force = bool(getattr(self.workflow, "_force_pregen", False))
+        existing_output = self.load_existing_output(project_dir)
+        existing_by_role = self.existing_by_role(existing_output)
+        target_role_ids = {role.id for role in target_roles}
+        merged_by_role = {
+            role_id: item
+            for role_id, item in existing_by_role.items()
+            if role_id not in target_role_ids
+        }
+
+        for role in target_roles:
+            selection = await self.select_role_voice(
+                provider=provider,
+                service=service,
+                manifest=manifest,
+                catalog_hash=catalog_hash,
+                role=role,
+                existing=existing_by_role.get(role.id),
+                force=force,
+            )
+            self.bind_selection_to_role(role, selection)
+            merged_by_role[role.id] = selection
+
+        ordered_selections = [
+            merged_by_role[role.id]
+            for role in state.roles.values()
+            if role.id in merged_by_role
+        ]
+        for role_id, item in merged_by_role.items():
+            if role_id not in state.roles:
+                ordered_selections.append(item)
+        output = VoiceSelectOutput(selected_voices=ordered_selections)
+        self.repo.save_node_output(project_dir, self.name, output)
+        return state
+
+
 class RoleVoiceDesignNode(VoiceNodeBase):
     name = "role_voice_design"
 
@@ -145,6 +767,17 @@ class RoleVoiceDesignNode(VoiceNodeBase):
 
 class RoleVoiceGenerationNode(VoiceNodeBase):
     name = "role_voice_generation"
+
+    def apply_voice_select_output(self, project_dir: Path, state: ProjectState) -> None:
+        path = self.layout.node_output_path(project_dir, VoiceSelectNode.name)
+        if not path.exists():
+            return
+        output = VoiceSelectOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        for item in output.selected_voices:
+            role = state.roles.get(item.role_id)
+            if role is None:
+                continue
+            VoiceSelectNode.bind_selection_to_role(role, item)
 
     @staticmethod
     def voice_preferred_name(state: ProjectState, audio: RoleAudio) -> str:
@@ -613,6 +1246,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             getattr(provider, "model", "-"),
         )
         self.workflow._hydrate_roles_from_design_files(project_dir, state, speech_provider=provider)
+        self.apply_voice_select_output(project_dir, state)
         self.workflow._repair_role_voice_design_if_needed(project_dir, state, speech_provider=provider)
         active_episode_keys = self.active_episode_keys(state)
         roles = self.target_roles(state, active_episode_keys, label=self.name)
@@ -655,6 +1289,7 @@ def build_voice_node_runners(workflow: Any) -> dict[str, VoiceNodeBase]:
         "logger": getattr(workflow, "logger", None) or get_logger(),
     }
     return {
+        VoiceSelectNode.name: VoiceSelectNode(**deps),
         RoleVoiceDesignNode.name: RoleVoiceDesignNode(**deps),
         RoleVoiceGenerationNode.name: RoleVoiceGenerationNode(**deps),
     }
@@ -672,6 +1307,7 @@ __all__ = [
     "VOICE_NODE_NAMES",
     "RoleVoiceDesignNode",
     "RoleVoiceGenerationNode",
+    "VoiceSelectNode",
     "VoiceNodeBase",
     "build_voice_node_runners",
     "build_voice_nodes",

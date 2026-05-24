@@ -57,6 +57,7 @@ from autodrama.workflows.selection import select_episode_keys
 PREGEN_NODES = PREGEN_NODE_NAMES
 EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "role_design",
+    "voice_select",
     "role_voice_generation",
     "role_full_body_generation",
     "role_multiview_generation",
@@ -275,6 +276,7 @@ class PregenWorkflow:
         speech_provider=None,
         preserve_assets: bool = False,
         validate_sample_text: bool = True,
+        bind_voice_choice: bool = True,
     ) -> None:
         roles_by_key = self._role_lookup(state)
         speaker_lookup = self._speaker_lookup(speech_provider) if speech_provider is not None else {}
@@ -289,10 +291,10 @@ class PregenWorkflow:
                 continue
             if not self._role_needs_voice(role):
                 continue
-            speaker = self._role_voice_speaker(item, speaker_lookup)
-            if getattr(item, "voice_type", None) and speaker is None:
+            speaker = self._role_voice_speaker(item, speaker_lookup) if bind_voice_choice else None
+            if bind_voice_choice and getattr(item, "voice_type", None) and speaker is None:
                 invalid_voice_types.append(f"{role.name}:{item.voice_type}")
-            if speaker is not None:
+            if bind_voice_choice and speaker is not None:
                 priority = self._voice_candidate_priority(item.emotion)
                 current = voice_candidates.get(role.id)
                 if current is None or priority > current[0]:
@@ -609,7 +611,7 @@ class PregenWorkflow:
         selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
-                "--episodes is only supported for pregen --only role_design, role_voice_generation, "
+                "--episodes is only supported for pregen --only role_design, voice_select, role_voice_generation, "
                 "role_full_body_generation, role_multiview_generation, role_intro_video_prompt, "
                 "role_intro_video_generation, prop_design, or prop_generation. "
                 "Use run generation --only storyboard_generation --episodes ... for storyboard shots."
@@ -844,6 +846,7 @@ class PregenWorkflow:
                 speech_provider=speech_provider,
                 preserve_assets=preserve_assets,
                 validate_sample_text=validate_voice_sample_text,
+                bind_voice_choice=False,
             )
         else:
             role.voice_summary = None
@@ -969,6 +972,12 @@ class PregenWorkflow:
     async def _run_role_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._role_node_runner("role_extract").run(project_dir, state)
 
+    async def _run_role_episode_key_audit(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._role_node_runner("role_episode_key_audit").run(project_dir, state)
+
+    async def _run_role_duplicate_audit(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._role_node_runner("role_duplicate_audit").run(project_dir, state)
+
     async def _run_ambient_entity_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._role_node_runner("ambient_entity_extract").run(project_dir, state)
 
@@ -980,6 +989,9 @@ class PregenWorkflow:
 
     async def _run_role_voice_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._voice_node_runner("role_voice_design").run(project_dir, state)
+
+    async def _run_voice_select(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._voice_node_runner("voice_select").run(project_dir, state)
 
     def _voice_preferred_name(self, state: ProjectState, audio: RoleAudio) -> str:
         digest = hashlib.sha1(f"{state.project_id}:{audio.id}".encode("utf-8")).hexdigest()

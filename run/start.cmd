@@ -107,6 +107,7 @@ echo   bgm_generation
 echo.
 echo Notes:
 echo   pregen writes reusable/static assets through bgm_generation.
+echo   pregen role audio chain is role_design, voice_select, then role_voice_generation.
 echo   generation starts with storyboard_generation, then processes selected episodes.
 goto end
 

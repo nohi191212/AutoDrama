@@ -21,6 +21,21 @@ class TextLLM(Protocol):
         """Generate JSON validated by the requested Pydantic schema."""
 
 
+class AudioJudgeLLM(Protocol):
+    name: str
+
+    async def judge_audio_json(
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        refs: list["AssetRef"],
+        temperature: float = 0.2,
+        metadata: dict[str, Any] | None = None,
+    ) -> T:
+        """Judge or describe audio references and return schema-validated JSON."""
+
+
 class AssetRef(BaseModel):
     id: str | None = None
     type: Literal["image", "video", "audio", "file", "url"] = "url"

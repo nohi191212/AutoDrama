@@ -4,9 +4,11 @@ from autodrama.config import Settings
 from autodrama.providers.aliyun.audio.qwen_tts import QwenVoiceDesignProvider
 from autodrama.providers.aliyun.image.wanxiang import WanxiangImageProvider
 from autodrama.providers.aliyun.music.fun_music import BailianMusicProvider
+from autodrama.providers.aliyun.omni.qwen_omni import QwenOmniAudioJudgeProvider
 from autodrama.providers.aliyun.text.qwen import QwenTextProvider
 from autodrama.providers.aliyun.video.wanxiang import WanxiangVideoProvider
 from autodrama.providers.base import (
+    AudioJudgeLLM,
     ImageGenerator,
     MusicGenerator,
     SpeechSynthesizer,
@@ -17,6 +19,7 @@ from autodrama.providers.base import (
 from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
 from autodrama.providers.elevenlabs.music.compose import ElevenLabsMusicProvider
 from autodrama.providers.local.mock.fake import (
+    FakeAudioJudgeProvider,
     FakeImageProvider,
     FakeMusicProvider,
     FakeTextProvider,
@@ -37,6 +40,7 @@ ALIYUN_TEXT_PROVIDER_NAMES = {"aliyun", "qwen", "bailian"}
 ALIYUN_IMAGE_PROVIDER_NAMES = {"aliyun", "wanxiang"}
 ALIYUN_VIDEO_PROVIDER_NAMES = {"aliyun", "wanxiang"}
 ALIYUN_AUDIO_PROVIDER_NAMES = {"aliyun", "qwen_tts"}
+ALIYUN_OMNI_PROVIDER_NAMES = {"aliyun_omni", "qwen_omni", "dashscope_omni"}
 ALIYUN_MUSIC_PROVIDER_NAMES = {"aliyun", "bailian"}
 MINIMAX_MUSIC_PROVIDER_NAMES = {"minimax", "minimax_music"}
 ELEVENLABS_MUSIC_PROVIDER_NAMES = {"elevenlabs", "elevenlabs_music"}
@@ -52,6 +56,7 @@ class ProviderRouter:
         self._fake_music = FakeMusicProvider()
         self._fake_video = FakeVideoProvider()
         self._fake_voice = FakeVoiceDesignProvider()
+        self._fake_judge = FakeAudioJudgeProvider()
         self.registry = ProviderRegistry()
         self._register_provider_factories()
 
@@ -150,6 +155,24 @@ class ProviderRouter:
             ),
         )
 
+        self.registry.register("judge", {"fake"}, lambda **_: self._fake_judge)
+        self.registry.register(
+            "judge",
+            ALIYUN_OMNI_PROVIDER_NAMES,
+            lambda provider_name, **_: QwenOmniAudioJudgeProvider(
+                self._aliyun_omni_settings(provider_name),
+                self.settings.runtime,
+            ),
+        )
+        self.registry.register(
+            "judge",
+            {"aliyun"},
+            lambda provider_name, **_: QwenOmniAudioJudgeProvider(
+                self._aliyun_omni_settings(provider_name),
+                self.settings.runtime,
+            ),
+        )
+
         self.registry.register("music", {"fake"}, lambda **_: self._fake_music)
         self.registry.register(
             "music",
@@ -202,6 +225,22 @@ class ProviderRouter:
             settings.base_url = base_url
         return settings
 
+    def _aliyun_omni_settings(self, provider_name: str):
+        if provider_name in self.settings.providers:
+            settings = self.settings.providers[provider_name].model_copy(deep=True)
+        elif "aliyun_omni" in self.settings.providers:
+            settings = self.settings.providers["aliyun_omni"].model_copy(deep=True)
+        else:
+            settings = self.settings.providers["aliyun"].model_copy(deep=True)
+        settings.models = dict(settings.models)
+        settings.models.setdefault("audio_judge", "qwen3.5-omni-plus")
+
+        base_url = (settings.base_url or "https://dashscope.aliyuncs.com").rstrip("/")
+        if not base_url.endswith("/compatible-mode/v1"):
+            base_url = f"{base_url}/compatible-mode/v1"
+        settings.base_url = base_url
+        return settings
+
     def _dashscope_api_v1_settings(self, provider_name: str):
         if provider_name == "aliyun":
             base_url = (self.settings.providers["aliyun"].base_url or "https://dashscope.aliyuncs.com").rstrip("/")
@@ -231,6 +270,15 @@ class ProviderRouter:
     def audio(self, purpose: str) -> VoiceDesigner | SpeechSynthesizer:
         provider_name = self.provider_override or self.settings.provider_for("audio", purpose)
         return self._provider_from_registry("audio", provider_name, purpose)
+
+    def judge(self, purpose: str) -> AudioJudgeLLM:
+        provider_name = self.provider_override
+        if not provider_name:
+            try:
+                provider_name = self.settings.provider_for("judge", purpose)
+            except KeyError:
+                provider_name = "aliyun_omni"
+        return self._provider_from_registry("judge", provider_name, purpose)
 
     def music(self, purpose: str) -> MusicGenerator:
         provider_name = self.provider_override

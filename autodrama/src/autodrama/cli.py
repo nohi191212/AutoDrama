@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 
 from autodrama.config import load_settings
 from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
+from autodrama.repositories.voice_catalog_repo import VoiceCatalogRepository
+from autodrama.services.voice_catalog_service import VoiceCatalogService
 from autodrama.workflows.generation import DEFAULT_GENERATION_NODES, GENERATION_NODES, GenerationWorkflow
 from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow
 from autodrama.workflows.selection import (
@@ -56,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--episode",
         dest="episodes",
         help=(
-            "Supported with pregen --only role_design, role_voice_generation, role_full_body_generation, "
+            "Supported with pregen --only role_design, voice_select, role_voice_generation, role_full_body_generation, "
             "role_multiview_generation, role_intro_video_prompt, role_intro_video_generation, "
             "prop_design, or prop_generation (legacy alias: prop_image_generation)."
         ),
@@ -86,6 +89,33 @@ def build_parser() -> argparse.ArgumentParser:
     generation_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     generation_parser.add_argument("--force", action="store_true")
 
+    catalog_parser = subparsers.add_parser("voice-catalog", help="Build or inspect reusable provider voice catalogs")
+    catalog_subparsers = catalog_parser.add_subparsers(dest="action", required=True)
+    catalog_build_parser = catalog_subparsers.add_parser("build", help="Create or refresh a voice catalog manifest")
+    catalog_build_parser.add_argument("--config", required=True)
+    catalog_build_parser.add_argument("--provider", default="configured")
+    catalog_build_parser.add_argument("--force-manifest", action="store_true")
+    catalog_build_parser.add_argument("--force-samples", action="store_true")
+    catalog_build_parser.add_argument("--force-profiles", action="store_true")
+    catalog_build_parser.add_argument(
+        "--judge-provider",
+        help="Override the audio judge provider for --force-profiles. Defaults to routing.judge.voice_catalog_profile.",
+    )
+    catalog_build_parser.add_argument("--voice-type", action="append", dest="voice_types")
+    catalog_build_parser.add_argument(
+        "--sample-emotion",
+        action="append",
+        dest="sample_emotions",
+        help=(
+            "Sample emotion(s) to build. Repeat or comma-separate values. "
+            "Default is normal. Use 'all' for normal,angry,sad,happy,low."
+        ),
+    )
+    catalog_build_parser.add_argument("--limit", type=int, help="Limit build work to the first N voices in the manifest")
+    catalog_inspect_parser = catalog_subparsers.add_parser("inspect", help="Print voice catalog summary")
+    catalog_inspect_parser.add_argument("--config", required=True)
+    catalog_inspect_parser.add_argument("--provider", default="configured")
+
     inspect_parser = subparsers.add_parser("inspect", help="Inspect a project")
     inspect_subparsers = inspect_parser.add_subparsers(dest="target", required=True)
     state_parser = inspect_subparsers.add_parser("state", help="Print state summary")
@@ -96,6 +126,127 @@ def build_parser() -> argparse.ArgumentParser:
     nodes_parser.add_argument("--project")
 
     return parser
+
+
+def _catalog_speech_provider(settings, provider_name: str):
+    override = None if provider_name == "configured" else provider_name
+    router = ProviderRouter(settings, provider_override=override)
+    return router.audio("speech")
+
+
+def _catalog_judge_provider(settings, *, speech_provider_name: str, judge_provider_name: str | None):
+    if judge_provider_name:
+        override = None if judge_provider_name == "configured" else judge_provider_name
+    elif speech_provider_name == "fake":
+        override = "fake"
+    else:
+        override = None
+    router = ProviderRouter(settings, provider_override=override)
+    return router.judge("voice_catalog_profile")
+
+
+def _parse_sample_emotions(values: list[str] | None) -> list[str]:
+    if not values:
+        return list(VoiceCatalogRepository.DEFAULT_SAMPLE_EMOTIONS)
+
+    emotions: list[str] = []
+    for raw_value in values:
+        for item in str(raw_value or "").split(","):
+            emotion = item.strip().lower()
+            if not emotion:
+                continue
+            if emotion == "all":
+                for full_emotion in VoiceCatalogRepository.FULL_SAMPLE_EMOTIONS:
+                    if full_emotion not in emotions:
+                        emotions.append(full_emotion)
+                continue
+            if emotion not in emotions:
+                emotions.append(emotion)
+    return emotions or list(VoiceCatalogRepository.DEFAULT_SAMPLE_EMOTIONS)
+
+
+async def cmd_voice_catalog_build(args: argparse.Namespace) -> int:
+    settings = load_settings(args.config)
+    provider = _catalog_speech_provider(settings, args.provider)
+    catalog_repo = VoiceCatalogRepository.from_settings(settings)
+    service = VoiceCatalogService(catalog_repo)
+    manifest = service.load_or_bootstrap_manifest(provider, force_bootstrap=args.force_manifest)
+    sample_emotions = _parse_sample_emotions(args.sample_emotions)
+    manifest = service.with_sample_emotions(manifest, sample_emotions)
+    catalog_repo.save_manifest(manifest)
+    voice_types = set(args.voice_types or [])
+    if args.limit is not None and args.limit > 0:
+        limited = {voice.voice_type for voice in manifest.voices[: args.limit]}
+        voice_types = voice_types.intersection(limited) if voice_types else limited
+    voice_types_arg = voice_types or None
+    samples_built = False
+    profiles_built = False
+    if args.force_samples:
+        manifest = await service.build_samples(
+            provider,
+            manifest,
+            force_samples=True,
+            voice_types=voice_types_arg,
+            sample_emotions=sample_emotions,
+        )
+        samples_built = True
+    if args.force_profiles:
+        judge = _catalog_judge_provider(
+            settings,
+            speech_provider_name=args.provider,
+            judge_provider_name=args.judge_provider,
+        )
+        manifest = await service.build_profiles(
+            judge,
+            manifest,
+            force_profiles=True,
+            voice_types=voice_types_arg,
+        )
+        profiles_built = True
+    manifest_path = catalog_repo.manifest_path(manifest.provider, manifest.model)
+    print(
+        json.dumps(
+            {
+                "provider": manifest.provider,
+                "model": manifest.model,
+                "catalog_version": manifest.catalog_version,
+                "voice_count": len(manifest.voices),
+                "sample_emotions": manifest.sample_emotions,
+                "manifest_path": str(manifest_path),
+                "samples_built": samples_built,
+                "profiles_built": profiles_built,
+                "selected_voice_types": sorted(voice_types) if voice_types else [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_voice_catalog_inspect(args: argparse.Namespace) -> int:
+    settings = load_settings(args.config)
+    provider = _catalog_speech_provider(settings, args.provider)
+    catalog_repo = VoiceCatalogRepository.from_settings(settings)
+    service = VoiceCatalogService(catalog_repo)
+    manifest = service.load_or_bootstrap_manifest(provider)
+    duplicates = catalog_repo.duplicate_labels(manifest)
+    print(
+        json.dumps(
+            {
+                "provider": manifest.provider,
+                "model": manifest.model,
+                "catalog_version": manifest.catalog_version,
+                "voice_count": len(manifest.voices),
+                "sample_emotions": manifest.sample_emotions,
+                "duplicate_voice_labels": duplicates,
+                "manifest_path": str(catalog_repo.manifest_path(manifest.provider, manifest.model)),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -242,6 +393,10 @@ def cmd_inspect_nodes(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] in {"pregen", "generation"}:
+        argv = ["run", *argv]
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -251,6 +406,10 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(cmd_run_pregen(args))
     if args.command == "run" and args.workflow == "generation":
         return asyncio.run(cmd_run_generation(args))
+    if args.command == "voice-catalog" and args.action == "build":
+        return asyncio.run(cmd_voice_catalog_build(args))
+    if args.command == "voice-catalog" and args.action == "inspect":
+        return cmd_voice_catalog_inspect(args)
     if args.command == "inspect" and args.target == "state":
         return cmd_inspect_state(args)
     if args.command == "inspect" and args.target == "nodes":

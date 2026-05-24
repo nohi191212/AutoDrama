@@ -15,6 +15,8 @@ from autodrama.core.schemas import (
     PropExtractOutput,
     RoleAppearanceDesignOutput,
     RoleDesignOutput,
+    RoleDuplicateAuditReviewOutput,
+    RoleEpisodeKeyAuditReviewOutput,
     RoleExtractOutput,
     RoleVoiceDesignOutput,
     ScriptNovelExtractBatchOutput,
@@ -24,6 +26,11 @@ from autodrama.core.schemas import (
     StoryboardEpisodeOutput,
     StoryboardNextShotOutput,
     StoryboardShotGenerationOutput,
+)
+from autodrama.core.voice_catalog import (
+    VoiceCatalogProfile,
+    VoiceSelectAudioJudgeOutput,
+    VoiceSelectShortlistOutput,
 )
 from autodrama.providers.base import (
     AssetRef,
@@ -199,6 +206,17 @@ class FakeTextProvider:
                         },
                     ]
                 }
+        elif schema is RoleEpisodeKeyAuditReviewOutput or node_name == "role_episode_key_audit":
+            role_name = str(metadata.get("role_name") or "角色")
+            data = {
+                "role_name": role_name,
+                "missing_episode_keys": [],
+                "missing_source_chapters": [],
+                "evidence": "fake provider found no missing role episode keys.",
+                "confidence": 1.0,
+            }
+        elif schema is RoleDuplicateAuditReviewOutput or node_name == "role_duplicate_audit":
+            data = {"duplicate_groups": []}
         elif schema is AmbientEntityOutput or node_name == "ambient_entity_extract":
             data = {"entities": []}
         elif schema is RoleDesignOutput or node_name == "role_design":
@@ -457,6 +475,24 @@ class FakeTextProvider:
                         "role_bound_props": [],
                         "intro_video_prompt": "参考图片1中的赵启外观和深色文件夹设计，赵启站在洁净、亮度适中的虚空圆台上；0-2 秒：圆台缓慢转动，他整理西装下摆，维持强势站姿；2-5 秒：他夹起深色文件夹，展示文件夹与手臂的比例和使用方式；5-8 秒：短暂停顿后他抬眼露出压迫感强的目光，背景干净抽象，无其他人物、字幕或水印。",
                     },
+                ]
+            }
+        elif schema is VoiceSelectShortlistOutput or node_name == "voice_select_shortlist":
+            candidates = metadata.get("heuristic_candidates")
+            if not isinstance(candidates, list) or not candidates:
+                candidates = metadata.get("voice_profiles")
+            if not isinstance(candidates, list):
+                candidates = []
+            data = {
+                "candidates": [
+                    {
+                        "voice_label": str(candidate.get("voice_label") or candidate.get("voice_type") or "Fake Voice"),
+                        "voice_type": str(candidate.get("voice_type") or ""),
+                        "score": candidate.get("score") or candidate.get("heuristic_score") or 8.0,
+                        "reason": str(candidate.get("reason") or candidate.get("heuristic_reason") or "fake text shortlist selected this candidate."),
+                    }
+                    for candidate in candidates[: int(metadata.get("limit") or 5)]
+                    if isinstance(candidate, dict) and candidate.get("voice_type")
                 ]
             }
         elif schema is RoleVoiceDesignOutput or node_name == "role_voice_design":
@@ -963,11 +999,150 @@ class FakeVideoProvider:
         return result
 
 
+class FakeAudioJudgeProvider:
+    name = "fake"
+    model = "fake-audio-judge"
+
+    async def judge_audio_json(
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        refs: list[AssetRef],
+        temperature: float = 0.2,
+        metadata: dict[str, Any] | None = None,
+    ) -> T:
+        del prompt, temperature
+        metadata = metadata or {}
+        if schema is VoiceCatalogProfile:
+            voice_label = str(metadata.get("voice_label") or metadata.get("voice_type") or "Fake Voice")
+            voice_type = str(metadata.get("voice_type") or "")
+            gender = "female" if "female" in voice_type else ("male" if "male" in voice_type else None)
+            data = {
+                "summary": (
+                    f"{voice_label} 的声线在 fake 评测中呈现出干净稳定的中频轮廓，像一块被打磨过的温润木片，"
+                    "边缘没有尖锐毛刺，气息推进均匀，咬字颗粒清楚而不过分用力。它的情绪底色偏克制、可靠，"
+                    "带一点贴近现实对白的松弛感，闭眼时容易联想到一个说话有分寸、反应清醒的短剧人物。"
+                    "这种声音不追求夸张的戏剧爆点，更适合职场、悬疑或生活流场景里需要长期复用的角色配音。"
+                ),
+                "gender_presentation": gender,
+                "age_impression": "young_adult_to_adult",
+                "texture": ["clear", "stable"],
+                "performance_style": ["natural", "restrained"],
+                "strengths": ["普通对白自然", "多情绪样例稳定"],
+                "weaknesses": ["fake provider 不代表真实听感"],
+                "best_role_types": ["短剧对白角色"],
+                "avoid_role_types": ["需要真实听感判断的最终生产选择"],
+                "emotion_quality": {
+                    str(ref.metadata.get("emotion") or ref.id or "normal"): 8.0
+                    for ref in refs
+                },
+            }
+        elif schema is VoiceSelectAudioJudgeOutput:
+            candidates = metadata.get("candidates")
+            if not isinstance(candidates, list) or not candidates:
+                candidates = [
+                    {
+                        "voice_label": str(metadata.get("selected_voice_label") or "Fake Voice"),
+                        "voice_type": str(metadata.get("selected_voice_type") or "fake_voice"),
+                        "score": 8.0,
+                        "reason": "fake audio judge fallback",
+                    }
+                ]
+            selected = dict(candidates[0])
+            data = {
+                "selected_voice_type": selected.get("voice_type"),
+                "selected_voice_label": selected.get("voice_label") or selected.get("voice_type"),
+                "selected_reason": selected.get("reason") or "fake audio judge selected the top candidate.",
+                "ranked_candidates": candidates,
+            }
+        else:
+            raise ValueError(f"Fake audio judge has no fixture for schema {schema.__name__}")
+        return schema.model_validate(data)
+
+
 class FakeVoiceDesignProvider:
     name = "fake"
     model = "fake-voice-design"
     clone_model = "fake-voice-clone"
     target_model = "fake-tts"
+    resource_id = "fake-tts"
+    _SPEAKERS = [
+        {
+            "name": "Fake Male",
+            "voice_type": "fake_male_voice",
+            "resource_id": "fake-tts",
+            "model_family": "fake",
+            "scene": "通用场景",
+            "language": "中文",
+            "gender": "male",
+            "abilities": ["情感变化"],
+            "emotion_capable": True,
+            "supported_emotions": ["normal", "angry", "sad", "happy", "low"],
+            "tags": ["clear", "restrained"],
+        },
+        {
+            "name": "Fake Female",
+            "voice_type": "fake_female_voice",
+            "resource_id": "fake-tts",
+            "model_family": "fake",
+            "scene": "通用场景",
+            "language": "中文",
+            "gender": "female",
+            "abilities": ["情感变化"],
+            "emotion_capable": True,
+            "supported_emotions": ["normal", "angry", "sad", "happy", "low"],
+            "tags": ["clear", "warm"],
+        },
+        {
+            "name": "Fake Mature",
+            "voice_type": "fake_mature_voice",
+            "resource_id": "fake-tts",
+            "model_family": "fake",
+            "scene": "剧情旁白与成熟角色",
+            "language": "中文",
+            "gender": "male",
+            "abilities": ["情感变化"],
+            "emotion_capable": True,
+            "supported_emotions": ["normal", "angry", "sad", "happy", "low"],
+            "tags": ["mature", "low", "stable"],
+        },
+    ]
+
+    @classmethod
+    def available_speakers(cls) -> list[dict[str, Any]]:
+        return [dict(speaker) for speaker in cls._SPEAKERS]
+
+    @classmethod
+    def available_speakers_for_prompt(cls) -> list[dict[str, Any]]:
+        return cls.available_speakers()
+
+    def resolve_role_voice(
+        self,
+        *,
+        role_id: str,
+        role_name: str,
+        role_intro: str | None = None,
+        role_voice_summary: str | None = None,
+        role_personality: str | None = None,
+    ) -> str:
+        del role_id
+        hint = " ".join(
+            item
+            for item in (role_name, role_intro, role_voice_summary, role_personality)
+            if item
+        )
+        if any(marker in hint for marker in ("女", "她", "母亲", "妻子", "姐姐", "妹妹")):
+            return "fake_female_voice"
+        if any(marker in hint for marker in ("成熟", "主管", "父亲", "反派", "强势")):
+            return "fake_mature_voice"
+        return "fake_male_voice"
+
+    def resolve_voice_resource_id(self, voice_type: str | None) -> str:
+        for speaker in self._SPEAKERS:
+            if speaker["voice_type"] == voice_type:
+                return str(speaker["resource_id"])
+        return self.resource_id
 
     async def create_voice(
         self,

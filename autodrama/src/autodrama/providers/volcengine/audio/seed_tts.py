@@ -35,6 +35,7 @@ class VolcengineSeedTTSProvider:
         "tension": "tense",
         "calm": "normal",
         "asmr": "whisper",
+        "low": "low",
     }
     _DEFAULT_EMOTION_INSTRUCTIONS: dict[str, dict[str, Any]] = {
         "normal": {
@@ -78,6 +79,13 @@ class VolcengineSeedTTSProvider:
             "speech_rate": -10,
             "loudness_rate": -8,
             "instruction": "贴近耳语，音量较低，气声更明显，但吐字保持清晰。",
+        },
+        "low": {
+            "emotion": "neutral",
+            "emotion_scale": 3,
+            "speech_rate": -6,
+            "loudness_rate": -4,
+            "instruction": "压低声线，声音低沉克制，带私密感或压迫感，但不是耳语，吐字保持清晰。",
         },
         "other": {
             "emotion": "neutral",
@@ -404,7 +412,11 @@ class VolcengineSeedTTSProvider:
                 ) from exc
 
         if not audio_chunks:
-            raise ProviderBadResponseError("Volcengine speech synthesis returned no audio chunks")
+            raise ProviderBadResponseError(
+                "Volcengine speech synthesis returned no audio chunks "
+                f"for voice={voice} emotion={metadata.get('emotion') or 'normal'} "
+                f"resource_id={resource_id}; response_headers={response_headers}; events={raw_events[-3:]}"
+            )
 
         audio_bytes = b"".join(audio_chunks)
         return VoiceSynthesisResult(

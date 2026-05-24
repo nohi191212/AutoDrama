@@ -1,4 +1,5 @@
 from autodrama.providers.local.mock.fake import (
+    FakeAudioJudgeProvider,
     FakeImageProvider,
     FakeMusicProvider,
     FakeTextProvider,
@@ -7,6 +8,7 @@ from autodrama.providers.local.mock.fake import (
 )
 
 __all__ = [
+    "FakeAudioJudgeProvider",
     "FakeImageProvider",
     "FakeMusicProvider",
     "FakeTextProvider",
