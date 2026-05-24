@@ -431,6 +431,22 @@ class StaticAssetGenerationOutput(BaseModel):
     generated_assets: list[StaticAssetGenerationItem]
 
 
+class RoleIntroVideoPromptItem(BaseModel):
+    asset_id: str
+    role_id: str
+    role_name: str
+    appearance_id: str
+    appearance_name: str
+    prompt: str
+    reference_asset_id: str
+    reference_asset_path: str
+    episode_keys: list[str] = Field(default_factory=list)
+
+
+class RoleIntroVideoPromptOutput(BaseModel):
+    prompts: list[RoleIntroVideoPromptItem]
+
+
 class ShotDialogueAudioAsset(BaseModel):
     asset_id: str
     role_id: str | None = None

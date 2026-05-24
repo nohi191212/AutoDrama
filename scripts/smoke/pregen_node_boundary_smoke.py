@@ -43,6 +43,7 @@ from autodrama.workflows.nodes.static_asset_nodes import (  # noqa: E402
     RoleAppearanceGenerationNode,
     RoleFullBodyGenerationNode,
     RoleIntroVideoGenerationNode,
+    RoleIntroVideoPromptNode,
     RoleMultiviewGenerationNode,
 )
 from autodrama.workflows.nodes.voice_nodes import (  # noqa: E402
@@ -119,6 +120,7 @@ def main() -> int:
     expected_static_asset_owners = {
         "role_full_body_generation": RoleFullBodyGenerationNode,
         "role_multiview_generation": RoleMultiviewGenerationNode,
+        "role_intro_video_prompt": RoleIntroVideoPromptNode,
         "role_intro_video_generation": RoleIntroVideoGenerationNode,
         "prop_extract": PropExtractNode,
         "prop_design": PropDesignNode,

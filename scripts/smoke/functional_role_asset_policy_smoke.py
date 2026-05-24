@@ -130,6 +130,12 @@ async def main_async() -> int:
     multiview_asset_types = [item["asset_type"] for item in multiview_output["generated_assets"]]
     require(multiview_asset_types == ["role_multiview"], "functional role should emit one multiview asset")
 
+    state = await workflow._static_asset_node_runner("role_intro_video_prompt").run(project_dir, state)
+    intro_prompt_output = json.loads(
+        (project_dir / "assets" / "json" / "nodes" / "role_intro_video_prompt.json").read_text(encoding="utf-8")
+    )
+    require(intro_prompt_output["prompts"] == [], "functional role should not emit intro video prompt")
+
     state = await workflow._static_asset_node_runner("role_intro_video_generation").run(project_dir, state)
     role = state.roles["role_山门守卫"]
     appearance = role.appearances["base"]

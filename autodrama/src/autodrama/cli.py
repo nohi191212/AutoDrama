@@ -57,8 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest="episodes",
         help=(
             "Supported with pregen --only role_design, role_voice_generation, role_full_body_generation, "
-            "role_multiview_generation, role_intro_video_generation, prop_design, or prop_generation "
-            "(legacy alias: prop_image_generation)."
+            "role_multiview_generation, role_intro_video_prompt, role_intro_video_generation, "
+            "prop_design, or prop_generation (legacy alias: prop_image_generation)."
         ),
     )
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")

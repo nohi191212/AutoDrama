@@ -60,6 +60,7 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "role_voice_generation",
     "role_full_body_generation",
     "role_multiview_generation",
+    "role_intro_video_prompt",
     "role_intro_video_generation",
     "prop_design",
     "prop_generation",
@@ -609,8 +610,8 @@ class PregenWorkflow:
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
                 "--episodes is only supported for pregen --only role_design, role_voice_generation, "
-                "role_full_body_generation, role_multiview_generation, role_intro_video_generation, "
-                "prop_design, or prop_generation. "
+                "role_full_body_generation, role_multiview_generation, role_intro_video_prompt, "
+                "role_intro_video_generation, prop_design, or prop_generation. "
                 "Use run generation --only storyboard_generation --episodes ... for storyboard shots."
             )
         logger.info(
@@ -1623,6 +1624,9 @@ class PregenWorkflow:
 
     async def _run_role_multiview_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("role_multiview_generation").run(project_dir, state)
+
+    async def _run_role_intro_video_prompt(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("role_intro_video_prompt").run(project_dir, state)
 
     async def _run_role_intro_video_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("role_intro_video_generation").run(project_dir, state)

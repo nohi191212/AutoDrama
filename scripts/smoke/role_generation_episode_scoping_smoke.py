@@ -136,6 +136,13 @@ async def main_async() -> int:
         f"role_multiview_generation did not scope to Beta: {multiview_output}",
     )
 
+    await workflow.run(project_dir, only="role_intro_video_prompt", episode_keys=["episode_002"], force=True)
+    intro_prompt_output = json.loads((project_dir / "assets" / "json" / "nodes" / "role_intro_video_prompt.json").read_text(encoding="utf-8"))
+    require(
+        {item["role_id"] for item in intro_prompt_output["prompts"]} == {"role_beta"},
+        f"role_intro_video_prompt did not scope to Beta: {intro_prompt_output}",
+    )
+
     await workflow.run(project_dir, only="role_intro_video_generation", episode_keys=["episode_002"], force=True)
     intro_output = json.loads((project_dir / "assets" / "json" / "nodes" / "role_intro_video_generation.json").read_text(encoding="utf-8"))
     require(
