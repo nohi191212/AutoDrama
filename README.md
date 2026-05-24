@@ -1,5 +1,9 @@
 # AutoDrama
 
+<p align="center">
+  <img src="docs/assets/autodrama-logo.png" alt="AutoDrama logo" width="240">
+</p>
+
 AutoDrama 是一个短剧自动生成工作流项目。它把输入故事大纲拆成剧集，生成脚本、角色、道具、场景、BGM 等可复用静态资产，再按剧集生成分镜、镜头 BGM、参考帧和镜头视频。
 
 本仓库当前重点支持两段式流程：
