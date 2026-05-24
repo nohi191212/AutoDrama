@@ -663,7 +663,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         intro_prompt = "\n".join(
             part
             for part in (
-                "参考图片1中的人物三视图、全身比例和绑定物品设计，保持形象一致性。",
+                "参考图片1中的人物三视图、全身比例和绑定物品设计，保持人物形象一致性但不要求和图片像素级一致以防动作僵硬，人物动作和画面表现需要符合基本逻辑",
                 f"画面风格要求：{visual_style_prompt}" if visual_style_prompt else "",
                 base_intro_prompt,
                 "全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。",
