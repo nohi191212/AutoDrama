@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Supported with pregen --only role_design, voice_select, role_voice_generation, role_full_body_generation, "
             "role_multiview_generation, role_intro_video_prompt, role_intro_video_generation, "
-            "prop_design, or prop_generation (legacy alias: prop_image_generation)."
+            "prop_design, prop_generation, or layout_image_generation (legacy alias: prop_image_generation)."
         ),
     )
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
@@ -96,10 +96,23 @@ def build_parser() -> argparse.ArgumentParser:
     catalog_build_parser.add_argument("--provider", default="configured")
     catalog_build_parser.add_argument("--force-manifest", action="store_true")
     catalog_build_parser.add_argument("--force-samples", action="store_true")
-    catalog_build_parser.add_argument("--force-profiles", action="store_true")
+    profile_group = catalog_build_parser.add_mutually_exclusive_group()
+    profile_group.add_argument(
+        "--force-profiles",
+        action="store_true",
+        help="Regenerate voice profiles for selected voices even when matching profiles exist.",
+    )
+    profile_group.add_argument(
+        "--miss-profiles",
+        action="store_true",
+        help="Build only missing or stale voice profiles; existing matching profiles are reused.",
+    )
     catalog_build_parser.add_argument(
         "--judge-provider",
-        help="Override the audio judge provider for --force-profiles. Defaults to routing.judge.voice_catalog_profile.",
+        help=(
+            "Override the audio judge provider for --force-profiles/--miss-profiles. "
+            "Defaults to routing.judge.voice_catalog_profile."
+        ),
     )
     catalog_build_parser.add_argument("--voice-type", action="append", dest="voice_types")
     catalog_build_parser.add_argument(
@@ -190,7 +203,7 @@ async def cmd_voice_catalog_build(args: argparse.Namespace) -> int:
             sample_emotions=sample_emotions,
         )
         samples_built = True
-    if args.force_profiles:
+    if args.force_profiles or args.miss_profiles:
         judge = _catalog_judge_provider(
             settings,
             speech_provider_name=args.provider,
@@ -199,7 +212,7 @@ async def cmd_voice_catalog_build(args: argparse.Namespace) -> int:
         manifest = await service.build_profiles(
             judge,
             manifest,
-            force_profiles=True,
+            force_profiles=args.force_profiles,
             voice_types=voice_types_arg,
         )
         profiles_built = True
@@ -215,6 +228,11 @@ async def cmd_voice_catalog_build(args: argparse.Namespace) -> int:
                 "manifest_path": str(manifest_path),
                 "samples_built": samples_built,
                 "profiles_built": profiles_built,
+                "profiles_mode": (
+                    "force"
+                    if args.force_profiles
+                    else ("missing" if args.miss_profiles else None)
+                ),
                 "selected_voice_types": sorted(voice_types) if voice_types else [],
             },
             ensure_ascii=False,

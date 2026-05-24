@@ -6,6 +6,7 @@ from autodrama.core.schemas import (
     BGMDesignOutput,
     LayoutDedupeReviewOutput,
     LayoutDesignOutput,
+    LayoutExtractOutput,
     ProjectState,
     PropDesignOutput,
     PropExtractItem,
@@ -156,16 +157,47 @@ class AssetService:
             },
         )
 
+    async def layout_extract(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        novel_full: dict[str, str],
+    ) -> LayoutExtractOutput:
+        prompt = self.prompts.render(
+            "layout_extract",
+            title=state.title,
+            raw_script=state.raw_script,
+            novel_full=self.format_json(novel_full),
+            episode_keys=", ".join(novel_full),
+            roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
+            props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),
+            visual_style_label=self.visual_style_label(state),
+            visual_style_prompt=self.visual_style_prompt(state),
+        )
+        return await provider.generate_json(
+            prompt,
+            LayoutExtractOutput,
+            temperature=0.4,
+            metadata={
+                "node_name": "layout_extract",
+                "project_id": state.project_id,
+                "expected_keys": list(novel_full),
+            },
+        )
+
     async def layout_design(
         self,
         state: ProjectState,
         provider: TextLLM,
         *,
+        layout_extracts: list[dict[str, object]],
         episode_stories: dict[str, str],
     ) -> LayoutDesignOutput:
         prompt = self.prompts.render(
             "layout_design",
             title=state.title,
+            layout_extracts=self.format_json(layout_extracts),
             episode_stories=self.format_json(episode_stories),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
             props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),

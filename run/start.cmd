@@ -74,6 +74,12 @@ if "%~1"=="--episodes" (
   shift
   goto parse
 )
+if "%~1"=="--episode" (
+  set "EPISODES=%~2"
+  shift
+  shift
+  goto parse
+)
 if "%~1"=="--shots" (
   set "SHOTS=%~2"
   shift
@@ -96,6 +102,7 @@ echo Usage:
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
 echo   run\start.cmd [--only NODE] [--episodes 1,3] [--shots 1-3]
 echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force]
+echo   --episode is accepted as an alias for --episodes.
 echo   run\start.cmd --workflow pregen^|generation [options]
 echo.
 echo This is the native Windows entry point. It uses runtime.python.windows
@@ -115,6 +122,7 @@ goto end
 echo Usage: 1>&2
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force] 1>&2
 echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force] 1>&2
+echo   --episode is accepted as an alias for --episodes. 1>&2
 exit /b 2
 
 :run

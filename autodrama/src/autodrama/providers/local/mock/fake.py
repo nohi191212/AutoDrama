@@ -11,6 +11,7 @@ from autodrama.core.schemas import (
     BGMDesignOutput,
     LayoutDedupeReviewOutput,
     LayoutDesignOutput,
+    LayoutExtractOutput,
     PropDesignOutput,
     PropExtractOutput,
     RoleAppearanceDesignOutput,
@@ -486,10 +487,21 @@ class FakeTextProvider:
             data = {
                 "candidates": [
                     {
+                        "candidate_id": candidate.get("candidate_id"),
                         "voice_label": str(candidate.get("voice_label") or candidate.get("voice_type") or "Fake Voice"),
                         "voice_type": str(candidate.get("voice_type") or ""),
-                        "score": candidate.get("score") or candidate.get("heuristic_score") or 8.0,
-                        "reason": str(candidate.get("reason") or candidate.get("heuristic_reason") or "fake text shortlist selected this candidate."),
+                        "score": (
+                            candidate.get("score")
+                            or candidate.get("local_score")
+                            or candidate.get("heuristic_score")
+                            or 8.0
+                        ),
+                        "reason": str(
+                            candidate.get("reason")
+                            or candidate.get("local_reason")
+                            or candidate.get("heuristic_reason")
+                            or "fake text shortlist selected this candidate."
+                        ),
                     }
                     for candidate in candidates[: int(metadata.get("limit") or 5)]
                     if isinstance(candidate, dict) and candidate.get("voice_type")
@@ -595,6 +607,25 @@ class FakeTextProvider:
             if prop_name:
                 selected_props = [prop for prop in data["props"] if prop.get("name") == prop_name]
                 data["props"] = selected_props or data["props"][:1]
+        elif schema is LayoutExtractOutput or node_name == "layout_extract":
+            data = {
+                "layouts": [
+                    {
+                        "name": "雨夜办公室",
+                        "episode_keys": episode_keys,
+                        "source_chapters": ["第1章-第2章"],
+                        "brief": "林舟发现合同异常并与苏晚核对证据的悬疑调查空间。",
+                        "appearance_notes": ["深夜办公区", "窗外雨光", "冷白灯", "办公桌与电脑"],
+                    },
+                    {
+                        "name": "会议室",
+                        "episode_keys": episode_keys,
+                        "source_chapters": ["第1章-第2章"],
+                        "brief": "林舟公开投屏证据并反击赵启的对峙空间。",
+                        "appearance_notes": ["玻璃会议室", "长桌", "投影屏", "冷色顶灯"],
+                    },
+                ]
+            }
         elif schema is LayoutDesignOutput or node_name == "layout_design":
             data = {
                 "layouts": [
@@ -1051,6 +1082,7 @@ class FakeAudioJudgeProvider:
                 ]
             selected = dict(candidates[0])
             data = {
+                "selected_candidate_id": selected.get("candidate_id"),
                 "selected_voice_type": selected.get("voice_type"),
                 "selected_voice_label": selected.get("voice_label") or selected.get("voice_type"),
                 "selected_reason": selected.get("reason") or "fake audio judge selected the top candidate.",

@@ -52,6 +52,7 @@ class VoiceCatalogManifest(BaseModel):
 
 
 class VoiceCandidateItem(BaseModel):
+    candidate_id: str | None = None
     voice_label: str
     voice_type: str
     voice_resource_id: str | None = None
@@ -64,6 +65,7 @@ class VoiceCandidateItem(BaseModel):
 
 
 class VoiceSelectShortlistCandidate(BaseModel):
+    candidate_id: str | None = None
     voice_label: str
     voice_type: str
     score: float | None = None
@@ -107,6 +109,7 @@ class VoiceSelectOutput(BaseModel):
 
 
 class VoiceSelectAudioJudgeRankedItem(BaseModel):
+    candidate_id: str | None = None
     voice_label: str
     voice_type: str
     score: float | None = None
@@ -114,6 +117,7 @@ class VoiceSelectAudioJudgeRankedItem(BaseModel):
 
 
 class VoiceSelectAudioJudgeOutput(BaseModel):
+    selected_candidate_id: str | None = None
     selected_voice_type: str
     selected_voice_label: str
     selected_reason: str

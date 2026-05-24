@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from pathlib import Path
@@ -21,6 +22,7 @@ from autodrama.core.voice_catalog import (
     VoiceSelectShortlistOutput,
 )
 from autodrama.providers.base import AssetRef
+from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
@@ -128,7 +130,9 @@ class VoiceNodeBase:
 
 class VoiceSelectNode(VoiceNodeBase):
     name = "voice_select"
-    selection_prompt_version = "voice_select.text_shortlist.chunked.v1"
+    selection_prompt_version = "voice_select.text_shortlist.filtered_flash_top3.v3"
+    candidate_limit = 3
+    text_shortlist_model = "deepseek-v4-flash"
     text_shortlist_batch_size = 80
 
     @classmethod
@@ -171,6 +175,29 @@ class VoiceSelectNode(VoiceNodeBase):
             for item in output.selected_voices
             if item.role_id
         }
+
+    @staticmethod
+    def ordered_output(
+        state: ProjectState,
+        merged_by_role: dict[str, RoleVoiceSelectionItem],
+    ) -> VoiceSelectOutput:
+        ordered_selections = [
+            merged_by_role[role.id]
+            for role in state.roles.values()
+            if role.id in merged_by_role
+        ]
+        for role_id, item in merged_by_role.items():
+            if role_id not in state.roles:
+                ordered_selections.append(item)
+        return VoiceSelectOutput(selected_voices=ordered_selections)
+
+    def save_progress_output(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        merged_by_role: dict[str, RoleVoiceSelectionItem],
+    ) -> None:
+        self.repo.save_node_output(project_dir, self.name, self.ordered_output(state, merged_by_role))
 
     @staticmethod
     def bind_selection_to_role(role: Role, selection: RoleVoiceSelectionItem) -> None:
@@ -237,8 +264,26 @@ class VoiceSelectNode(VoiceNodeBase):
                 errors.append(f"{purpose}: {exc!r}")
         return None, "; ".join(errors)
 
+    def voice_select_text_provider(self) -> tuple[Any | None, str | None]:
+        if str(getattr(self.router, "provider_override", "") or ""):
+            return self.text_shortlist_provider()
+
+        settings = getattr(self.repo, "settings", None)
+        provider_settings = getattr(settings, "providers", {}).get("deepseek") if settings is not None else None
+        runtime_settings = getattr(settings, "runtime", None)
+        if provider_settings is None or runtime_settings is None:
+            return self.text_shortlist_provider()
+
+        voice_select_settings = provider_settings.model_copy(deep=True)
+        voice_select_settings.models = dict(voice_select_settings.models)
+        voice_select_settings.models["text"] = self.text_shortlist_model
+        voice_select_settings.options = dict(voice_select_settings.options)
+        voice_select_settings.options["thinking_enabled"] = False
+        voice_select_settings.options["reasoning_effort"] = "low"
+        return DeepSeekTextProvider(voice_select_settings, runtime_settings), None
+
     def selection_model(self, manifest: VoiceCatalogManifest) -> str:
-        text_provider, text_error = self.text_shortlist_provider()
+        text_provider, text_error = self.voice_select_text_provider()
         if text_provider is not None:
             text_model = self.provider_model_label(text_provider)
         else:
@@ -299,159 +344,93 @@ class VoiceSelectNode(VoiceNodeBase):
         manifest: VoiceCatalogManifest,
         role: Role,
         heuristic_candidates: list[VoiceCandidateItem],
-        limit: int = 5,
+        candidate_pool: list[VoiceCandidateItem] | None = None,
+        filter_metadata: dict[str, Any] | None = None,
+        limit: int = 3,
     ) -> tuple[list[VoiceCandidateItem], dict[str, Any]]:
-        provider, provider_error = self.text_shortlist_provider()
+        del heuristic_candidates
+        if candidate_pool is None or filter_metadata is None:
+            candidate_pool, filter_metadata = service.voice_select_candidate_pool(role, manifest)
+        fallback_candidates = candidate_pool[:limit]
+
+        provider, provider_error = self.voice_select_text_provider()
         if provider is None:
-            return heuristic_candidates, {
+            return fallback_candidates, {
                 "text_shortlist_skipped": provider_error or "text provider is unavailable",
+                "text_shortlist_filters": filter_metadata,
             }
 
         prompts = getattr(self.workflow, "prompts", None)
         if prompts is None:
-            return heuristic_candidates, {
+            return fallback_candidates, {
                 "text_shortlist_skipped": "workflow prompt store is unavailable",
+                "text_shortlist_filters": filter_metadata,
             }
 
         role_design = service.role_design_for_shortlist(role)
-        voice_profiles = service.voice_profiles_for_prompt(role, manifest)
-        chunk_size = max(1, int(self.text_shortlist_batch_size))
-        chunks = [
-            voice_profiles[index:index + chunk_size]
-            for index in range(0, len(voice_profiles), chunk_size)
-        ] or [[]]
-        chunk_outputs: list[dict[str, Any]] = []
-        chunk_candidates: list[VoiceCandidateItem] = []
-        seen_voice_types: set[str] = set()
-
-        for chunk_index, chunk in enumerate(chunks, start=1):
-            prompt = prompts.render(
-                "voice_select_shortlist",
-                role_design=json.dumps(role_design, ensure_ascii=False, indent=2),
-                voice_profiles=json.dumps(chunk, ensure_ascii=False, indent=2),
-            )
-            output = await provider.generate_json(
-                prompt,
-                VoiceSelectShortlistOutput,
-                temperature=0.25,
-                metadata={
-                    "node_name": "voice_select_shortlist",
-                    "role_id": role.id,
-                    "role_name": role.name,
-                    "provider": manifest.provider,
-                    "model": manifest.model,
-                    "voice_count": len(manifest.voices),
-                    "limit": limit,
-                    "chunk_index": chunk_index,
-                    "chunk_count": len(chunks),
-                    "heuristic_candidates": [
-                        candidate.model_dump(mode="json")
-                        for candidate in heuristic_candidates
-                    ],
-                    "voice_profiles": chunk,
-                },
-            )
-            chunk_outputs.append(
-                {
-                    "chunk_index": chunk_index,
-                    "candidate_count": len(chunk),
-                    "output": output.model_dump(mode="json"),
-                }
-            )
-            for candidate in service.candidates_from_shortlist_output(
-                output,
-                manifest,
-                fallback_candidates=[],
-                limit=limit,
-            ):
-                if candidate.voice_type in seen_voice_types:
-                    continue
-                chunk_candidates.append(candidate)
-                seen_voice_types.add(candidate.voice_type)
-
-        final_output: VoiceSelectShortlistOutput | None = None
-        if len(chunk_candidates) > limit:
-            merged_profiles = [
-                {
-                    "voice_label": candidate.voice_label,
-                    "voice_type": candidate.voice_type,
-                    "voice_resource_id": candidate.voice_resource_id,
-                    "voice_model_family": candidate.voice_model_family,
-                    "voice_catalog_key": candidate.voice_catalog_key,
-                    "score": candidate.score,
-                    "reason": candidate.reason,
-                    "profile_summary": candidate.profile_summary,
-                    "sample_paths": candidate.sample_paths,
-                }
-                for candidate in chunk_candidates
-            ]
-            prompt = prompts.render(
-                "voice_select_shortlist",
-                role_design=json.dumps(role_design, ensure_ascii=False, indent=2),
-                voice_profiles=json.dumps(merged_profiles, ensure_ascii=False, indent=2),
-            )
-            final_output = await provider.generate_json(
-                prompt,
-                VoiceSelectShortlistOutput,
-                temperature=0.2,
-                metadata={
-                    "node_name": "voice_select_shortlist",
-                    "role_id": role.id,
-                    "role_name": role.name,
-                    "provider": manifest.provider,
-                    "model": manifest.model,
-                    "voice_count": len(chunk_candidates),
-                    "limit": limit,
-                    "chunk_index": "final",
-                    "chunk_count": len(chunks),
-                    "heuristic_candidates": [
-                        candidate.model_dump(mode="json")
-                        for candidate in chunk_candidates
-                    ],
-                    "voice_profiles": merged_profiles,
-                },
-            )
-            candidates = service.candidates_from_shortlist_output(
-                final_output,
-                manifest,
-                fallback_candidates=chunk_candidates,
-                limit=limit,
-            )
-        else:
-            candidates = service.candidates_from_shortlist_output(
-                VoiceSelectShortlistOutput(
-                    candidates=[
-                        {
-                            "voice_label": candidate.voice_label,
-                            "voice_type": candidate.voice_type,
-                            "score": candidate.score,
-                            "reason": candidate.reason,
-                        }
-                        for candidate in chunk_candidates
-                    ]
-                ),
-                manifest,
-                fallback_candidates=heuristic_candidates,
-                limit=limit,
-            )
-
-        raw_shortlist: dict[str, Any]
-        if len(chunk_outputs) == 1 and final_output is None:
-            raw_shortlist = chunk_outputs[0]["output"]
-        else:
-            raw_shortlist = {
-                "chunks": chunk_outputs,
-                "final": final_output.model_dump(mode="json") if final_output is not None else None,
+        voice_profiles = service.voice_profiles_for_prompt(role, manifest, candidates=candidate_pool)
+        candidate_by_id = {
+            str(candidate.candidate_id): candidate
+            for candidate in candidate_pool
+            if candidate.candidate_id
+        }
+        if not voice_profiles:
+            return fallback_candidates, {
+                "text_shortlist_skipped": "no voice_select candidates after language/gender/model filters",
+                "text_shortlist_filters": filter_metadata,
+                "text_shortlist_provider": self.provider_model_label(provider),
             }
+
+        prompt = prompts.render(
+            "voice_select_shortlist",
+            role_design=json.dumps(role_design, ensure_ascii=False, indent=2),
+            voice_profiles=json.dumps(voice_profiles, ensure_ascii=False, indent=2),
+        )
+        self.logger.info(
+            "voice_select model_call=text_shortlist role=%s provider=%s voices=%d limit=%d filters=%s",
+            role.name,
+            self.provider_model_label(provider),
+            len(voice_profiles),
+            limit,
+            json.dumps(filter_metadata, ensure_ascii=False, sort_keys=True),
+        )
+        output = await provider.generate_json(
+            prompt,
+            VoiceSelectShortlistOutput,
+            temperature=0.2,
+            metadata={
+                "node_name": "voice_select_shortlist",
+                "role_id": role.id,
+                "role_name": role.name,
+                "provider": manifest.provider,
+                "model": manifest.model,
+                "manifest_voice_count": len(manifest.voices),
+                "voice_count": len(voice_profiles),
+                "limit": limit,
+                "filters": filter_metadata,
+                "voice_profiles": voice_profiles,
+            },
+        )
+        candidates = service.candidates_from_shortlist_output(
+            output,
+            manifest,
+            fallback_candidates=fallback_candidates,
+            candidate_by_id=candidate_by_id,
+            limit=limit,
+        )
+
+        raw_shortlist = output.model_dump(mode="json")
         if not candidates:
-            return heuristic_candidates, {
+            return fallback_candidates, {
                 "text_shortlist": raw_shortlist,
                 "text_shortlist_error": "text shortlist returned no valid catalog voice_type",
                 "text_shortlist_provider": self.provider_model_label(provider),
+                "text_shortlist_filters": filter_metadata,
             }
         return candidates, {
             "text_shortlist": raw_shortlist,
             "text_shortlist_provider": self.provider_model_label(provider),
+            "text_shortlist_filters": filter_metadata,
         }
 
     def audio_judge_refs(
@@ -459,14 +438,17 @@ class VoiceSelectNode(VoiceNodeBase):
         *,
         service: VoiceCatalogService,
         manifest: VoiceCatalogManifest,
-        top_candidates: list,
+        top_candidates: list[VoiceCandidateItem],
     ) -> list[AssetRef]:
         refs: list[AssetRef] = []
         for candidate in top_candidates:
             voice = service.repo.voice_by_type(manifest, candidate.voice_type)
             if voice is None:
                 continue
-            refs.extend(service.sample_refs_for_voice(voice, manifest.sample_emotions))
+            for ref in service.sample_refs_for_voice(voice, manifest.sample_emotions):
+                metadata = dict(ref.metadata)
+                metadata["candidate_id"] = candidate.candidate_id
+                refs.append(ref.model_copy(update={"metadata": metadata}))
         return refs
 
     async def audio_judge_selection(
@@ -475,8 +457,8 @@ class VoiceSelectNode(VoiceNodeBase):
         role: Role,
         service: VoiceCatalogService,
         manifest: VoiceCatalogManifest,
-        top_candidates: list,
-    ) -> tuple[Any, VoiceSelectAudioJudgeOutput] | None:
+        top_candidates: list[VoiceCandidateItem],
+    ) -> tuple[VoiceCandidateItem, VoiceSelectAudioJudgeOutput] | None:
         if not top_candidates:
             return None
         refs = self.audio_judge_refs(
@@ -496,6 +478,7 @@ class VoiceSelectNode(VoiceNodeBase):
             return None
         candidate_profiles = [
             {
+                "candidate_id": candidate.candidate_id,
                 "voice_label": candidate.voice_label,
                 "voice_type": candidate.voice_type,
                 "score": candidate.score,
@@ -513,6 +496,7 @@ class VoiceSelectNode(VoiceNodeBase):
                 [
                     {
                         "id": ref.id,
+                        "candidate_id": ref.metadata.get("candidate_id"),
                         "voice_type": ref.metadata.get("voice_type"),
                         "voice_label": ref.metadata.get("voice_label"),
                         "emotion": ref.metadata.get("emotion"),
@@ -524,6 +508,14 @@ class VoiceSelectNode(VoiceNodeBase):
                 ensure_ascii=False,
                 indent=2,
             ),
+        )
+        self.logger.info(
+            "voice_select model_call=audio_judge role=%s provider=%s candidates=%d refs=%d sample_emotions=%s",
+            role.name,
+            self.provider_model_label(judge),
+            len(top_candidates),
+            len(refs),
+            ",".join(manifest.sample_emotions) or "-",
         )
         judge_output = await judge.judge_audio_json(
             prompt,
@@ -537,8 +529,15 @@ class VoiceSelectNode(VoiceNodeBase):
                 "candidates": candidate_profiles,
             },
         )
+        by_id = {
+            str(candidate.candidate_id): candidate
+            for candidate in top_candidates
+            if candidate.candidate_id
+        }
         by_type = {candidate.voice_type: candidate for candidate in top_candidates}
-        selected = by_type.get(judge_output.selected_voice_type)
+        selected = by_id.get(str(judge_output.selected_candidate_id or "").strip())
+        if selected is None:
+            selected = by_type.get(judge_output.selected_voice_type)
         if selected is None:
             return None
         return selected, judge_output
@@ -584,20 +583,27 @@ class VoiceSelectNode(VoiceNodeBase):
         if cached is not None:
             return cached
 
-        heuristic_candidates = service.shortlist(role, manifest, limit=5)
+        limit = max(1, int(self.candidate_limit))
+        candidate_pool, filter_metadata = service.voice_select_candidate_pool(role, manifest)
+        heuristic_candidates = candidate_pool[:limit]
         top_candidates = heuristic_candidates
-        shortlist_response: dict[str, Any] = {}
+        shortlist_response: dict[str, Any] = {
+            "text_shortlist_filters": filter_metadata,
+        }
         try:
             top_candidates, shortlist_response = await self.text_shortlist(
                 service=service,
                 manifest=manifest,
                 role=role,
                 heuristic_candidates=heuristic_candidates,
-                limit=5,
+                candidate_pool=candidate_pool,
+                filter_metadata=filter_metadata,
+                limit=limit,
             )
         except Exception as exc:
             shortlist_response = {
                 "text_shortlist_error": repr(exc),
+                "text_shortlist_filters": filter_metadata,
             }
 
         if top_candidates:
@@ -702,14 +708,11 @@ class VoiceSelectNode(VoiceNodeBase):
         force = bool(getattr(self.workflow, "_force_pregen", False))
         existing_output = self.load_existing_output(project_dir)
         existing_by_role = self.existing_by_role(existing_output)
-        target_role_ids = {role.id for role in target_roles}
-        merged_by_role = {
-            role_id: item
-            for role_id, item in existing_by_role.items()
-            if role_id not in target_role_ids
-        }
+        merged_by_role = dict(existing_by_role)
 
-        for role in target_roles:
+        progress_lock = asyncio.Lock()
+
+        async def process_role(role: Role) -> None:
             selection = await self.select_role_voice(
                 provider=provider,
                 service=service,
@@ -720,18 +723,24 @@ class VoiceSelectNode(VoiceNodeBase):
                 force=force,
             )
             self.bind_selection_to_role(role, selection)
-            merged_by_role[role.id] = selection
+            async with progress_lock:
+                merged_by_role[role.id] = selection
+                self.save_progress_output(project_dir, state, merged_by_role)
+                self.logger.info(
+                    "%s generated voice_type=%s source=%s",
+                    role.name,
+                    selection.selected_voice_type,
+                    selection.selection_source,
+                )
 
-        ordered_selections = [
-            merged_by_role[role.id]
-            for role in state.roles.values()
-            if role.id in merged_by_role
-        ]
-        for role_id, item in merged_by_role.items():
-            if role_id not in state.roles:
-                ordered_selections.append(item)
-        output = VoiceSelectOutput(selected_voices=ordered_selections)
-        self.repo.save_node_output(project_dir, self.name, output)
+        tasks = [asyncio.create_task(process_role(role)) for role in target_roles]
+        try:
+            await asyncio.gather(*tasks)
+        except Exception:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        self.save_progress_output(project_dir, state, merged_by_role)
         return state
 
 

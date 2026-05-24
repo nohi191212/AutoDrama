@@ -431,6 +431,18 @@ class PropDesignOutput(BaseModel):
     props: list[PropDesignItem]
 
 
+class LayoutExtractItem(BaseModel):
+    name: str
+    episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    brief: str | None = None
+    appearance_notes: list[str] = Field(default_factory=list)
+
+
+class LayoutExtractOutput(BaseModel):
+    layouts: list[LayoutExtractItem]
+
+
 class LayoutDesignItem(BaseModel):
     name: str
     desc: str

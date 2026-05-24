@@ -183,6 +183,7 @@ role_intro_video_generation
 prop_extract
 prop_design
 prop_generation
+layout_extract
 layout_design
 layout_dedupe_review
 layout_image_generation
@@ -203,7 +204,7 @@ role_multiview_generation
 role_intro_video_generation
 ```
 
-`role_design` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并输出声音需求、`sample_text`、`full_body_prompt`、三视图 + 道具 prompt、介绍视频 prompt 和角色绑定道具。`voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，按手工覆盖、有效缓存、文本 top 5 初筛、音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；`role_voice_generation` 再使用该 `voice_type` 合成人物样例音频。`role_full_body_generation` 先生成自然正面全身参考图；`role_multiview_generation` 必须使用 full body 图作为参考，生成三视图 + 道具设计图；`role_intro_video_generation` 再使用 multiview 图作为参考生成角色介绍视频。功能角色如果 `has_dialogue=false` 不生成声音；功能角色默认跳过介绍视频。
+`role_design` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并输出声音需求、`sample_text`、`full_body_prompt`、三视图 + 道具 prompt、介绍视频 prompt 和角色绑定道具。`voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；`role_voice_generation` 再使用该 `voice_type` 合成人物样例音频。`role_full_body_generation` 先生成自然正面全身参考图；`role_multiview_generation` 必须使用 full body 图作为参考，生成三视图 + 道具设计图；`role_intro_video_generation` 再使用 multiview 图作为参考生成角色介绍视频。功能角色如果 `has_dialogue=false` 不生成声音；功能角色默认跳过介绍视频。
 
 `role_episode_key_audit` 在 `role_extract` 之后运行，会以 30 并发逐个检查角色 JSON 的 `episode_keys` 覆盖情况；如果发现遗漏，只向 `role_extract*`、已有 `role_design`、角色 JSON 和 state 角色记录追加缺失的 `episode_keys/source_chapters`，不会删除或重排原有条目。
 
@@ -293,7 +294,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --episode
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
 
-`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `role_design`、`voice_select`、`role_voice_generation`、`role_full_body_generation`、`role_multiview_generation`、`role_intro_video_generation`、`prop_design` 和 `prop_generation`。角色相关节点会按角色 `episode_keys` 过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。
+`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `role_design`、`voice_select`、`role_voice_generation`、`role_full_body_generation`、`role_multiview_generation`、`role_intro_video_generation`、`prop_design`、`prop_generation` 和 `layout_image_generation`。角色、道具和场景图相关节点会按各自的 `episode_keys` 过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。
 
 全局音色 catalog 命令：
 
@@ -302,10 +303,11 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --confi
 D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider volcengine --force-samples
 D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider volcengine --force-samples --sample-emotion all
 D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider volcengine --force-profiles
+D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider volcengine --miss-profiles
 D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --config config.yaml --provider volcengine
 ```
 
-`voice-catalog build` 会刷新 provider speaker manifest；`--force-samples` 默认只为目标音色生成 `normal` 样例，避免全量 catalog 触发过多 TTS 请求；如果确实需要五情绪样例，可以加 `--sample-emotion all` 生成 `normal/angry/sad/happy/low`。`--force-profiles` 会调用 `routing.judge.voice_catalog_profile` 配置的 audio judge 生成自然语言听感画像，每个音色会单独落盘到 `.assets/voice_catalog/<provider>/<model>/profiles/<voice_type>.json`，同时回写 manifest；如需临时覆盖 judge，可加 `--judge-provider fake` 或其他已注册 judge。调试时可以加 `--voice-type <voice_type>` 或 `--limit 5` 控制范围。项目内 `voice_select` 会先用 `routing.text.voice_select` 根据角色和音色画像筛 top 5（未配置时复用 `routing.text.role`，失败时退回 catalog 启发式），样例齐全时再调用 `routing.judge.voice_select` 听音频终选。`voice_label` 只作为人类可读展示字段，落盘和合成 API 始终使用官方 `voice_type`。
+`voice-catalog build` 会刷新 provider speaker manifest；`--force-samples` 默认只为目标音色生成 `normal` 样例，避免全量 catalog 触发过多 TTS 请求；如果确实需要五情绪样例，可以加 `--sample-emotion all` 生成 `normal/angry/sad/happy/low`。`--force-profiles` 会调用 `routing.judge.voice_catalog_profile` 配置的 audio judge 重新生成自然语言听感画像，每个音色会单独落盘到 `.assets/voice_catalog/<provider>/<model>/profiles/<voice_type>.json`，同时回写 manifest；`--miss-profiles` 只补 manifest 中缺失或 `profile_hash` 过期的 profile，已有匹配画像会复用并跳过 judge；两种 profile 模式都会以 5 并发调用 judge；如需临时覆盖 judge，可加 `--judge-provider fake` 或其他已注册 judge。调试时可以加 `--voice-type <voice_type>` 或 `--limit 5` 控制范围。项目内 `voice_select` 会先把候选过滤到中文、角色同性别、豆包语音合成模型 2.0（Volcengine catalog）后，为每个候选生成内部 `candidate_id`，并用 `deepseek-v4-flash`、关闭 thinking 的单次文本调用直接筛 top 3；多个角色会并行执行，每个角色确定后立即落盘并输出 `<role> generated` 日志。样例齐全时再调用 `routing.judge.voice_select`，默认 Qwen3.5-Omni-Plus，听 top 3 音频终选。`voice_label` 只作为人类可读展示字段，落盘和合成 API 始终使用官方 `voice_type`。
 
 按镜头选择：
 
@@ -405,6 +407,8 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_cache_smoke.p
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_episode_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_manual_override_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_audio_judge_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_parallel_top3_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_deepseek_flash_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_voice_generation_uses_voice_select_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_generation_episode_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/functional_role_asset_policy_smoke.py

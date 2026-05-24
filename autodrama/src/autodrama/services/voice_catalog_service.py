@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -32,6 +33,7 @@ class VoiceCatalogService:
         self.repo = repo
 
     PROFILE_PROMPT_VERSION = "voice_catalog_profile.natural_sketch.v1"
+    PROFILE_BUILD_CONCURRENCY = 5
 
     @staticmethod
     def provider_identity(provider: Any) -> tuple[str, str]:
@@ -318,17 +320,19 @@ class VoiceCatalogService:
         prompts: PromptStore | None = None,
     ) -> VoiceCatalogManifest:
         prompts = prompts or PromptStore()
+        judge_name = str(getattr(judge, "name", "unknown"))
         judge_model = str(getattr(judge, "model", "") or "")
-        updated_voices: list[VoiceCatalogVoiceItem] = []
+        updated_voices: list[VoiceCatalogVoiceItem | None] = [None] * len(manifest.voices)
+        profile_jobs: list[dict[str, Any]] = []
 
-        for voice in manifest.voices:
+        for index, voice in enumerate(manifest.voices):
             if voice_types and voice.voice_type not in voice_types:
-                updated_voices.append(voice)
+                updated_voices[index] = voice
                 continue
             updated_voice = voice.model_copy(deep=True)
             profile_hash = self.profile_hash(
                 updated_voice,
-                judge_name=str(getattr(judge, "name", "unknown")),
+                judge_name=judge_name,
                 judge_model=judge_model,
                 profile_prompt_version=self.PROFILE_PROMPT_VERSION,
             )
@@ -337,12 +341,12 @@ class VoiceCatalogService:
                 self.repo.save_voice_profile(
                     manifest,
                     updated_voice,
-                    judge_name=str(getattr(judge, "name", "unknown")),
+                    judge_name=judge_name,
                     judge_model=judge_model,
                     profile_prompt_version=self.PROFILE_PROMPT_VERSION,
                     sample_refs=self.profile_sample_ref_payload(refs),
                 )
-                updated_voices.append(updated_voice)
+                updated_voices[index] = updated_voice
                 continue
 
             refs = self.sample_refs_for_voice(updated_voice, manifest.sample_emotions)
@@ -351,38 +355,75 @@ class VoiceCatalogService:
                 raise ValueError(
                     f"Cannot profile {voice.voice_type}: missing sample audio for {', '.join(missing)}"
                 )
+            sample_refs = self.profile_sample_ref_payload(refs)
             prompt = prompts.render(
                 "voice_catalog_profile",
                 official_metadata=json.dumps(updated_voice.official, ensure_ascii=False, indent=2),
-                sample_refs=json.dumps(self.profile_sample_ref_payload(refs), ensure_ascii=False, indent=2),
+                sample_refs=json.dumps(sample_refs, ensure_ascii=False, indent=2),
             )
-            profile = await judge.judge_audio_json(
-                prompt,
-                VoiceCatalogProfile,
-                refs=refs,
-                temperature=0.2,
-                metadata={
-                    "node_name": "voice_catalog_profile",
-                    "voice_catalog_key": updated_voice.voice_catalog_key,
-                    "voice_type": updated_voice.voice_type,
-                    "voice_label": updated_voice.voice_label,
-                },
+            profile_jobs.append(
+                {
+                    "index": index,
+                    "voice": updated_voice,
+                    "profile_hash": profile_hash,
+                    "refs": refs,
+                    "sample_refs": sample_refs,
+                    "prompt": prompt,
+                }
             )
+
+        semaphore = asyncio.Semaphore(self.PROFILE_BUILD_CONCURRENCY)
+
+        async def build_profile_job(job: dict[str, Any]) -> tuple[int, VoiceCatalogVoiceItem]:
+            updated_voice = job["voice"]
+            async with semaphore:
+                profile = await judge.judge_audio_json(
+                    job["prompt"],
+                    VoiceCatalogProfile,
+                    refs=job["refs"],
+                    temperature=0.2,
+                    metadata={
+                        "node_name": "voice_catalog_profile",
+                        "voice_catalog_key": updated_voice.voice_catalog_key,
+                        "voice_type": updated_voice.voice_type,
+                        "voice_label": updated_voice.voice_label,
+                    },
+                )
             updated_voice.omni_profile = profile
-            updated_voice.profile_hash = profile_hash
+            updated_voice.profile_hash = job["profile_hash"]
             self.repo.save_voice_profile(
                 manifest,
                 updated_voice,
-                judge_name=str(getattr(judge, "name", "unknown")),
+                judge_name=judge_name,
                 judge_model=judge_model,
                 profile_prompt_version=self.PROFILE_PROMPT_VERSION,
-                sample_refs=self.profile_sample_ref_payload(refs),
+                sample_refs=job["sample_refs"],
             )
-            updated_voices.append(updated_voice)
-            manifest = manifest.model_copy(update={"voices": updated_voices + manifest.voices[len(updated_voices):]})
-            self.repo.save_manifest(manifest)
+            return int(job["index"]), updated_voice
 
-        manifest = manifest.model_copy(update={"voices": updated_voices})
+        tasks = [asyncio.create_task(build_profile_job(job)) for job in profile_jobs]
+        try:
+            for task in asyncio.as_completed(tasks):
+                index, updated_voice = await task
+                updated_voices[index] = updated_voice
+                progress_voices = [
+                    updated if updated is not None else original
+                    for updated, original in zip(updated_voices, manifest.voices)
+                ]
+                progress_manifest = manifest.model_copy(update={"voices": progress_voices})
+                self.repo.save_manifest(progress_manifest)
+        except Exception:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        final_voices = [
+            updated if updated is not None else original
+            for updated, original in zip(updated_voices, manifest.voices)
+        ]
+        manifest = manifest.model_copy(update={"voices": final_voices})
         self.repo.save_manifest(manifest)
         return manifest
 
@@ -392,6 +433,7 @@ class VoiceCatalogService:
         *,
         score: float | None = None,
         reason: str,
+        candidate_id: str | None = None,
     ) -> VoiceCandidateItem:
         profile_summary = voice.omni_profile.summary if voice.omni_profile else None
         sample_paths = {
@@ -399,6 +441,7 @@ class VoiceCatalogService:
             for emotion, sample in voice.samples.items()
         }
         return VoiceCandidateItem(
+            candidate_id=candidate_id,
             voice_label=voice.voice_label,
             voice_type=voice.voice_type,
             voice_resource_id=voice.voice_resource_id,
@@ -470,9 +513,16 @@ class VoiceCatalogService:
     @staticmethod
     def _voice_gender(voice: VoiceCatalogVoiceItem) -> str | None:
         gender = str(voice.official.get("gender") or "").strip().lower()
-        if gender in {"female", "woman", "女", "女性"}:
+        label = voice.voice_label.lower()
+        voice_type = voice.voice_type.lower()
+        gender_text = " ".join([gender, label, voice_type])
+        if gender in {"female", "woman", "girl", "女", "女性", "女声"}:
             return "female"
-        if gender in {"male", "man", "男", "男性"}:
+        if gender in {"male", "man", "boy", "男", "男性", "男声"}:
+            return "male"
+        if any(marker in gender_text for marker in ("female", "woman", "girl", "女", "女生", "少女", "御姐")):
+            return "female"
+        if any(marker in gender_text for marker in ("male", " man ", "boy", "男", "男生", "青叔", "大叔")):
             return "male"
         if voice.voice_type.startswith("zh_female"):
             return "female"
@@ -504,6 +554,122 @@ class VoiceCatalogService:
                 ]
             )
         return " ".join(parts)
+
+    @staticmethod
+    def _voice_is_doubao_2_0(voice: VoiceCatalogVoiceItem) -> bool:
+        official = voice.official
+        values = [
+            voice.voice_resource_id,
+            voice.voice_model_family,
+            official.get("resource_id"),
+            official.get("voice_resource_id"),
+            official.get("model_family"),
+            official.get("voice_model_family"),
+        ]
+        text = " ".join(str(value or "") for value in values)
+        return "seed-tts-2.0" in text or "豆包语音合成模型2.0" in text
+
+    def voice_select_candidate_pool(
+        self,
+        role: Role,
+        manifest: VoiceCatalogManifest,
+    ) -> tuple[list[VoiceCandidateItem], dict[str, Any]]:
+        role_text = self._role_text(role)
+        role_gender = self._infer_role_gender(role_text)
+        require_doubao_2 = str(manifest.provider or "").strip().lower() == "volcengine"
+        skipped = {
+            "non_chinese": 0,
+            "unknown_gender": 0,
+            "gender_mismatch": 0,
+            "non_doubao_2_0": 0,
+        }
+        scored: list[tuple[float, int, VoiceCatalogVoiceItem, str]] = []
+        for index, voice in enumerate(manifest.voices):
+            if self._voice_language_key(voice) != "zh":
+                skipped["non_chinese"] += 1
+                continue
+            voice_gender = self._voice_gender(voice)
+            if role_gender:
+                if voice_gender is None:
+                    skipped["unknown_gender"] += 1
+                    continue
+                if role_gender != voice_gender:
+                    skipped["gender_mismatch"] += 1
+                    continue
+            if require_doubao_2 and not self._voice_is_doubao_2_0(voice):
+                skipped["non_doubao_2_0"] += 1
+                continue
+            score, reason = self.score_voice_for_role(role, voice)
+            scored.append((score, -index, voice, reason))
+
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        candidates = [
+            self.candidate_from_voice(
+                voice,
+                score=score,
+                reason=reason,
+                candidate_id=f"V{position:03d}",
+            )
+            for position, (score, _index, voice, reason) in enumerate(scored, start=1)
+        ]
+        metadata = {
+            "role_gender": role_gender or "unknown",
+            "require_language": "zh",
+            "require_same_gender": bool(role_gender),
+            "require_doubao_2_0": require_doubao_2,
+            "candidate_count": len(candidates),
+            "skipped": skipped,
+        }
+        return candidates, metadata
+
+    @staticmethod
+    def compact_candidate_profile(candidate: VoiceCandidateItem, voice: VoiceCatalogVoiceItem) -> dict[str, Any]:
+        official = voice.official
+        profile = voice.omni_profile
+        compact_profile: dict[str, Any] | None = None
+        if profile is not None:
+            compact_profile = {
+                "summary": profile.summary,
+                "gender_presentation": profile.gender_presentation,
+                "age_impression": profile.age_impression,
+                "texture": profile.texture[:3],
+                "performance_style": profile.performance_style[:3],
+                "best_role_types": profile.best_role_types[:3],
+                "avoid_role_types": profile.avoid_role_types[:3],
+            }
+        abilities = [str(item) for item in official.get("abilities") or [] if str(item).strip()]
+        tags = [str(item) for item in official.get("tags") or [] if str(item).strip()]
+        return {
+            "candidate_id": candidate.candidate_id,
+            "voice_label": candidate.voice_label,
+            "voice_type": candidate.voice_type,
+            "gender": VoiceCatalogService._voice_gender(voice),
+            "language": VoiceCatalogService._voice_language_key(voice),
+            "model_family": voice.voice_model_family or official.get("model_family"),
+            "scene": official.get("scene"),
+            "abilities": abilities[:4],
+            "tags": tags[:6],
+            "emotion_capable": bool(official.get("emotion_capable") or official.get("supported_emotions")),
+            "profile": compact_profile,
+            "local_score": candidate.score,
+            "local_reason": candidate.reason,
+        }
+
+    def voice_profiles_for_prompt(
+        self,
+        role: Role,
+        manifest: VoiceCatalogManifest,
+        candidates: list[VoiceCandidateItem] | None = None,
+    ) -> list[dict[str, Any]]:
+        if candidates is None:
+            candidates, _metadata = self.voice_select_candidate_pool(role, manifest)
+        profiles: list[dict[str, Any]] = []
+        for candidate in candidates:
+            voice = self.repo.voice_by_type(manifest, candidate.voice_type)
+            if voice is None:
+                continue
+            profiles.append(self.compact_candidate_profile(candidate, voice))
+        return profiles
 
     def score_voice_for_role(self, role: Role, voice: VoiceCatalogVoiceItem) -> tuple[float, str]:
         role_text = self._role_text(role)
@@ -580,63 +746,34 @@ class VoiceCatalogService:
             ],
         }
 
-    def voice_profiles_for_prompt(self, role: Role, manifest: VoiceCatalogManifest) -> list[dict[str, Any]]:
-        profiles: list[dict[str, Any]] = []
-        for voice in manifest.voices:
-            heuristic_score, heuristic_reason = self.score_voice_for_role(role, voice)
-            official = voice.official
-            profiles.append(
-                {
-                    "voice_label": voice.voice_label,
-                    "voice_type": voice.voice_type,
-                    "voice_resource_id": voice.voice_resource_id,
-                    "voice_model_family": voice.voice_model_family,
-                    "voice_catalog_key": voice.voice_catalog_key,
-                    "official": {
-                        "gender": official.get("gender"),
-                        "language": official.get("language"),
-                        "scene": official.get("scene"),
-                        "abilities": official.get("abilities"),
-                        "tags": official.get("tags"),
-                        "emotion_capable": official.get("emotion_capable"),
-                        "supported_emotions": official.get("supported_emotions"),
-                    },
-                    "omni_profile": (
-                        voice.omni_profile.model_dump(mode="json")
-                        if voice.omni_profile is not None
-                        else None
-                    ),
-                    "heuristic_score": heuristic_score,
-                    "heuristic_reason": heuristic_reason,
-                    "available_sample_emotions": sorted(voice.samples),
-                }
-            )
-        return profiles
-
     def candidates_from_shortlist_output(
         self,
         output: VoiceSelectShortlistOutput,
         manifest: VoiceCatalogManifest,
         *,
         fallback_candidates: list[VoiceCandidateItem],
+        candidate_by_id: dict[str, VoiceCandidateItem] | None = None,
         limit: int = 5,
     ) -> list[VoiceCandidateItem]:
         candidates: list[VoiceCandidateItem] = []
         seen_voice_types: set[str] = set()
         for item in output.candidates:
-            voice_type = str(item.voice_type or "").strip()
+            candidate_id = str(item.candidate_id or "").strip()
+            source_candidate = candidate_by_id.get(candidate_id) if candidate_by_id else None
+            voice_type = str(
+                source_candidate.voice_type if source_candidate is not None else item.voice_type or ""
+            ).strip()
             if not voice_type or voice_type in seen_voice_types:
                 continue
             voice = self.repo.voice_by_type(manifest, voice_type)
             if voice is None:
                 continue
-            candidates.append(
-                self.candidate_from_voice(
-                    voice,
-                    score=item.score,
-                    reason=item.reason,
-                )
+            base_candidate = source_candidate or self.candidate_from_voice(
+                voice,
+                candidate_id=candidate_id or None,
+                reason=item.reason,
             )
+            candidates.append(base_candidate.model_copy(update={"score": item.score, "reason": item.reason}))
             seen_voice_types.add(voice_type)
             if len(candidates) >= limit:
                 break

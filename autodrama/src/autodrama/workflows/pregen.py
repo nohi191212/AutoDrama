@@ -65,6 +65,7 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "role_intro_video_generation",
     "prop_design",
     "prop_generation",
+    "layout_image_generation",
 }
 PREGEN_ONLY_ALIASES = {"prop_image_generation": "prop_generation"}
 
@@ -613,7 +614,7 @@ class PregenWorkflow:
             raise ValueError(
                 "--episodes is only supported for pregen --only role_design, voice_select, role_voice_generation, "
                 "role_full_body_generation, role_multiview_generation, role_intro_video_prompt, "
-                "role_intro_video_generation, prop_design, or prop_generation. "
+                "role_intro_video_generation, prop_design, prop_generation, or layout_image_generation. "
                 "Use run generation --only storyboard_generation --episodes ... for storyboard shots."
             )
         logger.info(
@@ -1844,6 +1845,9 @@ class PregenWorkflow:
 
     async def _run_prop_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._run_prop_generation(project_dir, state)
+
+    async def _run_layout_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("layout_extract").run(project_dir, state)
 
     async def _run_layout_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("layout_design").run(project_dir, state)

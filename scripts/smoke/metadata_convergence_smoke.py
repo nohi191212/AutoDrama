@@ -68,6 +68,13 @@ async def main_async() -> int:
         "per-prop extract JSON should exist",
     )
 
+    await workflow.run(project_dir, only="layout_extract", force=True)
+    state_payload = load_state_payload(project_dir)
+    metadata = state_payload.get("metadata", {})
+    require(isinstance(metadata, dict), "state metadata should be a dict after layout_extract")
+    require("layout_extract" not in metadata, "state.json metadata should not contain layout_extract")
+    require((project_dir / "assets" / "json" / "nodes" / "layout_extract.json").exists(), "layout_extract node output missing")
+
     await workflow.run(project_dir, only="layout_design", force=True)
     state_payload = load_state_payload(project_dir)
     metadata = state_payload.get("metadata", {})

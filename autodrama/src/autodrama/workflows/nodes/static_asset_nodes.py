@@ -6,6 +6,9 @@ from typing import Any
 from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
     Layout,
+    LayoutDesignItem,
+    LayoutExtractItem,
+    LayoutExtractOutput,
     ProjectState,
     Prop,
     PropDesignItem,
@@ -36,6 +39,7 @@ STATIC_ASSET_NODE_NAMES = [
     "prop_extract",
     "prop_design",
     "prop_generation",
+    "layout_extract",
     "layout_design",
     "layout_dedupe_review",
     "layout_image_generation",
@@ -186,6 +190,11 @@ class StaticAssetNodeBase:
             return True
         return self.intersects_active_episode_keys(self.dedupe_texts(prop.episode_keys), active_episode_keys)
 
+    def layout_matches_active_episode_keys(self, layout: Layout, active_episode_keys: list[str]) -> bool:
+        if not active_episode_keys:
+            return True
+        return self.intersects_active_episode_keys(self.dedupe_texts(layout.episode_keys), active_episode_keys)
+
     def role_matches_active_episode_keys(
         self,
         role: Role,
@@ -235,6 +244,65 @@ class StaticAssetNodeBase:
     @classmethod
     def prop_extract_key(cls, item: PropExtractItem | PropDesignItem) -> str:
         return cls.prop_asset_id(item.name, item.status)
+
+    @classmethod
+    def layout_extract_key(cls, item: LayoutExtractItem | LayoutDesignItem) -> str:
+        return normalize_id("layout", item.name)
+
+    def load_layout_extract_output(self, project_dir: Path) -> LayoutExtractOutput:
+        path = self.layout.node_output_path(project_dir, "layout_extract")
+        if not path.exists():
+            raise FileNotFoundError(
+                "layout_extract output is missing; run pregen --only layout_extract before layout_design"
+            )
+        return LayoutExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def layout_episode_keys(
+        self,
+        name: str,
+        episode_keys: list[str],
+        state: ProjectState,
+        *,
+        label: str,
+    ) -> list[str]:
+        expected_keys = self.expected_episode_keys(state)
+        expected = set(expected_keys)
+        cleaned = self.dedupe_texts(episode_keys)
+        invalid = [episode_key for episode_key in cleaned if episode_key not in expected]
+        if invalid:
+            raise ValueError(
+                f"{label} generated invalid episode_keys for {name}: "
+                f"{', '.join(invalid)}; expected one of {', '.join(expected_keys)}"
+            )
+        if not cleaned:
+            raise ValueError(f"{label} must include episode_keys for {name}")
+        selected = set(cleaned)
+        return [episode_key for episode_key in expected_keys if episode_key in selected]
+
+    def layouts_from_design_items(
+        self,
+        items: list[LayoutDesignItem],
+        state: ProjectState,
+        *,
+        label: str,
+    ) -> dict[str, Layout]:
+        layouts: dict[str, Layout] = {}
+        for item in items:
+            item.name = str(item.name or "").strip()
+            if not item.name:
+                raise ValueError(f"{label} returned a layout with empty name")
+            item.episode_keys = self.layout_episode_keys(item.name, item.episode_keys, state, label=label)
+            layout_id = normalize_id("layout", item.name)
+            if layout_id in layouts:
+                raise ValueError(f"{label} returned duplicated layout: {item.name}")
+            layouts[layout_id] = Layout(
+                id=layout_id,
+                name=item.name,
+                desc=item.desc,
+                prompt=item.prompt,
+                episode_keys=item.episode_keys,
+            )
+        return layouts
 
     def select_prop_design_item(self, output: PropDesignOutput, extract_item: PropExtractItem) -> PropDesignItem:
         if not output.props:
@@ -1559,6 +1627,51 @@ class PropGenerationNode(StaticAssetNodeBase):
         return state
 
 
+class LayoutExtractNode(StaticAssetNodeBase):
+    name = "layout_extract"
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("layout")
+        self.logger.info(
+            "node=layout_extract provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        episode_keys = self.expected_episode_keys(state)
+        self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        output = await self.asset_service.layout_extract(
+            state,
+            provider,
+            novel_full=self.novel_full_contents(project_dir, state, episode_keys),
+        )
+
+        expected = set(episode_keys)
+        seen_keys: set[str] = set()
+        for item in output.layouts:
+            item.name = str(item.name or "").strip()
+            if not item.name:
+                raise ValueError("layout_extract returned a layout with empty name")
+            item.episode_keys = self.dedupe_texts(item.episode_keys)
+            item.source_chapters = self.dedupe_texts(item.source_chapters)
+            item.appearance_notes = self.dedupe_texts(item.appearance_notes)
+            invalid_episode_keys = sorted(set(item.episode_keys).difference(expected))
+            if invalid_episode_keys:
+                raise ValueError(
+                    f"layout_extract episode_keys for {item.name} must use existing keys; "
+                    f"got {', '.join(invalid_episode_keys)}"
+                )
+            if not item.episode_keys:
+                raise ValueError(f"layout_extract must include episode_keys for {item.name}")
+            key = self.layout_extract_key(item)
+            if key in seen_keys:
+                raise ValueError(f"layout_extract returned duplicated layout: {item.name}")
+            seen_keys.add(key)
+
+        state.budget.used_text_calls += 1
+        self.repo.save_node_output(project_dir, self.name, output)
+        return state
+
+
 class LayoutDesignNode(StaticAssetNodeBase):
     name = "layout_design"
 
@@ -1569,21 +1682,14 @@ class LayoutDesignNode(StaticAssetNodeBase):
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
+        extract_output = self.load_layout_extract_output(project_dir)
         output = await self.asset_service.layout_design(
             state,
             provider,
+            layout_extracts=[item.model_dump(mode="json") for item in extract_output.layouts],
             episode_stories=self.episode_stories(project_dir, state),
         )
-        state.layouts = {
-            normalize_id("layout", item.name): Layout(
-                id=normalize_id("layout", item.name),
-                name=item.name,
-                desc=item.desc,
-                prompt=item.prompt,
-                episode_keys=item.episode_keys,
-            )
-            for item in output.layouts
-        }
+        state.layouts = self.layouts_from_design_items(output.layouts, state, label="layout_design")
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, self.name, output)
         return state
@@ -1600,16 +1706,7 @@ class LayoutDedupeReviewNode(StaticAssetNodeBase):
             getattr(provider, "model", "-"),
         )
         output = await self.asset_service.layout_dedupe_review(state, provider)
-        state.layouts = {
-            normalize_id("layout", item.name): Layout(
-                id=normalize_id("layout", item.name),
-                name=item.name,
-                desc=item.desc,
-                prompt=item.prompt,
-                episode_keys=item.episode_keys,
-            )
-            for item in output.layouts
-        }
+        state.layouts = self.layouts_from_design_items(output.layouts, state, label="layout_dedupe_review")
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, self.name, output)
         return state
@@ -1626,8 +1723,32 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
             getattr(provider, "model", "-"),
         )
         generated: list[StaticAssetGenerationItem] = []
-        layouts = list(state.layouts.values())
+        active_episode_keys = self.active_episode_keys(state)
+        all_layouts = list(state.layouts.values())
+        layouts = [
+            layout
+            for layout in all_layouts
+            if self.layout_matches_active_episode_keys(layout, active_episode_keys)
+        ]
+        if active_episode_keys:
+            self.logger.info(
+                "node=layout_image_generation episode-scoped rerun episodes=%s target_images=%d",
+                ",".join(active_episode_keys),
+                len(layouts),
+            )
         self.logger.info("node=layout_image_generation total_images=%d", len(layouts))
+        generated_by_asset_id: dict[str, StaticAssetGenerationItem] = {}
+        if active_episode_keys:
+            path = self.layout.node_output_path(project_dir, self.name)
+            if path.exists():
+                try:
+                    existing_output = StaticAssetGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
+                    generated_by_asset_id = {
+                        item.asset_id: item
+                        for item in existing_output.generated_assets
+                    }
+                except Exception as exc:
+                    self.logger.warning("layout_image_generation ignored invalid existing node output %s: %s", path, exc)
         for layout in layouts:
             result = await provider.generate_image(
                 layout.prompt,
@@ -1665,7 +1786,20 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
                 )
             )
             self.logger.info("%s generated successfully, saved in %s", layout.id, asset_path)
-        self.repo.save_node_output(project_dir, self.name, StaticAssetGenerationOutput(generated_assets=generated))
+            generated_by_asset_id[layout.id] = generated[-1]
+        if active_episode_keys and generated_by_asset_id:
+            ordered_generated = [
+                generated_by_asset_id[layout.id]
+                for layout in all_layouts
+                if layout.id in generated_by_asset_id
+            ]
+        else:
+            ordered_generated = generated
+        self.repo.save_node_output(
+            project_dir,
+            self.name,
+            StaticAssetGenerationOutput(generated_assets=ordered_generated),
+        )
         return state
 
 
@@ -1698,6 +1832,7 @@ def build_static_asset_node_runners(workflow: Any) -> dict[str, StaticAssetNodeB
         PropExtractNode.name: PropExtractNode(**deps),
         PropDesignNode.name: PropDesignNode(**deps),
         PropGenerationNode.name: PropGenerationNode(**deps),
+        LayoutExtractNode.name: LayoutExtractNode(**deps),
         LayoutDesignNode.name: LayoutDesignNode(**deps),
         LayoutDedupeReviewNode.name: LayoutDedupeReviewNode(**deps),
         LayoutImageGenerationNode.name: LayoutImageGenerationNode(**deps),
@@ -1716,6 +1851,7 @@ __all__ = [
     "STATIC_ASSET_NODE_NAMES",
     "LayoutDedupeReviewNode",
     "LayoutDesignNode",
+    "LayoutExtractNode",
     "LayoutImageGenerationNode",
     "PropDesignNode",
     "PropExtractNode",
