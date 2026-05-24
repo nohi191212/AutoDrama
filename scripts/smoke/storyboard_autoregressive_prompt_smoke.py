@@ -24,6 +24,7 @@ from autodrama.core.schemas import (  # noqa: E402
     RoleAudio,
     ScriptBundle,
     StoryboardNextShotOutput,
+    StoryboardSourceCoverage,
 )
 from autodrama.providers.local.mock.fake import FakeTextProvider  # noqa: E402
 from autodrama.services.storyboard_service import StoryboardService  # noqa: E402
@@ -167,11 +168,38 @@ async def main_async() -> int:
     service = StoryboardService(PromptStore())
     progress_snapshots: list[tuple[str, str, int]] = []
     state = build_state()
-    current_novel_full = (
+    story_text = (
         "雨夜办公室，林舟发现合同关键页纸张颜色不对。苏晚递来旧邮件截图，"
         "邮件附件时间线证明合同被调包。次日会议室，赵启试图压住议程，"
         "林舟投屏证据并公开反击。"
     )
+    current_novel_full = f"源章节：第1章-第2章。\n\n{story_text}\n\n（未完待续）"
+
+    terminal_source = "源章节：第1章-第2章。\n\n雨夜办公室，林舟公开反击。\n\n（未完待续）"
+    terminal_start_text, terminal_start_offset = service._source_anchor(terminal_source, 0)
+    terminal_end_offset = service._story_text_end_offset(terminal_source)
+    require(
+        terminal_start_text.startswith("雨夜办公室"),
+        f"Source anchor should skip source chapter metadata: {terminal_start_text}",
+    )
+    require(
+        terminal_source[terminal_end_offset:].strip() == "（未完待续）",
+        "Story end offset should stop before terminal metadata",
+    )
+    terminal_next = service._validate_source_coverage(
+        StoryboardSourceCoverage(
+            start_text="雨夜办公室，林舟公开反击。",
+            end_text="雨夜办公室，林舟公开反击。",
+            next_start_text=None,
+            note="covers story text without the terminal marker",
+        ),
+        current_novel_full=terminal_source,
+        current_shot_start_text=terminal_start_text,
+        current_start_offset=terminal_start_offset,
+        is_chapter_complete=True,
+        source_end_offset=terminal_end_offset,
+    )
+    require(terminal_next is None, f"Completed terminal marker coverage should return None: {terminal_next}")
 
     def record_progress(episode, shot) -> None:
         progress_snapshots.append((episode.episode_key, shot.shot_id, len(episode.shots)))
@@ -214,6 +242,12 @@ async def main_async() -> int:
     require("0-4 秒：" in provider.calls[0]["prompt"], "Prompt missing official-style timed video_prompt guidance/example")
     require("方括号标签" in provider.calls[0]["prompt"], "Prompt missing guidance against old bracketed style")
     require("硬切到" in provider.calls[0]["prompt"], "Prompt missing natural explicit cut guidance/example")
+    require(
+        provider.calls[0]["metadata"]["current_shot_start_text"].startswith("雨夜办公室"),
+        f"First storyboard cursor should skip source chapter metadata: {provider.calls[0]['metadata']}",
+    )
+    first_cursor_section = provider.calls[0]["prompt"].split("当前 shot 起点原文：", 1)[1].split("## 资产与风格", 1)[0]
+    require("源章节" not in first_cursor_section, f"First cursor section should not include metadata: {first_cursor_section}")
     require('"source_coverage"' in provider.calls[1]["prompt"], "Second prompt missing first shot source coverage")
     require("episode_001_shot_001" in provider.calls[1]["prompt"], "Second prompt missing first shot id")
     require("episode_001_shot_002" in provider.calls[2]["prompt"], "Third prompt missing two generated shots context")

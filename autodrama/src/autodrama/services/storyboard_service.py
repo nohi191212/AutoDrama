@@ -17,6 +17,7 @@ from autodrama.utils.prompts import PromptStore
 
 class StoryboardService:
     MAX_GENERATION_STEPS_PER_CHAPTER = 24
+    _STORY_END_MARKERS = frozenset({"（未完待续）", "(未完待续)", "未完待续"})
 
     def __init__(self, prompts: PromptStore) -> None:
         self.prompts = prompts
@@ -84,10 +85,34 @@ class StoryboardService:
         return StoryboardShot.model_validate(data)
 
     @staticmethod
-    def _source_anchor(text: str, start_offset: int, *, limit: int = 96) -> tuple[str, int]:
+    def _story_text_start_offset(text: str, start_offset: int = 0) -> int:
         cursor = max(0, start_offset)
         while cursor < len(text) and text[cursor].isspace():
             cursor += 1
+
+        line_end = text.find("\n", cursor)
+        first_line_end = len(text) if line_end < 0 else line_end
+        first_line = text[cursor:first_line_end].strip()
+        if first_line.startswith(("源章节：", "源章节:")):
+            cursor = first_line_end
+            while cursor < len(text) and text[cursor].isspace():
+                cursor += 1
+        return cursor
+
+    @classmethod
+    def _story_text_end_offset(cls, text: str) -> int:
+        end = len(text.rstrip())
+        while end > 0:
+            line_start = text.rfind("\n", 0, end) + 1
+            last_line = text[line_start:end].strip()
+            if last_line not in cls._STORY_END_MARKERS:
+                break
+            end = len(text[:line_start].rstrip())
+        return end
+
+    @staticmethod
+    def _source_anchor(text: str, start_offset: int, *, limit: int = 96) -> tuple[str, int]:
+        cursor = StoryboardService._story_text_start_offset(text, start_offset)
         if cursor >= len(text):
             raise ValueError("Cannot build storyboard source anchor after the end of current_novel_full")
 
@@ -119,7 +144,11 @@ class StoryboardService:
         current_shot_start_text: str,
         current_start_offset: int,
         is_chapter_complete: bool,
+        source_end_offset: int | None = None,
     ) -> int | None:
+        if source_end_offset is None:
+            source_end_offset = len(current_novel_full.rstrip())
+
         start_offset = self._find_anchor_offset(
             current_novel_full,
             coverage.start_text,
@@ -128,7 +157,8 @@ class StoryboardService:
         )
         if start_offset != current_start_offset:
             raise ValueError(
-                "Storyboard source_coverage.start_text must point at the supplied current_shot_start_text boundary"
+                "Storyboard source_coverage.start_text must point at the supplied current_shot_start_text boundary "
+                f"(expected {current_shot_start_text[:80]!r}, got {coverage.start_text[:80]!r})"
             )
 
         end_offset = self._find_anchor_offset(
@@ -143,7 +173,7 @@ class StoryboardService:
         if is_chapter_complete:
             if next_start_text:
                 raise ValueError("Completed storyboard chapter must return source_coverage.next_start_text=null")
-            if current_novel_full[next_search_offset:].strip():
+            if current_novel_full[next_search_offset:source_end_offset].strip():
                 raise ValueError("Completed storyboard chapter source_coverage.end_text must reach current_novel_full end")
             return None
 
@@ -157,6 +187,8 @@ class StoryboardService:
         )
         if next_start_offset <= current_start_offset:
             raise ValueError("Storyboard source_coverage.next_start_text must move forward in current_novel_full")
+        if next_start_offset >= source_end_offset:
+            raise ValueError("Storyboard source_coverage.next_start_text must point at remaining story text")
         return next_start_offset
 
     async def storyboard_episode(
@@ -179,7 +211,10 @@ class StoryboardService:
             raise ValueError(f"storyboard current_novel_full is empty for {episode_key}")
         if novel_extract_all is None:
             novel_extract_all = {episode_key: str(episode_story or current_novel_full).strip()}
+        source_end_offset = self._story_text_end_offset(current_novel_full)
         current_shot_start_text, current_start_offset = self._source_anchor(current_novel_full, 0)
+        if current_start_offset >= source_end_offset:
+            raise ValueError(f"storyboard current_novel_full has no story text for {episode_key}")
         visual_style_prompt = state.metadata.get(
             "visual_style_prompt",
             "真人电影质感：真实摄影、自然光或电影布光、真实材质、真实皮肤纹理和电影镜头语言。",
@@ -226,6 +261,7 @@ class StoryboardService:
                 current_shot_start_text=current_shot_start_text,
                 current_start_offset=current_start_offset,
                 is_chapter_complete=output.is_chapter_complete,
+                source_end_offset=source_end_offset,
             )
             shot_index = len(shots) + 1
             shot = self._normalize_generated_shot(output.shot, episode_key=episode_key, shot_index=shot_index)
