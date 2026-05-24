@@ -517,6 +517,10 @@ class RoleDesignNode(RoleNodeBase):
                 )
 
         force_pregen = bool(getattr(self.workflow, "_force_pregen", False))
+        target_role_keys = {
+            self.workflow._role_name_key(item.name)
+            for item in target_extract_roles
+        }
         previous_roles = dict(state.roles)
         previous_role_props = {
             prop_id: prop
@@ -538,6 +542,12 @@ class RoleDesignNode(RoleNodeBase):
                     if not self.workflow._role_design_item_complete(existing_item):
                         continue
                     existing_key = self.workflow._role_name_key(existing_item.name)
+                    if force_pregen and existing_key in target_role_keys:
+                        self.logger.info(
+                            "role_design %s will be regenerated due to --force",
+                            existing_item.name,
+                        )
+                        continue
                     extract_item = extract_by_key.get(existing_key)
                     if extract_item is not None:
                         try:
@@ -559,7 +569,6 @@ class RoleDesignNode(RoleNodeBase):
                         project_dir,
                         existing_item.name,
                     )
-                    designed_by_key[existing_key] = existing_item
                     role_id = normalize_id("role", existing_item.name)
                     previous_role = previous_roles.get(role_id)
                     if previous_role is not None:
@@ -574,6 +583,7 @@ class RoleDesignNode(RoleNodeBase):
                         speech_provider=speech_provider,
                         design_path=existing_design_path,
                         preserve_assets=True,
+                        validate_voice_sample_text=False,
                     )
                     role = state.roles[role_id]
                     self.role_designs.save_design_item(
@@ -583,6 +593,7 @@ class RoleDesignNode(RoleNodeBase):
                         role=role,
                         bound_props=self._role_bound_props(state, role.id),
                     )
+                    designed_by_key[existing_key] = existing_item
 
         role_index = self._role_index_items(extract_output.roles)
         role_novel_extract: dict[str, str] | None = None

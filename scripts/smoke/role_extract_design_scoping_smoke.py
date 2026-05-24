@@ -25,6 +25,13 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def poison_role_design_sample_text(project_dir: Path, role_name: str) -> None:
+    path = project_dir / "assets" / "json" / "roles" / f"role_{role_name}.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["design"]["voices"][0]["sample_text"] = f"（低声）我是{role_name}。（内心独白）这段旧样本文本不该阻断强制重跑。"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 class RoleScopedTextProvider:
     name = "role-scoped"
     model = "role-scoped-json"
@@ -192,6 +199,8 @@ async def main_async() -> int:
     require("intro_video_prompt" not in state_role["appearances"]["base"], "State role appearance should not keep video prompt")
     require("sample_text" not in state_role["audio"]["normal"], "State role audio should not keep sample_text")
 
+    poison_role_design_sample_text(project_dir, "林舟")
+    poison_role_design_sample_text(project_dir, "苏晚")
     role_provider.role_design_prompts = {}
     state = await workflow.run(
         project_dir,
@@ -207,6 +216,11 @@ async def main_async() -> int:
     scoped_design = json.loads((project_dir / "assets" / "json" / "nodes" / "role_design.json").read_text(encoding="utf-8"))
     scoped_role_names = {item["name"] for item in scoped_design["roles"]}
     require(scoped_role_names == {"林舟", "苏晚"}, "episode-scoped role_design node output did not preserve roles")
+    su_role_payload = json.loads((project_dir / "assets" / "json" / "roles" / "role_苏晚.json").read_text(encoding="utf-8"))
+    require(
+        "（" not in su_role_payload["design"]["voices"][0]["sample_text"],
+        "episode-scoped force did not regenerate target role design",
+    )
 
     print("role_extract_design_scoping_smoke=ok")
     print(f"project_dir={project_dir}")

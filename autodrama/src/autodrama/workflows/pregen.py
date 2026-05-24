@@ -273,6 +273,7 @@ class PregenWorkflow:
         *,
         speech_provider=None,
         preserve_assets: bool = False,
+        validate_sample_text: bool = True,
     ) -> None:
         roles_by_key = self._role_lookup(state)
         speaker_lookup = self._speaker_lookup(speech_provider) if speech_provider is not None else {}
@@ -304,10 +305,11 @@ class PregenWorkflow:
                 desc=item.desc,
                 sample_text=item.sample_text,
             )
-            self._validate_voice_sample_text(
-                f"role_voice_design for {role.name} voices[{item.emotion or 'normal'}].sample_text",
-                audio.sample_text,
-            )
+            if validate_sample_text:
+                self._validate_voice_sample_text(
+                    f"role_voice_design for {role.name} voices[{item.emotion or 'normal'}].sample_text",
+                    audio.sample_text,
+                )
             if preserve_assets and existing_audio is not None:
                 audio.generation_status = existing_audio.generation_status
                 audio.asset_id = existing_audio.asset_id
@@ -788,6 +790,7 @@ class PregenWorkflow:
         speech_provider=None,
         design_path: str | None = None,
         preserve_assets: bool = False,
+        validate_voice_sample_text: bool = True,
     ) -> None:
         if not self._role_design_item_complete(item):
             missing: list[str] = []
@@ -839,6 +842,7 @@ class PregenWorkflow:
                 RoleVoiceDesignOutput(role_voices=item.voices),
                 speech_provider=speech_provider,
                 preserve_assets=preserve_assets,
+                validate_sample_text=validate_voice_sample_text,
             )
         else:
             role.voice_summary = None
@@ -949,6 +953,7 @@ class PregenWorkflow:
                 speech_provider=speech_provider,
                 design_path=role.design_path or self._role_design_relative_path(project_dir, role.id),
                 preserve_assets=True,
+                validate_voice_sample_text=False,
             )
 
     def _role_node_runner(self, node_name: str) -> RoleNodeBase:
