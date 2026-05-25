@@ -9,7 +9,6 @@ from autodrama.core.schemas import (
     DynamicAssetSolidificationOutput,
     ProjectState,
     RefFrameGenerationOutput,
-    ShotBGMGenerationOutput,
     ShotVideoGenerationOutput,
     StoryboardEpisodeOutput,
     StoryboardGenerationOutput,
@@ -55,6 +54,63 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             return ""
         return f"画面风格要求: {prompt}"
 
+    @staticmethod
+    def _cg_character_safety_prompt() -> str:
+        return (
+            "人物形象安全风格要求: 保持项目整体电影级写实CG画面语言，但人类/类人角色必须是高质量风格化CG动漫角色，"
+            "不是照片级真人肖像；脸部、皮肤和毛发要有CG建模与动画电影材质感，避免真实摄影人像、真实皮肤毛孔、"
+            "汗渍、微血管、皮肤斑点、真实人脸扫描、明星脸或身份证照感。角色识别依靠风格化脸型、眼型、发型、"
+            "服装剪裁、配饰、色彩和气质。"
+        )
+
+    @staticmethod
+    def _ref_frame_only_video_prompt() -> str:
+        return (
+            "Seedance ref_frame_only 参考图处理要求: 本片段只使用镜头参考帧作为视觉锚点。"
+            "请尽可能去掉参考帧中的真人肖像特征，保留并强化动漫化CG角色特征：五官更干净概括、皮肤更平滑、"
+            "毛孔/汗渍/微血管/皮肤斑点等真实人脸细节弱化或消除，眼型、眉形、发型、服装轮廓和配饰保持稳定；"
+            "人物应呈现高质量CG动漫角色而非现实人物、明星脸、证件照或真实摄影人像。"
+            "场景、构图、光影、动作节奏、服装材质和空间关系仍然遵守参考帧，不要改变剧情主体。"
+        )
+
+    @staticmethod
+    def _shot_spatial_continuity_prompt(shot: StoryboardShot) -> str:
+        if not (shot.physical_space_note or shot.spatial_structure_summary or shot.spatial_constraints):
+            return ""
+        spatial_parts = [
+            "最高优先级空间连续性要求:",
+        ]
+        if shot.physical_space_note:
+            spatial_parts.append(f"空间备注: {shot.physical_space_note}")
+        if shot.spatial_continuity_mode:
+            spatial_parts.append(f"连续性模式: {shot.spatial_continuity_mode}")
+        if shot.spatial_reference_shot_ids:
+            spatial_parts.append("参考帧来源 shot: " + "、".join(shot.spatial_reference_shot_ids))
+        if shot.spatial_structure_summary:
+            spatial_parts.append("稳定空间结构: " + shot.spatial_structure_summary)
+        if shot.spatial_constraints:
+            spatial_parts.append("必须遵守: " + "；".join(shot.spatial_constraints))
+        if shot.spatial_movement_allowed:
+            reason = f"，原因: {shot.spatial_movement_reason}" if shot.spatial_movement_reason else ""
+            spatial_parts.append(
+                f"当前剧本只允许理由中点名的人物或道具发生合理运动{reason}。"
+                "这不代表摄影机可以越轴，也不代表整套空间拓扑可以镜像反转。"
+            )
+        else:
+            spatial_parts.append(
+                "如果当前剧本没有明确写人物移动、绕行或换位，人物与关键物体的左右、前后、远近关系不能无故反转。"
+            )
+        spatial_parts.append(
+            "传入的历史参考帧只用于锁定物理空间拓扑，不要求逐像素复制背景。"
+            "背景人群保持大致一致的站位区域、密度、朝向和围观/队列结构；"
+            "可以自然变化个体姿态和面孔，但不要把人群带突然移到另一侧或前后景关系完全改变。"
+        )
+        spatial_parts.append(
+            "如果下方主体画面描述中的画面左侧/右侧、前景/后景、人物边缘位置与历史参考帧或本空间要求冲突，"
+            "以历史参考帧和本空间要求为准；可以调整构图和景别来表现当前剧情，但不要镜像、换轴或把人物/石柱/传送阵/人群带反到另一侧。"
+        )
+        return "\n".join(spatial_parts)
+
     def _shot_ref_frame_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
         layout = state.layouts.get(shot.layout_id)
         role_lines = []
@@ -92,12 +148,17 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             if prop:
                 prop_lines.append(f"{prop.name}: {prop.desc}")
 
+        spatial_prompt = self._shot_spatial_continuity_prompt(shot)
         parts = [
             self._visual_style_prompt(state),
+            self._cg_character_safety_prompt(),
             f"剧集: {episode.episode_key}",
             "静态锚点参考帧生成要求:",
-            shot.ref_frame_prompt,
         ]
+        if spatial_prompt:
+            parts.append(spatial_prompt)
+            parts.append("主体画面描述如下；若它与上方空间连续性要求冲突，以上方空间连续性要求为准:")
+        parts.append(shot.ref_frame_prompt)
         if layout:
             parts.append(f"场景设定: {layout.name} - {layout.desc}")
         if role_lines:
@@ -116,20 +177,30 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             )
         if shot.dialogue:
             parts.append("画面对白气氛: " + " / ".join(shot.dialogue))
+        if spatial_prompt:
+            parts.append("最终空间冲突处理: 历史参考帧和最高优先级空间连续性要求优先于主体画面描述中的构图左右词。")
         parts.append(
             "生成单帧锚点剧照，用于锁定本片段的静态资产表现；它不是视频首帧。"
             "不要添加字幕、水印、文字标识或片段编号。"
         )
         return "\n".join(item for item in parts if item)
 
-    def _shot_video_prompt(self, state: ProjectState, episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> str:
+    def _shot_video_prompt(
+        self,
+        state: ProjectState,
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        provider=None,
+    ) -> str:
         style_prompt = str(state.metadata.get("visual_style_prompt", "")).strip()
         body = shot.video_prompt.strip()
-        parts: list[str] = []
+        parts: list[str] = [self._cg_character_safety_prompt()]
+        if self._video_reference_mode(provider) in {"ref_frame_only", "ref_frame"}:
+            parts.append(self._ref_frame_only_video_prompt())
         if shot.start_frame_source == "previous_shot_last_frame":
             lead = (
-                "首帧为图片1，即上一段视频尾帧，承接上一段末尾的人物姿态、空间方向、"
-                "道具位置、能量位置和环境粒子，再从该状态继续本片段动作。"
+                "本片段按硬切进入当前画面；图片1是上一段视频尾帧，仅用于承接上一段末尾的人物姿态、"
+                "空间方向、道具位置、能量位置和环境粒子，再从该状态继续本片段动作。"
             )
             if shot.start_frame_inheritance_reason:
                 lead = f"{lead} 延续原因是{shot.start_frame_inheritance_reason.rstrip('。')}。"
@@ -149,13 +220,18 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     body = body.removeprefix(prefix).lstrip()
                     break
             parts.append(
-                "参考图仅作为静态锚点，保持当前片段中人物外观、服装、道具造型和场景表现一致；"
-                "参考视频仅作为动态锚点，保持角色动态气质、动作节奏和动态特效表现一致。"
+                "本片段按硬切进入当前画面。参考图仅作为静态锚点，保持当前片段中人物外观、服装、"
+                "道具造型和场景表现一致；参考视频仅作为动态锚点，保持角色动态气质、动作节奏和动态特效表现一致；"
+                "参考音频或对白音频仅用于锁定角色音色、语气、口型节奏和对白情绪。"
                 "不要把任何参考素材当作本片段首帧或尾帧，不要逐帧复刻参考素材。"
             )
         parts.append(body)
         if style_prompt:
             parts.append(f"画面风格保持{style_prompt.rstrip('。')}。")
+        parts.append(
+            "片段首尾只允许硬切；任何 J-Cut 或 L-Cut 只能发生在本片段内部中段，"
+            "不要让声音提前进入本片段之前，也不要让声音拖尾到下一片段。"
+        )
         parts.append("全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。")
         return " ".join(item for item in parts if item)
 
@@ -174,8 +250,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         outputs: dict[str, BaseModel] = {}
         if "storyboard_generation" in target_nodes:
             outputs["storyboard_generation"] = StoryboardGenerationOutput(generated_episodes=[])
-        if "shot_bgm_generation" in target_nodes:
-            outputs["shot_bgm_generation"] = ShotBGMGenerationOutput(generated_bgms=[])
         if "ref_frame_generation" in target_nodes:
             outputs["ref_frame_generation"] = RefFrameGenerationOutput(generated_ref_frames=[])
         if "shot_video_generation" in target_nodes:
@@ -191,10 +265,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             if not isinstance(current, StoryboardGenerationOutput) or not isinstance(output, StoryboardGenerationOutput):
                 raise TypeError("storyboard_generation output type mismatch")
             current.generated_episodes.extend(output.generated_episodes)
-        elif node_name == "shot_bgm_generation":
-            if not isinstance(current, ShotBGMGenerationOutput) or not isinstance(output, ShotBGMGenerationOutput):
-                raise TypeError("shot_bgm_generation output type mismatch")
-            current.generated_bgms.extend(output.generated_bgms)
         elif node_name == "ref_frame_generation":
             if not isinstance(current, RefFrameGenerationOutput) or not isinstance(output, RefFrameGenerationOutput):
                 raise TypeError("ref_frame_generation output type mismatch")
@@ -247,11 +317,18 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         episode_keys: list[str] | None = None,
         only: str | None = None,
         shot_selectors: list[str] | None = None,
+        max_shots: int | None = None,
     ) -> ProjectState:
         if until not in GENERATION_NODES:
             raise ValueError(f"Unsupported generation stop node: {until}")
         if only is not None and only not in GENERATION_NODES:
             raise ValueError(f"Unsupported generation only node: {only}")
+        try:
+            effective_max_shots = int(max_shots if max_shots is not None else self.settings.generation.max_shots)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"generation max_shots must be a positive integer; got {max_shots!r}") from exc
+        if effective_max_shots < 1:
+            raise ValueError(f"generation max_shots must be >= 1; got {effective_max_shots}")
 
         logger = setup_logging(project_dir)
         state = self.repo.load_state(project_dir)
@@ -284,13 +361,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             raise ValueError("--shots can only be used with generation nodes after storyboard_generation")
         run_outputs = self._empty_run_outputs(target_nodes)
         logger.info(
-            "workflow=generation project_id=%s until=%s only=%s force=%s episodes=%s shots=%s",
+            "workflow=generation project_id=%s until=%s only=%s force=%s episodes=%s shots=%s max_shots=%d",
             state.project_id,
             until,
             only or "-",
             force,
             ",".join(selected_episode_keys),
             ",".join(shot_selectors or []) or "-",
+            effective_max_shots,
         )
 
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
@@ -305,6 +383,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             force=force,
             selected_episode_keys=selected_episode_keys,
             shot_selectors={str(selector).strip().lower() for selector in shot_selectors or [] if str(selector).strip()},
+            max_shots=effective_max_shots,
         )
         self._force_generation = bool(force)
         if shot_selectors:

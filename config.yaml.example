@@ -57,6 +57,20 @@ budget:
   max_music_count: 5
   max_text_calls: 200
 
+generation:
+  # Maximum storyboard shots generated per episode by storyboard_generation.
+  # The CLI flag `--max-shots` overrides this value for a single generation run.
+  max_shots: 10
+  # Used by role_full_body_generation and role_multiview_generation as Image 2 style references.
+  role_design_style_reference_dir: ./.assets/sample
+  # Unified role image style prompt. This takes priority over legacy visual_style preset wording
+  # inside role design JSON when generating full-body and multiview role images.
+  role_design_style_prompt: >
+    使用参考图片作为统一人物美术风格、材质质感、光影、色彩和画面气质参考。
+    人物保持国漫CG/动画电影角色质感，明显非真人摄影，脸部为风格化CG美术表现，
+    避免真实人脸毛孔、汗渍、微血管等照片级细节。保留东方修仙题材的服饰层次、
+    旧布料、金属、石材和随身道具材质差异，背景保持干净，不出现文字、水印或logo。
+
 providers:
   aliyun:
     base_url: https://dashscope.aliyuncs.com
@@ -156,9 +170,15 @@ providers:
     api_key_env: DEEPSEEK_API_KEY
     models:
       text: deepseek-v4-pro
+      storyboard: deepseek-v4-pro
+      ref_frame_spatial: deepseek-v4-flash
     options:
       reasoning_effort: max
       thinking_enabled: true
+      storyboard_reasoning_effort: max
+      storyboard_thinking_enabled: true
+      ref_frame_spatial_reasoning_effort: low
+      ref_frame_spatial_thinking_enabled: false
 
   minimax:
     base_url: https://api.minimaxi.com
@@ -203,7 +223,8 @@ providers:
       tts: seed-icl-2.0
       target_model: seed-icl-2.0
       clone_target_model: seed-icl-2.0
-      image: doubao-seedream-5-0-lite-260128
+      image: doubao-seedream-5-0-260128
+      seedream_5: doubao-seedream-5-0-260128
       seedream_5_lite: doubao-seedream-5-0-lite-260128
       video: doubao-seedance-2-0-260128
       seedance_2: doubao-seedance-2-0-260128
@@ -216,6 +237,11 @@ providers:
       seedream_base_url: https://ark.cn-beijing.volces.com
       seedream_api_key_env: VOLCENGINE_API_KEY
       seedream_image_size: 1600x2848
+      seedream_role_full_body_size: 1600x2848
+      seedream_role_design_size: 2848x1600
+      seedream_prop_size: 2048x2048
+      seedream_layout_size: 2848x1600
+      seedream_ref_frame_size: 1600x2848
       seedream_output_format: png
       seedream_response_format: url
       seedream_watermark: false
@@ -225,6 +251,10 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
+      # ref_frame_only sends only the shot reference frame to Seedance, not role/layout asset sheets.
+      # The video prompt adds a Seedance-specific instruction to reduce real-person traits in the
+      # reference frame while preserving anime/CG character identity, lowering real-person privacy
+      # false positives from near-photographic faces.
       video_reference_mode: ref_frame_only
       video_poll_interval_seconds: 30
       return_last_frame: true
@@ -304,7 +334,7 @@ routing:
     prop: deepseek
     layout: deepseek
     storyboard: deepseek
-    shot_bgm: deepseek
+    ref_frame_spatial: deepseek
     edit_plan: aliyun
     bgm_plan: aliyun
   image:
@@ -322,7 +352,6 @@ routing:
     music: minimax
   music:
     bgm: minimax
-    shot_bgm: elevenlabs
   judge:
     voice_catalog_profile: aliyun_omni
     voice_select: aliyun_omni

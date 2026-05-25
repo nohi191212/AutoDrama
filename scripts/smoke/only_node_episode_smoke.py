@@ -82,20 +82,17 @@ async def main_async() -> int:
         f"Expected only episode_001 storyboard output, got {storyboard_output['generated_episodes']}",
     )
 
-    await generation_workflow.run(
-        project_dir,
-        until="dynamic_asset_solidification",
-        only="shot_bgm_generation",
-        episode_keys=parse_episode_keys("2"),
-    )
-    require(
-        '"assets/audios/shot_bgms/' not in shot_text(project_dir, "episode_001"),
-        "episode_001 got shot BGM during episode_002-only generation",
-    )
-    require(
-        '"assets/audios/shot_bgms/' in shot_text(project_dir, "episode_002"),
-        "episode_002 did not get shot BGM",
-    )
+    try:
+        await generation_workflow.run(
+            project_dir,
+            until="dynamic_asset_solidification",
+            only="shot_bgm_generation",
+            episode_keys=parse_episode_keys("2"),
+        )
+    except ValueError as exc:
+        require("Unsupported generation only node" in str(exc), f"Unexpected error for removed node: {exc}")
+    else:
+        raise AssertionError("shot_bgm_generation should no longer be a supported generation node")
 
     await generation_workflow.run(
         project_dir,

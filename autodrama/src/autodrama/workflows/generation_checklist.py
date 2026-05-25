@@ -12,7 +12,6 @@ CHECKLIST_FILENAME = "generation_checklist.json"
 EpisodeGenerationStatus = Literal["pending", "completed", "skipped", "failed", "missing_shot"]
 
 DYNAMIC_STATUS_FIELDS = (
-    "shot_bgm",
     "ref_frame",
     "shot_video",
     "solidified",
@@ -56,12 +55,10 @@ def _episode_status(project_dir: Path, episode_key: str) -> dict[str, EpisodeGen
     if not episode.shots:
         return {field: "pending" for field in DYNAMIC_STATUS_FIELDS}
 
-    shot_bgm_done = all(bool(shot.shot_bgm_assets) for shot in episode.shots)
     ref_done = all(bool(shot.ref_frame_asset_path) for shot in episode.shots)
     video_done = all(bool(shot.video_asset_path or shot.video_task_id) for shot in episode.shots)
     solidified_done = all(bool(shot.solidified_asset_ids) for shot in episode.shots)
     return {
-        "shot_bgm": "completed" if shot_bgm_done else "pending",
         "ref_frame": "completed" if ref_done else "pending",
         "shot_video": "completed" if video_done else "pending",
         "solidified": "completed" if solidified_done else "pending",
@@ -73,14 +70,12 @@ def _generated_counts(project_dir: Path, episode_key: str) -> dict[str, int]:
     if episode is None:
         return {
             "shots": 0,
-            "shot_bgms": 0,
             "ref_frames": 0,
             "shot_videos": 0,
             "solidified_assets": 0,
         }
     return {
         "shots": len(episode.shots),
-        "shot_bgms": sum(len(shot.shot_bgm_assets) for shot in episode.shots),
         "ref_frames": sum(1 for shot in episode.shots if shot.ref_frame_asset_path),
         "shot_videos": sum(1 for shot in episode.shots if shot.video_asset_path or shot.video_task_id),
         "solidified_assets": sum(len(shot.solidified_asset_ids) for shot in episode.shots),
@@ -167,7 +162,8 @@ def update_checklist_from_state(
         "instructions": (
             "把某集的 generate 改为 true 后，run generation 会生成或重新生成该集动态资产；"
             "成功后系统会自动把 generate 改回 false。"
-            "默认流程包含 shot_bgm_generation；该节点会先生成英文声音描述，再调用 ElevenLabs 生成镜头 BGM。"
+            "默认流程生成 storyboard、参考帧、镜头视频和动态资产索引；"
+            "镜头配音/配乐请在视频剪辑完成后统一处理。"
         ),
         "episodes": episodes,
     }

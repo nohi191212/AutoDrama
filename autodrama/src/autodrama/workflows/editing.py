@@ -330,15 +330,6 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
             )
             audio_layers.extend(dialogue_layers)
             missing_assets.extend(dialogue_missing)
-            shot_bgm_layers, shot_bgm_missing = self._build_shot_bgm_layers(
-                project_dir,
-                episode.episode_key,
-                shot,
-                cursor,
-                duration,
-            )
-            audio_layers.extend(shot_bgm_layers)
-            missing_assets.extend(shot_bgm_missing)
             subtitle_cues.extend(self._build_subtitle_cues(shot, cursor, duration, len(subtitle_cues)))
             cursor += duration
 
@@ -504,49 +495,6 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
                         "role_id": asset.role_id,
                         "role_name": asset.role_name,
                         "text": asset.text,
-                    },
-                )
-            )
-        return layers, missing
-
-    def _build_shot_bgm_layers(
-        self,
-        project_dir: Path,
-        episode_key: str,
-        shot: StoryboardShot,
-        shot_start: float,
-        shot_duration: float,
-    ) -> tuple[list[EditAudioLayer], list[EditMissingAsset]]:
-        layers: list[EditAudioLayer] = []
-        missing: list[EditMissingAsset] = []
-        for index, asset in enumerate(shot.shot_bgm_assets, start=1):
-            if not self._project_path_exists(project_dir, asset.asset_path):
-                missing.append(
-                    EditMissingAsset(
-                        asset_type="bgm",
-                        episode_key=episode_key,
-                        shot_id=shot.shot_id,
-                        asset_id=asset.asset_id,
-                        path=asset.asset_path,
-                        required=False,
-                        reason="Shot BGM file is missing; final video will be composed without this shot BGM layer.",
-                    )
-                )
-                continue
-            layers.append(
-                EditAudioLayer(
-                    layer_id=f"{shot.shot_id}_bgm_{index:02d}",
-                    layer_type="bgm",
-                    source_path=asset.asset_path or "",
-                    start_time=round(shot_start, 3),
-                    duration_seconds=round(shot_duration, 3),
-                    volume=0.75,
-                    fade_in_seconds=min(0.25, shot_duration / 6),
-                    fade_out_seconds=min(0.35, shot_duration / 5),
-                    metadata={
-                        "shot_id": shot.shot_id,
-                        "asset_id": asset.asset_id,
-                        "source_node": "shot_bgm_generation",
                     },
                 )
             )

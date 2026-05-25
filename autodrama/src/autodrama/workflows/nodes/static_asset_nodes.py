@@ -22,6 +22,7 @@ from autodrama.core.schemas import (
     StaticAssetGenerationOutput,
 )
 from autodrama.logging import get_logger
+from autodrama.providers.base import AssetRef
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.repositories.prop_design_repo import PropDesignRepository
@@ -125,6 +126,11 @@ class StaticAssetNodeBase:
             result.append(text)
             seen.add(text)
         return result
+
+    @staticmethod
+    def first_image_url(result: Any) -> str | None:
+        image_urls = getattr(result, "image_urls", None)
+        return image_urls[0] if image_urls else None
 
     @staticmethod
     def prop_name_key(name: object) -> str:
@@ -379,6 +385,7 @@ class StaticAssetNodeBase:
         if existing_prop is not None:
             prop.asset_id = existing_prop.asset_id
             prop.asset_path = existing_prop.asset_path
+            prop.asset_url = existing_prop.asset_url
             prop.provider = existing_prop.provider
             prop.model = existing_prop.model
             prop.request_id = existing_prop.request_id
@@ -504,6 +511,7 @@ class StaticAssetNodeBase:
                 id=normal_prop.asset_id or normal_prop.id,
                 type="image",
                 path=str(reference_path),
+                url=normal_prop.asset_url,
                 metadata={
                     "asset_type": "prop",
                     "name": normal_prop.name,
@@ -543,6 +551,7 @@ class StaticAssetNodeBase:
                 id=appearance.design_image_asset_id or appearance.id,
                 type="image",
                 path=str(reference_path),
+                url=appearance.design_image_asset_url or appearance.asset_url,
                 metadata={
                     "asset_type": "role_appearance",
                     "role_id": role.id,
@@ -631,6 +640,89 @@ class RoleAppearanceDesignNode(StaticAssetNodeBase):
 
 
 class RoleAppearanceGenerationBase(StaticAssetNodeBase):
+    ROLE_DESIGN_STYLE_PROMPT_HEADER = "统一人物设计风格要求（优先级高于角色设计 JSON 中的旧画面风格模板）"
+    STYLE_REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+    def role_design_style_reference_refs(self) -> list[AssetRef]:
+        ref_dir = self.repo.settings.generation.role_design_style_reference_dir
+        if ref_dir is None:
+            return []
+        if not ref_dir.exists() or not ref_dir.is_dir():
+            raise FileNotFoundError(f"role_design_style_reference_dir does not exist or is not a directory: {ref_dir}")
+
+        paths = [
+            path
+            for path in sorted(ref_dir.iterdir(), key=lambda item: item.name.lower())
+            if path.is_file() and path.suffix.lower() in self.STYLE_REFERENCE_EXTENSIONS
+        ]
+        if not paths:
+            raise ValueError(f"role_design_style_reference_dir contains no supported image files: {ref_dir}")
+
+        return [
+            AssetRef(
+                id=f"role_design_style_ref_{index}",
+                type="image",
+                path=str(path),
+                metadata={
+                    "asset_type": "role_design_style_reference",
+                    "role": "style_reference",
+                    "source_dir": str(ref_dir),
+                },
+            )
+            for index, path in enumerate(paths, start=1)
+        ]
+
+    def role_design_style_prompt(self) -> str:
+        return str(self.repo.settings.generation.role_design_style_prompt or "").strip()
+
+    def role_design_style_prefix(
+        self,
+        *,
+        style_reference_count: int,
+        identity_reference_index: int | None = None,
+        output_kind: str,
+    ) -> str:
+        parts: list[str] = []
+        style_prompt = self.role_design_style_prompt()
+        if style_prompt:
+            parts.append(f"{self.ROLE_DESIGN_STYLE_PROMPT_HEADER}：{style_prompt}")
+        if style_reference_count > 0:
+            if style_reference_count == 1:
+                style_ref_text = "参考图片1"
+            else:
+                style_ref_text = f"参考图片1-{style_reference_count}"
+            parts.append(
+                f"{style_ref_text}只作为{output_kind}的整体美术风格、材质质感、光影、色彩和画面气质参考；"
+                "不要照搬参考图中的人物身份、脸、服装或构图。"
+            )
+        if identity_reference_index is not None:
+            parts.append(
+                f"参考图片{identity_reference_index}是同一角色的全身身份参考，必须保持人物脸型、发型、服装、"
+                "随身道具、体型比例和身份特征一致。"
+            )
+        if parts:
+            parts.append("下方角色提示词中的人物身份、服装、道具和结构要求仍需保留；若画面风格冲突，以上方统一风格要求和参考图片风格为准。")
+        return "\n".join(parts)
+
+    def apply_role_design_style_context(
+        self,
+        prompt: str,
+        *,
+        style_reference_count: int,
+        identity_reference_index: int | None = None,
+        output_kind: str,
+    ) -> str:
+        prefix = self.role_design_style_prefix(
+            style_reference_count=style_reference_count,
+            identity_reference_index=identity_reference_index,
+            output_kind=output_kind,
+        )
+        if not prefix:
+            return prompt
+        if prompt.lstrip().startswith(self.ROLE_DESIGN_STYLE_PROMPT_HEADER):
+            return prompt
+        return "\n\n".join([prefix, prompt])
+
     @staticmethod
     def role_full_body_asset_id(appearance: RoleAppearance) -> str:
         return f"{appearance.id}_full_body"
@@ -639,12 +731,13 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
     def role_full_body_prompt(role: Role, appearance: RoleAppearance) -> str:
         prompt = str(appearance.full_body_prompt or "").strip()
         if prompt:
-            return "\n".join(
-                [
-                    prompt,
-                    "硬性要求：正面全身照，角色从头到脚完整入画；自然展示身份和气质，不要立正站立、不要证件照姿势、不要三视图、不要右侧道具设计图、不要其他人物、不要字幕水印或文字标识。",
-                ]
+            hard_requirement = (
+                "硬性要求：正面全身照，角色从头到脚完整入画；自然展示身份和气质，不要立正站立、"
+                "不要证件照姿势、不要三视图、不要右侧道具设计图、不要其他人物、不要字幕水印或文字标识。"
             )
+            if hard_requirement in prompt:
+                return prompt
+            return "\n".join([prompt, hard_requirement])
 
         desc = str(appearance.desc or "").strip()
         multiview_prompt = str(appearance.prompt or "").strip()
@@ -747,6 +840,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             prompt=intro_prompt,
             reference_asset_id=appearance.design_image_asset_id or appearance.id,
             reference_asset_path=str(multiview_asset_path),
+            reference_asset_url=appearance.design_image_asset_url or appearance.asset_url,
             episode_keys=self.dedupe_texts(role.episode_keys),
         )
 
@@ -806,13 +900,27 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
     ) -> list[StaticAssetGenerationItem]:
         generated: list[StaticAssetGenerationItem] = []
         reuse_existing_assets = not bool(getattr(self.workflow, "_force_pregen", False))
+        style_refs = self.role_design_style_reference_refs()
+        if style_refs:
+            if not getattr(provider, "supports_reference_images", False):
+                raise ValueError(f"{node_name} requires an image provider that supports reference images")
+            self.logger.info(
+                "%s using %d role design style reference image(s)",
+                node_name,
+                len(style_refs),
+            )
         for role, appearance in appearances:
             full_body_asset_id = self.role_full_body_asset_id(appearance)
-            full_body_prompt = self.role_full_body_prompt(role, appearance)
+            full_body_prompt = self.apply_role_design_style_context(
+                self.role_full_body_prompt(role, appearance),
+                style_reference_count=len(style_refs),
+                output_kind="角色全身图",
+            )
             output_path = self.layout.image_asset_path(project_dir, "roles", full_body_asset_id)
             existing_path = self.existing_full_body_path(project_dir, appearance)
             if reuse_existing_assets and existing_path is not None:
                 asset_path = existing_path
+                asset_url = appearance.full_body_image_asset_url
                 provider_name = str(appearance.full_body_provider or getattr(provider, "name", "unknown"))
                 model = str(appearance.full_body_model or getattr(provider, "model", ""))
                 request_id = appearance.full_body_request_id
@@ -828,6 +936,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 )
                 result = await provider.generate_image(
                     full_body_prompt,
+                    refs=style_refs,
                     metadata={
                         "node_name": node_name,
                         "project_id": state.project_id,
@@ -835,9 +944,11 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                         "appearance_id": appearance.id,
                         "asset_id": full_body_asset_id,
                         "asset_type": "role_full_body",
+                        "style_reference_count": len(style_refs),
                     },
                 )
                 asset_path = await self.media_store.write_first_generated_image(project_dir, output_path, result)
+                asset_url = self.first_image_url(result)
                 provider_name = result.provider
                 model = result.model
                 request_id = result.request_id
@@ -848,6 +959,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             appearance.full_body_prompt = full_body_prompt
             appearance.full_body_image_asset_id = full_body_asset_id
             appearance.full_body_image_asset_path = asset_path
+            appearance.full_body_image_asset_url = asset_url
             appearance.full_body_image_generation_status = "generated"
             appearance.full_body_provider = provider_name
             appearance.full_body_model = model
@@ -860,6 +972,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 name=f"{role.name}/{appearance.name}/full_body",
                 prompt=full_body_prompt,
                 asset_path=asset_path,
+                asset_url=asset_url,
                 provider=provider_name,
                 model=model,
                 request_id=request_id,
@@ -880,15 +993,26 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         node_name: str,
         generated_by_asset_id: dict[str, StaticAssetGenerationItem],
     ) -> list[StaticAssetGenerationItem]:
-        from autodrama.providers.base import AssetRef
-
         generated: list[StaticAssetGenerationItem] = []
         reuse_existing_assets = not bool(getattr(self.workflow, "_force_pregen", False))
+        style_refs = self.role_design_style_reference_refs()
+        if style_refs:
+            self.logger.info(
+                "%s using %d role design style reference image(s)",
+                node_name,
+                len(style_refs),
+            )
         for role, appearance in appearances:
             if not appearance.prompt:
                 raise ValueError(
                     f"Cannot generate role multiview for {role.name}/{appearance.name}: "
                     "missing prompt in role design JSON"
+                )
+            multiview_prompt = self.apply_role_design_style_context(
+                appearance.prompt,
+                style_reference_count=len(style_refs),
+                identity_reference_index=len(style_refs) + 1,
+                output_kind="角色三视图设计图",
             )
             full_body_asset_id = self.role_full_body_asset_id(appearance)
             full_body_asset_path = self.layout.existing_project_file(project_dir, appearance.full_body_image_asset_path)
@@ -907,6 +1031,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 existing_path = self.layout.existing_project_file(project_dir, output_path)
             if reuse_existing_assets and existing_path is not None:
                 asset_path = existing_path
+                asset_url = appearance.design_image_asset_url or appearance.asset_url
                 provider_name = str(appearance.provider or getattr(provider, "name", "unknown"))
                 model = str(appearance.model or getattr(provider, "model", ""))
                 request_id = appearance.request_id
@@ -917,10 +1042,12 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 if not getattr(provider, "supports_reference_images", False):
                     raise ValueError(f"{node_name} requires an image provider that supports reference images")
                 refs = [
+                    *style_refs,
                     AssetRef(
                         id=full_body_asset_id,
                         type="image",
                         path=str(project_dir / full_body_asset_path),
+                        url=appearance.full_body_image_asset_url,
                         metadata={
                             "asset_type": "role_full_body",
                             "role_id": role.id,
@@ -936,7 +1063,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                     appearance.name,
                 )
                 result = await provider.generate_image(
-                    appearance.prompt,
+                    multiview_prompt,
                     refs=refs,
                     metadata={
                         "node_name": node_name,
@@ -945,9 +1072,12 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                         "appearance_id": appearance.id,
                         "asset_id": multiview_asset_id,
                         "asset_type": "role_multiview",
+                        "style_reference_count": len(style_refs),
+                        "identity_reference_index": len(style_refs) + 1,
                     },
                 )
                 asset_path = await self.media_store.write_first_generated_image(project_dir, output_path, result)
+                asset_url = self.first_image_url(result)
                 provider_name = result.provider
                 model = result.model
                 request_id = result.request_id
@@ -957,8 +1087,10 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
 
             appearance.asset_id = multiview_asset_id
             appearance.asset_path = asset_path
+            appearance.asset_url = asset_url
             appearance.design_image_asset_id = multiview_asset_id
             appearance.design_image_asset_path = asset_path
+            appearance.design_image_asset_url = asset_url
             appearance.design_image_generation_status = "generated"
             appearance.provider = provider_name
             appearance.model = model
@@ -969,6 +1101,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 if prop is not None:
                     prop.asset_id = multiview_asset_id
                     prop.asset_path = asset_path
+                    prop.asset_url = asset_url
                     prop.provider = provider_name
                     prop.model = model
                     prop.request_id = request_id
@@ -978,8 +1111,9 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 asset_type="role_multiview",
                 owner_id=role.id,
                 name=f"{role.name}/{appearance.name}/multiview",
-                prompt=appearance.prompt,
+                prompt=multiview_prompt,
                 asset_path=asset_path,
+                asset_url=asset_url,
                 provider=provider_name,
                 model=model,
                 request_id=request_id,
@@ -1051,6 +1185,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                         id=prompt_item.reference_asset_id,
                         type="image",
                         path=str(project_dir / reference_asset_path),
+                        url=prompt_item.reference_asset_url,
                         metadata={
                             "asset_type": "role_multiview",
                             "role_id": role.id,
@@ -1587,8 +1722,10 @@ class PropGenerationNode(StaticAssetNodeBase):
                 self.layout.image_asset_path(project_dir, "props", prop.id),
                 result,
             )
+            asset_url = self.first_image_url(result)
             prop.asset_id = prop.id
             prop.asset_path = asset_path
+            prop.asset_url = asset_url
             prop.provider = result.provider
             prop.model = result.model
             prop.request_id = result.request_id
@@ -1602,6 +1739,7 @@ class PropGenerationNode(StaticAssetNodeBase):
                     name=prop.name,
                     prompt=prompt,
                     asset_path=asset_path,
+                    asset_url=asset_url,
                     provider=result.provider,
                     model=result.model,
                     request_id=result.request_id,
@@ -1764,8 +1902,10 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
                 self.layout.image_asset_path(project_dir, "layouts", layout.id),
                 result,
             )
+            asset_url = self.first_image_url(result)
             layout.asset_id = layout.id
             layout.asset_path = asset_path
+            layout.asset_url = asset_url
             layout.provider = result.provider
             layout.model = result.model
             layout.request_id = result.request_id
@@ -1778,6 +1918,7 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
                     name=layout.name,
                     prompt=layout.prompt,
                     asset_path=asset_path,
+                    asset_url=asset_url,
                     provider=result.provider,
                     model=result.model,
                     request_id=result.request_id,

@@ -27,6 +27,16 @@ def parse_shot_selectors(value: str | None) -> list[str] | None:
     return parse_shot_selectors_value(value)
 
 
+def parse_positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"must be a positive integer: {value}") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1: {value}")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     pregen_only_choices = [*PREGEN_NODES]
     if "prop_image_generation" not in pregen_only_choices:
@@ -85,6 +95,11 @@ def build_parser() -> argparse.ArgumentParser:
     generation_parser.add_argument(
         "--shots",
         help="Comma-separated shot indexes or ids to generate inside selected episodes, for example 1-3 or episode_001_shot_1.",
+    )
+    generation_parser.add_argument(
+        "--max-shots",
+        type=parse_positive_int,
+        help="Maximum storyboard shots generated per episode; overrides generation.max_shots in config.",
     )
     generation_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     generation_parser.add_argument("--force", action="store_true")
@@ -342,6 +357,7 @@ async def cmd_run_generation(args: argparse.Namespace) -> int:
         episode_keys=episode_keys,
         only=args.only,
         shot_selectors=parse_shot_selectors(args.shots),
+        max_shots=args.max_shots,
     )
     get_logger().info(
         "run summary workflow=generation project_id=%s current_node=%s project_dir=%s",
@@ -357,6 +373,7 @@ async def cmd_run_generation(args: argparse.Namespace) -> int:
                 "completed_nodes": state.completed_nodes,
                 "project_dir": str(project_dir),
                 "generation_checklist": str(project_dir / "generation_checklist.json"),
+                "max_shots": args.max_shots or settings.generation.max_shots,
             },
             ensure_ascii=False,
             indent=2,

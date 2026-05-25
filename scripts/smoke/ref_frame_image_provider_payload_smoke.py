@@ -75,9 +75,9 @@ def main(argv: list[str] | None = None) -> int:
         refs=local_refs,
         metadata=metadata,
     )
-    if seedream_payload["model"] != settings.providers["volcengine"].models["seedream_5_lite"]:
+    if seedream_payload["model"] != settings.providers["volcengine"].models["seedream_5"]:
         raise AssertionError(f"Unexpected Seedream model: {seedream_payload['model']}")
-    if seedream_payload["size"] != settings.providers["volcengine"].options["seedream_image_size"]:
+    if seedream_payload["size"] != settings.providers["volcengine"].options["seedream_ref_frame_size"]:
         raise AssertionError(f"Unexpected Seedream size: {seedream_payload['size']}")
     if not str(seedream_payload.get("image", "")).startswith("data:image/png;base64,"):
         raise AssertionError("Seedream ref-frame reference image was not encoded as data URL")

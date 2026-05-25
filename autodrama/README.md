@@ -51,27 +51,24 @@ Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at m
 Dynamic shot-level assets now live in a separate workflow:
 
 1. `storyboard_generation`
-2. `shot_bgm_generation`
-3. `ref_frame_generation`
-4. `shot_video_generation`
-5. `dynamic_asset_solidification`
+2. `ref_frame_generation`
+3. `shot_video_generation`
+4. `dynamic_asset_solidification`
 
-`shot_bgm_generation` generates per-shot background audio in two steps: DeepSeek writes an English timed sound description from the storyboard shot, then ElevenLabs Music Compose renders the audio.
+`run generation` processes selected episodes in episode order. For each episode it writes the storyboard shot to `shots/{episode_key}.json`, generates reference frames, shot videos, and solidified dynamic asset metadata back into that shot before moving to the next episode. Completed storyboard summaries are stored in `assets/json/storyboard_history.json` and injected into later storyboard prompts so following episodes can preserve continuity. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
 
-`run generation` processes selected episodes in episode order. For each episode it writes the storyboard shot to `shots/{episode_key}.json`, generates shot BGM, reference frames, shot videos, and solidified dynamic asset metadata back into that shot before moving to the next episode. Completed storyboard summaries are stored in `assets/json/storyboard_history.json` and injected into later storyboard prompts so following episodes can preserve continuity. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
+`ref_frame_generation` performs an internal spatial-continuity planning step before each reference frame. The planner uses `routing.text.ref_frame_spatial`, normally DeepSeek `deepseek-v4-flash` with thinking disabled, to decide whether the current shot is in the same physical space as the previous shot. Same-space shots reuse the previous reference frame, and when available the previous two same-space frames, as topology anchors. If the previous shot is not the same physical space, the planner can reuse older same-space reference frames from `assets/json/spatial_ref_frame_index.json`, capped at 10 images. The shot JSON stores `physical_space_key`, `physical_space_note`, `spatial_reference_shot_ids`, `spatial_structure_summary`, and `spatial_constraints`; these fields guide the image prompt so character/object/crowd left-right and foreground-background relationships do not drift unless the script says they moved.
 
 ## Provider routing
 
 The default production routing in `config.yaml` is:
 
 - `text.bgm_plan: aliyun` for `bgm_design`.
-- `text.shot_bgm: deepseek` for shot-level sound description design.
+- `text.ref_frame_spatial: deepseek` for reference-frame spatial continuity planning.
 - `music.bgm: minimax` for `bgm_generation` with MiniMax `music-2.6`.
-- `music.shot_bgm: elevenlabs` for per-shot ElevenLabs Music Compose audio.
 - `audio.speech: volcengine` for role TTS.
-- `image.role`, `image.prop`, `image.layout`, and `image.ref_frame`: `toapi` for GPT Image 2 static assets and shot-level reference frames with reference images. ToAPI defaults to role multiview sheets at `16:9`/`4K`, role full-body references at `1:2`/`4K`, props at `1:1`/`2K`, layouts at `16:9`/`4K`, and reference frames at `16:9`/`4K`; role generation creates the full-body image first, then uses it as the reference for the multiview sheet.
-- Set `image.ref_frame: volcengine` to switch shot-level reference frames back to Seedream 5.0 lite, or set image routes to `rightcode` to use the older RightCode GPT Image path.
-- `video.shot: volcengine` for shot videos.
+- `image.role`, `image.prop`, `image.layout`, and `image.ref_frame`: `toapi` for GPT-Image-2 image generation. Role full-body images, role multiview sheets, props, layouts, and shot reference frames are saved both as local image files and as the provider returned image URL.
+- `video.shot: volcengine` for shot videos. The default `providers.volcengine.options.video_reference_mode: ref_frame_only` sends only the saved shot reference-frame image URL to Seedance, not role/layout asset sheets, and also sends the role audio referenced by storyboard `role_audio_ids` as character audio anchors. When generated images are reused as references elsewhere, the workflow passes the saved network URL first and falls back to the local file only when no URL is available. In this mode the generated video prompt adds a Seedance-specific instruction to remove real-person portrait traits from the reference frame as much as possible while preserving anime/CG character identity, including smoother stylized skin, reduced pores/sweat/micro-vessels/skin spots, stable eye shape, hair shape, costume silhouette, accessories, motion rhythm, and spatial relationships.
 
 Volcengine TTS should keep `instruction_mode: none` unless a provider-level instruction carrier is verified. This prevents instruction-prefix text from being synthesized as speech.
 
@@ -237,7 +234,6 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config con
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only prop_generation --episodes 1 --force
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only bgm_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only shot_bgm_generation --episodes 1
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1,3
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only dynamic_asset_solidification --episodes episode_001
@@ -266,7 +262,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --only sh
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes episode_001 --shots episode_001_shot_1
 ```
 
-`--shots` can only be used with generation nodes after `storyboard_generation`, such as `shot_bgm_generation`, `ref_frame_generation`, `shot_video_generation`, and `dynamic_asset_solidification`.
+`--shots` can only be used with generation nodes after `storyboard_generation`, such as `ref_frame_generation`, `shot_video_generation`, and `dynamic_asset_solidification`.
 
 ### 5. Common resume and rerun cases
 
@@ -287,12 +283,6 @@ Regenerate only storyboard for one episode:
 
 ```powershell
 run\start.cmd --generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1 --force
-```
-
-Regenerate shot BGM after editing storyboard video prompts or timing:
-
-```powershell
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_bgm_generation --episodes 1 --force
 ```
 
 Regenerate reference frames for selected shots:

@@ -13,6 +13,7 @@ class WorkflowRunContext:
     force: bool = False
     selected_episode_keys: list[str] | None = None
     shot_selectors: set[str] = field(default_factory=set)
+    max_shots: int | None = None
     burn_subtitles: bool = True
 
     def episode_selected(self, episode_key: str) -> bool:

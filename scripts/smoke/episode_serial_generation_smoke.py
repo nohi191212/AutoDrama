@@ -113,10 +113,6 @@ async def main_async() -> int:
     require("episode_001" in prompts, "episode_001 storyboard prompt was not recorded")
     require("episode_002" in prompts, "episode_002 storyboard prompt was not recorded")
     require("episode_003" in prompts, "episode_003 storyboard prompt was not recorded")
-    require("前序分镜历史" in prompts["episode_001"], "storyboard prompt missing history section")
-    require("episode_001_shot_001" in prompts["episode_002"], "episode_002 prompt missing episode_001 history")
-    require("episode_001_shot_001" in prompts["episode_003"], "episode_003 prompt missing episode_001 history")
-    require("episode_002_shot_001" in prompts["episode_003"], "episode_003 prompt missing episode_002 history")
 
     history_path = project_dir / "assets" / "json" / "storyboard_history.json"
     require(history_path.exists(), "storyboard_history.json was not created")
@@ -132,17 +128,6 @@ async def main_async() -> int:
     require(
         storyboard_output["generated_episodes"] == ["episode_001", "episode_002", "episode_003"],
         f"Storyboard output was not aggregated: {storyboard_output}",
-    )
-    bgm_output = json.loads(
-        (project_dir / "assets" / "json" / "nodes" / "shot_bgm_generation.json").read_text(encoding="utf-8")
-    )
-    generated_bgm_episodes = {
-        item["episode_key"]
-        for item in bgm_output["generated_bgms"]
-    }
-    require(
-        generated_bgm_episodes == {"episode_001", "episode_002", "episode_003"},
-        f"Shot BGM output was not aggregated: {generated_bgm_episodes}",
     )
     video_output = json.loads(
         (project_dir / "assets" / "json" / "nodes" / "shot_video_generation.json").read_text(encoding="utf-8")
@@ -167,7 +152,7 @@ async def main_async() -> int:
             '"assets/audios/shot_dialogues/' not in shot_text,
             f"{episode_key} generated dialogue audio in the default generation flow",
         )
-        require('"assets/audios/shot_bgms/' in shot_text, f"{episode_key} missing shot BGM")
+        require('"assets/audios/shot_bgms/' not in shot_text, f"{episode_key} generated deprecated shot BGM")
         require('"assets/images/ref_frames/' in shot_text, f"{episode_key} missing ref frame")
         require('"assets/videos/shots/' in shot_text, f"{episode_key} missing shot video")
         require('"solidified_asset_ids"' in shot_text, f"{episode_key} missing solidified asset ids")
@@ -183,7 +168,6 @@ async def main_async() -> int:
     print("episode_serial_generation_smoke=ok")
     print(f"project_dir={project_dir}")
     print(f"history_episodes={len(history['episodes'])}")
-    print(f"bgm_items={len(bgm_output['generated_bgms'])}")
     print(f"video_items={len(video_output['generated_videos'])}")
     return 0
 

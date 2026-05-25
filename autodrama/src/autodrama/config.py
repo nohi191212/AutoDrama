@@ -65,6 +65,12 @@ class BudgetSettings(BaseModel):
     max_text_calls: int = 200
 
 
+class GenerationSettings(BaseModel):
+    max_shots: int = Field(default=10, ge=1)
+    role_design_style_reference_dir: Path | None = None
+    role_design_style_prompt: str = ""
+
+
 class ProviderSettings(BaseModel):
     base_url: str | None = None
     api_key_env: str | None = None
@@ -97,6 +103,7 @@ class Settings(BaseModel):
     output: OutputSettings = Field(default_factory=OutputSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
+    generation: GenerationSettings = Field(default_factory=GenerationSettings)
     providers: dict[str, ProviderSettings] = Field(default_factory=dict)
     routing: dict[str, dict[str, str]] = Field(default_factory=dict)
     apikeys_file: Path | None = Path("./apikeys.yaml")
@@ -166,6 +173,13 @@ def load_settings(config_path: str | Path) -> Settings:
 
     if settings.project.script_outline_file and not settings.project.script_outline_file.is_absolute():
         settings.project.script_outline_file = (path.parent / settings.project.script_outline_file).resolve()
+    if (
+        settings.generation.role_design_style_reference_dir
+        and not settings.generation.role_design_style_reference_dir.is_absolute()
+    ):
+        settings.generation.role_design_style_reference_dir = (
+            path.parent / settings.generation.role_design_style_reference_dir
+        ).resolve()
     if settings.apikeys_file and not settings.apikeys_file.is_absolute():
         settings.apikeys_file = (path.parent / settings.apikeys_file).resolve()
 

@@ -44,11 +44,33 @@ def main(argv: list[str] | None = None) -> int:
         "生成 9:16 竖屏短剧分镜参考帧，保持角色与参考图一致。",
         refs=[AssetRef(id="reference", type="image", path=str(image_path))],
     )
+    url_ref_payload = provider.build_payload(
+        "生成破损状态道具，保持与参考图同一主体。",
+        refs=[
+            AssetRef(
+                id="reference",
+                type="image",
+                path=str(image_path),
+                url="https://example.invalid/generated-reference.png",
+            )
+        ],
+        metadata={"node_name": "prop_generation"},
+    )
     output_path = tmp_dir / "payload.json"
-    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_path.write_text(
+        json.dumps(
+            {
+                "generic": {**payload, "image": "<base64 data URL omitted>"},
+                "prop_with_url_ref": url_ref_payload,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     volcengine_settings = settings.providers["volcengine"]
-    if payload["model"] != volcengine_settings.models["seedream_5_lite"]:
+    if payload["model"] != volcengine_settings.models["seedream_5"]:
         raise AssertionError(f"Unexpected model: {payload['model']}")
     if payload["size"] != "1600x2848":
         raise AssertionError(f"Unexpected size: {payload['size']}")
@@ -60,6 +82,10 @@ def main(argv: list[str] | None = None) -> int:
         raise AssertionError(f"Unexpected sequential_image_generation: {payload['sequential_image_generation']}")
     if payload["image"].startswith("data:image/png;base64,") is False:
         raise AssertionError("Reference image was not encoded as a png data URL")
+    if url_ref_payload["image"] != "https://example.invalid/generated-reference.png":
+        raise AssertionError(f"Reference URL was not preferred over local path: {url_ref_payload['image']}")
+    if url_ref_payload["size"] != volcengine_settings.options["seedream_prop_size"]:
+        raise AssertionError(f"Unexpected prop size: {url_ref_payload['size']}")
 
     print("seedream_payload_smoke=ok")
     print(f"payload_path={output_path}")

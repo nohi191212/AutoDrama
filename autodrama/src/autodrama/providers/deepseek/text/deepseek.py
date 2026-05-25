@@ -19,14 +19,34 @@ T = TypeVar("T", bound=BaseModel)
 class DeepSeekTextProvider:
     name = "deepseek"
 
-    def __init__(self, settings: ProviderSettings, runtime: RuntimeSettings) -> None:
+    def __init__(self, settings: ProviderSettings, runtime: RuntimeSettings, *, model_key: str = "text") -> None:
         self.settings = settings
         self.runtime = runtime
         self.base_url = (settings.base_url or "https://api.deepseek.com").rstrip("/")
-        self.model = settings.models.get("text", "deepseek-v4-pro")
+        self.model_key = model_key
+        self.model = settings.models.get(model_key) or settings.models.get("text", "deepseek-v4-pro")
         self.api_key = settings.secret("api_key_env")
-        self.reasoning_effort = str(settings.options.get("reasoning_effort", "max"))
-        self.thinking_enabled = bool(settings.options.get("thinking_enabled", True))
+        self.reasoning_effort = str(
+            settings.options.get(f"{model_key}_reasoning_effort", settings.options.get("reasoning_effort", "max"))
+        )
+        self.thinking_enabled = self._bool_option(
+            settings.options.get(f"{model_key}_thinking_enabled", settings.options.get("thinking_enabled", True)),
+            default=True,
+        )
+
+    @staticmethod
+    def _bool_option(value: object, *, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on", "enabled"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off", "disabled"}:
+                return False
+        return bool(value)
 
     def _write_detail_log(
         self,

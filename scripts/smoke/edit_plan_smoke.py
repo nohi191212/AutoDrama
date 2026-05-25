@@ -66,11 +66,11 @@ async def main_async() -> int:
         raise AssertionError("Edit plan has no subtitle cues")
     if any(item.get("required") for item in plan["missing_assets"]):
         raise AssertionError(f"Edit plan has required missing assets: {plan['missing_assets']}")
-    if not any(
+    if any(
         layer.get("metadata", {}).get("source_node") == "shot_bgm_generation"
         for layer in plan["audio_layers"]
     ):
-        raise AssertionError("Edit plan has no shot_bgm_generation audio layer")
+        raise AssertionError("Edit plan should not include deprecated shot_bgm_generation audio layers")
     if plan["output_video_path"] != "outputs/videos/episode_001.mp4":
         raise AssertionError(f"Unexpected output path: {plan['output_video_path']}")
 

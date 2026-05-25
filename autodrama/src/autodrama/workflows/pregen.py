@@ -889,6 +889,7 @@ class PregenWorkflow:
                 if preserve_assets and existing_prop is not None:
                     prop.asset_id = existing_prop.asset_id
                     prop.asset_path = existing_prop.asset_path
+                    prop.asset_url = existing_prop.asset_url
                     prop.provider = existing_prop.provider
                     prop.model = existing_prop.model
                     prop.request_id = existing_prop.request_id
@@ -924,12 +925,15 @@ class PregenWorkflow:
                 appearance.intro_video_generation_status = existing_appearance.intro_video_generation_status
                 appearance.full_body_image_asset_id = existing_appearance.full_body_image_asset_id
                 appearance.full_body_image_asset_path = existing_appearance.full_body_image_asset_path
+                appearance.full_body_image_asset_url = existing_appearance.full_body_image_asset_url
                 appearance.design_image_asset_id = existing_appearance.design_image_asset_id
                 appearance.design_image_asset_path = existing_appearance.design_image_asset_path
+                appearance.design_image_asset_url = existing_appearance.design_image_asset_url
                 appearance.intro_video_asset_id = existing_appearance.intro_video_asset_id
                 appearance.intro_video_asset_path = existing_appearance.intro_video_asset_path
                 appearance.asset_id = existing_appearance.asset_id
                 appearance.asset_path = existing_appearance.asset_path
+                appearance.asset_url = existing_appearance.asset_url
                 appearance.full_body_provider = existing_appearance.full_body_provider
                 appearance.full_body_model = existing_appearance.full_body_model
                 appearance.full_body_request_id = existing_appearance.full_body_request_id
@@ -1270,6 +1274,7 @@ class PregenWorkflow:
                     id=layout.id,
                     type="image",
                     path=str(project_dir / layout.asset_path),
+                    url=layout.asset_url,
                     metadata={"asset_type": "layout", "name": layout.name},
                 )
             )
@@ -1301,6 +1306,7 @@ class PregenWorkflow:
                             id=appearance.id,
                             type="image",
                             path=str(project_dir / appearance.asset_path),
+                            url=appearance.asset_url or appearance.design_image_asset_url,
                             metadata={
                                 "asset_type": "role_appearance",
                                 "role_id": role.id,
@@ -1319,6 +1325,7 @@ class PregenWorkflow:
                         id=prop.id,
                         type="image",
                         path=str(project_dir / prop.asset_path),
+                        url=prop.asset_url,
                         metadata={"asset_type": "prop", "name": prop.name},
                     )
                     )
@@ -1364,6 +1371,56 @@ class PregenWorkflow:
                         )
                     )
                     break
+        return refs
+
+    def _shot_role_audio_refs(self, project_dir: Path, state: ProjectState, shot: StoryboardShot) -> list:
+        from autodrama.providers.base import AssetRef
+
+        refs: list[AssetRef] = []
+        explicit_audio_ids = {str(value).strip() for value in shot.role_audio_ids if str(value).strip()}
+        seen: set[str] = set()
+
+        def append_audio(role: Role, audio: RoleAudio, *, source: str) -> None:
+            audio_key = audio.asset_id or audio.id
+            if not audio_key or audio_key in seen or not audio.asset_path:
+                return
+            path = Path(audio.asset_path)
+            if not path.is_absolute():
+                path = project_dir / path
+            if not path.exists() or not path.is_file():
+                return
+            seen.add(audio_key)
+            refs.append(
+                AssetRef(
+                    id=audio_key,
+                    type="audio",
+                    path=str(path),
+                    metadata={
+                        "asset_type": "role_audio",
+                        "reference_source": source,
+                        "role_id": role.id,
+                        "role_name": role.name,
+                        "emotion": audio.emotion,
+                        "voice": audio.voice_type,
+                        "voice_name": audio.voice_name,
+                    },
+                )
+            )
+
+        if explicit_audio_ids:
+            for role in state.roles.values():
+                for audio in role.audio.values():
+                    if audio.id in explicit_audio_ids or (audio.asset_id and audio.asset_id in explicit_audio_ids):
+                        append_audio(role, audio, source="storyboard_role_audio_ids")
+            return refs
+
+        for role_id in shot.role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            audio = role.audio.get("normal") or next((item for item in role.audio.values() if item.asset_path), None)
+            if audio is not None:
+                append_audio(role, audio, source="shot_role_ids")
         return refs
 
     @staticmethod
@@ -1432,18 +1489,24 @@ class PregenWorkflow:
                 )
             )
             return refs
-        if shot.ref_frame_asset_path:
+        if shot.ref_frame_asset_path or shot.ref_frame_asset_url:
+            ref_frame_path = str(project_dir / shot.ref_frame_asset_path) if shot.ref_frame_asset_path else None
             refs.append(
                 AssetRef(
                     id=shot.ref_frame_asset_id,
                     type="image",
-                    path=str(project_dir / shot.ref_frame_asset_path),
-                    metadata={"asset_type": "ref_frame"},
+                    path=ref_frame_path,
+                    url=shot.ref_frame_asset_url,
+                    metadata={
+                        "asset_type": "ref_frame",
+                        "reference_source": "seedream_url" if shot.ref_frame_asset_url else "local_file",
+                    },
                 )
             )
         if self._video_reference_mode(provider) not in {"ref_frame_only", "ref_frame"}:
             refs.extend(self._shot_ref_asset_refs(project_dir, state, shot))
             refs.extend(self._shot_anchor_video_refs(project_dir, state, shot))
+        dialogue_audio_role_ids: set[str] = set()
         for audio in shot.dialogue_audio_assets:
             if audio.asset_path:
                 refs.append(
@@ -1458,6 +1521,16 @@ class PregenWorkflow:
                         },
                     )
                 )
+                if audio.role_id:
+                    dialogue_audio_role_ids.add(audio.role_id)
+        role_audio_refs = self._shot_role_audio_refs(project_dir, state, shot)
+        if not shot.role_audio_ids:
+            role_audio_refs = [
+                ref
+                for ref in role_audio_refs
+                if not ref.metadata.get("role_id") or ref.metadata.get("role_id") not in dialogue_audio_role_ids
+            ]
+        refs.extend(role_audio_refs)
         return refs
 
     def _role_for_dialogue_line(
@@ -1792,6 +1865,7 @@ class PregenWorkflow:
                 id=normal_prop.asset_id or normal_prop.id,
                 type="image",
                 path=str(reference_path),
+                url=normal_prop.asset_url,
                 metadata={
                     "asset_type": "prop",
                     "name": normal_prop.name,
@@ -1831,6 +1905,7 @@ class PregenWorkflow:
                 id=appearance.design_image_asset_id or appearance.id,
                 type="image",
                 path=str(reference_path),
+                url=appearance.design_image_asset_url or appearance.asset_url,
                 metadata={
                     "asset_type": "role_appearance",
                     "role_id": role.id,

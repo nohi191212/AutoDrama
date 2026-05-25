@@ -65,14 +65,19 @@ class ProviderRouter:
         self.registry.register(
             "text",
             {"deepseek"},
-            lambda **_: DeepSeekTextProvider(self.settings.providers["deepseek"], self.settings.runtime),
+            lambda purpose, **_: DeepSeekTextProvider(
+                self.settings.providers["deepseek"],
+                self.settings.runtime,
+                model_key=purpose,
+            ),
         )
         self.registry.register(
             "text",
             ALIYUN_TEXT_PROVIDER_NAMES,
-            lambda provider_name, **_: QwenTextProvider(
+            lambda provider_name, purpose, **_: QwenTextProvider(
                 self._openai_compatible_settings(provider_name),
                 self.settings.runtime,
+                model_key=purpose,
             ),
         )
 

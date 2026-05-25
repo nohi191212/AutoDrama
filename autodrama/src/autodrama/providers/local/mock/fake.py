@@ -14,6 +14,7 @@ from autodrama.core.schemas import (
     LayoutExtractOutput,
     PropDesignOutput,
     PropExtractOutput,
+    RefFrameSpatialPlan,
     RoleAppearanceDesignOutput,
     RoleDesignOutput,
     RoleDuplicateAuditReviewOutput,
@@ -23,7 +24,6 @@ from autodrama.core.schemas import (
     ScriptNovelExtractBatchOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
-    ShotBGMSoundDesignOutput,
     StoryboardEpisodeOutput,
     StoryboardNextShotOutput,
     StoryboardShotGenerationOutput,
@@ -707,17 +707,25 @@ class FakeTextProvider:
             data = {
                 "bgms": bgms
             }
-        elif schema is ShotBGMSoundDesignOutput or node_name == "shot_bgm_generation":
-            duration = metadata.get("duration_seconds") or 6
+        elif schema is RefFrameSpatialPlan or node_name == "ref_frame_spatial_planning":
+            previous_shot_id = metadata.get("previous_shot_id")
+            reference_ids = [str(previous_shot_id)] if previous_shot_id else []
             data = {
-                "sound_description": (
-                    "Instrumental cinematic background music and sound design, no vocals, no lyrics, no dialogue. "
-                    f"[0.0-{float(duration) / 2:.1f}s] Sparse low drone, cold office air hum, distant rain texture, "
-                    "subtle paper rustle as rhythmic detail [No cut]. "
-                    f"[{float(duration) / 2:.1f}-{float(duration):.1f}s] Tension rises with muted pulses, glassy high "
-                    "tones, restrained impact, and a short reverb tail for the next cut [Hard cut]. "
-                    "Final mix: keep dialogue range clear and end with a controlled cinematic tail."
-                )
+                "same_physical_space_as_previous": bool(previous_shot_id),
+                "confidence": 0.82 if previous_shot_id else 0.72,
+                "continuity_mode": "previous_shot" if previous_shot_id else "new_space",
+                "physical_space_key": "layout_fake::main_area",
+                "physical_space_note": "Fake layout main area",
+                "reference_shot_ids": reference_ids,
+                "spatial_structure_summary": (
+                    "Keep the protagonist and key props on the same relative left/right and foreground/background axes."
+                ),
+                "spatial_constraints": [
+                    "Do not flip the protagonist to the other side of key props unless the script says they moved.",
+                    "Keep background crowd bands in roughly the same area and density.",
+                ],
+                "movement_allowed": False,
+                "movement_reason": None,
             }
         elif schema in {StoryboardNextShotOutput, StoryboardShotGenerationOutput}:
             episode_key = str(metadata.get("episode_key") or episode_keys[0])

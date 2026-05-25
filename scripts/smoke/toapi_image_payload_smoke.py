@@ -95,8 +95,12 @@ def main() -> int:
     require(ref_frame_payload["resolution"] == "4K", f"Unexpected ref frame resolution: {ref_frame_payload['resolution']}")
 
     app_settings = load_settings(ROOT_DIR / "config.yaml.example")
-    routed_provider = ProviderRouter(app_settings).image("role")
-    require(isinstance(routed_provider, ToAPIImageProvider), f"Expected ToAPI role image provider; got {type(routed_provider)}")
+    for purpose in ("role", "prop", "layout", "ref_frame"):
+        routed_provider = ProviderRouter(app_settings).image(purpose)
+        require(
+            isinstance(routed_provider, ToAPIImageProvider),
+            f"Expected ToAPI image provider for image.{purpose}; got {type(routed_provider)}",
+        )
 
     output_dir = ROOT_DIR / ".tmp" / "smoke" / "toapi_image_payload"
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -27,10 +27,11 @@ class VolcengineSeedreamImageProvider:
             or "https://ark.cn-beijing.volces.com"
         ).rstrip("/")
         self.model = (
-            settings.models.get("seedream_5_lite")
+            settings.models.get("seedream_5")
+            or settings.models.get("seedream_5_lite")
             or settings.models.get("seedream")
             or settings.models.get("image")
-            or "doubao-seedream-5-0-lite-260128"
+            or "doubao-seedream-5-0-260128"
         )
         self.api_key = self._api_key(settings)
         self.size = str(
@@ -92,7 +93,7 @@ class VolcengineSeedreamImageProvider:
         payload: dict[str, Any] = {
             "model": str(metadata.get("model") or self.model),
             "prompt": prompt[:5000],
-            "size": str(metadata.get("size") or size or self.size),
+            "size": str(metadata.get("size") or size or self._purpose_size(metadata) or self.size),
             "output_format": str(metadata.get("output_format") or self.output_format),
             "response_format": str(metadata.get("response_format") or self.response_format),
             "watermark": bool(metadata.get("watermark", self.watermark)),
@@ -124,6 +125,28 @@ class VolcengineSeedreamImageProvider:
         if isinstance(extra_parameters, dict):
             payload.update(extra_parameters)
         return payload
+
+    def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
+        node_name = str(metadata.get("node_name") or "")
+        if node_name == "role_full_body_generation":
+            return (
+                self.settings.options.get("seedream_role_full_body_size")
+                or self.settings.options.get("role_full_body_size")
+            )
+        if node_name in {"role_appearance_generation", "role_multiview_generation"}:
+            return (
+                self.settings.options.get("seedream_role_multiview_size")
+                or self.settings.options.get("seedream_role_design_size")
+                or self.settings.options.get("role_multiview_size")
+                or self.settings.options.get("role_design_size")
+            )
+        if node_name == "prop_generation":
+            return self.settings.options.get("seedream_prop_size") or self.settings.options.get("prop_size")
+        if node_name == "layout_image_generation":
+            return self.settings.options.get("seedream_layout_size") or self.settings.options.get("layout_size")
+        if node_name == "ref_frame_generation":
+            return self.settings.options.get("seedream_ref_frame_size") or self.settings.options.get("ref_frame_size")
+        return None
 
     def _reference_images(self, refs: list[AssetRef]) -> list[str]:
         images: list[str] = []

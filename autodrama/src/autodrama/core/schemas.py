@@ -50,12 +50,15 @@ class RoleAppearance(BaseModel):
     intro_video_generation_status: str = "pending"
     full_body_image_asset_id: str | None = None
     full_body_image_asset_path: str | None = None
+    full_body_image_asset_url: str | None = None
     design_image_asset_id: str | None = None
     design_image_asset_path: str | None = None
+    design_image_asset_url: str | None = None
     intro_video_asset_id: str | None = None
     intro_video_asset_path: str | None = None
     asset_id: str | None = None
     asset_path: str | None = None
+    asset_url: str | None = None
     full_body_provider: str | None = None
     full_body_model: str | None = None
     full_body_request_id: str | None = None
@@ -101,6 +104,7 @@ class Prop(BaseModel):
     source: str | None = None
     design_path: str | None = None
     asset_path: str | None = None
+    asset_url: str | None = None
     prompt: str | None = Field(default=None, exclude=True)
     asset_id: str | None = Field(default=None, exclude=True)
     provider: str | None = Field(default=None, exclude=True)
@@ -117,6 +121,7 @@ class Layout(BaseModel):
     episode_keys: list[str] = Field(default_factory=list)
     asset_id: str | None = None
     asset_path: str | None = None
+    asset_url: str | None = None
     provider: str | None = None
     model: str | None = None
     request_id: str | None = None
@@ -486,6 +491,7 @@ class StaticAssetGenerationItem(BaseModel):
     name: str
     prompt: str
     asset_path: str | None = None
+    asset_url: str | None = None
     provider: str
     model: str
     request_id: str | None = None
@@ -506,6 +512,7 @@ class RoleIntroVideoPromptItem(BaseModel):
     prompt: str
     reference_asset_id: str
     reference_asset_path: str
+    reference_asset_url: str | None = None
     episode_keys: list[str] = Field(default_factory=list)
 
 
@@ -600,11 +607,21 @@ class StoryboardShot(BaseModel):
     shot_bgm_assets: list[ShotBGMAsset] = Field(default_factory=list)
     ref_frame_asset_id: str | None = None
     ref_frame_asset_path: str | None = None
+    ref_frame_asset_url: str | None = None
     ref_frame_provider: str | None = None
     ref_frame_model: str | None = None
     ref_frame_request_id: str | None = None
     ref_frame_usage: dict[str, Any] = Field(default_factory=dict)
     ref_frame_raw_response: dict[str, Any] = Field(default_factory=dict)
+    physical_space_key: str | None = None
+    physical_space_note: str | None = None
+    spatial_continuity_mode: str | None = None
+    spatial_reference_shot_ids: list[str] = Field(default_factory=list)
+    spatial_structure_summary: str | None = None
+    spatial_constraints: list[str] = Field(default_factory=list)
+    spatial_movement_allowed: bool | None = None
+    spatial_movement_reason: str | None = None
+    spatial_plan_confidence: float | None = None
     video_asset_id: str | None = None
     video_asset_path: str | None = None
     video_provider: str | None = None
@@ -652,18 +669,17 @@ class ShotDialogueAudioGenerationOutput(BaseModel):
     skipped_dialogue_lines: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ShotBGMSoundDesignOutput(BaseModel):
-    sound_description: str
-
-
-class ShotBGMGenerationItem(BaseModel):
-    episode_key: str
-    shot_id: str
-    asset: ShotBGMAsset
-
-
-class ShotBGMGenerationOutput(BaseModel):
-    generated_bgms: list[ShotBGMGenerationItem]
+class RefFrameSpatialPlan(BaseModel):
+    same_physical_space_as_previous: bool = False
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    continuity_mode: Literal["previous_shot", "reuse_prior_space", "new_space"] = "new_space"
+    physical_space_key: str = ""
+    physical_space_note: str = ""
+    reference_shot_ids: list[str] = Field(default_factory=list)
+    spatial_structure_summary: str = ""
+    spatial_constraints: list[str] = Field(default_factory=list)
+    movement_allowed: bool = False
+    movement_reason: str | None = None
 
 
 class RefFrameGenerationItem(BaseModel):
@@ -672,11 +688,18 @@ class RefFrameGenerationItem(BaseModel):
     asset_id: str
     prompt: str
     asset_path: str | None = None
+    asset_url: str | None = None
     provider: str
     model: str
     request_id: str | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
     raw_response: dict[str, Any] = Field(default_factory=dict)
+    physical_space_key: str | None = None
+    physical_space_note: str | None = None
+    spatial_continuity_mode: str | None = None
+    spatial_reference_shot_ids: list[str] = Field(default_factory=list)
+    spatial_structure_summary: str | None = None
+    spatial_constraints: list[str] = Field(default_factory=list)
 
 
 class RefFrameGenerationOutput(BaseModel):

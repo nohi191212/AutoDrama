@@ -1,11 +1,11 @@
 # 🐙 AutoDrama
 
-AutoDrama 是一个短剧自动生成工作流项目。它把输入故事大纲拆成剧集，生成脚本、角色、道具、场景、BGM 等可复用静态资产，再按剧集生成分镜、镜头 BGM、参考帧和镜头视频。
+AutoDrama 是一个短剧自动生成工作流项目。它把输入故事大纲拆成剧集，生成脚本、角色、道具、场景、BGM 等可复用静态资产，再按剧集生成分镜、参考帧和镜头视频。
 
 本仓库当前重点支持两段式流程：
 
 1. `pregen`: 预生成脚本、角色、道具、场景、全局 BGM 等项目级资产。
-2. `generation`: 按剧集生成动态镜头资产，包括 storyboard、shot BGM、reference frame、shot video 和动态资产固化记录。
+2. `generation`: 按剧集生成动态镜头资产，包括 storyboard、reference frame、shot video 和动态资产固化记录。
 
 Python 包采用嵌套 `src` 布局，源码位于 `autodrama/src/autodrama`。请从仓库根目录运行命令。
 
@@ -97,8 +97,8 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 
 角色静态图像现在只使用 `role_full_body` 和 `role_multiview` 两类配置：
 
-- `role_full_body`: 正面全身参考图，建议竖幅比例，例如 ToAPI `role_full_body_size: "1:2"` 或 RightCode `role_full_body_size: 1024x1536`。
-- `role_multiview`: 三视图 + 绑定道具设计图，使用 full body 作为参考图，建议 16:9 横幅比例。
+- `role_full_body`: 正面全身参考图，默认走 ToAPI GPT-Image-2，建议竖幅比例，例如 `role_full_body_size: "1:2"`。
+- `role_multiview`: 三视图 + 绑定道具设计图，使用 full body 作为参考图，默认走 ToAPI GPT-Image-2，建议 16:9 横幅比例，例如 `role_design_size: "16:9"`。
 
 旧的 `role_portrait` / `portrait_prompt` 已移除，不再作为角色资产配置项或 prompt 字段。
 
@@ -122,11 +122,13 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 
 - 文本脚本: `aliyun`
 - 角色/道具/场景/分镜文本: `deepseek`
-- 静态图像和参考帧: `toapi`
+- 静态角色/道具/场景图像: `toapi` / GPT-Image-2
+- 镜头参考帧: `toapi` / GPT-Image-2
 - 角色语音: `volcengine`
 - 全局 BGM: `minimax`
-- 镜头 BGM: `elevenlabs`
 - 镜头视频: `volcengine`
+
+所有图片生成默认通过 ToAPI GPT-Image-2：角色全身图、角色三视图、道具图、场景图和镜头参考帧都会本地保存图片文件，并同时保存 provider 返回的图片 URL。后续把这些图片作为参考图传给图片或视频模型时，会优先传保存的网络 URL，只有没有 URL 时才回退到本地文件。`providers.volcengine.options.video_reference_mode: ref_frame_only` 是 Seedance 的默认视频参考模式。该模式只把镜头参考帧传给 Seedance，不再额外传角色/场景资产图；短视频生成会优先使用保存的参考帧图片 URL，并传入 storyboard `role_audio_ids` 对应的人物音频作为参考音频。视频 prompt 中会加入更强的人物风格约束：尽可能去掉参考帧中的真人肖像特征，保留动漫化 CG 角色特征，例如弱化真实皮肤毛孔、汗渍、微血管、皮肤斑点和真实摄影人像感，同时保留眼型、眉形、发型、服装轮廓、配饰、动作节奏和空间关系。这是为了降低 Seedance 将偏真人参考图误判为 real person / privacy content 的概率。
 
 本地验证或演示可以使用 `--fake`，不会调用真实外部服务。
 
@@ -227,7 +229,6 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config
 
 ```text
 storyboard_generation
-shot_bgm_generation
 ref_frame_generation
 shot_video_generation
 dynamic_asset_solidification
@@ -317,7 +318,11 @@ run\start.cmd --generation --config config.yaml --project <project_id> --only sh
 run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes episode_001 --shots episode_001_shot_001
 ```
 
-`--shots` 只能用于 `storyboard_generation` 之后的动态节点，例如 `shot_bgm_generation`、`ref_frame_generation`、`shot_video_generation` 和 `dynamic_asset_solidification`。
+`--shots` 只能用于 `storyboard_generation` 之后的动态节点，例如 `ref_frame_generation`、`shot_video_generation` 和 `dynamic_asset_solidification`。
+
+`ref_frame_generation` 在生成每个参考帧前会先做一次轻量空间连续性规划。默认通过 `routing.text.ref_frame_spatial` 调用 DeepSeek `ref_frame_spatial` 模型配置，用 `deepseek-v4-flash`、低 reasoning effort、关闭 thinking，判断当前 shot 是否与上一 shot 处于同一物理空间；如果不是，则从历史参考帧索引里查找可复用的同一物理空间。规划结果会写回 `shots/<episode_key>.json` 的 `physical_space_key`、`physical_space_note`、`spatial_reference_shot_ids`、`spatial_structure_summary` 和 `spatial_constraints` 等字段。
+
+如果当前 shot 与上一 shot 同空间，参考帧生成会优先传入上一张参考帧，并在可用时传入前两张同空间参考帧；如果复用更早的历史空间，则最多传入 10 张历史参考帧。历史空间索引保存在 `outputs/<project_id>/assets/json/spatial_ref_frame_index.json`。这些参考帧用于锁定人物、关键物体、空间边界和背景人群的左右/前后/远近拓扑关系，不要求逐像素复制背景。
 
 ## 断点续跑
 
@@ -353,8 +358,7 @@ outputs/<project_id>/
 ├── assets/
 │   ├── audios/
 │   │   ├── bgms/
-│   │   ├── role_voices/
-│   │   └── shot_bgms/
+│   │   └── role_voices/
 │   ├── images/
 │   │   ├── roles/
 │   │   ├── props/
@@ -367,6 +371,7 @@ outputs/<project_id>/
 │   └── json/
 │       ├── assets/
 │       │   └── dynamic_assets.json
+│       ├── spatial_ref_frame_index.json
 │       ├── nodes/
 │       ├── roles/
 │       ├── props/

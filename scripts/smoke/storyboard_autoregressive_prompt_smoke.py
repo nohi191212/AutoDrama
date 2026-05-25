@@ -24,6 +24,7 @@ from autodrama.core.schemas import (  # noqa: E402
     RoleAudio,
     ScriptBundle,
     StoryboardNextShotOutput,
+    StoryboardShotDraft,
     StoryboardSourceCoverage,
 )
 from autodrama.providers.local.mock.fake import FakeTextProvider  # noqa: E402
@@ -58,6 +59,71 @@ class RecordingFakeTextProvider(FakeTextProvider):
             }
         )
         return await super().generate_json(prompt, schema, temperature=temperature, metadata=metadata)
+
+
+class AlwaysIncompleteTextProvider:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    @staticmethod
+    def _next_sentence(text: str, start: int) -> str:
+        cursor = max(0, start)
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        sentence_end = text.find("。", cursor)
+        if sentence_end < 0:
+            raise AssertionError("Smoke source must contain another sentence")
+        return text[cursor : sentence_end + 1]
+
+    async def generate_json(
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        temperature: float = 0.7,
+        metadata: dict[str, Any] | None = None,
+    ) -> T:
+        del temperature
+        metadata = dict(metadata or {})
+        self.calls.append(
+            {
+                "schema": schema.__name__,
+                "prompt": prompt,
+                "metadata": metadata,
+            }
+        )
+        source_text = str(metadata["current_novel_full"])
+        start_text = str(metadata["current_shot_start_text"])
+        start_offset = source_text.find(start_text)
+        if start_offset < 0:
+            raise AssertionError(f"current_shot_start_text not found in source: {start_text}")
+        next_start_text = self._next_sentence(source_text, start_offset + len(start_text))
+        return schema.model_validate(
+            {
+                "episode_key": metadata["episode_key"],
+                "shot": {
+                    "layout_id": "layout_雨夜办公室",
+                    "title": f"未完成上限验证 {len(self.calls)}",
+                    "source_coverage": {
+                        "start_text": start_text,
+                        "end_text": start_text,
+                        "next_start_text": next_start_text,
+                        "note": "covers one natural source chunk and keeps the chapter incomplete",
+                    },
+                    "duration_seconds": 4,
+                    "transition": "结尾停在当前动作状态，可硬切到下一段。",
+                    "dialogue": [],
+                    "role_ids": [],
+                    "role_appearance_ids": [],
+                    "role_audio_ids": [],
+                    "prop_ids": [],
+                    "anchor_frame_prompt": "真人电影质感，雨夜办公室内的稳定中景，冷白灯照亮桌面。",
+                    "video_prompt": "硬切进入雨夜办公室，镜头稳定推进，环境声保持在本片段内部，结尾停在可硬切状态。",
+                },
+                "is_chapter_complete": False,
+                "completion_reason": "smoke provider intentionally leaves the chapter incomplete",
+            }
+        )
 
 
 def build_state() -> ProjectState:
@@ -168,6 +234,10 @@ async def main_async() -> int:
     service = StoryboardService(PromptStore())
     progress_snapshots: list[tuple[str, str, int]] = []
     state = build_state()
+    require(
+        StoryboardService.MAX_GENERATION_STEPS_PER_CHAPTER == 10,
+        f"Storyboard max shot generation cap should be 10, got {StoryboardService.MAX_GENERATION_STEPS_PER_CHAPTER}",
+    )
     story_text = (
         "雨夜办公室，林舟发现合同关键页纸张颜色不对。苏晚递来旧邮件截图，"
         "邮件附件时间线证明合同被调包。次日会议室，赵启试图压住议程，"
@@ -200,6 +270,126 @@ async def main_async() -> int:
         source_end_offset=terminal_end_offset,
     )
     require(terminal_next is None, f"Completed terminal marker coverage should return None: {terminal_next}")
+
+    whitespace_next_source = "前文结束。\n\n嗡——！\n\n天旋地转。\n\n后文继续。"
+    whitespace_next = service._validate_source_coverage(
+        StoryboardSourceCoverage(
+            start_text="前文结束。",
+            end_text="前文结束。",
+            next_start_text="嗡——！天旋地转。",
+            note="next anchor collapses paragraph whitespace",
+        ),
+        current_novel_full=whitespace_next_source,
+        current_shot_start_text="前文结束。",
+        current_start_offset=0,
+        is_chapter_complete=False,
+    )
+    require(
+        whitespace_next == whitespace_next_source.find("嗡——！"),
+        f"Whitespace-normalized next_start_text resolved to wrong offset: {whitespace_next}",
+    )
+
+    whitespace_end_source = "甲。\n\n\n\n后文。\n\n后文。"
+    whitespace_end = service._validate_source_coverage(
+        StoryboardSourceCoverage(
+            start_text="甲。后文。",
+            end_text="甲。后文。",
+            next_start_text="后文。",
+            note="end anchor collapses whitespace before a repeated next anchor",
+        ),
+        current_novel_full=whitespace_end_source,
+        current_shot_start_text="甲。后文。",
+        current_start_offset=0,
+        is_chapter_complete=False,
+    )
+    require(
+        whitespace_end == whitespace_end_source.rfind("后文。"),
+        f"Whitespace-normalized end_text did not advance past covered text: {whitespace_end}",
+    )
+
+    leading_variant_source = (
+        "韩默被竹枝逼到死角。\n\n"
+        "他眼中闪过一抹狠戾。左手探入皮袋，摸到了那枚唯一的爆炎丹。"
+        "这本来是准备对付筑基期妖兽的底牌，但眼下若不用，恐怕连用它的机会都没了。\n\n"
+        "他不再犹豫，法力猛然注入丹丸。"
+    )
+    leading_variant_next = service._validate_source_coverage(
+        StoryboardSourceCoverage(
+            start_text="韩默被竹枝逼到死角。",
+            end_text=(
+                "韩默眼中闪过一抹狠戾。左手探入皮袋，摸到了那枚唯一的爆炎丹。"
+                "这本来是准备对付筑基期妖兽的底牌，但眼下若不用，恐怕连用它的机会都没了。"
+            ),
+            next_start_text="他不再犹豫，法力猛然注入丹丸。",
+            note="end anchor allows a short leading role-name/pronoun variant",
+        ),
+        current_novel_full=leading_variant_source,
+        current_shot_start_text="韩默被竹枝逼到死角。",
+        current_start_offset=0,
+        is_chapter_complete=False,
+    )
+    require(
+        leading_variant_next == leading_variant_source.find("他不再犹豫"),
+        f"Leading-variant end_text did not resolve the next source cursor: {leading_variant_next}",
+    )
+
+    bad_end_good_next_source = (
+        "韩默缓缓站起身，尽量不发出任何声响。\n\n"
+        "他强迫自己冷静下来，先运功查看体内状况。传送带来的紊乱已经平复大半，"
+        "经脉虽还有些酸痛，但法力流转已无大碍。而真正让他心头一跳的，是空气中那充沛到近乎粘稠的灵气——"
+        "他甚至不用刻意运功，灵气就顺着全身毛孔往体内钻，在经脉里欢快地游走。\n\n"
+        "韩默心中一喜。如此浓郁的灵气，若是能吸纳炼化，别说十天，只需打坐半日。"
+    )
+    bad_end_good_next = service._validate_source_coverage(
+        StoryboardSourceCoverage(
+            start_text="韩默缓缓站起身，尽量不发出任何声响。",
+            end_text=(
+                "他强迫自己冷静下来，先运功查看体内状况。传送带来的紊乱已经平复大半，"
+                "经脉虽还有些酸痛，但法力流转已无大碍，而真正让他心头一跳的，是空气中那充沛到近乎粘稠的灵气。"
+            ),
+            next_start_text="韩默心中一喜。如此浓郁的灵气，若是能吸纳炼化，别说十天，只需打坐半日。",
+            note="incomplete shot should use next_start_text as the authoritative cursor",
+        ),
+        current_novel_full=bad_end_good_next_source,
+        current_shot_start_text="韩默缓缓站起身，尽量不发出任何声响。",
+        current_start_offset=0,
+        is_chapter_complete=False,
+    )
+    require(
+        bad_end_good_next == bad_end_good_next_source.find("韩默心中一喜"),
+        f"Incomplete coverage should tolerate a bad end_text when next_start_text is valid: {bad_end_good_next}",
+    )
+
+    repaired_dialogue_shot = service._normalize_generated_shot(
+        StoryboardShotDraft(
+            layout_id="layout_会议室",
+            title="对白补全验证",
+            source_coverage=StoryboardSourceCoverage(
+                start_text="林舟公开反击。",
+                end_text="林舟公开反击。",
+                next_start_text=None,
+                note="verifies deterministic video_prompt dialogue completion",
+            ),
+            duration_seconds=8,
+            transition="结尾可硬切。",
+            dialogue=["林舟：这份合同被换过，时间线就在这里。"],
+            role_ids=["role_林舟"],
+            role_appearance_ids=["role_林舟_appearance_base"],
+            role_audio_ids=["role_林舟_audio_normal"],
+            prop_ids=["prop_邮件截图"],
+            anchor_frame_prompt="真人电影质感，会议室中林舟站在投影屏旁。",
+            video_prompt="林舟站在投影屏旁开口，赵启坐在阴影里听他说话。",
+        ),
+        episode_key="episode_001",
+        shot_index=99,
+    )
+    require(
+        "林舟：这份合同被换过，时间线就在这里。" in repaired_dialogue_shot.video_prompt,
+        "Normalized video_prompt should include every missing dialogue line verbatim",
+    )
+    require("参考图只用于锁定" in repaired_dialogue_shot.video_prompt, "video_prompt missing reference image guidance")
+    require("参考视频只用于锁定" in repaired_dialogue_shot.video_prompt, "video_prompt missing reference video guidance")
+    require("参考音频或对白音频" in repaired_dialogue_shot.video_prompt, "video_prompt missing reference audio guidance")
 
     def record_progress(episode, shot) -> None:
         progress_snapshots.append((episode.episode_key, shot.shot_id, len(episode.shots)))
@@ -242,6 +432,24 @@ async def main_async() -> int:
     require("0-4 秒：" in provider.calls[0]["prompt"], "Prompt missing official-style timed video_prompt guidance/example")
     require("方括号标签" in provider.calls[0]["prompt"], "Prompt missing guidance against old bracketed style")
     require("硬切到" in provider.calls[0]["prompt"], "Prompt missing natural explicit cut guidance/example")
+    require("每一句对白" in provider.calls[0]["prompt"], "Prompt missing dialogue-in-video_prompt requirement")
+    require("参考音频" in provider.calls[0]["prompt"], "Prompt missing audio reference guidance")
+    require("首尾衔接要求" in provider.calls[0]["prompt"], "Prompt missing hard-cut boundary guidance")
+    require("内部 J-Cut" in provider.calls[0]["prompt"], "Prompt missing internal-only J-Cut guidance")
+    require("可演性预算" in provider.calls[0]["prompt"], "Prompt missing performability budget guidance")
+    require("最多 2 句完整对白" in provider.calls[0]["prompt"], "Prompt missing dialogue density limit")
+    require("不超过 50 个中文字符" in provider.calls[0]["prompt"], "Prompt missing 50-char dialogue limit")
+    require("犹豫时，切短一点" in provider.calls[0]["prompt"], "Prompt missing low-density split preference")
+    require("max_shots_per_chapter" not in provider.calls[0]["prompt"], "Prompt should not expose shot count cap")
+    require("remaining_shot_slots" not in provider.calls[0]["prompt"], "Prompt should not expose remaining shot slots")
+    require(
+        "max_shots_per_chapter" not in provider.calls[0]["metadata"],
+        "Provider metadata should not expose shot count cap",
+    )
+    require(
+        "remaining_shot_slots" not in provider.calls[0]["metadata"],
+        "Provider metadata should not expose remaining shot slots",
+    )
     require(
         provider.calls[0]["metadata"]["current_shot_start_text"].startswith("雨夜办公室"),
         f"First storyboard cursor should skip source chapter metadata: {provider.calls[0]['metadata']}",
@@ -251,6 +459,38 @@ async def main_async() -> int:
     require('"source_coverage"' in provider.calls[1]["prompt"], "Second prompt missing first shot source coverage")
     require("episode_001_shot_001" in provider.calls[1]["prompt"], "Second prompt missing first shot id")
     require("episode_001_shot_002" in provider.calls[2]["prompt"], "Third prompt missing two generated shots context")
+
+    capped_max_shots = 4
+    capped_provider = AlwaysIncompleteTextProvider()
+    capped_service = StoryboardService(PromptStore())
+    capped_story = "".join(
+        f"第{index:02d}段里角色沿着长廊观察灵光变化并保持警惕，动作连续但还没有抵达终点。"
+        for index in range(1, 13)
+    )
+    capped_output = await capped_service.storyboard_episode(
+        state,
+        capped_provider,
+        episode_key="episode_001",
+        novel_extract_all=dict(state.script.novel_extract),
+        current_novel_full=capped_story,
+        max_shots=capped_max_shots,
+    )
+    require(
+        len(capped_output.shots) == capped_max_shots,
+        f"Storyboard code cap should return at most {capped_max_shots} shots, got {len(capped_output.shots)}",
+    )
+    require(
+        len(capped_provider.calls) == capped_max_shots,
+        f"Storyboard code cap should call provider at most {capped_max_shots} times, got {len(capped_provider.calls)}",
+    )
+    require(
+        all(not call["metadata"].get("max_shots_per_chapter") for call in capped_provider.calls),
+        "Shot count cap should stay outside provider-visible metadata",
+    )
+    require(
+        all("max_shots" not in call["metadata"] for call in capped_provider.calls),
+        "CLI/config shot count cap should stay outside provider-visible metadata",
+    )
 
     output_dir = ROOT_DIR / ".tmp" / "smoke" / "storyboard_autoregressive_prompt"
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -136,6 +136,8 @@ class PropDesignRepository:
         }
         if prop.asset_path:
             content["image_asset_path"] = prop.asset_path
+        if prop.asset_url:
+            content["image_asset_url"] = prop.asset_url
         if extra_content:
             content.update({key: value for key, value in extra_content.items() if value not in (None, "", [])})
 
@@ -213,6 +215,10 @@ class PropDesignRepository:
             payload["content"] = content
 
         content["image_asset_path"] = asset_path
+        image_urls = getattr(result, "image_urls", None)
+        asset_url = image_urls[0] if image_urls else prop.asset_url
+        if asset_url:
+            content["image_asset_url"] = asset_url
         payload.update(
             {
                 "prop_id": prop.id,
@@ -223,6 +229,7 @@ class PropDesignRepository:
                 "image_generation": {
                     "asset_id": prop.asset_id or prop.id,
                     "asset_path": asset_path,
+                    "asset_url": asset_url,
                     "provider": result.provider,
                     "model": result.model,
                     "request_id": result.request_id,
