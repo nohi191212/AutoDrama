@@ -25,26 +25,14 @@ class RoleService:
         return json.dumps(value, ensure_ascii=False, indent=2)
 
     @staticmethod
-    def visual_style_label(state: ProjectState) -> str:
-        return str(state.metadata.get("visual_style_label", "真人电影质感"))
+    def role_design_style_prompt(state: ProjectState) -> str:
+        return str(state.metadata.get("role_design_style_prompt") or "").strip()
 
     @staticmethod
-    def visual_style_prompt(state: ProjectState) -> str:
-        return str(
-            state.metadata.get(
-                "visual_style_prompt",
-                "真人电影质感：真实摄影、自然光或电影布光、真实材质、真实皮肤纹理和电影镜头语言。",
-            )
-        )
-
-    @staticmethod
-    def role_appearance_view_requirement(state: ProjectState) -> str:
-        visual_style = str(state.metadata.get("visual_style", "live_action"))
-        if visual_style == "live_action":
-            return "半身或全身真人电影感角色设定图；干净背景；无其他人物；不要做三视图拼版。"
+    def role_appearance_view_requirement() -> str:
         return (
-            "三视图角色设定图 / character turnaround sheet：同一角色正面、侧面、背面三视图并排，"
-            "统一身高比例和服装细节，干净背景，无其他人物；不要做单张半身照或只有一个角度的角色图。"
+            "角色形象分两步生成：先生成单人正面全身图，再以该全身图为身份参考生成同一角色正面、侧面、背面三视图"
+            "和绑定物品设计图。三视图必须统一身高比例、脸型、发型、服装和道具细节。"
         )
 
     async def role_extract(
@@ -63,8 +51,6 @@ class RoleService:
             novel_full=self.format_json(novel_full),
             existing_roles=self.format_json(existing_roles),
             episode_keys=", ".join(novel_full),
-            visual_style_label=self.visual_style_label(state),
-            visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,
@@ -210,8 +196,6 @@ class RoleService:
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(functional_roles),
             episode_keys=", ".join(novel_full),
-            visual_style_label=self.visual_style_label(state),
-            visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,
@@ -247,9 +231,8 @@ class RoleService:
             role_index=self.format_json(role_index),
             designed_role_voices=self.format_json(designed_role_voices),
             available_voices=self.format_json(available_voices),
-            visual_style_label=self.visual_style_label(state),
-            visual_style_prompt=self.visual_style_prompt(state),
-            role_appearance_view_requirement=self.role_appearance_view_requirement(state),
+            role_design_style_prompt=self.role_design_style_prompt(state),
+            role_appearance_view_requirement=self.role_appearance_view_requirement(),
         )
         return await provider.generate_json(
             prompt,

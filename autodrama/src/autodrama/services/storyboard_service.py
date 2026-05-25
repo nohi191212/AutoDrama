@@ -448,11 +448,6 @@ class StoryboardService:
         current_shot_start_text, current_start_offset = self._source_anchor(current_novel_full, 0)
         if current_start_offset >= source_end_offset:
             raise ValueError(f"storyboard current_novel_full has no story text for {episode_key}")
-        visual_style_prompt = state.metadata.get(
-            "visual_style_prompt",
-            "真人电影质感：真实摄影、自然光或电影布光、真实材质、真实皮肤纹理和电影镜头语言。",
-        )
-
         for generation_step in range(1, max_generation_steps + 1):
             prompt = self.prompts.render(
                 "storyboard_generate",
@@ -467,8 +462,6 @@ class StoryboardService:
                 layouts=self.format_json(
                     {layout_id: layout.model_dump(mode="json") for layout_id, layout in state.layouts.items()}
                 ),
-                visual_style_label=state.metadata.get("visual_style_label", "真人电影质感"),
-                visual_style_prompt=visual_style_prompt,
             )
             output = await provider.generate_json(
                 prompt,

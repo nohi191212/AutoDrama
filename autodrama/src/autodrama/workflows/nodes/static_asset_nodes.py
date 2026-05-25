@@ -820,12 +820,12 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             "2-5 秒：人物做几个符合身份和性格的常见动作，如有随身物品，展示佩戴、握持或使用方式；"
             "5-8 秒：镜头轻微推近并停在人物稳定识别角度，背景保持干净抽象，无其他人物、无字幕、水印或文字标识。"
         )
-        visual_style_prompt = str(state.metadata.get("visual_style_prompt") or "").strip()
+        role_style_prompt = self.role_design_style_prompt()
         intro_prompt = "\n".join(
             part
             for part in (
                 "参考图片1中的人物三视图、全身比例和绑定物品设计，保持人物形象一致性但不要求和图片像素级一致以防动作僵硬，人物动作和画面表现需要符合基本逻辑",
-                f"画面风格要求：{visual_style_prompt}" if visual_style_prompt else "",
+                f"人物设计风格要求：{role_style_prompt}" if role_style_prompt else "",
                 base_intro_prompt,
                 "全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。",
             )

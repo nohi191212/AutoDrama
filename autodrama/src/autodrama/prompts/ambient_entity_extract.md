@@ -20,10 +20,6 @@
 
 全集 episode_key 列表：{{episode_keys}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
-
 # 背景实体定义
 
 背景实体不是角色资产。它们只用于环境氛围、势力规模、场面密度、远景人群或阵营存在感。

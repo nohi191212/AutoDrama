@@ -22,10 +22,6 @@
 已经随人物设计的绑定物品：
 {{role_bound_props}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
-
 # 要求
 
 - 只提取剧情推进、证据、冲突、反转、动作或角色决策中必须出现的全局关键道具。

@@ -9,9 +9,9 @@ class ProjectMetadata(BaseModel):
     episode_count: int = 1
     episode_duration_seconds: int = 30
     bgm_count: int = 3
-    visual_style: str = "live_action"
-    visual_style_label: str | None = None
-    visual_style_prompt: str | None = None
+    role_design_style_prompt: str | None = None
+    prop_design_style_prompt: str | None = None
+    layout_design_style_prompt: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
@@ -20,9 +20,9 @@ class ProjectMetadata(BaseModel):
             "episode_count",
             "episode_duration_seconds",
             "bgm_count",
-            "visual_style",
-            "visual_style_label",
-            "visual_style_prompt",
+            "role_design_style_prompt",
+            "prop_design_style_prompt",
+            "layout_design_style_prompt",
         }
         payload = {key: metadata[key] for key in known if key in metadata}
         parsed = cls.model_validate(payload)

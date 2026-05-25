@@ -90,7 +90,9 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - `project.episode_count`: 剧集数量。
 - `project.episode_duration_seconds`: 单集目标时长。
 - `project.bgm_count`: 全局 BGM 数量。
-- `project.visual_style`: 画面风格，支持 `live_action`、`anime_2d`、`anime_3d`、`cg_animation`。
+- `generation.role_design_style_prompt`: 人物设计统一风格 prompt。
+- `generation.prop_design_style_prompt`: 道具设计统一画风 prompt。
+- `generation.layout_design_style_prompt`: 场景设计统一画风 prompt。
 - `output.root_dir`: 输出目录，默认 `./outputs`。
 - `providers`: 各 Provider 的 base URL、模型名和选项。
 - `routing`: 不同能力和用途的 Provider 路由。

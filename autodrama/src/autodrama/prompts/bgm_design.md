@@ -9,8 +9,6 @@
 分集剧情依据：
 {{episode_stories}}
 
-画面风格：{{visual_style_label}}
-
 BGM数量：{{bgm_count}}
 
 # 要求

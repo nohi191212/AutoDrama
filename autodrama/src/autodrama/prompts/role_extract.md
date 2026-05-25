@@ -19,10 +19,6 @@
 
 全集 episode_key 列表：{{episode_keys}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
-
 # 要求
 
 - 提取所有会在剧情中被看见、听见或明确参与事件且需要进入角色资产链的角色，包括主要角色和功能角色。

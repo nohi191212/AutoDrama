@@ -223,8 +223,6 @@ def build_state() -> ProjectState:
         },
         metadata={
             "episode_duration_seconds": 30,
-            "visual_style_label": "真人电影质感",
-            "visual_style_prompt": "真实摄影、自然光或电影布光、真实材质、真实皮肤纹理和电影镜头语言。",
         },
     )
 

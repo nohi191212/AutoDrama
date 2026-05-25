@@ -21,10 +21,6 @@
 
 单集目标时长：{{episode_duration_seconds}} 秒
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
-
 # 要求
 
 - 输出 `novel_extract`，键名必须包含且只包含当前批次分集键名：{{batch_episode_keys}}。

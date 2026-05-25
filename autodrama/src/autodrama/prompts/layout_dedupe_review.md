@@ -9,10 +9,6 @@
 当前场景：
 {{layouts}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
-
 # 要求
 
 - 如果多个场景本质上是同一空间，只保留一个，并合并 `episode_keys`。

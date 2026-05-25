@@ -18,9 +18,7 @@
 道具：
 {{props}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
+场景画风设计要求：{{layout_design_style_prompt}}
 
 # 要求
 

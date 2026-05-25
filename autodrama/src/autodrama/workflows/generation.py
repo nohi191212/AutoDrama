@@ -48,13 +48,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         self.generation_episode_nodes = build_generation_episode_nodes(self)
 
     @staticmethod
-    def _visual_style_prompt(state: ProjectState) -> str:
-        prompt = str(state.metadata.get("visual_style_prompt", "")).strip()
-        if not prompt:
-            return ""
-        return f"画面风格要求: {prompt}"
-
-    @staticmethod
     def _cg_character_safety_prompt() -> str:
         return (
             "人物形象安全风格要求: 保持项目整体电影级写实CG画面语言，但人类/类人角色必须是高质量风格化CG动漫角色，"
@@ -150,7 +143,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
 
         spatial_prompt = self._shot_spatial_continuity_prompt(shot)
         parts = [
-            self._visual_style_prompt(state),
             self._cg_character_safety_prompt(),
             f"剧集: {episode.episode_key}",
             "静态锚点参考帧生成要求:",
@@ -192,7 +184,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         shot: StoryboardShot,
         provider=None,
     ) -> str:
-        style_prompt = str(state.metadata.get("visual_style_prompt", "")).strip()
         body = shot.video_prompt.strip()
         parts: list[str] = [self._cg_character_safety_prompt()]
         if self._video_reference_mode(provider) in {"ref_frame_only", "ref_frame"}:
@@ -226,8 +217,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 "不要把任何参考素材当作本片段首帧或尾帧，不要逐帧复刻参考素材。"
             )
         parts.append(body)
-        if style_prompt:
-            parts.append(f"画面风格保持{style_prompt.rstrip('。')}。")
         parts.append(
             "片段首尾只允许硬切；任何 J-Cut 或 L-Cut 只能发生在本片段内部中段，"
             "不要让声音提前进入本片段之前，也不要让声音拖尾到下一片段。"

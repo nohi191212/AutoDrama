@@ -12,9 +12,7 @@
 角色设定：
 {{roles}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
+人物设计统一风格要求：{{role_design_style_prompt}}
 
 人物形象图视图要求：{{role_appearance_view_requirement}}
 

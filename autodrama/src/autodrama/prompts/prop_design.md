@@ -27,9 +27,7 @@
 已经随人物设计的绑定物品：
 {{role_bound_props}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
+道具画风设计要求：{{prop_design_style_prompt}}
 
 # 总体要求
 

@@ -32,8 +32,6 @@ def main() -> int:
         episode_count=50,
         episode_duration_seconds=180,
         episode_keys=episode_keys,
-        visual_style_label="真人电影质感",
-        visual_style_prompt="真实摄影、电影布光、东方修仙质感。",
     )
     novel_prompt = prompts.render(
         "script_novel_episode",
@@ -47,8 +45,6 @@ def main() -> int:
         episode_duration_seconds=180,
         target_char_count=10800,
         episode_keys=episode_keys,
-        visual_style_label="真人电影质感",
-        visual_style_prompt="真实摄影、电影布光、东方修仙质感。",
     )
     extract_prompt = prompts.render(
         "script_novel_extract",
@@ -59,8 +55,6 @@ def main() -> int:
         batch_episode_keys=", ".join(f"episode_{index:03d}" for index in range(1, 6)),
         episode_count=50,
         episode_duration_seconds=180,
-        visual_style_label="真人电影质感",
-        visual_style_prompt="真实摄影、电影布光、东方修仙质感。",
     )
     require("连续 2 章合并为 1 集" in outline_prompt, "Outline prompt missing chapter-pairing rule")
     require("episode_001` 覆盖第1-2章" in outline_prompt, "Outline prompt missing episode_001 mapping")

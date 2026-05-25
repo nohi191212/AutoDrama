@@ -15,10 +15,6 @@
 
 必须使用的分集键名：{{episode_keys}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
-
 # 要求
 
 - 由你根据剧情节奏、冲突推进和爽点位置自主分集。

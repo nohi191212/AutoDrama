@@ -28,10 +28,6 @@
 已经写完的前序章节：
 {{previous_chapters}}
 
-画面风格：{{visual_style_label}}
-
-画面风格要求：{{visual_style_prompt}}
-
 # 要求
 
 - 只写 `{{current_episode_key}}` 这一集，输出 JSON 中的 `episode_key` 必须等于 `{{current_episode_key}}`。

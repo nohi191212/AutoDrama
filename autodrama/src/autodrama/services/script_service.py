@@ -29,19 +29,6 @@ class ScriptService:
         return cls.episode_duration_seconds(state) * 60
 
     @staticmethod
-    def visual_style_label(state: ProjectState) -> str:
-        return str(state.metadata.get("visual_style_label", "真人电影质感"))
-
-    @staticmethod
-    def visual_style_prompt(state: ProjectState) -> str:
-        return str(
-            state.metadata.get(
-                "visual_style_prompt",
-                "真人电影质感：真实摄影、自然光或电影布光、真实材质、真实皮肤纹理和电影镜头语言。",
-            )
-        )
-
-    @staticmethod
     def episode_keys(episode_count: int) -> list[str]:
         return [f"episode_{index:03d}" for index in range(1, episode_count + 1)]
 
@@ -59,8 +46,6 @@ class ScriptService:
             episode_count=episode_count,
             episode_duration_seconds=episode_duration_seconds,
             episode_keys=", ".join(self.episode_keys(episode_count)),
-            visual_style_label=self.visual_style_label(state),
-            visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,
@@ -95,8 +80,6 @@ class ScriptService:
             batch_episode_keys=", ".join(batch_episode_keys),
             episode_count=episode_count,
             episode_duration_seconds=episode_duration_seconds,
-            visual_style_label=self.visual_style_label(state),
-            visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,
@@ -136,8 +119,6 @@ class ScriptService:
             episode_duration_seconds=episode_duration_seconds,
             target_char_count=target_char_count,
             episode_keys=", ".join(self.episode_keys(episode_count)),
-            visual_style_label=self.visual_style_label(state),
-            visual_style_prompt=self.visual_style_prompt(state),
         )
         return await provider.generate_json(
             prompt,

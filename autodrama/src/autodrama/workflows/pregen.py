@@ -22,7 +22,6 @@ from autodrama.core.schemas import (
     StoryboardEpisodeOutput,
     StoryboardShot,
 )
-from autodrama.core.visual_style import visual_style_metadata
 from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.prop_design_repo import PropDesignRepository
@@ -380,7 +379,9 @@ class PregenWorkflow:
         state.metadata["episode_count"] = self.repo.settings.project.episode_count
         state.metadata["episode_duration_seconds"] = self.repo.settings.project.episode_duration_seconds
         state.metadata["bgm_count"] = self.repo.settings.project.bgm_count
-        state.metadata.update(visual_style_metadata(self.repo.settings.project.visual_style))
+        state.metadata["role_design_style_prompt"] = self.repo.settings.generation.role_design_style_prompt
+        state.metadata["prop_design_style_prompt"] = self.repo.settings.generation.prop_design_style_prompt
+        state.metadata["layout_design_style_prompt"] = self.repo.settings.generation.layout_design_style_prompt
 
     def _script_content_path(self, project_dir: Path, category: str, episode_key: str) -> Path:
         return self.script_contents.content_path(project_dir, category, episode_key)

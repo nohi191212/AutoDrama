@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from autodrama.config import Settings
 from autodrama.core.ids import make_project_id
 from autodrama.core.schemas import BudgetState, ProjectState, Role, ScriptBundle
-from autodrama.core.visual_style import visual_style_metadata
 from autodrama.repositories.project_layout import ProjectLayout
 
 
@@ -115,7 +114,9 @@ class ProjectRepository:
                 "episode_count": resolved_episode_count,
                 "episode_duration_seconds": resolved_episode_duration_seconds,
                 "bgm_count": self.settings.project.bgm_count,
-                **visual_style_metadata(self.settings.project.visual_style),
+                "role_design_style_prompt": self.settings.generation.role_design_style_prompt,
+                "prop_design_style_prompt": self.settings.generation.prop_design_style_prompt,
+                "layout_design_style_prompt": self.settings.generation.layout_design_style_prompt,
             },
         )
         self.save_state(project_dir, state)

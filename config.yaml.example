@@ -16,12 +16,6 @@ project:
   episode_duration_seconds: 30
   # Exact number of reusable BGM tracks that bgm_design should ask the LLM to describe.
   bgm_count: 3
-  # Visual style for character images, scene images, and downstream video prompts.
-  # Supported values: live_action, anime_2d, anime_3d, cg_animation
-  # Chinese aliases are also accepted: 真人电影质感, 2D动漫, 3D动漫, CG动画电影风
-  # anime_2d, anime_3d, and cg_animation use character turnaround sheets for role appearance images.
-  visual_style: live_action
-
 output:
   # All generated assets are saved under this directory.
   # Relative paths are resolved from the working directory.
@@ -63,13 +57,20 @@ generation:
   max_shots: 10
   # Used by role_full_body_generation and role_multiview_generation as Image 2 style references.
   role_design_style_reference_dir: ./.assets/sample
-  # Unified role image style prompt. This takes priority over legacy visual_style preset wording
-  # inside role design JSON when generating full-body and multiview role images.
+  # Unified role image style prompt used by role design, role_full_body_generation, and role_multiview_generation.
   role_design_style_prompt: >
     使用参考图片作为统一人物美术风格、材质质感、光影、色彩和画面气质参考。
     人物保持国漫CG/动画电影角色质感，明显非真人摄影，脸部为风格化CG美术表现，
     避免真实人脸毛孔、汗渍、微血管等照片级细节。保留东方修仙题材的服饰层次、
     旧布料、金属、石材和随身道具材质差异，背景保持干净，不出现文字、水印或logo。
+  prop_design_style_prompt: >
+    道具图保持国漫CG/动画电影资产设定图质感，材质区分清楚，轮廓完整可读；
+    光影干净，背景简洁，无人物、无手持、无文字、水印或logo。重点表现尺寸比例、
+    材质、磨损、能量状态和一眼可识别的结构细节。
+  layout_design_style_prompt: >
+    场景图保持国漫CG/动画电影无人物空场景质感，空间结构清晰，前中后景层次明确；
+    材质、光源、阴影、空气粒子和色彩关系稳定可复用，适配16:9短剧构图。
+    不出现人物、背影、手、剪影、字幕、水印、文字标识或无关logo。
 
 providers:
   aliyun:
