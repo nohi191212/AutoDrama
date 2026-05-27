@@ -174,6 +174,24 @@ async def main_async() -> int:
     require(skip_provider.submit_count == 0, "Completed video should be reused without --force")
     require(skip_provider.query_count == 0, "Completed video should not be polled without --force")
 
+    missing_asset = project_dir / task["asset_path"]
+    missing_asset.unlink()
+    stale_provider = QueueVideoProvider(complete=True)
+    await GenerationWorkflow(repo=repo, router=VideoRouter(stale_provider)).run(
+        project_dir,
+        until="shot_video_generation",
+        only="shot_video_generation",
+        episode_keys=parse_episode_keys("1"),
+        shot_selectors=parse_shot_selectors("1"),
+    )
+    require(stale_provider.submit_count == 1, "Succeeded task with missing local video should submit a new task")
+    require(stale_provider.query_count == 1, "Resubmitted stale video task should be polled once")
+    registry = json.loads(task_path.read_text(encoding="utf-8"))
+    task = registry["tasks"][0]
+    require(task["task_status"] == "succeeded", f"Unexpected stale rerun task status: {task['task_status']}")
+    require("stale_at" not in task, "Completed replacement task should not retain stale_at")
+    require((project_dir / task["asset_path"]).exists(), f"Replacement video missing: {task['asset_path']}")
+
     force_provider = QueueVideoProvider(complete=True)
     await GenerationWorkflow(repo=repo, router=VideoRouter(force_provider)).run(
         project_dir,

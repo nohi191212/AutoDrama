@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from typing import Any, Callable
 
@@ -432,7 +433,7 @@ class StoryboardService:
         current_novel_full: str | None = None,
         episode_story: str | None = None,
         previous_storyboard_history: dict[str, Any] | None = None,
-        on_shot_generated: Callable[[StoryboardEpisodeOutput, StoryboardShot], None] | None = None,
+        on_shot_generated: Callable[[StoryboardEpisodeOutput, StoryboardShot], Any] | None = None,
         max_shots: int | None = None,
     ) -> StoryboardEpisodeOutput:
         del previous_storyboard_history
@@ -493,7 +494,9 @@ class StoryboardService:
             shot = self._normalize_generated_shot(output.shot, episode_key=episode_key, shot_index=shot_index)
             shots.append(shot)
             if on_shot_generated is not None:
-                on_shot_generated(StoryboardEpisodeOutput(episode_key=episode_key, shots=list(shots)), shot)
+                callback_result = on_shot_generated(StoryboardEpisodeOutput(episode_key=episode_key, shots=list(shots)), shot)
+                if inspect.isawaitable(callback_result):
+                    await callback_result
             if output.is_chapter_complete:
                 break
             current_shot_start_text = str(output.shot.source_coverage.next_start_text or "").strip()

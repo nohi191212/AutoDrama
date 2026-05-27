@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from datetime import datetime
 from pathlib import Path
@@ -73,8 +74,12 @@ class DynamicAssetNodeMixin:
         shots_dir.mkdir(parents=True, exist_ok=True)
         shot_path = shots_dir / f"{episode_key}.json"
 
-        def save_storyboard_progress(episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> None:
-            self.repo.write_json(shot_path, episode.model_dump(mode="json", exclude_none=True))
+        async def save_storyboard_progress(episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> None:
+            progress_episode = episode
+            merge_callback = getattr(self, "_storyboard_progress_merge_callback", None)
+            if callable(merge_callback):
+                progress_episode = merge_callback(project_dir, episode_key, episode, shot)
+            self.repo.write_json(shot_path, progress_episode.model_dump(mode="json", exclude_none=True))
             get_logger().info(
                 "episode %s shot %s generated, saved in %s",
                 episode.episode_key,
@@ -82,6 +87,11 @@ class DynamicAssetNodeMixin:
                 self._project_relative(project_dir, shot_path),
                 extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
             )
+            after_callback = getattr(self, "_storyboard_shot_generated_callback", None)
+            if callable(after_callback):
+                callback_result = after_callback(progress_episode, shot)
+                if inspect.isawaitable(callback_result):
+                    await callback_result
 
         max_shots = getattr(getattr(self, "_run_context", None), "max_shots", None)
         if max_shots is None:
@@ -894,6 +904,7 @@ class DynamicAssetNodeMixin:
         task_file = generation_tasks_path(project_dir)
         success_statuses = self._video_success_statuses(provider)
         failure_statuses = self._video_failure_statuses(provider)
+        non_resumable_statuses = failure_statuses | {"stale"}
         max_polls = int(getattr(provider, "max_polls", 120))
         poll_interval_seconds = float(getattr(provider, "poll_interval_seconds", 5))
         status_log_interval_polls = max(1, int(getattr(provider, "status_log_interval_polls", 6)))
@@ -911,6 +922,35 @@ class DynamicAssetNodeMixin:
                 if existing_task or shot.video_asset_path
                 else ""
             )
+            stale_success_missing_asset = (
+                not force_generation
+                and existing_task is not None
+                and existing_status in success_statuses
+                and not self._path_exists(project_dir, saved_asset_path)
+            )
+            if stale_success_missing_asset:
+                get_logger().warning(
+                    "%s previous video task %s is terminal success but local asset is missing (%s); "
+                    "marking task stale and submitting a new task",
+                    shot.shot_id,
+                    existing_task.get("task_id") or "-",
+                    saved_asset_path or planned_asset_path,
+                    extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
+                )
+                existing_task = upsert_generation_task(
+                    registry,
+                    {
+                        "task_key": task_key,
+                        "task_status": "stale",
+                        "previous_task_status": existing_status,
+                        "stale_at": now_iso(),
+                        "stale_reason": "terminal_success_asset_missing",
+                        "stale_task_id": existing_task.get("task_id"),
+                        "stale_asset_path": saved_asset_path or planned_asset_path,
+                    },
+                )
+                save_generation_tasks(self.repo, project_dir, registry)
+                existing_status = task_status(existing_task)
 
             if not force_generation and existing_status in success_statuses and self._path_exists(project_dir, saved_asset_path):
                 result = VideoGenerationResult(
@@ -976,7 +1016,12 @@ class DynamicAssetNodeMixin:
 
             task: dict[str, Any]
             last_logged_status: str | None
-            if not force_generation and existing_task and existing_task.get("task_id") and existing_status not in failure_statuses:
+            if (
+                not force_generation
+                and existing_task
+                and existing_task.get("task_id")
+                and existing_status not in non_resumable_statuses
+            ):
                 task = existing_task
                 last_logged_status = existing_status
                 get_logger().info(
@@ -999,6 +1044,14 @@ class DynamicAssetNodeMixin:
                         shot.shot_id,
                         existing_task.get("task_id"),
                         existing_status,
+                        extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
+                    )
+                elif existing_task and existing_status == "stale":
+                    get_logger().info(
+                        "%s previous video task %s is stale reason=%s; submitting a new task",
+                        shot.shot_id,
+                        existing_task.get("stale_task_id") or existing_task.get("task_id") or "-",
+                        existing_task.get("stale_reason") or "-",
                         extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                     )
                 elif force_generation and existing_task:
@@ -1038,6 +1091,14 @@ class DynamicAssetNodeMixin:
                         provider=provider,
                     ),
                 )
+                for stale_key in (
+                    "previous_task_status",
+                    "stale_at",
+                    "stale_reason",
+                    "stale_task_id",
+                    "stale_asset_path",
+                ):
+                    task.pop(stale_key, None)
                 save_generation_tasks(self.repo, project_dir, registry)
                 self._apply_shot_video_result(shot, asset_id=asset_id, result=result, provider=provider)
                 self._save_storyboard_episode(project_dir, episode)

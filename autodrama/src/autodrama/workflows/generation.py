@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 from typing import cast
 
@@ -36,6 +37,41 @@ DEFAULT_GENERATION_NODES = list(GENERATION_NODE_NAMES)
 
 
 class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
+    _GENERATED_STORYBOARD_SHOT_FIELDS = frozenset(
+        {
+            "dialogue_audio_assets",
+            "shot_bgm_assets",
+            "ref_frame_asset_id",
+            "ref_frame_asset_path",
+            "ref_frame_asset_url",
+            "ref_frame_provider",
+            "ref_frame_model",
+            "ref_frame_request_id",
+            "ref_frame_usage",
+            "ref_frame_raw_response",
+            "physical_space_key",
+            "physical_space_note",
+            "spatial_continuity_mode",
+            "spatial_reference_shot_ids",
+            "spatial_structure_summary",
+            "spatial_constraints",
+            "spatial_movement_allowed",
+            "spatial_movement_reason",
+            "spatial_plan_confidence",
+            "video_asset_id",
+            "video_asset_path",
+            "video_provider",
+            "video_model",
+            "video_task_id",
+            "video_task_status",
+            "video_request_id",
+            "video_last_frame_asset_path",
+            "video_usage",
+            "video_raw_response",
+            "solidified_asset_ids",
+        }
+    )
+
     def __init__(
         self,
         *,
@@ -313,6 +349,206 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             self.repo.save_node_output(project_dir, node_name, output)
 
     @staticmethod
+    def _should_run_shot_serial_generation(
+        target_nodes: list[str],
+        *,
+        only: str | None,
+        shot_selectors: list[str] | None,
+    ) -> bool:
+        return (
+            only is None
+            and not shot_selectors
+            and len(target_nodes) > 1
+            and target_nodes[0] == "storyboard_generation"
+            and any(
+                node_name in target_nodes
+                for node_name in {"ref_frame_generation", "shot_video_generation", "dynamic_asset_solidification"}
+            )
+        )
+
+    @classmethod
+    def _copy_generated_shot_fields(cls, target: StoryboardShot, source: StoryboardShot) -> None:
+        model_fields = type(target).model_fields
+        for field_name in cls._GENERATED_STORYBOARD_SHOT_FIELDS:
+            if field_name in model_fields:
+                setattr(target, field_name, deepcopy(getattr(source, field_name)))
+
+    def _merge_storyboard_progress_episode(
+        self,
+        project_dir: Path,
+        episode_key: str,
+        episode: StoryboardEpisodeOutput,
+        current_shot: StoryboardShot,
+    ) -> StoryboardEpisodeOutput:
+        shot_path = project_dir / "shots" / f"{episode_key}.json"
+        if not shot_path.exists():
+            return episode
+        existing_episode = self._load_storyboard_episode(project_dir, episode_key)
+        existing_by_id = {shot.shot_id: shot for shot in existing_episode.shots}
+        for progress_shot in episode.shots:
+            if progress_shot.shot_id == current_shot.shot_id:
+                continue
+            existing_shot = existing_by_id.get(progress_shot.shot_id)
+            if existing_shot is not None:
+                self._copy_generated_shot_fields(progress_shot, existing_shot)
+        return episode
+
+    def _sync_storyboard_progress_from_disk(
+        self,
+        project_dir: Path,
+        episode_key: str,
+        progress_episode: StoryboardEpisodeOutput,
+    ) -> None:
+        updated_episode = self._load_storyboard_episode(project_dir, episode_key)
+        updated_by_id = {shot.shot_id: shot for shot in updated_episode.shots}
+        for progress_shot in progress_episode.shots:
+            updated_shot = updated_by_id.get(progress_shot.shot_id)
+            if updated_shot is not None:
+                self._copy_generated_shot_fields(progress_shot, updated_shot)
+
+    def _merge_shot_dynamic_assets(
+        self,
+        project_dir: Path,
+        episode_key: str,
+        shot_id: str,
+        output: DynamicAssetSolidificationOutput,
+    ) -> None:
+        existing_items = self.dynamic_assets.load_index(project_dir)
+        replace_keys = {
+            (item.episode_key, item.asset_id)
+            for item in existing_items
+            if item.episode_key == episode_key and item.shot_id == shot_id
+        }
+        replace_keys.update((item.episode_key, item.asset_id) for item in output.solidified_assets)
+        self.dynamic_assets.merge_assets(project_dir, output.solidified_assets, replace_keys=replace_keys)
+
+    async def _run_generation_episode_by_shot(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        *,
+        episode_key: str,
+        target_nodes: list[str],
+        run_outputs: dict[str, BaseModel],
+    ) -> None:
+        logger = get_logger()
+        downstream_nodes = target_nodes[1:]
+        previous_callback = getattr(self, "_storyboard_shot_generated_callback", None)
+        previous_merge_callback = getattr(self, "_storyboard_progress_merge_callback", None)
+        previous_active_shot_selectors = getattr(self, "_active_shot_selectors", None)
+
+        async def run_downstream_for_shot(progress_episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> None:
+            logger.info(
+                "episode %s shot %s serial pipeline started nodes=%s",
+                episode_key,
+                shot.shot_id,
+                ",".join(downstream_nodes),
+                extra={"episode_key": episode_key, "shot_id": shot.shot_id},
+            )
+            self._active_shot_selectors = {shot.shot_id}
+            try:
+                for node_index, node_name in enumerate(downstream_nodes, start=2):
+                    with log_context(node_name=node_name, episode_key=episode_key, shot_id=shot.shot_id):
+                        logger.info(
+                            "episode %s shot %s node %d/%d %s started",
+                            episode_key,
+                            shot.shot_id,
+                            node_index,
+                            len(target_nodes),
+                            node_name,
+                        )
+                        output = await self._run_generation_node_for_episode(
+                            project_dir,
+                            state,
+                            node_name,
+                            episode_key,
+                        )
+                        self._merge_run_output(run_outputs, node_name, output)
+                        if node_name == "dynamic_asset_solidification":
+                            if not isinstance(output, DynamicAssetSolidificationOutput):
+                                raise TypeError("dynamic_asset_solidification output type mismatch")
+                            self._merge_shot_dynamic_assets(
+                                project_dir,
+                                episode_key,
+                                shot.shot_id,
+                                cast(DynamicAssetSolidificationOutput, output),
+                            )
+                        state.mark_completed(node_name)
+                        self.repo.save_state(project_dir, state)
+                        self._save_run_outputs(project_dir, run_outputs)
+                        logger.info(
+                            "episode %s shot %s node %d/%d %s completed current_node=%s",
+                            episode_key,
+                            shot.shot_id,
+                            node_index,
+                            len(target_nodes),
+                            node_name,
+                            state.current_node,
+                        )
+            finally:
+                if previous_active_shot_selectors is None:
+                    if hasattr(self, "_active_shot_selectors"):
+                        delattr(self, "_active_shot_selectors")
+                else:
+                    self._active_shot_selectors = previous_active_shot_selectors
+            self._sync_storyboard_progress_from_disk(project_dir, episode_key, progress_episode)
+            logger.info(
+                "episode %s shot %s serial pipeline completed",
+                episode_key,
+                shot.shot_id,
+                extra={"episode_key": episode_key, "shot_id": shot.shot_id},
+            )
+
+        self._storyboard_shot_generated_callback = run_downstream_for_shot
+        self._storyboard_progress_merge_callback = self._merge_storyboard_progress_episode
+        try:
+            with log_context(node_name="storyboard_generation", episode_key=episode_key):
+                logger.info(
+                    "episode %s node %d/%d %s started",
+                    episode_key,
+                    1,
+                    len(target_nodes),
+                    "storyboard_generation",
+                )
+                output = await self._run_generation_node_for_episode(
+                    project_dir,
+                    state,
+                    "storyboard_generation",
+                    episode_key,
+                )
+                self._merge_run_output(run_outputs, "storyboard_generation", output)
+                update_storyboard_history_from_episode(
+                    self.repo,
+                    project_dir,
+                    state,
+                    self._load_storyboard_episode(project_dir, episode_key),
+                )
+                state.mark_completed("storyboard_generation")
+                if target_nodes[-1] != "storyboard_generation" and target_nodes[-1] in state.completed_nodes:
+                    state.current_node = target_nodes[-1]
+                self.repo.save_state(project_dir, state)
+                self._save_run_outputs(project_dir, run_outputs)
+                logger.info(
+                    "episode %s node %d/%d %s completed current_node=%s",
+                    episode_key,
+                    1,
+                    len(target_nodes),
+                    "storyboard_generation",
+                    state.current_node,
+                )
+        finally:
+            if previous_callback is None:
+                if hasattr(self, "_storyboard_shot_generated_callback"):
+                    delattr(self, "_storyboard_shot_generated_callback")
+            else:
+                self._storyboard_shot_generated_callback = previous_callback
+            if previous_merge_callback is None:
+                if hasattr(self, "_storyboard_progress_merge_callback"):
+                    delattr(self, "_storyboard_progress_merge_callback")
+            else:
+                self._storyboard_progress_merge_callback = previous_merge_callback
+
+    @staticmethod
     def _target_generation_nodes(until: str, only: str | None) -> list[str]:
         if only:
             return [only]
@@ -427,49 +663,62 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     ",".join(target_nodes),
                 )
                 try:
-                    for node_index, node_name in enumerate(target_nodes, start=1):
-                        with log_context(node_name=node_name, episode_key=episode_key):
-                            logger.info(
-                                "episode %s node %d/%d %s started",
-                                episode_key,
-                                node_index,
-                                len(target_nodes),
-                                node_name,
-                            )
-                            output = await self._run_generation_node_for_episode(
-                                project_dir,
-                                state,
-                                node_name,
-                                episode_key,
-                            )
-                            self._merge_run_output(run_outputs, node_name, output)
-                            if node_name == "storyboard_generation":
-                                update_storyboard_history_from_episode(
-                                    self.repo,
+                    if self._should_run_shot_serial_generation(
+                        target_nodes,
+                        only=only,
+                        shot_selectors=shot_selectors,
+                    ):
+                        await self._run_generation_episode_by_shot(
+                            project_dir,
+                            state,
+                            episode_key=episode_key,
+                            target_nodes=target_nodes,
+                            run_outputs=run_outputs,
+                        )
+                    else:
+                        for node_index, node_name in enumerate(target_nodes, start=1):
+                            with log_context(node_name=node_name, episode_key=episode_key):
+                                logger.info(
+                                    "episode %s node %d/%d %s started",
+                                    episode_key,
+                                    node_index,
+                                    len(target_nodes),
+                                    node_name,
+                                )
+                                output = await self._run_generation_node_for_episode(
                                     project_dir,
                                     state,
-                                    self._load_storyboard_episode(project_dir, episode_key),
-                                )
-                            if node_name == "dynamic_asset_solidification":
-                                if not isinstance(output, DynamicAssetSolidificationOutput):
-                                    raise TypeError("dynamic_asset_solidification output type mismatch")
-                                output = cast(DynamicAssetSolidificationOutput, output)
-                                self.dynamic_assets.merge_episode_assets(
-                                    project_dir,
+                                    node_name,
                                     episode_key,
-                                    output.solidified_assets,
                                 )
-                            state.mark_completed(node_name)
-                            self.repo.save_state(project_dir, state)
-                            self._save_run_outputs(project_dir, run_outputs)
-                            logger.info(
-                                "episode %s node %d/%d %s completed current_node=%s",
-                                episode_key,
-                                node_index,
-                                len(target_nodes),
-                                node_name,
-                                state.current_node,
-                            )
+                                self._merge_run_output(run_outputs, node_name, output)
+                                if node_name == "storyboard_generation":
+                                    update_storyboard_history_from_episode(
+                                        self.repo,
+                                        project_dir,
+                                        state,
+                                        self._load_storyboard_episode(project_dir, episode_key),
+                                    )
+                                if node_name == "dynamic_asset_solidification":
+                                    if not isinstance(output, DynamicAssetSolidificationOutput):
+                                        raise TypeError("dynamic_asset_solidification output type mismatch")
+                                    output = cast(DynamicAssetSolidificationOutput, output)
+                                    self.dynamic_assets.merge_episode_assets(
+                                        project_dir,
+                                        episode_key,
+                                        output.solidified_assets,
+                                    )
+                                state.mark_completed(node_name)
+                                self.repo.save_state(project_dir, state)
+                                self._save_run_outputs(project_dir, run_outputs)
+                                logger.info(
+                                    "episode %s node %d/%d %s completed current_node=%s",
+                                    episode_key,
+                                    node_index,
+                                    len(target_nodes),
+                                    node_name,
+                                    state.current_node,
+                                )
                 except Exception:
                     update_checklist_from_state(
                         self.repo,
