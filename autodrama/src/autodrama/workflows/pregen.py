@@ -1264,12 +1264,21 @@ class PregenWorkflow:
             voice_resource_id=voice_resource_id,
         )
 
-    def _shot_ref_asset_refs(self, project_dir: Path, state: ProjectState, shot: StoryboardShot) -> list:
+    def _shot_ref_asset_refs(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        shot: StoryboardShot,
+        *,
+        include_layout: bool = True,
+        include_roles: bool = True,
+        include_props: bool = True,
+    ) -> list:
         from autodrama.providers.base import AssetRef
 
         refs: list[AssetRef] = []
         layout = state.layouts.get(shot.layout_id)
-        if layout and layout.asset_path:
+        if include_layout and layout and layout.asset_path:
             refs.append(
                 AssetRef(
                     id=layout.id,
@@ -1280,55 +1289,57 @@ class PregenWorkflow:
                 )
             )
 
-        appearance_ids = list(shot.role_appearance_ids)
-        seen_appearance_ids = set(appearance_ids)
-        for role_id in shot.role_ids:
-            role = state.roles.get(role_id)
-            if role is None:
-                continue
-            base_appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
-            if base_appearance and base_appearance.id not in seen_appearance_ids:
-                appearance_ids.append(base_appearance.id)
-                seen_appearance_ids.add(base_appearance.id)
+        if include_roles:
+            appearance_ids = list(shot.role_appearance_ids)
+            seen_appearance_ids = set(appearance_ids)
+            for role_id in shot.role_ids:
+                role = state.roles.get(role_id)
+                if role is None:
+                    continue
+                base_appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
+                if base_appearance and base_appearance.id not in seen_appearance_ids:
+                    appearance_ids.append(base_appearance.id)
+                    seen_appearance_ids.add(base_appearance.id)
 
-        for appearance_id in appearance_ids:
-            for role in state.roles.values():
-                appearance = next(
-                    (
-                        item
-                        for item in role.appearances.values()
-                        if item.id == appearance_id or item.name == appearance_id
-                    ),
-                    None,
-                )
-                if appearance and appearance.asset_path:
+            for appearance_id in appearance_ids:
+                for role in state.roles.values():
+                    appearance = next(
+                        (
+                            item
+                            for item in role.appearances.values()
+                            if item.id == appearance_id or item.name == appearance_id
+                        ),
+                        None,
+                    )
+                    if appearance and appearance.asset_path:
+                        refs.append(
+                            AssetRef(
+                                id=appearance.id,
+                                type="image",
+                                path=str(project_dir / appearance.asset_path),
+                                url=appearance.asset_url or appearance.design_image_asset_url,
+                                metadata={
+                                    "asset_type": "role_appearance",
+                                    "role_id": role.id,
+                                    "role_name": role.name,
+                                    "name": appearance.name,
+                                },
+                            )
+                        )
+                        break
+
+        if include_props:
+            for prop_id in shot.prop_ids:
+                prop = state.props.get(prop_id)
+                if prop and prop.asset_path:
                     refs.append(
                         AssetRef(
-                            id=appearance.id,
+                            id=prop.id,
                             type="image",
-                            path=str(project_dir / appearance.asset_path),
-                            url=appearance.asset_url or appearance.design_image_asset_url,
-                            metadata={
-                                "asset_type": "role_appearance",
-                                "role_id": role.id,
-                                "role_name": role.name,
-                                "name": appearance.name,
-                            },
+                            path=str(project_dir / prop.asset_path),
+                            url=prop.asset_url,
+                            metadata={"asset_type": "prop", "name": prop.name},
                         )
-                    )
-                    break
-
-        for prop_id in shot.prop_ids:
-            prop = state.props.get(prop_id)
-            if prop and prop.asset_path:
-                refs.append(
-                    AssetRef(
-                        id=prop.id,
-                        type="image",
-                        path=str(project_dir / prop.asset_path),
-                        url=prop.asset_url,
-                        metadata={"asset_type": "prop", "name": prop.name},
-                    )
                     )
         return refs
 
@@ -1437,6 +1448,22 @@ class PregenWorkflow:
         return str(mode).strip().lower().replace("-", "_")
 
     @staticmethod
+    def _video_reference_mode_uses_role_prop_refs(mode: str) -> bool:
+        return mode in {
+            "ref_frame_role_prop",
+            "ref_frame_role_prop_previous_video",
+            "ref_frame_role_prop_prev_video",
+        }
+
+    @staticmethod
+    def _video_reference_mode_uses_previous_scene_video(mode: str) -> bool:
+        return mode in {
+            "ref_frame_role_prop_previous_video",
+            "ref_frame_role_prop_prev_video",
+            "ref_frame_previous_video",
+        }
+
+    @staticmethod
     def _previous_shot(episode: StoryboardEpisodeOutput | None, shot: StoryboardShot) -> StoryboardShot | None:
         if episode is None:
             return None
@@ -1448,6 +1475,47 @@ class PregenWorkflow:
         if not previous:
             return None
         return sorted(previous, key=lambda item: int(item.index))[-1]
+
+    @staticmethod
+    def _shots_share_scene(current_shot: StoryboardShot, previous_shot: StoryboardShot) -> bool:
+        current_space = str(current_shot.physical_space_key or "").strip()
+        previous_space = str(previous_shot.physical_space_key or "").strip()
+        if current_space and previous_space:
+            return current_space == previous_space
+        return bool(current_shot.layout_id and current_shot.layout_id == previous_shot.layout_id)
+
+    def _shot_previous_scene_video_refs(
+        self,
+        project_dir: Path,
+        shot: StoryboardShot,
+        episode: StoryboardEpisodeOutput | None,
+    ) -> list:
+        from autodrama.providers.base import AssetRef
+
+        previous_shot = self._previous_shot(episode, shot)
+        if previous_shot is None or not self._shots_share_scene(shot, previous_shot):
+            return []
+        if not previous_shot.video_asset_path:
+            return []
+        video_path = Path(previous_shot.video_asset_path)
+        if not video_path.is_absolute():
+            video_path = project_dir / video_path
+        if not video_path.exists() or not video_path.is_file():
+            return []
+        return [
+            AssetRef(
+                id=previous_shot.video_asset_id or previous_shot.shot_id,
+                type="video",
+                path=str(video_path),
+                metadata={
+                    "asset_type": "previous_shot_video",
+                    "reference_source": "same_scene_spatial_continuity",
+                    "previous_shot_id": previous_shot.shot_id,
+                    "layout_id": shot.layout_id,
+                    "physical_space_key": shot.physical_space_key or previous_shot.physical_space_key,
+                },
+            )
+        ]
 
     def _shot_video_refs(
         self,
@@ -1461,6 +1529,7 @@ class PregenWorkflow:
 
         refs: list[AssetRef] = []
         previous_shot = self._previous_shot(episode, shot)
+        reference_mode = self._video_reference_mode(provider)
         if shot.start_frame_source == "previous_shot_last_frame":
             if previous_shot is None:
                 raise ValueError(
@@ -1504,9 +1573,25 @@ class PregenWorkflow:
                     },
                 )
             )
-        if self._video_reference_mode(provider) not in {"ref_frame_only", "ref_frame"}:
+        if self._video_reference_mode_uses_role_prop_refs(reference_mode):
+            refs.extend(
+                self._shot_ref_asset_refs(
+                    project_dir,
+                    state,
+                    shot,
+                    include_layout=False,
+                    include_roles=True,
+                    include_props=True,
+                )
+            )
+        elif reference_mode not in {"ref_frame_only", "ref_frame"}:
             refs.extend(self._shot_ref_asset_refs(project_dir, state, shot))
             refs.extend(self._shot_anchor_video_refs(project_dir, state, shot))
+        previous_scene_video_refs = (
+            self._shot_previous_scene_video_refs(project_dir, shot, episode)
+            if self._video_reference_mode_uses_previous_scene_video(reference_mode)
+            else []
+        )
         dialogue_audio_role_ids: set[str] = set()
         for audio in shot.dialogue_audio_assets:
             if audio.asset_path:
@@ -1532,6 +1617,7 @@ class PregenWorkflow:
                 if not ref.metadata.get("role_id") or ref.metadata.get("role_id") not in dialogue_audio_role_ids
             ]
         refs.extend(role_audio_refs)
+        refs.extend(previous_scene_video_refs)
         return refs
 
     def _role_for_dialogue_line(

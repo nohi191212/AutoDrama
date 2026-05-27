@@ -252,11 +252,11 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # ref_frame_only sends only the shot reference frame to Seedance, not role/layout asset sheets.
-      # The video prompt adds a Seedance-specific instruction to reduce real-person traits in the
-      # reference frame while preserving anime/CG character identity, lowering real-person privacy
-      # false positives from near-photographic faces.
-      video_reference_mode: ref_frame_only
+      # Sends the shot reference frame, current-shot role/prop images, role/dialogue audio, and
+      # the previous same-scene shot video to Seedance. It does not send layout sheets or role intro videos.
+      # The video prompt also reduces real-person traits in the reference frame while preserving
+      # anime/CG character identity, lowering real-person privacy false positives from near-photographic faces.
+      video_reference_mode: ref_frame_role_prop_previous_video
       video_poll_interval_seconds: 30
       return_last_frame: true
       generate_audio: false

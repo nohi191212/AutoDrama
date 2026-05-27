@@ -221,6 +221,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             "片段首尾只允许硬切；任何 J-Cut 或 L-Cut 只能发生在本片段内部中段，"
             "不要让声音提前进入本片段之前，也不要让声音拖尾到下一片段。"
         )
+        parts.append(
+            "如果背景中存在人群或群众，不要让他们静止不动；让他们进行符合场景逻辑、"
+            "情绪氛围和空间关系的自然移动、避让、聚散或反应，但不要抢占主体动作。"
+        )
         parts.append("全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。")
         return " ".join(item for item in parts if item)
 

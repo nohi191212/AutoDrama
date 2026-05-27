@@ -130,7 +130,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - 全局 BGM: `minimax`
 - 镜头视频: `volcengine`
 
-所有图片生成默认通过 ToAPI GPT-Image-2：角色全身图、角色三视图、道具图、场景图和镜头参考帧都会本地保存图片文件，并同时保存 provider 返回的图片 URL。后续把这些图片作为参考图传给图片或视频模型时，会优先传保存的网络 URL，只有没有 URL 时才回退到本地文件。`providers.volcengine.options.video_reference_mode: ref_frame_only` 是 Seedance 的默认视频参考模式。该模式只把镜头参考帧传给 Seedance，不再额外传角色/场景资产图；短视频生成会优先使用保存的参考帧图片 URL，并传入 storyboard `role_audio_ids` 对应的人物音频作为参考音频。视频 prompt 中会加入更强的人物风格约束：尽可能去掉参考帧中的真人肖像特征，保留动漫化 CG 角色特征，例如弱化真实皮肤毛孔、汗渍、微血管、皮肤斑点和真实摄影人像感，同时保留眼型、眉形、发型、服装轮廓、配饰、动作节奏和空间关系。这是为了降低 Seedance 将偏真人参考图误判为 real person / privacy content 的概率。
+所有图片生成默认通过 ToAPI GPT-Image-2：角色全身图、角色三视图、道具图、场景图和镜头参考帧都会本地保存图片文件，并同时保存 provider 返回的图片 URL。后续把这些图片作为参考图传给图片或视频模型时，会优先传保存的网络 URL，只有没有 URL 时才回退到本地文件。`providers.volcengine.options.video_reference_mode: ref_frame_role_prop_previous_video` 是 Seedance 的默认视频参考模式。该模式会把镜头参考帧、当前 shot 涉及的角色图、道具图、角色/对白音频，以及同一物理空间中上一片段已生成的视频传给 Seedance；不会额外传场景 layout 图或角色介绍视频。视频 prompt 中会加入参考帧处理约束：参考帧用于锁定人物外观、服装、道具造型、场景表现和空间关系，但不要把参考帧逐帧复刻成首帧或尾帧；上一片段视频只作为同场景空间和动态节奏参考。
 
 本地验证或演示可以使用 `--fake`，不会调用真实外部服务。
 
