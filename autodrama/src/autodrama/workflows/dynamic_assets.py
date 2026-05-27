@@ -900,7 +900,7 @@ class DynamicAssetNodeMixin:
         force_generation = bool(getattr(self, "_force_generation", False))
         for shot in shots:
             asset_id = normalize_id(f"{shot.shot_id}", "video")
-            prompt = self._shot_video_prompt(state, episode, shot, provider=provider)
+            prompt = self._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
             task_key = self._shot_video_task_key(episode.episode_key, shot.shot_id)
             output_path = self._video_asset_path(project_dir, "shots", asset_id)
             planned_asset_path = self._project_relative(project_dir, output_path)
@@ -1271,7 +1271,13 @@ class DynamicAssetNodeMixin:
                     )
                 )
             if shot.video_asset_id:
-                video_generation_prompt = self._shot_video_prompt(state, episode, shot, provider=video_provider)
+                video_generation_prompt = self._shot_video_prompt(
+                    state,
+                    episode,
+                    shot,
+                    provider=video_provider,
+                    project_dir=project_dir,
+                )
                 shot.solidified_asset_ids.append(shot.video_asset_id)
                 solidified.append(
                     DynamicAssetSolidificationItem(

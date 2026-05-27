@@ -1484,38 +1484,176 @@ class PregenWorkflow:
             return current_space == previous_space
         return bool(current_shot.layout_id and current_shot.layout_id == previous_shot.layout_id)
 
-    def _shot_previous_scene_video_refs(
+    @staticmethod
+    def _shot_video_file_path(project_dir: Path, shot: StoryboardShot) -> Path | None:
+        if not shot.video_asset_path:
+            return None
+        video_path = Path(shot.video_asset_path)
+        if not video_path.is_absolute():
+            video_path = project_dir / video_path
+        if not video_path.exists() or not video_path.is_file():
+            return None
+        return video_path
+
+    def _previous_video_shot(
+        self,
+        project_dir: Path,
+        episode: StoryboardEpisodeOutput | None,
+        shot: StoryboardShot,
+    ) -> StoryboardShot | None:
+        previous_shot = self._previous_shot(episode, shot)
+        if previous_shot is None:
+            return None
+        return previous_shot if self._shot_video_file_path(project_dir, previous_shot) else None
+
+    def _nearest_same_scene_video_shot(
+        self,
+        project_dir: Path,
+        episode: StoryboardEpisodeOutput | None,
+        shot: StoryboardShot,
+    ) -> StoryboardShot | None:
+        if episode is None:
+            return None
+        previous_shots = sorted(
+            (item for item in episode.shots if int(item.index) < int(shot.index)),
+            key=lambda item: int(item.index),
+            reverse=True,
+        )
+        for candidate in previous_shots:
+            if not self._shots_share_scene(shot, candidate):
+                continue
+            if self._shot_video_file_path(project_dir, candidate):
+                return candidate
+        return None
+
+    @staticmethod
+    def _video_refs_point_to_same_asset(left, right) -> bool:
+        if left is None or right is None:
+            return False
+        left_id = str(left.id or "").strip()
+        right_id = str(right.id or "").strip()
+        if left_id and right_id and left_id == right_id:
+            return True
+        left_path = str(left.path or "").strip().replace("\\", "/")
+        right_path = str(right.path or "").strip().replace("\\", "/")
+        return bool(left_path and right_path and left_path == right_path)
+
+    def _shot_video_asset_ref(
+        self,
+        project_dir: Path,
+        source_shot: StoryboardShot,
+        *,
+        asset_type: str,
+        reference_source: str,
+        reference_role: str,
+        current_shot: StoryboardShot,
+        extra_metadata: dict[str, Any] | None = None,
+    ):
+        from autodrama.providers.base import AssetRef
+
+        video_path = self._shot_video_file_path(project_dir, source_shot)
+        if video_path is None:
+            return None
+        metadata = {
+            "asset_type": asset_type,
+            "reference_source": reference_source,
+            "reference_role": reference_role,
+            "source_shot_id": source_shot.shot_id,
+            "layout_id": current_shot.layout_id,
+            "physical_space_key": current_shot.physical_space_key or source_shot.physical_space_key,
+            "camera_direction_required": False,
+            "spatial_match_rule": "same latent 3D space by physical_space_key or layout_id",
+        }
+        if extra_metadata:
+            metadata.update(extra_metadata)
+        return AssetRef(
+            id=source_shot.video_asset_id or source_shot.shot_id,
+            type="video",
+            path=str(video_path),
+            metadata=metadata,
+        )
+
+    def _shot_context_video_refs(
         self,
         project_dir: Path,
         shot: StoryboardShot,
         episode: StoryboardEpisodeOutput | None,
     ) -> list:
-        from autodrama.providers.base import AssetRef
-
-        previous_shot = self._previous_shot(episode, shot)
-        if previous_shot is None or not self._shots_share_scene(shot, previous_shot):
-            return []
-        if not previous_shot.video_asset_path:
-            return []
-        video_path = Path(previous_shot.video_asset_path)
-        if not video_path.is_absolute():
-            video_path = project_dir / video_path
-        if not video_path.exists() or not video_path.is_file():
-            return []
-        return [
-            AssetRef(
-                id=previous_shot.video_asset_id or previous_shot.shot_id,
-                type="video",
-                path=str(video_path),
-                metadata={
-                    "asset_type": "previous_shot_video",
-                    "reference_source": "same_scene_spatial_continuity",
-                    "previous_shot_id": previous_shot.shot_id,
-                    "layout_id": shot.layout_id,
-                    "physical_space_key": shot.physical_space_key or previous_shot.physical_space_key,
+        scene_shot = self._nearest_same_scene_video_shot(project_dir, episode, shot)
+        previous_shot = self._previous_video_shot(project_dir, episode, shot)
+        scene_ref = (
+            self._shot_video_asset_ref(
+                project_dir,
+                scene_shot,
+                asset_type="reference_video",
+                reference_source="nearest_same_scene_spatial_continuity",
+                reference_role="scene_consistency",
+                current_shot=shot,
+                extra_metadata={
+                    "scene_reference_shot_id": scene_shot.shot_id,
                 },
             )
-        ]
+            if scene_shot is not None
+            else None
+        )
+        previous_ref = (
+            self._shot_video_asset_ref(
+                project_dir,
+                previous_shot,
+                asset_type="previous_shot_video",
+                reference_source="previous_shot_content_continuity",
+                reference_role="previous_shot_continuity",
+                current_shot=shot,
+                extra_metadata={
+                    "previous_shot_id": previous_shot.shot_id,
+                },
+            )
+            if previous_shot is not None
+            else None
+        )
+        if scene_ref is not None and previous_ref is not None and self._video_refs_point_to_same_asset(scene_ref, previous_ref):
+            scene_ref.metadata.update(
+                {
+                    "asset_type": "reference_and_previous_shot_video",
+                    "reference_source": "nearest_same_scene_is_previous_shot",
+                    "reference_role": "scene_consistency_and_previous_shot_continuity",
+                    "reference_roles": ["scene_consistency", "previous_shot_continuity"],
+                    "previous_shot_id": previous_shot.shot_id,
+                    "scene_reference_shot_id": scene_shot.shot_id if scene_shot is not None else previous_shot.shot_id,
+                }
+            )
+            return [scene_ref]
+
+        refs = []
+        if scene_ref is not None:
+            refs.append(scene_ref)
+        if previous_ref is not None:
+            refs.append(previous_ref)
+        return refs
+
+    def _shot_video_reference_context(
+        self,
+        project_dir: Path | None,
+        episode: StoryboardEpisodeOutput | None,
+        shot: StoryboardShot,
+    ) -> str:
+        if project_dir is None:
+            return "none"
+        scene_shot = self._nearest_same_scene_video_shot(project_dir, episode, shot)
+        previous_shot = self._previous_video_shot(project_dir, episode, shot)
+        if scene_shot is not None and previous_shot is not None:
+            scene_path = self._shot_video_file_path(project_dir, scene_shot)
+            previous_path = self._shot_video_file_path(project_dir, previous_shot)
+            if scene_shot.shot_id == previous_shot.shot_id or (
+                scene_path is not None and previous_path is not None and scene_path == previous_path
+            ):
+                return "shared_reference_and_previous_video"
+            return "separate_reference_and_previous_video"
+        if scene_shot is not None:
+            return "reference_video_only"
+        if previous_shot is not None:
+            return "previous_video_only"
+        return "none"
 
     def _shot_video_refs(
         self,
@@ -1587,8 +1725,8 @@ class PregenWorkflow:
         elif reference_mode not in {"ref_frame_only", "ref_frame"}:
             refs.extend(self._shot_ref_asset_refs(project_dir, state, shot))
             refs.extend(self._shot_anchor_video_refs(project_dir, state, shot))
-        previous_scene_video_refs = (
-            self._shot_previous_scene_video_refs(project_dir, shot, episode)
+        context_video_refs = (
+            self._shot_context_video_refs(project_dir, shot, episode)
             if self._video_reference_mode_uses_previous_scene_video(reference_mode)
             else []
         )
@@ -1617,7 +1755,7 @@ class PregenWorkflow:
                 if not ref.metadata.get("role_id") or ref.metadata.get("role_id") not in dialogue_audio_role_ids
             ]
         refs.extend(role_audio_refs)
-        refs.extend(previous_scene_video_refs)
+        refs.extend(context_video_refs)
         return refs
 
     def _role_for_dialogue_line(

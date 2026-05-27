@@ -77,7 +77,7 @@ async def main_async() -> int:
     episode = workflow._load_storyboard_episode(project_dir, resolved_episode_key)
     shot = find_shot(episode, args.shot)
     asset_id = normalize_id(f"{shot.shot_id}", "video")
-    prompt = workflow._shot_video_prompt(state, episode, shot)
+    prompt = workflow._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
     task_key = workflow._shot_video_task_key(episode.episode_key, shot.shot_id)
     planned_asset_path = workflow._project_relative(
         project_dir,

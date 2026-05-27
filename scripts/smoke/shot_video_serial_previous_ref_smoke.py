@@ -47,7 +47,7 @@ class SerialPreviousRefVideoProvider:
         duration: float | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> VideoGenerationResult:
-        del prompt, duration
+        del duration
         metadata = metadata or {}
         refs = refs or []
         task_id = f"serial-task-{metadata.get('asset_id', 'shot')}"
@@ -55,6 +55,7 @@ class SerialPreviousRefVideoProvider:
             {
                 "task_id": task_id,
                 "shot_id": metadata.get("shot_id"),
+                "prompt": prompt,
                 "refs": refs,
             }
         )
@@ -98,7 +99,7 @@ async def main_async() -> int:
     )
     project_dir = repo.create_project(
         title="Shot Video Serial Previous Ref Smoke",
-        raw_script="林舟在会议室展示合同，随后推近合同细节。",
+        raw_script="林舟在会议室展示合同，随后切到走廊，又回到会议室继续展示证据。",
         project_id=project_id,
         episode_count=1,
         episode_duration_seconds=30,
@@ -131,6 +132,26 @@ async def main_async() -> int:
                     video_prompt="合同沿着同一张会议桌被推向镜头，延续上一镜的人物站位和桌面方向。",
                     physical_space_key="layout_room::main_table",
                 ),
+                StoryboardShot(
+                    shot_id="episode_001_shot_003",
+                    index=3,
+                    layout_id="layout_hallway",
+                    title="走廊反应",
+                    duration_seconds=6,
+                    ref_frame_prompt="走廊里，赵启侧身接电话。",
+                    video_prompt="镜头切到走廊，赵启压低声音接电话，灯光从玻璃墙反射过来。",
+                    physical_space_key="layout_hallway::glass_wall",
+                ),
+                StoryboardShot(
+                    shot_id="episode_001_shot_004",
+                    index=4,
+                    layout_id="layout_room",
+                    title="回到会议室",
+                    duration_seconds=6,
+                    ref_frame_prompt="回到同一间会议室，合同仍在桌面中央。",
+                    video_prompt="镜头回到会议室，林舟把合同重新推到桌面中央，延续会议桌的空间结构。",
+                    physical_space_key="layout_room::main_table",
+                ),
             ],
         ),
     )
@@ -142,28 +163,42 @@ async def main_async() -> int:
         episode_keys=parse_episode_keys("1"),
     )
 
-    require(len(provider.submissions) == 2, f"Expected two submissions, got {len(provider.submissions)}")
+    require(len(provider.submissions) == 4, f"Expected four submissions, got {len(provider.submissions)}")
     require(provider.submissions[0]["shot_id"] == "episode_001_shot_001", provider.submissions)
     require(provider.submissions[1]["shot_id"] == "episode_001_shot_002", provider.submissions)
+    require(provider.submissions[2]["shot_id"] == "episode_001_shot_003", provider.submissions)
+    require(provider.submissions[3]["shot_id"] == "episode_001_shot_004", provider.submissions)
     require(provider.submissions[0]["refs"] == [], "First shot should not have a previous video ref")
 
     second_refs = provider.submissions[1]["refs"]
-    require(len(second_refs) == 1, f"Second shot should have one previous video ref, got {len(second_refs)}")
-    previous_ref = second_refs[0]
-    require(previous_ref.metadata.get("asset_type") == "previous_shot_video", previous_ref.metadata)
-    require(previous_ref.metadata.get("previous_shot_id") == "episode_001_shot_001", previous_ref.metadata)
+    require(len(second_refs) == 1, f"Second shot should have one shared video ref, got {len(second_refs)}")
+    shared_ref = second_refs[0]
+    require(shared_ref.metadata.get("asset_type") == "reference_and_previous_shot_video", shared_ref.metadata)
+    require(shared_ref.metadata.get("previous_shot_id") == "episode_001_shot_001", shared_ref.metadata)
+    require(shared_ref.metadata.get("scene_reference_shot_id") == "episode_001_shot_001", shared_ref.metadata)
     require(
-        Path(str(previous_ref.path)).exists(),
-        f"Previous video ref was not written before second submit: {previous_ref.path}",
+        Path(str(shared_ref.path)).exists(),
+        f"Shared video ref was not written before second submit: {shared_ref.path}",
     )
+    require("参考视频与上一镜视频为同一个素材" in provider.submissions[1]["prompt"], provider.submissions[1]["prompt"])
+
+    fourth_refs = provider.submissions[3]["refs"]
+    fourth_asset_types = [str(ref.metadata.get("asset_type") or "") for ref in fourth_refs]
+    require(fourth_asset_types == ["reference_video", "previous_shot_video"], fourth_asset_types)
+    require(fourth_refs[0].metadata.get("scene_reference_shot_id") == "episode_001_shot_002", fourth_refs[0].metadata)
+    require(fourth_refs[1].metadata.get("previous_shot_id") == "episode_001_shot_003", fourth_refs[1].metadata)
+    require("本片段有两个不同的视频参考" in provider.submissions[3]["prompt"], provider.submissions[3]["prompt"])
 
     episode = workflow._load_storyboard_episode(project_dir, "episode_001")
     require(episode.shots[0].video_asset_path, "First shot video was not saved")
     require(episode.shots[1].video_asset_path, "Second shot video was not saved")
+    require(episode.shots[2].video_asset_path, "Third shot video was not saved")
+    require(episode.shots[3].video_asset_path, "Fourth shot video was not saved")
 
     print("shot_video_serial_previous_ref_smoke=ok")
     print(f"project_dir={project_dir}")
-    print(f"previous_video_ref={previous_ref.path}")
+    print(f"shared_video_ref={shared_ref.path}")
+    print(f"separate_video_refs={[ref.path for ref in fourth_refs]}")
     return 0
 
 

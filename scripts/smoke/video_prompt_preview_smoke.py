@@ -158,7 +158,8 @@ async def main_async(args: argparse.Namespace) -> int:
     workflow._apply_script_plan_settings(state)
     episode = load_episode(project_dir, key)
     shot = select_shot(episode, args.shot)
-    final_prompt = workflow._shot_video_prompt(state, episode, shot)
+    provider = router.video("shot")
+    final_prompt = workflow._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
 
     output_dir = Path(args.output_dir) if args.output_dir else default_output_dir(state.project_id)
     if not output_dir.is_absolute():

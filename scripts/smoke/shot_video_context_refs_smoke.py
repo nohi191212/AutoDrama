@@ -146,13 +146,20 @@ def main() -> int:
     refs = workflow._shot_video_refs(project_dir, state, current_shot, provider=provider, episode=episode)
     asset_types = [str(ref.metadata.get("asset_type") or "") for ref in refs]
 
-    require(asset_types == ["ref_frame", "role_appearance", "prop", "role_audio", "previous_shot_video"], asset_types)
+    require(
+        asset_types == ["ref_frame", "role_appearance", "prop", "role_audio", "reference_and_previous_shot_video"],
+        asset_types,
+    )
     require(all(item != "layout" for item in asset_types), f"Layout should not be sent in context mode: {asset_types}")
     require(refs[0].url == "https://example.invalid/ref-frame.png", "Ref frame URL should be preferred")
     require(refs[1].url == "https://example.invalid/role-linz.png", "Role image URL should be preferred")
     require(refs[2].url == "https://example.invalid/contract.png", "Prop image URL should be preferred")
     require(refs[3].metadata.get("reference_source") == "storyboard_role_audio_ids", "Role audio source mismatch")
-    require(refs[4].metadata.get("reference_source") == "same_scene_spatial_continuity", "Previous video source mismatch")
+    require(
+        refs[4].metadata.get("reference_source") == "nearest_same_scene_is_previous_shot",
+        "Shared reference/previous video source mismatch",
+    )
+    require(refs[4].metadata.get("reference_roles") == ["scene_consistency", "previous_shot_continuity"], refs[4].metadata)
 
     payload = provider.build_payload("测试视频参考组合。", refs=refs, duration=6)
     output_dir = ROOT_DIR / ".tmp" / "smoke" / "shot_video_context_refs"
@@ -175,7 +182,7 @@ def main() -> int:
 
     print("shot_video_context_refs_smoke=ok")
     print(f"payload_path={output_path}")
-    print("refs=ref_frame,role_appearance,prop,role_audio,previous_shot_video")
+    print("refs=ref_frame,role_appearance,prop,role_audio,reference_and_previous_shot_video")
     return 0
 
 

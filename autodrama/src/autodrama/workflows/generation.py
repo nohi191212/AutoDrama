@@ -183,10 +183,12 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         episode: StoryboardEpisodeOutput,
         shot: StoryboardShot,
         provider=None,
+        project_dir: Path | None = None,
     ) -> str:
         body = shot.video_prompt.strip()
+        reference_mode = self._video_reference_mode(provider)
         parts: list[str] = [self._cg_character_safety_prompt()]
-        if self._video_reference_mode(provider) in {"ref_frame_only", "ref_frame"}:
+        if reference_mode in {"ref_frame_only", "ref_frame"}:
             parts.append(self._ref_frame_only_video_prompt())
         if shot.start_frame_source == "previous_shot_last_frame":
             lead = (
@@ -221,6 +223,37 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             "片段首尾只允许硬切；任何 J-Cut 或 L-Cut 只能发生在本片段内部中段，"
             "不要让声音提前进入本片段之前，也不要让声音拖尾到下一片段。"
         )
+        video_reference_context = (
+            "none"
+            if (
+                shot.start_frame_source == "previous_shot_last_frame"
+                or not self._video_reference_mode_uses_previous_scene_video(reference_mode)
+            )
+            else self._shot_video_reference_context(project_dir, episode, shot)
+        )
+        if video_reference_context == "shared_reference_and_previous_video":
+            parts.append(
+                "视频参考关系: 参考视频与上一镜视频为同一个素材。该视频同时用于锁定同一潜在三维空间中的场景结构、"
+                "人物/道具相对位置、环境动态规律，并用于承接上一镜的画面内容、动作节奏和情绪余韵；"
+                "可以改变机位和镜头朝向，但不能无故反转空间左右、前后、远近关系，不要逐帧复刻。"
+            )
+        elif video_reference_context == "separate_reference_and_previous_video":
+            parts.append(
+                "视频参考关系: 本片段有两个不同的视频参考。参考视频用于场景一致性，只锁定同一潜在三维空间中的场景结构、"
+                "关键物体位置、环境动态、人群/光影规律，不要求镜头朝向一致，可以换机位；上一镜视频用于承接上一镜的"
+                "画面内容、动作节奏、情绪余韵和硬切前后的视觉衔接，不用于覆盖当前场景设定。两者冲突时，"
+                "以当前 shot 描述和参考图为主体，参考视频负责场景一致，上一镜视频负责衔接连续。"
+            )
+        elif video_reference_context == "reference_video_only":
+            parts.append(
+                "视频参考关系: 参考视频用于场景一致性，只锁定同一潜在三维空间中的场景结构、关键物体位置、"
+                "环境动态、人群/光影规律，不要求镜头朝向一致，可以换机位，不要逐帧复刻。"
+            )
+        elif video_reference_context == "previous_video_only":
+            parts.append(
+                "视频参考关系: 上一镜视频只用于承接上一镜的画面内容、动作节奏、情绪余韵和硬切前后的视觉衔接，"
+                "不用于覆盖当前场景设定，不要逐帧复刻。"
+            )
         parts.append(
             "如果背景中存在人群或群众，不要让他们静止不动；让他们进行符合场景逻辑、"
             "情绪氛围和空间关系的自然移动、避让、聚散或反应，但不要抢占主体动作。"
