@@ -53,7 +53,7 @@ budget:
 
 generation:
   # Maximum storyboard shots generated per episode by storyboard_generation.
-  # The CLI flag `--max-shots` overrides this value for a single generation run.
+  # Passing --shots to generation derives the storyboard run limit from the selected shot range.
   max_shots: 10
   # Used by role_full_body_generation and role_multiview_generation as Image 2 style references.
   role_design_style_reference_dir: ./.assets/sample

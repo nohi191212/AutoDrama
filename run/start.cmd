@@ -12,7 +12,6 @@ set "UNTIL=bgm_generation"
 set "ONLY="
 set "EPISODES="
 set "SHOTS="
-set "MAX_SHOTS="
 set "FORCE="
 
 :parse
@@ -87,12 +86,6 @@ if "%~1"=="--shots" (
   shift
   goto parse
 )
-if "%~1"=="--max-shots" (
-  set "MAX_SHOTS=%~2"
-  shift
-  shift
-  goto parse
-)
 if "%~1"=="--force" (
   set "FORCE=--force"
   shift
@@ -108,7 +101,7 @@ goto help_error
 echo Usage:
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
 echo   run\start.cmd [--only NODE] [--episodes 1,3] [--shots 1-3]
-echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--max-shots N] [--only NODE] [--fake] [--force]
+echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force]
 echo   --episode is accepted as an alias for --episodes.
 echo   run\start.cmd --workflow pregen^|generation [options]
 echo.
@@ -128,7 +121,7 @@ goto end
 :help_error
 echo Usage: 1>&2
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force] 1>&2
-echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--max-shots N] [--only NODE] [--fake] [--force] 1>&2
+echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force] 1>&2
 echo   --episode is accepted as an alias for --episodes. 1>&2
 exit /b 2
 
@@ -163,7 +156,6 @@ call :log "workflow: %WORKFLOW%"
 call :log "until: %UNTIL%"
 if not "%EPISODES%"=="" call :log "episodes: %EPISODES%"
 if not "%SHOTS%"=="" call :log "shots: %SHOTS%"
-if not "%MAX_SHOTS%"=="" call :log "max shots: %MAX_SHOTS%"
 if not "%ONLY%"=="" call :log "only: %ONLY%"
 
 set "PROJECT_ARGS="
@@ -175,13 +167,10 @@ if not "%EPISODES%"=="" set "EPISODE_ARGS=--episodes "%EPISODES%""
 set "SHOT_ARGS="
 if /I "%WORKFLOW%"=="generation" if not "%SHOTS%"=="" set "SHOT_ARGS=--shots "%SHOTS%""
 
-set "MAX_SHOT_ARGS="
-if /I "%WORKFLOW%"=="generation" if not "%MAX_SHOTS%"=="" set "MAX_SHOT_ARGS=--max-shots "%MAX_SHOTS%""
-
 set "ONLY_ARGS="
 if not "%ONLY%"=="" set "ONLY_ARGS=--only "%ONLY%""
 
-"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %SHOT_ARGS% %MAX_SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
+"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
 set "EXIT_CODE=%ERRORLEVEL%"
 
 popd >nul

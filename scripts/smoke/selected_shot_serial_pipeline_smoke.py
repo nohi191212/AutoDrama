@@ -143,9 +143,9 @@ async def main_async() -> int:
     settings.output.root_dir = ROOT_DIR / ".tmp" / "smoke"
     settings.project.episode_count = 1
     repo = ProjectRepository(settings)
-    project_id = f"shot_serial_big_loop_smoke_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    project_id = f"selected_shot_serial_pipeline_smoke_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     project_dir = repo.create_project(
-        title="Shot Serial Big Loop Smoke",
+        title="Selected Shot Serial Pipeline Smoke",
         raw_script="林舟发现合同被调包。苏晚递来旧邮件截图。林舟准备在会议室反击赵启。",
         project_id=project_id,
         episode_count=1,
@@ -156,59 +156,81 @@ async def main_async() -> int:
     await PregenWorkflow(repo=repo, router=fake_router).run(project_dir, until="bgm_generation", force=True)
 
     events: list[str] = []
-    router = RecordingRouter(events)
-    state = await GenerationWorkflow(repo=repo, router=router).run(
+    await GenerationWorkflow(repo=repo, router=RecordingRouter(events)).run(
         project_dir,
         until="dynamic_asset_solidification",
         episode_keys=["episode_001"],
-        shot_selectors=parse_shot_selectors("1-2"),
+        shot_selectors=parse_shot_selectors("1-3"),
     )
 
-    shot_1 = "episode_001_shot_001"
+    shot_path = project_dir / "shots" / "episode_001.json"
+    before = json.loads(shot_path.read_text(encoding="utf-8"))
+    shot_1_before = before["shots"][0]
+    shot_1_ref = shot_1_before["ref_frame_asset_path"]
+    shot_1_video = shot_1_before["video_asset_path"]
+    shot_1_solidified = list(shot_1_before["solidified_asset_ids"])
+
+    events.clear()
+    await GenerationWorkflow(repo=repo, router=RecordingRouter(events)).run(
+        project_dir,
+        until="dynamic_asset_solidification",
+        episode_keys=["episode_001"],
+        shot_selectors=parse_shot_selectors("2-3"),
+    )
+
+    require("storyboard:1" not in events, f"Shot 1 storyboard should be preserved as prefix, not regenerated: {events}")
     shot_2 = "episode_001_shot_002"
-    required_events = [
-        "storyboard:1",
-        f"spatial:{shot_1}",
-        f"ref_frame:{shot_1}",
-        f"video_submit:{shot_1}",
-        f"video_query:{shot_1}",
+    shot_3 = "episode_001_shot_003"
+    expected_events = [
         "storyboard:2",
         f"spatial:{shot_2}",
         f"ref_frame:{shot_2}",
         f"video_submit:{shot_2}",
         f"video_query:{shot_2}",
+        "storyboard:3",
+        f"spatial:{shot_3}",
+        f"ref_frame:{shot_3}",
+        f"video_submit:{shot_3}",
+        f"video_query:{shot_3}",
     ]
-    for event in required_events:
+    for event in expected_events:
         require(event in events, f"Missing event {event}; events={events}")
-
-    positions = {event: events.index(event) for event in required_events}
+    positions = {event: events.index(event) for event in expected_events}
     require(
-        positions["storyboard:1"]
-        < positions[f"ref_frame:{shot_1}"]
-        < positions[f"video_submit:{shot_1}"]
-        < positions[f"video_query:{shot_1}"]
-        < positions["storyboard:2"]
+        positions["storyboard:2"]
         < positions[f"ref_frame:{shot_2}"]
         < positions[f"video_submit:{shot_2}"]
-        < positions[f"video_query:{shot_2}"],
-        f"Shot pipeline did not run as a big loop: {events}",
+        < positions[f"video_query:{shot_2}"]
+        < positions["storyboard:3"]
+        < positions[f"ref_frame:{shot_3}"]
+        < positions[f"video_submit:{shot_3}"]
+        < positions[f"video_query:{shot_3}"],
+        f"Selected shots did not run as storyboard big loop: {events}",
     )
 
-    shot_payload = json.loads((project_dir / "shots" / "episode_001.json").read_text(encoding="utf-8"))
-    require(len(shot_payload["shots"]) == 2, f"Expected 2 shots, got {len(shot_payload['shots'])}")
-    for shot in shot_payload["shots"]:
-        require("ref_frame_asset_path" in shot, f"{shot['shot_id']} missing ref_frame_asset_path")
-        require("video_asset_path" in shot, f"{shot['shot_id']} missing video_asset_path")
-        require("solidified_asset_ids" in shot, f"{shot['shot_id']} missing solidified_asset_ids")
+    after = json.loads(shot_path.read_text(encoding="utf-8"))
+    shot_1_after = after["shots"][0]
+    require(shot_1_after["ref_frame_asset_path"] == shot_1_ref, "shot 1 ref frame changed")
+    require(shot_1_after["video_asset_path"] == shot_1_video, "shot 1 video changed")
+    require(shot_1_after["solidified_asset_ids"] == shot_1_solidified, "shot 1 solidified ids changed")
+    require((project_dir / shot_1_ref).exists(), "shot 1 ref frame file was deleted")
+    require((project_dir / shot_1_video).exists(), "shot 1 video file was deleted")
+
+    node_output = json.loads(
+        (project_dir / "assets" / "json" / "nodes" / "shot_video_generation.json").read_text(encoding="utf-8")
+    )
+    generated_shots = [item["shot_id"] for item in node_output["generated_videos"]]
+    require(generated_shots == [shot_2, shot_3], f"Unexpected generated videos: {generated_shots}")
 
     dynamic_assets = json.loads(
         (project_dir / "assets" / "json" / "assets" / "dynamic_assets.json").read_text(encoding="utf-8")
     )
-    asset_shot_ids = {item["shot_id"] for item in dynamic_assets["assets"]}
-    require(asset_shot_ids == {shot_1, shot_2}, f"Unexpected dynamic asset shot ids: {asset_shot_ids}")
-    require(state.current_node == "dynamic_asset_solidification", f"Unexpected current_node: {state.current_node}")
+    indexed_keys = [(item["shot_id"], item["asset_id"]) for item in dynamic_assets["assets"]]
+    require(len(indexed_keys) == len(set(indexed_keys)), f"Duplicate dynamic asset entries: {indexed_keys}")
+    indexed_shots = {shot_id for shot_id, _ in indexed_keys}
+    require(indexed_shots == {"episode_001_shot_001", shot_2, shot_3}, f"Unexpected indexed shots: {indexed_shots}")
 
-    print("shot_serial_big_loop_smoke=ok")
+    print("selected_shot_serial_pipeline_smoke=ok")
     print(f"project_dir={project_dir}")
     print(f"events={events}")
     return 0

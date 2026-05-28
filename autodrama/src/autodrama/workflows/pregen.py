@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from autodrama.config import Settings
 from autodrama.core.ids import normalize_id, slugify
@@ -1495,22 +1497,130 @@ class PregenWorkflow:
             return None
         return video_path
 
+    @staticmethod
+    def _is_web_url(value: str | None) -> bool:
+        if not isinstance(value, str) or not value:
+            return False
+        return value.startswith(("http://", "https://"))
+
+    @staticmethod
+    def _signed_url_expiry(value: str) -> datetime | None:
+        query = parse_qs(urlparse(value).query)
+        for key in ("Expires", "expires", "x-expires", "X-Expires"):
+            raw_values = query.get(key)
+            if not raw_values:
+                continue
+            try:
+                return datetime.fromtimestamp(int(raw_values[0]), tz=timezone.utc)
+            except (TypeError, ValueError, OSError):
+                continue
+
+        tos_dates = query.get("X-Tos-Date") or query.get("x-tos-date")
+        tos_expires = query.get("X-Tos-Expires") or query.get("x-tos-expires")
+        if tos_dates and tos_expires:
+            try:
+                signed_at = datetime.strptime(tos_dates[0], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+                return signed_at + timedelta(seconds=int(tos_expires[0]))
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    @classmethod
+    def _web_url_is_probably_usable(cls, value: str | None) -> bool:
+        if not cls._is_web_url(value):
+            return False
+        expiry = cls._signed_url_expiry(str(value))
+        if expiry is None:
+            return True
+        return expiry > datetime.now(timezone.utc) + timedelta(minutes=5)
+
+    @classmethod
+    def _video_url_from_raw_response(cls, value: Any) -> str | None:
+        def usable(raw: Any) -> str | None:
+            if isinstance(raw, str) and cls._web_url_is_probably_usable(raw):
+                return raw
+            return None
+
+        def walk(raw: Any) -> str | None:
+            if isinstance(raw, dict):
+                for key in ("video_url", "videoUrl"):
+                    candidate = raw.get(key)
+                    if isinstance(candidate, dict):
+                        found = usable(candidate.get("url"))
+                    else:
+                        found = usable(candidate)
+                    if found:
+                        return found
+
+                if str(raw.get("type") or "").strip().lower() == "video_url":
+                    nested_video = raw.get("video_url")
+                    if isinstance(nested_video, dict):
+                        found = usable(nested_video.get("url"))
+                        if found:
+                            return found
+                    found = usable(raw.get("url"))
+                    if found:
+                        return found
+
+                for key in ("output", "data", "result", "content"):
+                    found = walk(raw.get(key))
+                    if found:
+                        return found
+                for item in raw.values():
+                    found = walk(item)
+                    if found:
+                        return found
+            elif isinstance(raw, list):
+                for item in raw:
+                    found = walk(item)
+                    if found:
+                        return found
+            return None
+
+        return walk(value)
+
+    @classmethod
+    def _shot_video_web_url(cls, shot: StoryboardShot) -> str | None:
+        asset_url = getattr(shot, "video_asset_url", None)
+        if cls._web_url_is_probably_usable(asset_url):
+            return str(asset_url)
+        return cls._video_url_from_raw_response(shot.video_raw_response)
+
+    @staticmethod
+    def _video_provider_requires_web_reference_video(provider=None) -> bool:
+        return bool(getattr(provider, "reference_video_requires_web_url", False))
+
+    def _shot_video_reference_available(
+        self,
+        project_dir: Path,
+        shot: StoryboardShot,
+        *,
+        provider=None,
+    ) -> bool:
+        if self._video_provider_requires_web_reference_video(provider):
+            return self._shot_video_web_url(shot) is not None
+        return self._shot_video_file_path(project_dir, shot) is not None or self._shot_video_web_url(shot) is not None
+
     def _previous_video_shot(
         self,
         project_dir: Path,
         episode: StoryboardEpisodeOutput | None,
         shot: StoryboardShot,
+        *,
+        provider=None,
     ) -> StoryboardShot | None:
         previous_shot = self._previous_shot(episode, shot)
         if previous_shot is None:
             return None
-        return previous_shot if self._shot_video_file_path(project_dir, previous_shot) else None
+        return previous_shot if self._shot_video_reference_available(project_dir, previous_shot, provider=provider) else None
 
     def _nearest_same_scene_video_shot(
         self,
         project_dir: Path,
         episode: StoryboardEpisodeOutput | None,
         shot: StoryboardShot,
+        *,
+        provider=None,
     ) -> StoryboardShot | None:
         if episode is None:
             return None
@@ -1522,7 +1632,7 @@ class PregenWorkflow:
         for candidate in previous_shots:
             if not self._shots_share_scene(shot, candidate):
                 continue
-            if self._shot_video_file_path(project_dir, candidate):
+            if self._shot_video_reference_available(project_dir, candidate, provider=provider):
                 return candidate
         return None
 
@@ -1536,7 +1646,11 @@ class PregenWorkflow:
             return True
         left_path = str(left.path or "").strip().replace("\\", "/")
         right_path = str(right.path or "").strip().replace("\\", "/")
-        return bool(left_path and right_path and left_path == right_path)
+        if left_path and right_path and left_path == right_path:
+            return True
+        left_url = str(left.url or "").strip()
+        right_url = str(right.url or "").strip()
+        return bool(left_url and right_url and left_url == right_url)
 
     def _shot_video_asset_ref(
         self,
@@ -1547,12 +1661,24 @@ class PregenWorkflow:
         reference_source: str,
         reference_role: str,
         current_shot: StoryboardShot,
+        provider=None,
         extra_metadata: dict[str, Any] | None = None,
     ):
         from autodrama.providers.base import AssetRef
 
+        video_url = self._shot_video_web_url(source_shot)
         video_path = self._shot_video_file_path(project_dir, source_shot)
-        if video_path is None:
+        if self._video_provider_requires_web_reference_video(provider) and not video_url:
+            get_logger().warning(
+                "skip video reference %s for %s: provider %s requires a non-expired web URL, "
+                "but only local/expired video is available",
+                source_shot.shot_id,
+                current_shot.shot_id,
+                getattr(provider, "name", "unknown"),
+                extra={"shot_id": current_shot.shot_id, "source_shot_id": source_shot.shot_id},
+            )
+            return None
+        if video_path is None and not video_url:
             return None
         metadata = {
             "asset_type": asset_type,
@@ -1569,7 +1695,8 @@ class PregenWorkflow:
         return AssetRef(
             id=source_shot.video_asset_id or source_shot.shot_id,
             type="video",
-            path=str(video_path),
+            path=str(video_path) if video_path is not None else None,
+            url=video_url,
             metadata=metadata,
         )
 
@@ -1578,9 +1705,10 @@ class PregenWorkflow:
         project_dir: Path,
         shot: StoryboardShot,
         episode: StoryboardEpisodeOutput | None,
+        provider=None,
     ) -> list:
-        scene_shot = self._nearest_same_scene_video_shot(project_dir, episode, shot)
-        previous_shot = self._previous_video_shot(project_dir, episode, shot)
+        scene_shot = self._nearest_same_scene_video_shot(project_dir, episode, shot, provider=provider)
+        previous_shot = self._previous_video_shot(project_dir, episode, shot, provider=provider)
         scene_ref = (
             self._shot_video_asset_ref(
                 project_dir,
@@ -1589,6 +1717,7 @@ class PregenWorkflow:
                 reference_source="nearest_same_scene_spatial_continuity",
                 reference_role="scene_consistency",
                 current_shot=shot,
+                provider=provider,
                 extra_metadata={
                     "scene_reference_shot_id": scene_shot.shot_id,
                 },
@@ -1604,6 +1733,7 @@ class PregenWorkflow:
                 reference_source="previous_shot_content_continuity",
                 reference_role="previous_shot_continuity",
                 current_shot=shot,
+                provider=provider,
                 extra_metadata={
                     "previous_shot_id": previous_shot.shot_id,
                 },
@@ -1636,16 +1766,22 @@ class PregenWorkflow:
         project_dir: Path | None,
         episode: StoryboardEpisodeOutput | None,
         shot: StoryboardShot,
+        *,
+        provider=None,
     ) -> str:
         if project_dir is None:
             return "none"
-        scene_shot = self._nearest_same_scene_video_shot(project_dir, episode, shot)
-        previous_shot = self._previous_video_shot(project_dir, episode, shot)
+        scene_shot = self._nearest_same_scene_video_shot(project_dir, episode, shot, provider=provider)
+        previous_shot = self._previous_video_shot(project_dir, episode, shot, provider=provider)
         if scene_shot is not None and previous_shot is not None:
             scene_path = self._shot_video_file_path(project_dir, scene_shot)
             previous_path = self._shot_video_file_path(project_dir, previous_shot)
+            scene_url = self._shot_video_web_url(scene_shot)
+            previous_url = self._shot_video_web_url(previous_shot)
             if scene_shot.shot_id == previous_shot.shot_id or (
                 scene_path is not None and previous_path is not None and scene_path == previous_path
+            ) or (
+                scene_url is not None and previous_url is not None and scene_url == previous_url
             ):
                 return "shared_reference_and_previous_video"
             return "separate_reference_and_previous_video"
@@ -1726,7 +1862,7 @@ class PregenWorkflow:
             refs.extend(self._shot_ref_asset_refs(project_dir, state, shot))
             refs.extend(self._shot_anchor_video_refs(project_dir, state, shot))
         context_video_refs = (
-            self._shot_context_video_refs(project_dir, shot, episode)
+            self._shot_context_video_refs(project_dir, shot, episode, provider=provider)
             if self._video_reference_mode_uses_previous_scene_video(reference_mode)
             else []
         )

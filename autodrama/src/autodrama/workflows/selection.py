@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from autodrama.core.schemas import ProjectState, StoryboardEpisodeOutput, StoryboardShot
 
 
@@ -86,6 +88,40 @@ def normalize_shot_selectors(selectors: list[str] | set[str] | None) -> set[str]
         for selector in selectors or []
         if str(selector).strip()
     }
+
+
+def shot_index_from_selector(selector: str) -> int | None:
+    normalized = str(selector or "").strip().lower().replace("-", "_")
+    if not normalized:
+        return None
+    if normalized.isdigit():
+        return int(normalized)
+    match = re.search(r"(?:^|_)shot_(\d+)$", normalized)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def shot_selector_index_bounds(selectors: list[str] | set[str] | None) -> tuple[int, int] | None:
+    normalized_selectors = normalize_shot_selectors(selectors)
+    if not normalized_selectors:
+        return None
+    indexes: list[int] = []
+    unresolved: list[str] = []
+    for selector in sorted(normalized_selectors):
+        index = shot_index_from_selector(selector)
+        if index is None:
+            unresolved.append(selector)
+        elif index < 1:
+            unresolved.append(selector)
+        else:
+            indexes.append(index)
+    if unresolved:
+        raise ValueError(
+            "Storyboard big-loop --shots must use numeric shot selectors so the storyboard limit can be derived; "
+            f"unsupported selectors: {', '.join(unresolved)}"
+        )
+    return min(indexes), max(indexes)
 
 
 def shot_matches_selectors(

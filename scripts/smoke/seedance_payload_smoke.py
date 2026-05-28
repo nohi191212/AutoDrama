@@ -43,7 +43,8 @@ def main(argv: list[str] | None = None) -> int:
         "测试 Seedance 2.0 视频生成 payload。镜头缓慢推进，人物保持一致。",
         refs=[
             AssetRef(id="reference", type="image", url="https://example.invalid/ref-frame.png"),
-            AssetRef(id="anchor_video", type="video", path=str(video_path)),
+            AssetRef(id="local_anchor_video", type="video", path=str(video_path)),
+            AssetRef(id="web_anchor_video", type="video", url="https://example.invalid/reference.mp4"),
             AssetRef(id="role_voice", type="audio", path=str(audio_path), metadata={"role_id": "role_linz"}),
         ],
         duration=args.duration,
@@ -61,10 +62,17 @@ def main(argv: list[str] | None = None) -> int:
     assert payload["content"][1]["image_url"]["url"] == "https://example.invalid/ref-frame.png"
     assert payload["content"][2]["type"] == "video_url"
     assert payload["content"][2]["role"] == "reference_video"
-    assert payload["content"][2]["video_url"]["url"].startswith("data:video/mp4;base64,")
+    assert payload["content"][2]["video_url"]["url"] == "https://example.invalid/reference.mp4"
     assert payload["content"][3]["type"] == "audio_url"
     assert payload["content"][3]["role"] == "reference_audio"
     assert payload["content"][3]["audio_url"]["url"].startswith("data:audio/mpeg;base64,")
+    assert all(
+        not (
+            item["type"] == "video_url"
+            and str(item["video_url"]["url"]).startswith("data:video/")
+        )
+        for item in payload["content"]
+    )
 
     first_frame_payload = provider.build_payload(
         "测试 Seedance 2.0 首帧模式。以上一镜头尾帧作为本镜头第一帧，从既有姿态继续动作。",

@@ -96,6 +96,8 @@ class DynamicAssetNodeMixin:
         max_shots = getattr(getattr(self, "_run_context", None), "max_shots", None)
         if max_shots is None:
             max_shots = self.settings.generation.max_shots
+        initial_shots_by_episode = getattr(self, "_storyboard_initial_shots_by_episode", {})
+        initial_shots = list(initial_shots_by_episode.get(episode_key, []))
         output = await self.storyboard_service.storyboard_episode(
             state,
             provider,
@@ -104,6 +106,7 @@ class DynamicAssetNodeMixin:
             current_novel_full=self._novel_full_contents(project_dir, state, [episode_key]).get(episode_key, ""),
             on_shot_generated=save_storyboard_progress,
             max_shots=max_shots,
+            initial_shots=initial_shots,
         )
         if output.episode_key != episode_key:
             raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")
@@ -810,6 +813,7 @@ class DynamicAssetNodeMixin:
                     "model": result.model or item["model"],
                     "task_id": result.task_id,
                     "task_status": task_status_value or result.task_status,
+                    "video_url": result.video_url,
                     "request_id": result.request_id,
                     "last_frame_url": result.last_frame_url,
                     "usage": result.usage,

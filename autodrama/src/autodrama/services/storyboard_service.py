@@ -435,9 +435,10 @@ class StoryboardService:
         previous_storyboard_history: dict[str, Any] | None = None,
         on_shot_generated: Callable[[StoryboardEpisodeOutput, StoryboardShot], Any] | None = None,
         max_shots: int | None = None,
+        initial_shots: list[StoryboardShot] | None = None,
     ) -> StoryboardEpisodeOutput:
         del previous_storyboard_history
-        shots: list[StoryboardShot] = []
+        shots: list[StoryboardShot] = list(initial_shots or [])
         self.last_text_call_count = 0
         max_generation_steps = self._max_generation_steps(max_shots)
         current_novel_full = str(current_novel_full or episode_story or "").strip()
@@ -449,7 +450,35 @@ class StoryboardService:
         current_shot_start_text, current_start_offset = self._source_anchor(current_novel_full, 0)
         if current_start_offset >= source_end_offset:
             raise ValueError(f"storyboard current_novel_full has no story text for {episode_key}")
-        for generation_step in range(1, max_generation_steps + 1):
+        if len(shots) > max_generation_steps:
+            return StoryboardEpisodeOutput(episode_key=episode_key, shots=shots[:max_generation_steps])
+        for expected_index, prefix_shot in enumerate(shots, start=1):
+            expected_shot_id = f"{episode_key}_shot_{expected_index:03d}"
+            if prefix_shot.index != expected_index or prefix_shot.shot_id != expected_shot_id:
+                raise ValueError(
+                    f"Storyboard prefix shot order mismatch: expected {expected_shot_id}, "
+                    f"got {prefix_shot.shot_id} index={prefix_shot.index}"
+                )
+            coverage = prefix_shot.source_coverage
+            if coverage is None:
+                raise ValueError(f"Storyboard prefix shot {prefix_shot.shot_id} has no source_coverage")
+            is_complete_prefix = expected_index >= max_generation_steps and not coverage.next_start_text
+            next_start_offset = self._validate_source_coverage(
+                coverage,
+                current_novel_full=current_novel_full,
+                current_shot_start_text=current_shot_start_text,
+                current_start_offset=current_start_offset,
+                is_chapter_complete=is_complete_prefix,
+                source_end_offset=source_end_offset,
+            )
+            if expected_index < max_generation_steps:
+                current_shot_start_text = str(coverage.next_start_text or "").strip()
+                if next_start_offset is None:
+                    raise ValueError(
+                        f"Storyboard prefix shot {prefix_shot.shot_id} cannot continue because next_start_text is empty"
+                    )
+                current_start_offset = next_start_offset
+        for generation_step in range(len(shots) + 1, max_generation_steps + 1):
             prompt = self.prompts.render(
                 "storyboard_generate",
                 title=state.title,

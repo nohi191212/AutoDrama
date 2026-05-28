@@ -18,6 +18,7 @@ class VolcengineSeedanceVideoProvider:
     """Volcengine Ark Seedance video provider."""
 
     name = "volcengine_seedance"
+    reference_video_requires_web_url = True
 
     _TERMINAL_SUCCESS = {"succeeded", "success", "completed", "done"}
     _TERMINAL_FAILURE = {"failed", "fail", "error", "expired", "cancelled", "canceled"}
@@ -190,6 +191,11 @@ class VolcengineSeedanceVideoProvider:
         return role_text if role_text in self._IMAGE_ROLES else "reference_image"
 
     def _ref_url_or_data(self, ref: AssetRef, *, expected_type: str) -> str | None:
+        if expected_type == "video":
+            for value in (ref.url, ref.path):
+                if isinstance(value, str) and value.startswith(("http://", "https://")):
+                    return value
+            return None
         if ref.url:
             return ref.url
         if asset_uri := self._asset_uri(ref):

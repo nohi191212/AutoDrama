@@ -121,6 +121,11 @@ def main() -> int:
         physical_space_key="layout_room::main_table",
         video_asset_id="video_episode_001_shot_001",
         video_asset_path="assets/videos/shots/episode_001_shot_001.mp4",
+        video_raw_response={
+            "content": {
+                "video_url": "https://example.invalid/episode_001_shot_001.mp4",
+            },
+        },
     )
     current_shot = StoryboardShot(
         shot_id="episode_001_shot_002",
@@ -160,6 +165,7 @@ def main() -> int:
         "Shared reference/previous video source mismatch",
     )
     require(refs[4].metadata.get("reference_roles") == ["scene_consistency", "previous_shot_continuity"], refs[4].metadata)
+    require(refs[4].url == "https://example.invalid/episode_001_shot_001.mp4", refs[4])
 
     payload = provider.build_payload("测试视频参考组合。", refs=refs, duration=6)
     output_dir = ROOT_DIR / ".tmp" / "smoke" / "shot_video_context_refs"
@@ -178,7 +184,7 @@ def main() -> int:
     require(len(audio_items) == 1, payload["content"])
     require(audio_items[0]["audio_url"]["url"].startswith("data:audio/mpeg;base64,"), payload["content"])
     require(len(video_items) == 1, payload["content"])
-    require(video_items[0]["video_url"]["url"].startswith("data:video/mp4;base64,"), payload["content"])
+    require(video_items[0]["video_url"]["url"] == "https://example.invalid/episode_001_shot_001.mp4", payload["content"])
 
     print("shot_video_context_refs_smoke=ok")
     print(f"payload_path={output_path}")

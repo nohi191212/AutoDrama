@@ -98,11 +98,12 @@ def main() -> int:
             "generation",
             "--config",
             str(ROOT_DIR / "config.yaml.example"),
-            "--max-shots",
-            "7",
+            "--shots",
+            "1-7",
         ]
     )
-    require(args.max_shots == 7, f"CLI --max-shots should parse override value, got {args.max_shots}")
+    require(args.shots == "1-7", f"CLI --shots should parse storyboard big-loop range, got {args.shots}")
+    require(not hasattr(args, "max_shots"), "CLI should not expose a max shot override")
 
     print("storyboard_deepseek_model_smoke=ok")
     print(f"storyboard_model={project_storyboard_provider.model}")

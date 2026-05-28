@@ -27,8 +27,13 @@ from autodrama.workflows.generation_checklist import (
 )
 from autodrama.workflows.context import WorkflowRunContext
 from autodrama.workflows.dynamic_assets import DynamicAssetNodeMixin
+from autodrama.workflows.generation_tasks import load_generation_tasks, save_generation_tasks
 from autodrama.workflows.nodes import GENERATION_NODE_NAMES, build_generation_episode_nodes
-from autodrama.workflows.selection import sort_episode_keys_in_story_order
+from autodrama.workflows.selection import (
+    shot_matches_selectors,
+    shot_selector_index_bounds,
+    sort_episode_keys_in_story_order,
+)
 from autodrama.workflows.storyboard_history import update_storyboard_history_from_episode
 
 GENERATION_NODES = GENERATION_NODE_NAMES
@@ -265,7 +270,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 shot.start_frame_source == "previous_shot_last_frame"
                 or not self._video_reference_mode_uses_previous_scene_video(reference_mode)
             )
-            else self._shot_video_reference_context(project_dir, episode, shot)
+            else self._shot_video_reference_context(project_dir, episode, shot, provider=provider)
         )
         if video_reference_context == "shared_reference_and_previous_video":
             parts.append(
@@ -355,9 +360,9 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         only: str | None,
         shot_selectors: list[str] | None,
     ) -> bool:
+        del shot_selectors
         return (
             only is None
-            and not shot_selectors
             and len(target_nodes) > 1
             and target_nodes[0] == "storyboard_generation"
             and any(
@@ -385,8 +390,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             return episode
         existing_episode = self._load_storyboard_episode(project_dir, episode_key)
         existing_by_id = {shot.shot_id: shot for shot in existing_episode.shots}
+        context = getattr(self, "_run_context", None)
+        active_selectors = set(getattr(context, "shot_selectors", set()) or set())
+        current_shot_selected = not active_selectors or shot_matches_selectors(episode, current_shot, active_selectors)
         for progress_shot in episode.shots:
-            if progress_shot.shot_id == current_shot.shot_id:
+            if progress_shot.shot_id == current_shot.shot_id and current_shot_selected:
                 continue
             existing_shot = existing_by_id.get(progress_shot.shot_id)
             if existing_shot is not None:
@@ -422,6 +430,163 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         replace_keys.update((item.episode_key, item.asset_id) for item in output.solidified_assets)
         self.dynamic_assets.merge_assets(project_dir, output.solidified_assets, replace_keys=replace_keys)
 
+    def _delete_project_file_if_exists(self, project_dir: Path, path_value: str | None) -> None:
+        if not path_value:
+            return
+        path = Path(path_value)
+        if not path.is_absolute():
+            path = project_dir / path
+        resolved_project_dir = project_dir.resolve()
+        resolved_path = path.resolve()
+        try:
+            resolved_path.relative_to(resolved_project_dir)
+        except ValueError:
+            get_logger().warning("skip deleting dynamic asset outside project: %s", resolved_path)
+            return
+        if resolved_path.exists() and resolved_path.is_file():
+            resolved_path.unlink()
+
+    def _clear_shot_dynamic_asset_fields(self, project_dir: Path, shot: StoryboardShot) -> None:
+        for audio in shot.dialogue_audio_assets:
+            self._delete_project_file_if_exists(project_dir, audio.asset_path)
+        for bgm in shot.shot_bgm_assets:
+            self._delete_project_file_if_exists(project_dir, bgm.asset_path)
+        self._delete_project_file_if_exists(project_dir, shot.ref_frame_asset_path)
+        self._delete_project_file_if_exists(project_dir, shot.video_asset_path)
+        self._delete_project_file_if_exists(project_dir, shot.video_last_frame_asset_path)
+
+        shot.dialogue_audio_assets = []
+        shot.shot_bgm_assets = []
+        shot.ref_frame_asset_id = None
+        shot.ref_frame_asset_path = None
+        shot.ref_frame_asset_url = None
+        shot.ref_frame_provider = None
+        shot.ref_frame_model = None
+        shot.ref_frame_request_id = None
+        shot.ref_frame_usage = {}
+        shot.ref_frame_raw_response = {}
+        shot.physical_space_key = None
+        shot.physical_space_note = None
+        shot.spatial_continuity_mode = None
+        shot.spatial_reference_shot_ids = []
+        shot.spatial_structure_summary = None
+        shot.spatial_constraints = []
+        shot.spatial_movement_allowed = None
+        shot.spatial_movement_reason = None
+        shot.spatial_plan_confidence = None
+        shot.video_asset_id = None
+        shot.video_asset_path = None
+        shot.video_provider = None
+        shot.video_model = None
+        shot.video_task_id = None
+        shot.video_task_status = None
+        shot.video_request_id = None
+        shot.video_last_frame_asset_path = None
+        shot.video_usage = {}
+        shot.video_raw_response = {}
+        shot.solidified_asset_ids = []
+
+    def _clear_selected_shot_dynamic_assets(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        episode: StoryboardEpisodeOutput,
+        shots: list[StoryboardShot],
+    ) -> None:
+        selected_shot_ids = {shot.shot_id for shot in shots}
+        for shot in episode.shots:
+            if shot.shot_id in selected_shot_ids:
+                self._clear_shot_dynamic_asset_fields(project_dir, shot)
+        self._save_storyboard_episode(project_dir, episode)
+
+        existing_assets = self.dynamic_assets.load_index(project_dir)
+        remaining_assets = [
+            item
+            for item in existing_assets
+            if not (item.episode_key == episode.episode_key and item.shot_id in selected_shot_ids)
+        ]
+        if len(remaining_assets) != len(existing_assets):
+            self.dynamic_assets.save_index(project_dir, remaining_assets)
+
+        registry = load_generation_tasks(project_dir, project_id=state.project_id)
+        task_keys = {
+            self._shot_video_task_key(episode.episode_key, shot_id)
+            for shot_id in selected_shot_ids
+        }
+        tasks = registry.get("tasks", [])
+        if isinstance(tasks, list):
+            remaining_tasks = [
+                task
+                for task in tasks
+                if not (isinstance(task, dict) and task.get("task_key") in task_keys)
+            ]
+            if len(remaining_tasks) != len(tasks):
+                registry["tasks"] = remaining_tasks
+                save_generation_tasks(self.repo, project_dir, registry)
+
+    def _selected_storyboard_prefix_shots(
+        self,
+        project_dir: Path,
+        *,
+        episode_key: str,
+        first_selected_index: int,
+    ) -> list[StoryboardShot]:
+        if first_selected_index <= 1:
+            return []
+
+        shot_path = self._shot_path(project_dir, episode_key)
+        if not shot_path.exists():
+            raise ValueError(
+                f"--shots starts at {first_selected_index}, but {episode_key} has no existing storyboard prefix. "
+                f"Run --shots 1-{first_selected_index} first or include shot 1 in the selected range."
+            )
+
+        existing_episode = self._load_storyboard_episode(project_dir, episode_key)
+        prefix = list(existing_episode.shots[: first_selected_index - 1])
+        if len(prefix) != first_selected_index - 1:
+            raise ValueError(
+                f"--shots starts at {first_selected_index}, but {episode_key} only has "
+                f"{len(existing_episode.shots)} existing storyboard shots. "
+                f"Run --shots 1-{first_selected_index} first or include the missing earlier shots."
+            )
+        for expected_index, shot in enumerate(prefix, start=1):
+            expected_id = f"{episode_key}_shot_{expected_index:03d}"
+            if shot.index != expected_index or shot.shot_id != expected_id:
+                raise ValueError(
+                    f"{episode_key} storyboard prefix is not sequential at shot {expected_index}: "
+                    f"got {shot.shot_id} index={shot.index}"
+                )
+            if shot.source_coverage is None:
+                raise ValueError(f"{episode_key} storyboard prefix shot {shot.shot_id} has no source_coverage")
+        return deepcopy(prefix)
+
+    def _clear_selected_storyboard_big_loop_assets(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        *,
+        episode_key: str,
+        selectors: set[str],
+    ) -> None:
+        if not selectors:
+            return
+        shot_path = self._shot_path(project_dir, episode_key)
+        if not shot_path.exists():
+            return
+        logger = get_logger()
+        episode = self._load_storyboard_episode(project_dir, episode_key)
+        selected_existing_shots = [
+            shot for shot in episode.shots if shot_matches_selectors(episode, shot, selectors)
+        ]
+        if not selected_existing_shots:
+            return
+        self._clear_selected_shot_dynamic_assets(project_dir, state, episode, selected_existing_shots)
+        logger.info(
+            "episode %s cleared dynamic assets for shots=%s before storyboard big loop",
+            episode_key,
+            ",".join(shot.shot_id for shot in selected_existing_shots),
+        )
+
     async def _run_generation_episode_by_shot(
         self,
         project_dir: Path,
@@ -436,8 +601,19 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         previous_callback = getattr(self, "_storyboard_shot_generated_callback", None)
         previous_merge_callback = getattr(self, "_storyboard_progress_merge_callback", None)
         previous_active_shot_selectors = getattr(self, "_active_shot_selectors", None)
+        context = getattr(self, "_run_context", None)
+        selected_shot_selectors = set(getattr(context, "shot_selectors", set()) or set())
+        previous_context_shot_selectors = set(context.shot_selectors) if context is not None else None
 
         async def run_downstream_for_shot(progress_episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> None:
+            if selected_shot_selectors and not shot_matches_selectors(progress_episode, shot, selected_shot_selectors):
+                logger.info(
+                    "episode %s shot %s storyboard generated as context; downstream nodes skipped by --shots",
+                    episode_key,
+                    shot.shot_id,
+                    extra={"episode_key": episode_key, "shot_id": shot.shot_id},
+                )
+                return
             logger.info(
                 "episode %s shot %s serial pipeline started nodes=%s",
                 episode_key,
@@ -445,6 +621,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 ",".join(downstream_nodes),
                 extra={"episode_key": episode_key, "shot_id": shot.shot_id},
             )
+            if context is not None:
+                context.shot_selectors = {shot.shot_id}
             self._active_shot_selectors = {shot.shot_id}
             try:
                 for node_index, node_name in enumerate(downstream_nodes, start=2):
@@ -486,6 +664,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                             state.current_node,
                         )
             finally:
+                if context is not None and previous_context_shot_selectors is not None:
+                    context.shot_selectors = set(previous_context_shot_selectors)
                 if previous_active_shot_selectors is None:
                     if hasattr(self, "_active_shot_selectors"):
                         delattr(self, "_active_shot_selectors")
@@ -585,12 +765,20 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             raise ValueError(f"Unsupported generation stop node: {until}")
         if only is not None and only not in GENERATION_NODES:
             raise ValueError(f"Unsupported generation only node: {only}")
+        target_nodes = self._target_generation_nodes(until, only)
         try:
             effective_max_shots = int(max_shots if max_shots is not None else self.settings.generation.max_shots)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"generation max_shots must be a positive integer; got {max_shots!r}") from exc
         if effective_max_shots < 1:
             raise ValueError(f"generation max_shots must be >= 1; got {effective_max_shots}")
+        shot_selector_bounds = (
+            shot_selector_index_bounds(shot_selectors)
+            if shot_selectors and "storyboard_generation" in target_nodes
+            else None
+        )
+        if shot_selector_bounds is not None:
+            effective_max_shots = shot_selector_bounds[1]
 
         logger = setup_logging(project_dir)
         state = self.repo.load_state(project_dir)
@@ -618,12 +806,9 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         selected_episode_keys = self._sort_episode_keys_in_story_order(state, selected_episode_keys)
         selected_set = set(selected_episode_keys)
 
-        target_nodes = self._target_generation_nodes(until, only)
-        if shot_selectors and "storyboard_generation" in target_nodes:
-            raise ValueError("--shots can only be used with generation nodes after storyboard_generation")
         run_outputs = self._empty_run_outputs(target_nodes)
         logger.info(
-            "workflow=generation project_id=%s until=%s only=%s force=%s episodes=%s shots=%s max_shots=%d",
+            "workflow=generation project_id=%s until=%s only=%s force=%s episodes=%s shots=%s storyboard_limit=%d",
             state.project_id,
             until,
             only or "-",
@@ -637,6 +822,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         previous_active_shot_selectors = getattr(self, "_active_shot_selectors", None)
         previous_force_generation = getattr(self, "_force_generation", None)
         previous_run_context = getattr(self, "_run_context", None)
+        previous_storyboard_initial_shots_by_episode = getattr(self, "_storyboard_initial_shots_by_episode", None)
         self._run_context = WorkflowRunContext(
             workflow_name="generation",
             project_dir=project_dir,
@@ -644,12 +830,21 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             only=only,
             force=force,
             selected_episode_keys=selected_episode_keys,
-            shot_selectors={str(selector).strip().lower() for selector in shot_selectors or [] if str(selector).strip()},
+            shot_selectors={
+                str(selector).strip().lower().replace("-", "_")
+                for selector in shot_selectors or []
+                if str(selector).strip()
+            },
             max_shots=effective_max_shots,
         )
+        self._storyboard_initial_shots_by_episode = {}
         self._force_generation = bool(force)
         if shot_selectors:
-            self._active_shot_selectors = {str(selector).strip().lower() for selector in shot_selectors if str(selector).strip()}
+            self._active_shot_selectors = {
+                str(selector).strip().lower().replace("-", "_")
+                for selector in shot_selectors
+                if str(selector).strip()
+            }
         elif hasattr(self, "_active_shot_selectors"):
             delattr(self, "_active_shot_selectors")
         try:
@@ -663,6 +858,27 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     ",".join(target_nodes),
                 )
                 try:
+                    if shot_selector_bounds is not None and "storyboard_generation" in target_nodes:
+                        first_selected_index, _ = shot_selector_bounds
+                        self._storyboard_initial_shots_by_episode[episode_key] = self._selected_storyboard_prefix_shots(
+                            project_dir,
+                            episode_key=episode_key,
+                            first_selected_index=first_selected_index,
+                        )
+                        if any(
+                            node_name in target_nodes
+                            for node_name in {
+                                "ref_frame_generation",
+                                "shot_video_generation",
+                                "dynamic_asset_solidification",
+                            }
+                        ):
+                            self._clear_selected_storyboard_big_loop_assets(
+                                project_dir,
+                                state,
+                                episode_key=episode_key,
+                                selectors=self._run_context.shot_selectors,
+                            )
                     if self._should_run_shot_serial_generation(
                         target_nodes,
                         only=only,
@@ -759,6 +975,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     delattr(self, "_run_context")
             else:
                 self._run_context = previous_run_context
+            if previous_storyboard_initial_shots_by_episode is None:
+                if hasattr(self, "_storyboard_initial_shots_by_episode"):
+                    delattr(self, "_storyboard_initial_shots_by_episode")
+            else:
+                self._storyboard_initial_shots_by_episode = previous_storyboard_initial_shots_by_episode
 
         processed_episode_keys = selected_set if target_nodes[-1] == GENERATION_NODES[-1] else None
         update_checklist_from_state(
