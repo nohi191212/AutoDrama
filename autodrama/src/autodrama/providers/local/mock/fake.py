@@ -21,6 +21,7 @@ from autodrama.core.schemas import (
     RoleEpisodeKeyAuditReviewOutput,
     RoleExtractOutput,
     RoleVoiceDesignOutput,
+    ScriptDetailExpandOutput,
     ScriptNovelExtractBatchOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
@@ -50,6 +51,18 @@ def _extract_prompt_int(prompt: str, label: str, default: int) -> int:
     if match:
         return int(match.group(1))
     return default
+
+
+def _extract_markdown_section(prompt: str, heading: str, next_heading: str | None = None) -> str:
+    marker = f"## {heading}"
+    if marker not in prompt:
+        return ""
+    text = prompt.split(marker, 1)[1].strip()
+    if next_heading:
+        next_marker = f"## {next_heading}"
+        if next_marker in text:
+            text = text.split(next_marker, 1)[0].strip()
+    return text.strip()
 
 
 def _episode_keys(episode_count: int) -> list[str]:
@@ -132,6 +145,21 @@ class FakeTextProvider:
                     key: f"第{index}集：林舟围绕合同调包事件推进调查与反击，冲突逐步升级。"
                     for index, key in enumerate(episode_keys, start=1)
                 },
+            }
+        elif schema is ScriptDetailExpandOutput or node_name == "script_detail_expand":
+            episode_key = str(metadata.get("episode_key") or episode_keys[0])
+            source_script = _extract_markdown_section(prompt, "输入剧本", "输出要求")
+            source_script = source_script or "第一集：\n1-1：室内-日-内\n人物：角色\n△角色站在原地。"
+            expanded_script = (
+                source_script.rstrip()
+                + "\n△细节补强：空气里有细微浮尘，光线从场景边缘斜切进来，"
+                + "角色的视线短暂停在关键物件上后才继续动作。"
+            )
+            data = {
+                "episode_key": episode_key,
+                "expanded_script": expanded_script,
+                "source_char_count": len(source_script),
+                "expanded_char_count": len(expanded_script),
             }
         elif schema is ScriptNovelEpisodeOutput or node_name == "script_novel_episode":
             episode_key = str(metadata.get("episode_key") or episode_keys[0])

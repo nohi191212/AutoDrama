@@ -29,6 +29,7 @@ from autodrama.providers.local.mock.fake import (
 from autodrama.providers.minimax.music.music_26 import MiniMaxMusicProvider
 from autodrama.providers.registry import ProviderRegistry
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
+from autodrama.providers.rightcode.text.gpt import RightCodeTextProvider
 from autodrama.providers.toapi.image.gpt_image import ToAPIImageProvider
 from autodrama.providers.volcengine.audio.seed_icl import VolcengineVoiceProvider
 from autodrama.providers.volcengine.audio.seed_tts import VolcengineSeedTTSProvider
@@ -76,6 +77,15 @@ class ProviderRouter:
             ALIYUN_TEXT_PROVIDER_NAMES,
             lambda provider_name, purpose, **_: QwenTextProvider(
                 self._openai_compatible_settings(provider_name),
+                self.settings.runtime,
+                model_key=purpose,
+            ),
+        )
+        self.registry.register(
+            "text",
+            {"rightcode"},
+            lambda provider_name, purpose, **_: RightCodeTextProvider(
+                self._settings_for(provider_name),
                 self.settings.runtime,
                 model_key=purpose,
             ),

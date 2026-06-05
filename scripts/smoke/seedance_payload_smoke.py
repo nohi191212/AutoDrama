@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
 
     assert payload["model"] == settings.providers["volcengine"].models["seedance_2"]
     assert payload["ratio"] == (args.ratio or settings.providers["volcengine"].options["video_ratio"])
-    assert payload["duration"] == max(4, min(15, round(args.duration)))
+    assert payload["duration"] == max(4, min(10, round(args.duration)))
     assert payload["content"][0]["type"] == "text"
     assert payload["content"][1]["type"] == "image_url"
     assert payload["content"][1]["role"] == "reference_image"

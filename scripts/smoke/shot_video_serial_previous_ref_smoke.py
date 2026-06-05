@@ -180,14 +180,26 @@ async def main_async() -> int:
         Path(str(shared_ref.path)).exists(),
         f"Shared video ref was not written before second submit: {shared_ref.path}",
     )
-    require("参考视频与上一镜视频为同一个素材" in provider.submissions[1]["prompt"], provider.submissions[1]["prompt"])
+    require("视频1" in provider.submissions[1]["prompt"], provider.submissions[1]["prompt"])
+    require(
+        "同场景镜头视频与上一 shot 镜头是同一个素材" in provider.submissions[1]["prompt"],
+        provider.submissions[1]["prompt"],
+    )
+    require("空间锚点和逻辑连贯性锚点" in provider.submissions[1]["prompt"], provider.submissions[1]["prompt"])
 
     fourth_refs = provider.submissions[3]["refs"]
     fourth_asset_types = [str(ref.metadata.get("asset_type") or "") for ref in fourth_refs]
     require(fourth_asset_types == ["reference_video", "previous_shot_video"], fourth_asset_types)
     require(fourth_refs[0].metadata.get("scene_reference_shot_id") == "episode_001_shot_002", fourth_refs[0].metadata)
     require(fourth_refs[1].metadata.get("previous_shot_id") == "episode_001_shot_003", fourth_refs[1].metadata)
-    require("本片段有两个不同的视频参考" in provider.submissions[3]["prompt"], provider.submissions[3]["prompt"])
+    require("视频1" in provider.submissions[3]["prompt"], provider.submissions[3]["prompt"])
+    require("视频2" in provider.submissions[3]["prompt"], provider.submissions[3]["prompt"])
+    require("同场景镜头视频，作为空间锚点" in provider.submissions[3]["prompt"], provider.submissions[3]["prompt"])
+    require("上一 shot 镜头视频，作为逻辑连贯性锚点" in provider.submissions[3]["prompt"], provider.submissions[3]["prompt"])
+    require(
+        "若二者不同，同场景镜头优先解决空间一致性" in provider.submissions[3]["prompt"],
+        provider.submissions[3]["prompt"],
+    )
 
     episode = workflow._load_storyboard_episode(project_dir, "episode_001")
     require(episode.shots[0].video_asset_path, "First shot video was not saved")

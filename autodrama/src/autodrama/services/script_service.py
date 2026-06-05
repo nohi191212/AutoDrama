@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from autodrama.core.schemas import (
+    ScriptDetailExpandOutput,
     ProjectState,
     ScriptNovelExtractBatchOutput,
     ScriptNovelEpisodeOutput,
@@ -56,6 +57,38 @@ class ScriptService:
                 "project_id": state.project_id,
                 "required_mapping_field": "episode_outlines",
                 "expected_keys": self.episode_keys(episode_count),
+            },
+        )
+
+    async def script_detail_expand(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        episode_key: str,
+        raw_script: str,
+        max_expand_ratio: float = 1.35,
+    ) -> ScriptDetailExpandOutput:
+        episode_count = self.episode_count(state)
+        episode_duration_seconds = self.episode_duration_seconds(state)
+        prompt = self.prompts.render(
+            "script_detail_expand",
+            title=state.title,
+            episode_key=episode_key,
+            episode_count=episode_count,
+            episode_duration_seconds=episode_duration_seconds,
+            max_expand_ratio=max_expand_ratio,
+            raw_script=raw_script,
+        )
+        return await provider.generate_json(
+            prompt,
+            ScriptDetailExpandOutput,
+            temperature=0.35,
+            metadata={
+                "node_name": "script_detail_expand",
+                "project_id": state.project_id,
+                "episode_key": episode_key,
+                "max_expand_ratio": max_expand_ratio,
             },
         )
 

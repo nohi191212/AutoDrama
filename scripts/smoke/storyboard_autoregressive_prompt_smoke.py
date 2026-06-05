@@ -236,12 +236,23 @@ async def main_async() -> int:
         StoryboardService.MAX_GENERATION_STEPS_PER_CHAPTER == 10,
         f"Storyboard max shot generation cap should be 10, got {StoryboardService.MAX_GENERATION_STEPS_PER_CHAPTER}",
     )
-    story_text = (
+    shootable_story_text = (
         "雨夜办公室，林舟发现合同关键页纸张颜色不对。苏晚递来旧邮件截图，"
         "邮件附件时间线证明合同被调包。次日会议室，赵启试图压住议程，"
         "林舟投屏证据并公开反击。"
     )
-    current_novel_full = f"源章节：第1章-第2章。\n\n{story_text}\n\n（未完待续）"
+    current_novel_full = (
+        "源章节：第1章-第2章。\n\n"
+        "《合同风暴》\n"
+        "人物小传：\n"
+        "林舟：二十八岁职场青年，长期被赵启压制。\n"
+        "苏晚：数据分析师，后续会帮助林舟调查更多线索。\n\n"
+        "第一集：\n"
+        "1-1：雨夜办公室-夜-内\n"
+        "人物：林舟、苏晚\n"
+        f"{shootable_story_text}\n\n"
+        "（未完待续）"
+    )
 
     terminal_source = "源章节：第1章-第2章。\n\n雨夜办公室，林舟公开反击。\n\n（未完待续）"
     terminal_start_text, terminal_start_offset = service._source_anchor(terminal_source, 0)
@@ -303,6 +314,43 @@ async def main_async() -> int:
     require(
         whitespace_end == whitespace_end_source.rfind("后文。"),
         f"Whitespace-normalized end_text did not advance past covered text: {whitespace_end}",
+    )
+
+    quote_variant_next_source = (
+        "“铁牛哥，你再拍几次，我怕是进秘境之前就被你拍散架了。”韩默揉着肩膀苦笑道。\n\n"
+        "铁牛咧嘴一乐，露出一口与粗犷外表不符的整齐白牙。他是唯一知道韩默底细的人。"
+        "两个月前韩默被清虚门外门管事陷害，逃出宗门时身上只有一件破褂子，是铁牛路过，"
+        "分了他半块粗饼。后来韩默凭着一手炼丹术在散修里渐渐站稳脚跟，"
+        "铁牛也沾光得了些好处，两人就这么成了过命的交情。\n\n"
+        "“愁啥？玉牌都到手了，难道还想退货？”铁牛从怀里掏出一张皱巴巴的羊皮地图。"
+    )
+    quote_variant_coverage = StoryboardSourceCoverage(
+        start_text="“铁牛哥，你再拍几次，我怕是进秘境之前就被你拍散架了。”韩默揉着肩膀苦笑道。",
+        end_text="“铁牛哥，你再拍几次，我怕是进秘境之前就被你拍散架了。”韩默揉着肩膀苦笑道。",
+        next_start_text=(
+            "铁牛咧嘴一乐，露出一口与粗犷外表不符的整齐白牙。他是唯一知道韩默底细的人。"
+            "两个月前韩默被清虚门外门管事陷害，逃出宗门时身上只有一件破褂子，是铁牛路过，"
+            "分了他半块粗饼。后来韩默凭着一手炼丹术在散修里渐渐站稳脚跟，"
+            "铁牛也沾光得了些好处，两人就这么成了过命的交情。\n"
+            '"愁啥？玉牌都到手了，难道还想退货？"铁牛从怀里掏出一张皱巴巴的羊皮地图。'
+        ),
+        note="next anchor tolerates straight quotes and is canonicalized to a short source cursor",
+    )
+    quote_variant_next = service._validate_source_coverage(
+        quote_variant_coverage,
+        current_novel_full=quote_variant_next_source,
+        current_shot_start_text="“铁牛哥，你再拍几次，我怕是进秘境之前就被你拍散架了。”韩默揉着肩膀苦笑道。",
+        current_start_offset=0,
+        is_chapter_complete=False,
+    )
+    require(
+        quote_variant_next == quote_variant_next_source.find("铁牛咧嘴一乐"),
+        f"Quote-normalized next_start_text resolved to wrong offset: {quote_variant_next}",
+    )
+    require(
+        quote_variant_coverage.next_start_text
+        == "铁牛咧嘴一乐，露出一口与粗犷外表不符的整齐白牙。他是唯一知道韩默底细的人。",
+        f"next_start_text should be canonicalized to a short source anchor: {quote_variant_coverage.next_start_text}",
     )
 
     leading_variant_source = (
@@ -427,17 +475,31 @@ async def main_async() -> int:
     require(schema_names == {StoryboardNextShotOutput.__name__}, f"Unexpected schemas: {schema_names}")
     require("已经生成并已覆盖的分镜" in provider.calls[0]["prompt"], "Prompt missing covered storyboard guidance")
     require("当前 shot 起点原文" in provider.calls[0]["prompt"], "Prompt missing next shot source cursor")
-    require("0-4 秒：" in provider.calls[0]["prompt"], "Prompt missing official-style timed video_prompt guidance/example")
+    require("0-3 秒：" in provider.calls[0]["prompt"], "Prompt missing official-style timed video_prompt guidance/example")
     require("方括号标签" in provider.calls[0]["prompt"], "Prompt missing guidance against old bracketed style")
     require("硬切到" in provider.calls[0]["prompt"], "Prompt missing natural explicit cut guidance/example")
     require("每一句对白" in provider.calls[0]["prompt"], "Prompt missing dialogue-in-video_prompt requirement")
     require("参考音频" in provider.calls[0]["prompt"], "Prompt missing audio reference guidance")
     require("首尾衔接要求" in provider.calls[0]["prompt"], "Prompt missing hard-cut boundary guidance")
+    require("运镜协调性要求" in provider.calls[0]["prompt"], "Prompt missing camera movement coordination guidance")
+    require("人物、场景和空间关系都相对固定" in provider.calls[0]["prompt"], "Prompt missing stable-scene camera restraint guidance")
+    require("快速拉近后又快速拉远" in provider.calls[0]["prompt"], "Prompt missing abrupt push-pull camera warning")
+    require("新进入一个大场景" in provider.calls[0]["prompt"], "Prompt missing large-scene camera exception")
+    require("人物战斗、奔跑、追逐" in provider.calls[0]["prompt"], "Prompt missing action camera exception")
     require("内部 J-Cut" in provider.calls[0]["prompt"], "Prompt missing internal-only J-Cut guidance")
     require("可演性预算" in provider.calls[0]["prompt"], "Prompt missing performability budget guidance")
+    require("4-10 秒" in provider.calls[0]["prompt"], "Prompt missing 10-second shot budget")
+    require("最多承载 1 个说话角色" in provider.calls[0]["prompt"], "Prompt missing single-speaker limit")
     require("最多 2 句完整对白" in provider.calls[0]["prompt"], "Prompt missing dialogue density limit")
     require("不超过 50 个中文字符" in provider.calls[0]["prompt"], "Prompt missing 50-char dialogue limit")
+    require("画面中央人物全身图 + 场景参考图" in provider.calls[0]["prompt"], "Prompt missing downstream image reference limit")
+    require("一个画面中央人物 intro video" in provider.calls[0]["prompt"], "Prompt missing downstream visual intro limit")
+    require("画面主体" in provider.calls[0]["prompt"], "Prompt missing VO visual-subject guidance")
+    require("B（VO）：台词" in provider.calls[0]["prompt"], "Prompt missing explicit VO dialogue guidance")
+    require("不张嘴、不对口型" in provider.calls[0]["prompt"], "Prompt missing onscreen/offscreen voice separation guidance")
     require("犹豫时，切短一点" in provider.calls[0]["prompt"], "Prompt missing low-density split preference")
+    require("context_only" in provider.calls[0]["prompt"], "Prompt missing mature-screenplay context-only guidance")
+    require("不是文本句子" in provider.calls[0]["prompt"], "Prompt missing beat-based shot unit guidance")
     require("max_shots_per_chapter" not in provider.calls[0]["prompt"], "Prompt should not expose shot count cap")
     require("remaining_shot_slots" not in provider.calls[0]["prompt"], "Prompt should not expose remaining shot slots")
     require(
@@ -449,11 +511,12 @@ async def main_async() -> int:
         "Provider metadata should not expose remaining shot slots",
     )
     require(
-        provider.calls[0]["metadata"]["current_shot_start_text"].startswith("雨夜办公室"),
-        f"First storyboard cursor should skip source chapter metadata: {provider.calls[0]['metadata']}",
+        provider.calls[0]["metadata"]["current_shot_start_text"].startswith("1-1：雨夜办公室"),
+        f"First storyboard cursor should skip mature screenplay header: {provider.calls[0]['metadata']}",
     )
     first_cursor_section = provider.calls[0]["prompt"].split("当前 shot 起点原文：", 1)[1].split("## 资产与风格", 1)[0]
     require("源章节" not in first_cursor_section, f"First cursor section should not include metadata: {first_cursor_section}")
+    require("人物小传" not in first_cursor_section, f"First cursor section should not include character bios: {first_cursor_section}")
     require('"source_coverage"' in provider.calls[1]["prompt"], "Second prompt missing first shot source coverage")
     require("episode_001_shot_001" in provider.calls[1]["prompt"], "Second prompt missing first shot id")
     require("episode_001_shot_002" in provider.calls[2]["prompt"], "Third prompt missing two generated shots context")

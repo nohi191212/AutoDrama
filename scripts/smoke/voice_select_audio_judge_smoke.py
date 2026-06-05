@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import shutil
 import sys
@@ -13,7 +14,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from autodrama.config import Settings  # noqa: E402
-from autodrama.core.schemas import ProjectState, Role, RoleAudio, ScriptBundle  # noqa: E402
+from autodrama.core.schemas import ProjectState, Role, RoleAppearance, RoleAudio, ScriptBundle  # noqa: E402
 from autodrama.providers.router import ProviderRouter  # noqa: E402
 from autodrama.repositories.project_repo import ProjectRepository  # noqa: E402
 from autodrama.repositories.voice_catalog_repo import VoiceCatalogRepository  # noqa: E402
@@ -26,6 +27,15 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def write_png(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/luz7XwAAAABJRU5ErkJggg=="
+        )
+    )
+
+
 async def main_async() -> int:
     tmp_root = ROOT_DIR / ".tmp" / "smoke" / "voice_select_audio_judge"
     if tmp_root.exists():
@@ -35,6 +45,8 @@ async def main_async() -> int:
     repo = ProjectRepository(settings)
     project_dir = tmp_root / "project"
     repo._create_project_dirs(project_dir)
+    role_full_body_path = project_dir / "assets" / "images" / "roles" / "role_linz_appearance_base_full_body.png"
+    write_png(role_full_body_path)
 
     router = ProviderRouter(settings, provider_override="fake")
     catalog_repo = VoiceCatalogRepository.from_settings(settings)
@@ -58,6 +70,16 @@ async def main_async() -> int:
                 intro="二十八岁男性职场青年，冷静克制。",
                 personality="谨慎、隐忍",
                 episode_keys=["episode_001"],
+                appearances={
+                    "base": RoleAppearance(
+                        id="role_linz_appearance_base",
+                        role_id="role_linz",
+                        name="base",
+                        desc="二十八岁男性职场青年，身形清瘦，穿深色西装，气质冷静克制。",
+                        full_body_image_asset_id="role_linz_appearance_base_full_body",
+                        full_body_image_asset_path="assets/images/roles/role_linz_appearance_base_full_body.png",
+                    )
+                },
                 audio={
                     "normal": RoleAudio(
                         id="role_linz_audio_normal",
@@ -77,6 +99,10 @@ async def main_async() -> int:
     require(item["selection_source"] == "omni_judge", f"voice_select did not use audio judge: {item}")
     require(item["selected_voice_type"] == "fake_male_voice", "unexpected selected voice_type")
     require("audio_judge" in item["raw_response"], "audio judge raw response missing")
+    require(
+        item["raw_response"].get("audio_judge_role_visual_ref_count") == 1,
+        f"audio judge did not receive role visual ref: {item}",
+    )
     require(state.roles["role_linz"].voice_type == "fake_male_voice", "selected voice not bound to state role")
 
     print("voice_select_audio_judge_smoke=ok")

@@ -132,7 +132,7 @@ async def main_async() -> int:
     provider_settings.options["video_resolution"] = "720p"
     provider_settings.options["video_min_duration_seconds"] = 4
     provider_settings.options["video_max_duration_seconds"] = max(
-        int(provider_settings.options.get("video_max_duration_seconds", 15)),
+        int(provider_settings.options.get("video_max_duration_seconds", 10)),
         4,
     )
     provider = VolcengineSeedanceVideoProvider(provider_settings, settings.runtime)

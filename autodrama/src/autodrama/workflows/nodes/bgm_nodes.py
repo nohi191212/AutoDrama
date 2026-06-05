@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from autodrama.core.ids import normalize_id
-from autodrama.core.schemas import BGM, ProjectState, StaticAssetGenerationItem, StaticAssetGenerationOutput
+from autodrama.core.schemas import BGM, BGMDesignOutput, ProjectState, StaticAssetGenerationItem, StaticAssetGenerationOutput
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
@@ -62,6 +62,13 @@ class BGMDesignNode(BGMNodeBase):
     name = "bgm_design"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        expected_bgm_count = self.repo.settings.project.bgm_count
+        if expected_bgm_count == 0:
+            state.bgms = {}
+            self.repo.save_node_output(project_dir, self.name, BGMDesignOutput(bgms=[]))
+            self.logger.info("bgm_design skipped because project.bgm_count is 0")
+            return state
+
         provider = self.router.text("bgm_plan")
         self.logger.info(
             "node=bgm_design provider=%s model=%s",
@@ -73,7 +80,6 @@ class BGMDesignNode(BGMNodeBase):
             provider,
             episode_stories=self.episode_stories(project_dir, state),
         )
-        expected_bgm_count = self.repo.settings.project.bgm_count
         if len(output.bgms) != expected_bgm_count:
             raise ValueError(f"bgm_design must generate exactly {expected_bgm_count} BGM items; got {len(output.bgms)}")
         bgm_ids = [normalize_id("bgm", item.name) for item in output.bgms]

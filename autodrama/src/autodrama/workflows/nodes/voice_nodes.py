@@ -130,7 +130,7 @@ class VoiceNodeBase:
 
 class VoiceSelectNode(VoiceNodeBase):
     name = "voice_select"
-    selection_prompt_version = "voice_select.text_shortlist.filtered_flash_top3.v3"
+    selection_prompt_version = "voice_select.text_shortlist.filtered_flash_top3.visual_refs.v4"
     candidate_limit = 3
     text_shortlist_model = "deepseek-v4-flash"
     text_shortlist_batch_size = 80
@@ -147,6 +147,19 @@ class VoiceSelectNode(VoiceNodeBase):
             "importance": role.importance,
             "episode_keys": role.episode_keys,
             "voice_summary": role.voice_summary,
+            "appearances": {
+                name: {
+                    "id": appearance.id,
+                    "desc": appearance.desc,
+                    "full_body_image_asset_path": appearance.full_body_image_asset_path,
+                    "full_body_image_asset_url": appearance.full_body_image_asset_url,
+                    "asset_path": appearance.asset_path,
+                    "asset_url": appearance.asset_url,
+                    "design_image_asset_path": appearance.design_image_asset_path,
+                    "design_image_asset_url": appearance.design_image_asset_url,
+                }
+                for name, appearance in sorted(role.appearances.items())
+            },
             "audio": {
                 emotion: {
                     "id": audio.id,
@@ -318,8 +331,67 @@ class VoiceSelectNode(VoiceNodeBase):
         return selection.model_copy(update={"raw_response": raw_response})
 
     @staticmethod
-    def role_design_for_prompt(role: Role) -> dict[str, Any]:
-        return {
+    def role_visual_refs(project_dir: Path, role: Role) -> list[AssetRef]:
+        refs: list[AssetRef] = []
+        appearances = list(role.appearances.values())
+        appearances.sort(key=lambda item: (0 if item.name == "base" else 1, item.name, item.id))
+        for appearance in appearances:
+            asset_type = "role_full_body"
+            asset_path = appearance.full_body_image_asset_path
+            asset_url = appearance.full_body_image_asset_url
+            asset_id = appearance.full_body_image_asset_id
+            if not (asset_path or asset_url):
+                asset_type = "role_appearance"
+                asset_path = appearance.asset_path or appearance.design_image_asset_path
+                asset_url = appearance.asset_url or appearance.design_image_asset_url
+                asset_id = appearance.asset_id or appearance.design_image_asset_id or appearance.id
+            if not (asset_path or asset_url):
+                continue
+            path = None
+            if asset_path:
+                candidate = Path(asset_path)
+                path = str(candidate if candidate.is_absolute() else project_dir / candidate)
+            refs.append(
+                AssetRef(
+                    id=asset_id or appearance.id,
+                    type="image",
+                    path=path,
+                    url=asset_url,
+                    metadata={
+                        "asset_type": asset_type,
+                        "reference_source": "voice_select_role_visual",
+                        "role_id": role.id,
+                        "role_name": role.name,
+                        "appearance_id": appearance.id,
+                        "appearance_name": appearance.name,
+                        "desc": appearance.desc,
+                    },
+                )
+            )
+            break
+        return refs
+
+    @classmethod
+    def role_visual_refs_for_prompt(cls, project_dir: Path, role: Role) -> list[dict[str, Any]]:
+        refs = cls.role_visual_refs(project_dir, role)
+        return [
+            {
+                "id": ref.id,
+                "type": ref.type,
+                "asset_type": ref.metadata.get("asset_type"),
+                "role_name": ref.metadata.get("role_name"),
+                "appearance_id": ref.metadata.get("appearance_id"),
+                "appearance_name": ref.metadata.get("appearance_name"),
+                "desc": ref.metadata.get("desc"),
+                "path": ref.path,
+                "url": ref.url,
+            }
+            for ref in refs
+        ]
+
+    @classmethod
+    def role_design_for_prompt(cls, project_dir: Path, role: Role) -> dict[str, Any]:
+        design = {
             "role_id": role.id,
             "role_name": role.name,
             "intro": role.intro,
@@ -336,10 +408,19 @@ class VoiceSelectNode(VoiceNodeBase):
                 for audio in role.audio.values()
             ],
         }
+        visual_refs = cls.role_visual_refs_for_prompt(project_dir, role)
+        if visual_refs:
+            design["visual_reference_assets"] = visual_refs
+            design["visual_voice_matching_requirement"] = (
+                "选择音色时必须参考人物图呈现的视觉年龄、体态、气质、服装风格和角色能量；"
+                "避免声线年龄感、厚度、甜度、成熟度或压迫感与人物形象明显脱节。"
+            )
+        return design
 
     async def text_shortlist(
         self,
         *,
+        project_dir: Path,
         service: VoiceCatalogService,
         manifest: VoiceCatalogManifest,
         role: Role,
@@ -367,7 +448,7 @@ class VoiceSelectNode(VoiceNodeBase):
                 "text_shortlist_filters": filter_metadata,
             }
 
-        role_design = service.role_design_for_shortlist(role)
+        role_design = self.role_design_for_prompt(project_dir, role)
         voice_profiles = service.voice_profiles_for_prompt(role, manifest, candidates=candidate_pool)
         candidate_by_id = {
             str(candidate.candidate_id): candidate
@@ -455,19 +536,22 @@ class VoiceSelectNode(VoiceNodeBase):
         self,
         *,
         role: Role,
+        project_dir: Path,
         service: VoiceCatalogService,
         manifest: VoiceCatalogManifest,
         top_candidates: list[VoiceCandidateItem],
     ) -> tuple[VoiceCandidateItem, VoiceSelectAudioJudgeOutput] | None:
         if not top_candidates:
             return None
-        refs = self.audio_judge_refs(
+        role_visual_refs = self.role_visual_refs(project_dir, role)
+        audio_refs = self.audio_judge_refs(
             service=service,
             manifest=manifest,
             top_candidates=top_candidates,
         )
+        refs = [*role_visual_refs, *audio_refs]
         expected_ref_count = len(top_candidates) * len(manifest.sample_emotions)
-        if len(refs) < expected_ref_count:
+        if len(audio_refs) < expected_ref_count:
             return None
         judge_getter = getattr(self.router, "judge", None)
         if not callable(judge_getter):
@@ -490,8 +574,24 @@ class VoiceSelectNode(VoiceNodeBase):
         ]
         prompt = prompts.render(
             "voice_select_audio_judge",
-            role_design=json.dumps(self.role_design_for_prompt(role), ensure_ascii=False, indent=2),
+            role_design=json.dumps(self.role_design_for_prompt(project_dir, role), ensure_ascii=False, indent=2),
             candidate_profiles=json.dumps(candidate_profiles, ensure_ascii=False, indent=2),
+            role_visual_refs=json.dumps(
+                [
+                    {
+                        "id": ref.id,
+                        "asset_type": ref.metadata.get("asset_type"),
+                        "appearance_id": ref.metadata.get("appearance_id"),
+                        "appearance_name": ref.metadata.get("appearance_name"),
+                        "desc": ref.metadata.get("desc"),
+                        "path": ref.path,
+                        "url": ref.url,
+                    }
+                    for ref in role_visual_refs
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
             sample_refs=json.dumps(
                 [
                     {
@@ -503,7 +603,7 @@ class VoiceSelectNode(VoiceNodeBase):
                         "sample_text": ref.metadata.get("sample_text"),
                         "path": ref.path,
                     }
-                    for ref in refs
+                    for ref in audio_refs
                 ],
                 ensure_ascii=False,
                 indent=2,
@@ -527,6 +627,8 @@ class VoiceSelectNode(VoiceNodeBase):
                 "role_id": role.id,
                 "role_name": role.name,
                 "candidates": candidate_profiles,
+                "role_visual_refs": [ref.model_dump(mode="json") for ref in role_visual_refs],
+                "audio_ref_count": len(audio_refs),
             },
         )
         by_id = {
@@ -546,6 +648,7 @@ class VoiceSelectNode(VoiceNodeBase):
         self,
         *,
         provider: Any,
+        project_dir: Path,
         service: VoiceCatalogService,
         manifest: VoiceCatalogManifest,
         catalog_hash: str,
@@ -592,6 +695,7 @@ class VoiceSelectNode(VoiceNodeBase):
         }
         try:
             top_candidates, shortlist_response = await self.text_shortlist(
+                project_dir=project_dir,
                 service=service,
                 manifest=manifest,
                 role=role,
@@ -616,6 +720,7 @@ class VoiceSelectNode(VoiceNodeBase):
             try:
                 judged = await self.audio_judge_selection(
                     role=role,
+                    project_dir=project_dir,
                     service=service,
                     manifest=manifest,
                     top_candidates=top_candidates,
@@ -626,6 +731,7 @@ class VoiceSelectNode(VoiceNodeBase):
             if judged is not None:
                 selected_candidate, judged_output = judged
                 raw_response["audio_judge"] = judged_output.model_dump(mode="json")
+                raw_response["audio_judge_role_visual_ref_count"] = len(self.role_visual_refs(project_dir, role))
             selection = service.selection_from_candidate(
                 role=role,
                 candidate=selected_candidate,
@@ -715,6 +821,7 @@ class VoiceSelectNode(VoiceNodeBase):
         async def process_role(role: Role) -> None:
             selection = await self.select_role_voice(
                 provider=provider,
+                project_dir=project_dir,
                 service=service,
                 manifest=manifest,
                 catalog_hash=catalog_hash,

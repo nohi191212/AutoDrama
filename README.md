@@ -130,7 +130,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - 全局 BGM: `minimax`
 - 镜头视频: `volcengine`
 
-所有图片生成默认通过 ToAPI GPT-Image-2：角色全身图、角色三视图、道具图、场景图和镜头参考帧都会本地保存图片文件，并同时保存 provider 返回的图片 URL。后续把这些图片作为参考图传给图片或视频模型时，会优先传保存的网络 URL，只有没有 URL 时才回退到本地文件。`providers.volcengine.options.video_reference_mode: ref_frame_role_prop_previous_video` 是 Seedance 的默认视频参考模式。该模式会把镜头参考帧、当前 shot 涉及的角色图、道具图、角色/对白音频，以及同一物理空间中上一片段已生成的视频传给 Seedance；不会额外传场景 layout 图或角色介绍视频。视频 prompt 中会加入参考帧处理约束：参考帧用于锁定人物外观、服装、道具造型、场景表现和空间关系，但不要把参考帧逐帧复刻成首帧或尾帧；上一片段视频只作为同场景空间和动态节奏参考。
+所有图片生成默认通过 ToAPI GPT-Image-2：角色全身图、角色三视图、道具图、场景图和镜头参考帧都会本地保存图片文件，并同时保存 provider 返回的图片 URL。后续把这些图片作为参考图传给图片或视频模型时，会优先传保存的网络 URL，只有没有 URL 时才回退到本地文件。`providers.volcengine.options.video_reference_mode: layout_role_intro_previous_video` 是 Seedance 的默认视频参考模式。该模式暂时不把镜头参考帧、人物设定图或道具设定图传给 Seedance；图片参考只保留无人物空场景 layout 图，视频参考保留角色基础介绍视频、同一物理空间中最近已生成的镜头视频和上一 shot 视频，角色/对白音频锚点仍会传入。视频 prompt 会按实际传入素材编号说明职责：场景图只锁定空间，角色介绍视频锁定人物形象和动态规律，同场镜头锁定空间连续性，上一镜头锁定硬切后的逻辑连贯性。
 
 本地验证或演示可以使用 `--fake`，不会调用真实外部服务。
 
@@ -152,7 +152,68 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli init --config config.ya
 
 初始化后会在 `outputs/<project_id>` 下写入 `state.json`、`project.json` 和基础目录结构。
 
-### 2. 运行预生成流程
+### 2. 导入成熟分场剧本
+
+如果输入文件已经是成熟分场剧本，不想让 `script_outline` / `script_novel` 再重写剧情，可以先把剧本导入为锁定的 `novel_full`：
+
+```powershell
+$env:PYTHONPATH="autodrama/src"
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli import-script --config config.yaml --project huyao --script inputs/狐妖.md --force
+```
+
+需要在导入前只补少量动作、空间、光影、材质、声音等可拍摄细节时，加 `--detail-expand`：
+
+```powershell
+$env:PYTHONPATH="autodrama/src"
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli import-script --config config.yaml --project huyao --script inputs/狐妖.md --detail-expand --expanded-script-out inputs/狐妖_细化.md --force
+```
+
+如果项目已经生成了角色图、音频、角色视频等资产，只想替换剧本文本并保留已有资产，不要使用 `--force`，改用 `--preserve-assets`：
+
+```powershell
+$env:PYTHONPATH="autodrama/src"
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli import-script --config config.yaml --project huyao --script inputs/狐妖.md --detail-expand --expanded-script-out inputs/狐妖_细化.md --preserve-assets
+```
+
+Windows 下也可以直接用快捷脚本。它默认会保留已有资产、执行保守细化，并自动刷新 `script_novel_extract`：
+
+```powershell
+run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐妖.md --expanded-script-out inputs/狐妖_细化.md
+```
+
+需要同时刷新分镜时加 `--storyboard`；默认不会生成参考帧或镜头视频：
+
+```powershell
+run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐妖.md --expanded-script-out inputs/狐妖_细化.md --storyboard --episodes 1
+```
+
+`--preserve-assets` 会保留角色、道具、场景、图片、音频、视频状态，只把 `script_novel_extract` 和动态分镜生成节点标记为需要重跑。导入后先刷新剧情摘要：
+
+```powershell
+run\start.cmd --config config.yaml --project huyao --only script_novel_extract
+```
+
+再按需要重新生成后续分镜：
+
+```powershell
+run\start.cmd --generation --config config.yaml --project huyao --only storyboard_generation --episodes 1
+```
+
+`import-script` 会写入 `assets/json/scripts/novel_full/episode_001.json`，并把 `script_outline`、`script_novel` 标记为已完成。后续普通预生成会跳过重写型脚本节点，直接从 `script_novel_extract` 继续：
+
+```powershell
+run\start.cmd --config config.yaml --project huyao
+```
+
+成熟剧本模式建议先跑到设计审查节点，确认角色、道具、场景没有被过度抽取：
+
+```powershell
+run\start.cmd --config config.yaml --project huyao --until layout_dedupe_review
+```
+
+如果暂时不需要 BGM 预资产，可以把 `project.bgm_count` 设为 `0`。
+
+### 3. 运行预生成流程
 
 使用 Windows 快捷脚本：
 
@@ -212,7 +273,7 @@ role_intro_video_generation
 
 `role_episode_key_audit` 在 `role_extract` 之后运行，会以 30 并发逐个检查角色 JSON 的 `episode_keys` 覆盖情况；如果发现遗漏，只向 `role_extract*`、已有 `role_design`、角色 JSON 和 state 角色记录追加缺失的 `episode_keys/source_chapters`，不会删除或重排原有条目。
 
-### 3. 运行动态资产生成流程
+### 4. 运行动态资产生成流程
 
 只运行动态资产：
 
@@ -236,7 +297,7 @@ shot_video_generation
 dynamic_asset_solidification
 ```
 
-### 4. 一次性运行预生成和动态资产
+### 5. 一次性运行预生成和动态资产
 
 ```powershell
 run\dynamic_assets.cmd --config config.yaml --project <project_id>

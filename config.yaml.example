@@ -14,7 +14,7 @@ project:
   episode_count: 1
   # Target duration for each episode, in seconds.
   episode_duration_seconds: 30
-  # Exact number of reusable BGM tracks that bgm_design should ask the LLM to describe.
+  # Exact number of reusable BGM tracks; set 0 to skip BGM design/generation.
   bgm_count: 3
 output:
   # All generated assets are saved under this directory.
@@ -118,12 +118,17 @@ providers:
     base_url: https://www.right.codes/draw
     api_key_env: RIGHTCODE_API_KEY
     models:
+      text: gpt-5.5
+      storyboard: gpt-5.5
       image: gpt-image-2
       # Used by role_multiview_generation for role multiview design images.
       role_multiview: gpt-image-2-vip
       # Used by role_full_body_generation for the 1:2 full-body reference image.
       role_full_body: gpt-image-2
     options:
+      text_response_format: true
+      reasoning_effort: xhigh
+      storyboard_reasoning_effort: xhigh
       size: 1024x1024
       # Used by role_multiview_generation for role multiview design images.
       role_multiview_size: 3840x2160
@@ -252,16 +257,23 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # Sends the shot reference frame, current-shot role/prop images, role/dialogue audio, and
-      # the previous same-scene shot video to Seedance. It does not send layout sheets or role intro videos.
-      # The video prompt also reduces real-person traits in the reference frame while preserving
-      # anime/CG character identity, lowering real-person privacy false positives from near-photographic faces.
-      video_reference_mode: ref_frame_role_prop_previous_video
+      # Seedance video refs: skip shot reference frames, broad role sheets, and prop sheets for now.
+      # Images are limited to the visual-subject full-body image plus empty layout/scene image.
+      # Videos can include the visual-subject intro video and previous shot video.
+      # Role/dialogue audio anchors are still allowed for the only speaking role.
+      video_reference_mode: layout_role_intro_previous_video
+      # Shot video refs are capped to: visual-subject full-body image, layout/scene image,
+      # visual-subject intro video, previous shot video, and one speaking-role audio reference.
+      # Keep role intro videos short so previous-shot video + intro video stays within Seedance r2v limits.
+      max_reference_images: 2
+      max_reference_audio: 1
+      max_reference_videos: 2
+      max_reference_video_total_duration_seconds: 15.2
       video_poll_interval_seconds: 30
       return_last_frame: true
       generate_audio: false
       video_min_duration_seconds: 4
-      video_max_duration_seconds: 15
+      video_max_duration_seconds: 10
       tts_resource_id: seed-tts-2.0
       tts_fallback_resource_id: seed-tts-1.0
       instruction_mode: none

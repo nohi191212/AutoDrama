@@ -58,6 +58,165 @@ class DynamicAssetNodeMixin:
     ) -> bool:
         return shot_matches_selectors(episode, shot, normalize_shot_selectors(selectors))
 
+    @staticmethod
+    def _internal_shot_logs_suppressed(workflow: object) -> bool:
+        return bool(getattr(workflow, "_suppress_internal_generation_shot_logs", False))
+
+    @staticmethod
+    def _prompt_log_safe_name(value: object, *, fallback: str) -> str:
+        text = str(value or "").strip() or fallback
+        invalid = '<>:"/\\|?*'
+        cleaned = "".join("_" if char in invalid or ord(char) < 32 else char for char in text)
+        cleaned = cleaned.strip(" .")
+        return cleaned or fallback
+
+    @classmethod
+    def _prompt_log_shot_dir(
+        cls,
+        shot: StoryboardShot | None = None,
+        *,
+        shot_index: int | None = None,
+        shot_id: str | None = None,
+    ) -> str:
+        if shot is not None:
+            shot_index = shot.index
+            shot_id = shot.shot_id
+        try:
+            return f"shot_{int(shot_index):03d}"
+        except (TypeError, ValueError):
+            pass
+        return cls._prompt_log_safe_name(shot_id, fallback="shot_unknown")
+
+    @classmethod
+    def _generation_prompt_log_path(
+        cls,
+        project_dir: Path,
+        *,
+        episode_key: str,
+        node_name: str,
+        shot: StoryboardShot | None = None,
+        shot_index: int | None = None,
+        shot_id: str | None = None,
+    ) -> Path:
+        episode_dir = cls._prompt_log_safe_name(episode_key, fallback="episode_unknown")
+        shot_dir = cls._prompt_log_shot_dir(shot, shot_index=shot_index, shot_id=shot_id)
+        node_file = cls._prompt_log_safe_name(node_name, fallback="node")
+        return project_dir / "logs" / episode_dir / shot_dir / f"{node_file}.log"
+
+    @staticmethod
+    def _asset_refs_for_prompt_log(refs: list | None) -> list[dict[str, Any]]:
+        logged_refs: list[dict[str, Any]] = []
+        for ref in refs or []:
+            url = getattr(ref, "url", None)
+            if isinstance(url, str) and url.startswith("data:") and len(url) > 240:
+                url = f"{url[:240]}...[truncated]"
+            item = {
+                "id": getattr(ref, "id", None),
+                "type": getattr(ref, "type", None),
+                "path": getattr(ref, "path", None),
+                "url": url,
+                "metadata": getattr(ref, "metadata", {}) or {},
+            }
+            logged_refs.append({key: value for key, value in item.items() if value not in (None, "", {})})
+        return logged_refs
+
+    def _write_generation_prompt_log(
+        self,
+        project_dir: Path,
+        *,
+        episode_key: str,
+        node_name: str,
+        shot: StoryboardShot | None = None,
+        shot_index: int | None = None,
+        shot_id: str | None = None,
+        prompt: str | None = None,
+        sections: list[tuple[str, object]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Path:
+        path = self._generation_prompt_log_path(
+            project_dir,
+            episode_key=episode_key,
+            node_name=node_name,
+            shot=shot,
+            shot_index=shot_index,
+            shot_id=shot_id,
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        resolved_shot_index = shot.index if shot is not None else shot_index
+        resolved_shot_id = shot.shot_id if shot is not None else shot_id
+        header: dict[str, Any] = {
+            "node_name": node_name,
+            "episode_key": episode_key,
+            "shot_index": resolved_shot_index,
+            "shot_id": resolved_shot_id,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        if metadata:
+            header["metadata"] = metadata
+
+        body: list[str] = [
+            "# generation prompt log",
+            json.dumps({key: value for key, value in header.items() if value not in (None, "", {})}, ensure_ascii=False, indent=2, default=str),
+        ]
+        if prompt is not None:
+            body.extend(["", "## prompt", str(prompt)])
+        for title, value in sections or []:
+            body.extend(["", f"## {title}"])
+            if isinstance(value, (dict, list)):
+                body.append(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+            else:
+                body.append(str(value))
+        path.write_text("\n".join(body).rstrip() + "\n", encoding="utf-8")
+        return path
+
+    def _log_generation_shot_started(self, episode_key: str, shot: StoryboardShot, node_name: str) -> None:
+        if self._internal_shot_logs_suppressed(self):
+            return
+        get_logger().info(
+            "%s shot %d %s started",
+            episode_key,
+            shot.index,
+            node_name,
+            extra={"episode_key": episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
+        )
+
+    def _log_generation_shot_finished(
+        self,
+        episode_key: str,
+        shot: StoryboardShot,
+        node_name: str,
+        saved_path: str,
+    ) -> None:
+        if self._internal_shot_logs_suppressed(self):
+            return
+        get_logger().info(
+            "%s shot %d %s finished successfully, saved in %s",
+            episode_key,
+            shot.index,
+            node_name,
+            saved_path,
+            extra={"episode_key": episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
+        )
+
+    def _log_generation_shot_failed(
+        self,
+        episode_key: str,
+        shot: StoryboardShot,
+        node_name: str,
+        exc: Exception,
+    ) -> None:
+        if self._internal_shot_logs_suppressed(self):
+            return
+        get_logger().error(
+            "%s shot %d %s failed, %s",
+            episode_key,
+            shot.index,
+            node_name,
+            exc,
+            extra={"episode_key": episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
+        )
+
     async def _run_storyboard_generation_for_episode(
         self,
         project_dir: Path,
@@ -74,6 +233,23 @@ class DynamicAssetNodeMixin:
         shots_dir.mkdir(parents=True, exist_ok=True)
         shot_path = shots_dir / f"{episode_key}.json"
 
+        def log_storyboard_shot_started(started_episode_key: str, shot_index: int) -> None:
+            get_logger().info(
+                "%s shot %d storyboard_generation started",
+                started_episode_key,
+                shot_index,
+                extra={"episode_key": started_episode_key, "shot_index": shot_index},
+            )
+
+        def log_storyboard_shot_failed(failed_episode_key: str, shot_index: int, exc: Exception) -> None:
+            get_logger().error(
+                "%s shot %d storyboard_generation failed, %s",
+                failed_episode_key,
+                shot_index,
+                exc,
+                extra={"episode_key": failed_episode_key, "shot_index": shot_index},
+            )
+
         async def save_storyboard_progress(episode: StoryboardEpisodeOutput, shot: StoryboardShot) -> None:
             progress_episode = episode
             merge_callback = getattr(self, "_storyboard_progress_merge_callback", None)
@@ -81,17 +257,31 @@ class DynamicAssetNodeMixin:
                 progress_episode = merge_callback(project_dir, episode_key, episode, shot)
             self.repo.write_json(shot_path, progress_episode.model_dump(mode="json", exclude_none=True))
             get_logger().info(
-                "episode %s shot %s generated, saved in %s",
+                "%s shot %d storyboard_generation finished successfully, saved in %s",
                 episode.episode_key,
-                shot.shot_id,
+                shot.index,
                 self._project_relative(project_dir, shot_path),
-                extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
+                extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
             )
             after_callback = getattr(self, "_storyboard_shot_generated_callback", None)
             if callable(after_callback):
                 callback_result = after_callback(progress_episode, shot)
                 if inspect.isawaitable(callback_result):
                     await callback_result
+
+        def write_storyboard_prompt_log(prompt_episode_key: str, shot_index: int, prompt: str) -> None:
+            self._write_generation_prompt_log(
+                project_dir,
+                episode_key=prompt_episode_key,
+                shot_index=shot_index,
+                node_name="storyboard_generation",
+                prompt=prompt,
+                metadata={
+                    "provider": getattr(provider, "name", "unknown"),
+                    "model": getattr(provider, "model", "-"),
+                    "model_call": "storyboard_service.storyboard_episode.generate_json",
+                },
+            )
 
         max_shots = getattr(getattr(self, "_run_context", None), "max_shots", None)
         if max_shots is None:
@@ -105,6 +295,9 @@ class DynamicAssetNodeMixin:
             novel_extract_all=self._episode_stories(project_dir, state),
             current_novel_full=self._novel_full_contents(project_dir, state, [episode_key]).get(episode_key, ""),
             on_shot_generated=save_storyboard_progress,
+            on_shot_started=log_storyboard_shot_started,
+            on_shot_failed=log_storyboard_shot_failed,
+            on_prompt_ready=write_storyboard_prompt_log,
             max_shots=max_shots,
             initial_shots=initial_shots,
         )
@@ -365,7 +558,7 @@ class DynamicAssetNodeMixin:
         state: ProjectState,
         episode: StoryboardEpisodeOutput,
         shot: StoryboardShot,
-    ) -> RefFrameSpatialPlan:
+    ) -> tuple[RefFrameSpatialPlan, str]:
         provider = self._ref_frame_spatial_text_provider()
         previous_shot = self._previous_shot(episode, shot)
         candidates = self._spatial_ref_frame_candidates(project_dir, episode, shot)
@@ -381,6 +574,20 @@ class DynamicAssetNodeMixin:
             ),
             spatial_candidates=json.dumps(candidates, ensure_ascii=False, indent=2),
         )
+        self._write_generation_prompt_log(
+            project_dir,
+            episode_key=episode.episode_key,
+            shot=shot,
+            node_name="ref_frame_generation",
+            sections=[("ref_frame_spatial_planning_prompt", prompt)],
+            metadata={
+                "provider": getattr(provider, "name", "unknown"),
+                "model": getattr(provider, "model", "-"),
+                "model_call": "ref_frame_spatial_planning.generate_json",
+                "previous_shot_id": previous_shot.shot_id if previous_shot else None,
+                "candidate_shot_ids": [item.get("shot_id") for item in candidates],
+            },
+        )
         plan = await provider.generate_json(
             prompt,
             RefFrameSpatialPlan,
@@ -395,7 +602,7 @@ class DynamicAssetNodeMixin:
             },
         )
         state.budget.used_text_calls += 1
-        return self._normalize_ref_frame_spatial_plan(state, episode, shot, plan, candidates=candidates)
+        return self._normalize_ref_frame_spatial_plan(state, episode, shot, plan, candidates=candidates), prompt
 
     def _normalize_ref_frame_spatial_plan(
         self,
@@ -617,69 +824,104 @@ class DynamicAssetNodeMixin:
         )
         for shot in shots:
             with log_context(episode_key=episode.episode_key, shot_id=shot.shot_id):
-                asset_id = normalize_id(f"{shot.shot_id}", "ref_frame")
-                spatial_plan = await self._plan_ref_frame_spatial_continuity(project_dir, state, episode, shot)
-                self._apply_ref_frame_spatial_plan(shot, spatial_plan)
-                prompt = self._shot_ref_frame_prompt(state, episode, shot)
-                refs = None
-                if getattr(provider, "supports_reference_images", False):
-                    refs = [
-                        *self._spatial_ref_frame_refs(project_dir, episode, shot, spatial_plan),
-                        *self._shot_ref_asset_refs(project_dir, state, shot),
-                    ]
-                result = await provider.generate_image(
-                    prompt,
-                    refs=refs,
-                    metadata={
-                        "node_name": "ref_frame_generation",
-                        "project_id": state.project_id,
-                        "episode_key": episode.episode_key,
-                        "shot_id": shot.shot_id,
-                        "asset_id": asset_id,
-                        "physical_space_key": shot.physical_space_key,
-                        "physical_space_note": shot.physical_space_note,
-                        "spatial_continuity_mode": shot.spatial_continuity_mode,
-                        "spatial_reference_shot_ids": shot.spatial_reference_shot_ids,
-                    },
-                )
-                asset_path = await self._write_first_generated_image(
-                    project_dir,
-                    self._image_asset_path(project_dir, "ref_frames", asset_id),
-                    result,
-                )
-                asset_url = result.image_urls[0] if result.image_urls else None
-                shot.ref_frame_asset_id = asset_id
-                shot.ref_frame_asset_path = asset_path
-                shot.ref_frame_asset_url = asset_url
-                shot.ref_frame_provider = result.provider
-                shot.ref_frame_model = result.model
-                shot.ref_frame_request_id = result.request_id
-                shot.ref_frame_usage = result.usage
-                shot.ref_frame_raw_response = result.raw_response
-                generated.append(
-                    RefFrameGenerationItem(
-                        episode_key=episode.episode_key,
-                        shot_id=shot.shot_id,
-                        asset_id=asset_id,
-                        prompt=prompt,
-                        asset_path=asset_path,
-                        asset_url=asset_url,
-                        provider=result.provider,
-                        model=result.model,
-                        request_id=result.request_id,
-                        usage=result.usage,
-                        raw_response=result.raw_response,
-                        physical_space_key=shot.physical_space_key,
-                        physical_space_note=shot.physical_space_note,
-                        spatial_continuity_mode=shot.spatial_continuity_mode,
-                        spatial_reference_shot_ids=shot.spatial_reference_shot_ids,
-                        spatial_structure_summary=shot.spatial_structure_summary,
-                        spatial_constraints=shot.spatial_constraints,
+                self._log_generation_shot_started(episode.episode_key, shot, "ref_frame_generation")
+                try:
+                    asset_id = normalize_id(f"{shot.shot_id}", "ref_frame")
+                    spatial_plan, spatial_plan_prompt = await self._plan_ref_frame_spatial_continuity(
+                        project_dir,
+                        state,
+                        episode,
+                        shot,
                     )
-                )
-                self._save_storyboard_episode(project_dir, episode)
-                self._record_spatial_ref_frame(project_dir, state, episode, shot)
-                get_logger().info("%s generated successfully, saved in %s", asset_id, asset_path)
+                    self._apply_ref_frame_spatial_plan(shot, spatial_plan)
+                    prompt = self._shot_ref_frame_prompt(state, episode, shot)
+                    refs = None
+                    if getattr(provider, "supports_reference_images", False):
+                        refs = [
+                            *self._spatial_ref_frame_refs(project_dir, episode, shot, spatial_plan),
+                            *self._shot_ref_asset_refs(project_dir, state, shot),
+                        ]
+                    self._write_generation_prompt_log(
+                        project_dir,
+                        episode_key=episode.episode_key,
+                        shot=shot,
+                        node_name="ref_frame_generation",
+                        sections=[
+                            ("ref_frame_spatial_planning_prompt", spatial_plan_prompt),
+                            ("image_generation_prompt", prompt),
+                            ("reference_assets", self._asset_refs_for_prompt_log(refs)),
+                        ],
+                        metadata={
+                            "provider": getattr(provider, "name", "unknown"),
+                            "model": getattr(provider, "model", "-"),
+                            "model_call": "image.generate_image",
+                            "asset_id": asset_id,
+                            "physical_space_key": shot.physical_space_key,
+                            "spatial_continuity_mode": shot.spatial_continuity_mode,
+                            "spatial_reference_shot_ids": shot.spatial_reference_shot_ids,
+                        },
+                    )
+                    result = await provider.generate_image(
+                        prompt,
+                        refs=refs,
+                        metadata={
+                            "node_name": "ref_frame_generation",
+                            "project_id": state.project_id,
+                            "episode_key": episode.episode_key,
+                            "shot_id": shot.shot_id,
+                            "asset_id": asset_id,
+                            "physical_space_key": shot.physical_space_key,
+                            "physical_space_note": shot.physical_space_note,
+                            "spatial_continuity_mode": shot.spatial_continuity_mode,
+                            "spatial_reference_shot_ids": shot.spatial_reference_shot_ids,
+                        },
+                    )
+                    asset_path = await self._write_first_generated_image(
+                        project_dir,
+                        self._image_asset_path(project_dir, "ref_frames", asset_id),
+                        result,
+                    )
+                    asset_url = result.image_urls[0] if result.image_urls else None
+                    shot.ref_frame_asset_id = asset_id
+                    shot.ref_frame_asset_path = asset_path
+                    shot.ref_frame_asset_url = asset_url
+                    shot.ref_frame_provider = result.provider
+                    shot.ref_frame_model = result.model
+                    shot.ref_frame_request_id = result.request_id
+                    shot.ref_frame_usage = result.usage
+                    shot.ref_frame_raw_response = result.raw_response
+                    generated.append(
+                        RefFrameGenerationItem(
+                            episode_key=episode.episode_key,
+                            shot_id=shot.shot_id,
+                            asset_id=asset_id,
+                            prompt=prompt,
+                            asset_path=asset_path,
+                            asset_url=asset_url,
+                            provider=result.provider,
+                            model=result.model,
+                            request_id=result.request_id,
+                            usage=result.usage,
+                            raw_response=result.raw_response,
+                            physical_space_key=shot.physical_space_key,
+                            physical_space_note=shot.physical_space_note,
+                            spatial_continuity_mode=shot.spatial_continuity_mode,
+                            spatial_reference_shot_ids=shot.spatial_reference_shot_ids,
+                            spatial_structure_summary=shot.spatial_structure_summary,
+                            spatial_constraints=shot.spatial_constraints,
+                        )
+                    )
+                    self._save_storyboard_episode(project_dir, episode)
+                    self._record_spatial_ref_frame(project_dir, state, episode, shot)
+                    self._log_generation_shot_finished(
+                        episode.episode_key,
+                        shot,
+                        "ref_frame_generation",
+                        asset_path,
+                    )
+                except Exception as exc:
+                    self._log_generation_shot_failed(episode.episode_key, shot, "ref_frame_generation", exc)
+                    raise
         self._save_storyboard_episode(project_dir, episode)
 
         return RefFrameGenerationOutput(generated_ref_frames=generated)
@@ -914,8 +1156,22 @@ class DynamicAssetNodeMixin:
         status_log_interval_polls = max(1, int(getattr(provider, "status_log_interval_polls", 6)))
         force_generation = bool(getattr(self, "_force_generation", False))
         for shot in shots:
+            self._log_generation_shot_started(episode.episode_key, shot, "shot_video_generation")
             asset_id = normalize_id(f"{shot.shot_id}", "video")
             prompt = self._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
+            self._write_generation_prompt_log(
+                project_dir,
+                episode_key=episode.episode_key,
+                shot=shot,
+                node_name="shot_video_generation",
+                prompt=prompt,
+                metadata={
+                    "provider": getattr(provider, "name", "unknown"),
+                    "model": getattr(provider, "model", "-"),
+                    "model_call": "video prompt computed; submit may reuse an existing task",
+                    "asset_id": asset_id,
+                },
+            )
             task_key = self._shot_video_task_key(episode.episode_key, shot.shot_id)
             output_path = self._video_asset_path(project_dir, "shots", asset_id)
             planned_asset_path = self._project_relative(project_dir, output_path)
@@ -1010,11 +1266,11 @@ class DynamicAssetNodeMixin:
                         provider=provider,
                     )
                 )
-                get_logger().info(
-                    "%s already generated, saved in %s",
-                    shot.shot_id,
+                self._log_generation_shot_finished(
+                    episode.episode_key,
+                    shot,
+                    "shot_video_generation",
                     saved_asset_path,
-                    extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                 )
                 continue
 
@@ -1040,6 +1296,12 @@ class DynamicAssetNodeMixin:
                 if not self._shot_video_inheritance_ready(project_dir, episode, shot):
                     message = self._shot_video_inheritance_blocked_message(project_dir, episode, shot)
                     get_logger().error("%s", message)
+                    self._log_generation_shot_failed(
+                        episode.episode_key,
+                        shot,
+                        "shot_video_generation",
+                        ProviderError(message),
+                    )
                     raise ProviderError(message)
 
                 if existing_task and existing_status in failure_statuses:
@@ -1067,20 +1329,47 @@ class DynamicAssetNodeMixin:
                         extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                     )
 
-                result = await provider.submit_video(
-                    prompt,
-                    refs=self._shot_video_refs(project_dir, state, shot, provider=provider, episode=episode),
-                    duration=shot.duration_seconds,
-                    metadata={
-                        "node_name": "shot_video_generation",
-                        "project_id": state.project_id,
-                        "episode_key": episode.episode_key,
-                        "shot_id": shot.shot_id,
-                        "asset_id": asset_id,
-                    },
-                )
+                try:
+                    video_refs = self._shot_video_refs(project_dir, state, shot, provider=provider, episode=episode)
+                    self._write_generation_prompt_log(
+                        project_dir,
+                        episode_key=episode.episode_key,
+                        shot=shot,
+                        node_name="shot_video_generation",
+                        prompt=prompt,
+                        sections=[("reference_assets", self._asset_refs_for_prompt_log(video_refs))],
+                        metadata={
+                            "provider": getattr(provider, "name", "unknown"),
+                            "model": getattr(provider, "model", "-"),
+                            "model_call": "video.submit_video",
+                            "asset_id": asset_id,
+                            "duration_seconds": shot.duration_seconds,
+                        },
+                    )
+                    result = await provider.submit_video(
+                        prompt,
+                        refs=video_refs,
+                        duration=shot.duration_seconds,
+                        metadata={
+                            "node_name": "shot_video_generation",
+                            "project_id": state.project_id,
+                            "episode_key": episode.episode_key,
+                            "shot_id": shot.shot_id,
+                            "asset_id": asset_id,
+                        },
+                    )
+                except Exception as exc:
+                    self._log_generation_shot_failed(episode.episode_key, shot, "shot_video_generation", exc)
+                    raise
                 if not result.task_id:
-                    raise ProviderError(f"Video provider submit result has no task_id for {shot.shot_id}")
+                    error = ProviderError(f"Video provider submit result has no task_id for {shot.shot_id}")
+                    self._log_generation_shot_failed(
+                        episode.episode_key,
+                        shot,
+                        "shot_video_generation",
+                        error,
+                    )
+                    raise error
                 task = upsert_generation_task(
                     registry,
                     self._shot_video_task_item(
@@ -1117,7 +1406,9 @@ class DynamicAssetNodeMixin:
 
             task_id = str(task.get("task_id") or "")
             if not task_id:
-                raise ProviderError(f"Missing video task_id for {shot.shot_id}; queue={task_file}")
+                error = ProviderError(f"Missing video task_id for {shot.shot_id}; queue={task_file}")
+                self._log_generation_shot_failed(episode.episode_key, shot, "shot_video_generation", error)
+                raise error
 
             completed = False
             for poll_index in range(1, max_polls + 1):
@@ -1160,7 +1451,9 @@ class DynamicAssetNodeMixin:
                         result,
                     )
                     if not asset_path:
-                        raise ProviderError(f"Video task {task_id} succeeded but returned no video URL or data")
+                        error = ProviderError(f"Video task {task_id} succeeded but returned no video URL or data")
+                        self._log_generation_shot_failed(episode.episode_key, shot, "shot_video_generation", error)
+                        raise error
                     last_frame_asset_path = await self._write_video_last_frame(
                         project_dir,
                         asset_id,
@@ -1203,11 +1496,11 @@ class DynamicAssetNodeMixin:
                             provider=provider,
                         )
                     )
-                    get_logger().info(
-                        "%s generated successfully, saved in %s",
-                        shot.shot_id,
+                    self._log_generation_shot_finished(
+                        episode.episode_key,
+                        shot,
+                        "shot_video_generation",
                         asset_path,
-                        extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                     )
                     completed = True
                     break
@@ -1230,7 +1523,14 @@ class DynamicAssetNodeMixin:
                         self._project_relative(project_dir, task_file),
                         extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                     )
-                    raise ProviderError(f"Video task {task_id} ended with status {result.task_status}; queue={task_file}")
+                    error = ProviderError(f"Video task {task_id} ended with status {result.task_status}; queue={task_file}")
+                    self._log_generation_shot_failed(
+                        episode.episode_key,
+                        shot,
+                        "shot_video_generation",
+                        error,
+                    )
+                    raise error
 
                 if poll_index < max_polls:
                     await asyncio.sleep(poll_interval_seconds)
@@ -1255,10 +1555,17 @@ class DynamicAssetNodeMixin:
                     self._project_relative(project_dir, task_file),
                     extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                 )
-                raise ProviderError(
+                error = ProviderError(
                     f"Video task {task.get('task_id')} did not finish after {max_polls} polls; "
                     f"saved in {task_file}. Rerun shot_video_generation to resume."
                 )
+                self._log_generation_shot_failed(
+                    episode.episode_key,
+                    shot,
+                    "shot_video_generation",
+                    error,
+                )
+                raise error
 
         self._save_storyboard_episode(project_dir, episode)
 
@@ -1288,82 +1595,120 @@ class DynamicAssetNodeMixin:
         episode = self._load_storyboard_episode(project_dir, episode_key)
         video_provider = self.router.video("shot")
         for shot in self._active_shots_for_episode(episode):
-            shot.solidified_asset_ids = []
-            for audio in shot.dialogue_audio_assets:
-                shot.solidified_asset_ids.append(audio.asset_id)
-                solidified.append(
-                    DynamicAssetSolidificationItem(
-                        asset_id=audio.asset_id,
-                        asset_type="shot_dialogue_audio",
-                        episode_key=episode.episode_key,
-                        shot_id=shot.shot_id,
-                        asset_path=audio.asset_path,
-                        source_node="shot_dialogue_audio_generation",
-                        metadata={
-                            "role_id": audio.role_id,
-                            "role_name": audio.role_name,
-                            "line_index": audio.line_index,
-                            "text": audio.text,
-                            "emotion": audio.emotion,
-                        },
+            self._log_generation_shot_started(episode.episode_key, shot, "dynamic_asset_solidification")
+            try:
+                shot.solidified_asset_ids = []
+                prompt_log_sections: list[tuple[str, object]] = [
+                    (
+                        "node_note",
+                        "dynamic_asset_solidification is a local asset-indexing node; it does not submit a new prompt to a model.",
                     )
-                )
-            if shot.ref_frame_asset_id:
-                ref_frame_generation_prompt = self._shot_ref_frame_prompt(state, episode, shot)
-                shot.solidified_asset_ids.append(shot.ref_frame_asset_id)
-                solidified.append(
-                    DynamicAssetSolidificationItem(
-                        asset_id=shot.ref_frame_asset_id,
-                        asset_type="ref_frame",
-                        episode_key=episode.episode_key,
-                        shot_id=shot.shot_id,
-                        asset_path=shot.ref_frame_asset_path,
-                        source_node="ref_frame_generation",
-                        metadata={
-                            "prompt": ref_frame_generation_prompt,
-                            "source_prompt": shot.ref_frame_prompt,
-                            "generation_prompt": ref_frame_generation_prompt,
-                            "provider": shot.ref_frame_provider,
-                            "model": shot.ref_frame_model,
-                            "asset_url": shot.ref_frame_asset_url,
-                            "physical_space_key": shot.physical_space_key,
-                            "physical_space_note": shot.physical_space_note,
-                            "spatial_continuity_mode": shot.spatial_continuity_mode,
-                            "spatial_reference_shot_ids": shot.spatial_reference_shot_ids,
-                            "spatial_structure_summary": shot.spatial_structure_summary,
-                            "spatial_constraints": shot.spatial_constraints,
-                        },
+                ]
+                for audio in shot.dialogue_audio_assets:
+                    shot.solidified_asset_ids.append(audio.asset_id)
+                    solidified.append(
+                        DynamicAssetSolidificationItem(
+                            asset_id=audio.asset_id,
+                            asset_type="shot_dialogue_audio",
+                            episode_key=episode.episode_key,
+                            shot_id=shot.shot_id,
+                            asset_path=audio.asset_path,
+                            source_node="shot_dialogue_audio_generation",
+                            metadata={
+                                "role_id": audio.role_id,
+                                "role_name": audio.role_name,
+                                "line_index": audio.line_index,
+                                "text": audio.text,
+                                "emotion": audio.emotion,
+                            },
+                        )
                     )
+                if shot.ref_frame_asset_id:
+                    ref_frame_generation_prompt = self._shot_ref_frame_prompt(state, episode, shot)
+                    prompt_log_sections.append(("ref_frame_generation_prompt_snapshot", ref_frame_generation_prompt))
+                    shot.solidified_asset_ids.append(shot.ref_frame_asset_id)
+                    solidified.append(
+                        DynamicAssetSolidificationItem(
+                            asset_id=shot.ref_frame_asset_id,
+                            asset_type="ref_frame",
+                            episode_key=episode.episode_key,
+                            shot_id=shot.shot_id,
+                            asset_path=shot.ref_frame_asset_path,
+                            source_node="ref_frame_generation",
+                            metadata={
+                                "prompt": ref_frame_generation_prompt,
+                                "source_prompt": shot.ref_frame_prompt,
+                                "generation_prompt": ref_frame_generation_prompt,
+                                "provider": shot.ref_frame_provider,
+                                "model": shot.ref_frame_model,
+                                "asset_url": shot.ref_frame_asset_url,
+                                "physical_space_key": shot.physical_space_key,
+                                "physical_space_note": shot.physical_space_note,
+                                "spatial_continuity_mode": shot.spatial_continuity_mode,
+                                "spatial_reference_shot_ids": shot.spatial_reference_shot_ids,
+                                "spatial_structure_summary": shot.spatial_structure_summary,
+                                "spatial_constraints": shot.spatial_constraints,
+                            },
+                        )
+                    )
+                if shot.video_asset_id:
+                    video_generation_prompt = self._shot_video_prompt(
+                        state,
+                        episode,
+                        shot,
+                        provider=video_provider,
+                        project_dir=project_dir,
+                    )
+                    prompt_log_sections.append(("shot_video_generation_prompt_snapshot", video_generation_prompt))
+                    shot.solidified_asset_ids.append(shot.video_asset_id)
+                    solidified.append(
+                        DynamicAssetSolidificationItem(
+                            asset_id=shot.video_asset_id,
+                            asset_type="shot_video",
+                            episode_key=episode.episode_key,
+                            shot_id=shot.shot_id,
+                            asset_path=shot.video_asset_path,
+                            source_node="shot_video_generation",
+                            metadata={
+                                "prompt": video_generation_prompt,
+                                "source_prompt": shot.video_prompt,
+                                "generation_prompt": video_generation_prompt,
+                                "provider": shot.video_provider,
+                                "model": shot.video_model,
+                                "task_id": shot.video_task_id,
+                                "task_status": shot.video_task_status,
+                                "duration_seconds": shot.duration_seconds,
+                            },
+                        )
+                    )
+                self._write_generation_prompt_log(
+                    project_dir,
+                    episode_key=episode.episode_key,
+                    shot=shot,
+                    node_name="dynamic_asset_solidification",
+                    sections=prompt_log_sections,
+                    metadata={
+                        "provider": "local",
+                        "model": "-",
+                        "model_call": "none",
+                        "solidified_asset_ids": list(shot.solidified_asset_ids),
+                    },
                 )
-            if shot.video_asset_id:
-                video_generation_prompt = self._shot_video_prompt(
-                    state,
-                    episode,
+                self._save_storyboard_episode(project_dir, episode)
+                self._log_generation_shot_finished(
+                    episode.episode_key,
                     shot,
-                    provider=video_provider,
-                    project_dir=project_dir,
+                    "dynamic_asset_solidification",
+                    self._project_relative(project_dir, self._shot_path(project_dir, episode_key)),
                 )
-                shot.solidified_asset_ids.append(shot.video_asset_id)
-                solidified.append(
-                    DynamicAssetSolidificationItem(
-                        asset_id=shot.video_asset_id,
-                        asset_type="shot_video",
-                        episode_key=episode.episode_key,
-                        shot_id=shot.shot_id,
-                        asset_path=shot.video_asset_path,
-                        source_node="shot_video_generation",
-                        metadata={
-                            "prompt": video_generation_prompt,
-                            "source_prompt": shot.video_prompt,
-                            "generation_prompt": video_generation_prompt,
-                            "provider": shot.video_provider,
-                            "model": shot.video_model,
-                            "task_id": shot.video_task_id,
-                            "task_status": shot.video_task_status,
-                            "duration_seconds": shot.duration_seconds,
-                        },
-                    )
+            except Exception as exc:
+                self._log_generation_shot_failed(
+                    episode.episode_key,
+                    shot,
+                    "dynamic_asset_solidification",
+                    exc,
                 )
+                raise
         self._save_storyboard_episode(project_dir, episode)
         return DynamicAssetSolidificationOutput(solidified_assets=solidified)
 

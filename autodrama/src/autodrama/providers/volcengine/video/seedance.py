@@ -47,10 +47,13 @@ class VolcengineSeedanceVideoProvider:
         self.poll_interval_seconds = float(settings.options.get("video_poll_interval_seconds", settings.options.get("poll_interval_seconds", 5)))
         self.max_polls = int(settings.options.get("video_max_polls", settings.options.get("max_polls", 120)))
         self.min_duration_seconds = int(settings.options.get("video_min_duration_seconds", 4))
-        self.max_duration_seconds = int(settings.options.get("video_max_duration_seconds", 15))
-        self.max_reference_images = int(settings.options.get("max_reference_images", 9))
-        self.max_reference_audio = int(settings.options.get("max_reference_audio", 3))
-        self.max_reference_videos = int(settings.options.get("max_reference_videos", 3))
+        self.max_duration_seconds = int(settings.options.get("video_max_duration_seconds", 10))
+        self.max_reference_images = int(settings.options.get("max_reference_images", 2))
+        self.max_reference_audio = int(settings.options.get("max_reference_audio", 1))
+        self.max_reference_videos = int(settings.options.get("max_reference_videos", 2))
+        self.max_reference_video_total_duration_seconds = float(
+            settings.options.get("max_reference_video_total_duration_seconds", 15.2)
+        )
 
     @staticmethod
     def _api_key(settings: ProviderSettings) -> str | None:

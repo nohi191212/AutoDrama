@@ -56,6 +56,7 @@ class RoleAppearance(BaseModel):
     design_image_asset_url: str | None = None
     intro_video_asset_id: str | None = None
     intro_video_asset_path: str | None = None
+    intro_video_asset_url: str | None = None
     asset_id: str | None = None
     asset_path: str | None = None
     asset_url: str | None = None
@@ -195,6 +196,13 @@ class ScriptOutlineOutput(BaseModel):
 
 class ScriptNovelOutput(BaseModel):
     novel_full: dict[str, str] = Field(validation_alias=AliasChoices("novel_full", "novel_script"))
+
+
+class ScriptDetailExpandOutput(BaseModel):
+    episode_key: str
+    expanded_script: str = Field(validation_alias=AliasChoices("expanded_script", "script", "novel_full"))
+    source_char_count: int | None = None
+    expanded_char_count: int | None = None
 
 
 class ScriptNovelExtractBatchOutput(BaseModel):

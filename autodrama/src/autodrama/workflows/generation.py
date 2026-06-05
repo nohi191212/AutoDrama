@@ -108,6 +108,15 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         )
 
     @staticmethod
+    def _no_flat_front_facing_video_prompt() -> str:
+        return (
+            "人物朝向约束: 视频中人物不要呈现证件照式、完全正对镜头的僵硬构图；"
+            "除非当前剧情明确是对镜头直播、自拍或正面宣告，人物脸部和身体应保持轻微侧转，"
+            "可采用约 15-45 度的三分之二侧脸、侧身、过肩、低头抬眼、视线看向画面内对象或镜头旁侧。"
+            "即使需要表现人物看向观众方向，也要避免双肩水平、脸部完全平贴镜头、眼睛长时间直盯镜头的静态正面姿势。"
+        )
+
+    @staticmethod
     def _shot_spatial_continuity_prompt(shot: StoryboardShot) -> str:
         if not (shot.physical_space_note or shot.spatial_structure_summary or shot.spatial_constraints):
             return ""
@@ -218,6 +227,310 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         )
         return "\n".join(item for item in parts if item)
 
+    @staticmethod
+    def _shot_video_ref_asset_type(ref) -> str:
+        metadata = getattr(ref, "metadata", {}) or {}
+        return str(metadata.get("asset_type") or "").strip()
+
+    @staticmethod
+    def _shot_video_ref_label(ref) -> str:
+        metadata = getattr(ref, "metadata", {}) or {}
+        for key in ("role_name", "name", "source_shot_id", "previous_shot_id", "scene_reference_shot_id"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value
+        return str(getattr(ref, "id", None) or "").strip() or "未命名参考"
+
+    @staticmethod
+    def _shot_video_ref_seedance_role(ref) -> str:
+        metadata = getattr(ref, "metadata", {}) or {}
+        return str(metadata.get("seedance_role") or metadata.get("role") or "reference_image").strip().lower()
+
+    @staticmethod
+    def _shot_video_ref_has_web_url(ref) -> bool:
+        url = str(getattr(ref, "url", None) or "").strip()
+        path = str(getattr(ref, "path", None) or "").strip()
+        return url.startswith(("http://", "https://")) or path.startswith(("http://", "https://"))
+
+    @classmethod
+    def _shot_video_prompt_ref_groups(cls, refs: list, provider=None) -> dict[str, list]:
+        image_refs = [ref for ref in refs if getattr(ref, "type", None) == "image"]
+        audio_refs = [ref for ref in refs if getattr(ref, "type", None) == "audio"]
+        video_refs = [ref for ref in refs if getattr(ref, "type", None) == "video"]
+
+        frame_image_refs = [
+            ref
+            for ref in image_refs
+            if cls._shot_video_ref_seedance_role(ref) in {"first_frame", "last_frame"}
+        ]
+        if frame_image_refs:
+            selected_frames = []
+            seen_roles: set[str] = set()
+            for ref in frame_image_refs:
+                role = cls._shot_video_ref_seedance_role(ref)
+                if role in seen_roles:
+                    continue
+                seen_roles.add(role)
+                selected_frames.append(ref)
+            return {"image": selected_frames, "audio": [], "video": []}
+
+        max_images = int(getattr(provider, "max_reference_images", 99) or 99)
+        max_audio = int(getattr(provider, "max_reference_audio", 99) or 99)
+        max_videos = int(getattr(provider, "max_reference_videos", 99) or 99)
+        if bool(getattr(provider, "reference_video_requires_web_url", False)):
+            video_refs = [ref for ref in video_refs if cls._shot_video_ref_has_web_url(ref)]
+        return {
+            "image": image_refs[:max_images],
+            "audio": audio_refs[:max_audio],
+            "video": video_refs[:max_videos],
+        }
+
+    @classmethod
+    def _shot_video_image_ref_instruction(cls, ref, index: int) -> str:
+        asset_type = cls._shot_video_ref_asset_type(ref)
+        label = cls._shot_video_ref_label(ref)
+        seedance_role = cls._shot_video_ref_seedance_role(ref)
+        prefix = f"图片{index}（{label}）"
+        if asset_type == "previous_shot_last_frame" or seedance_role == "first_frame":
+            return (
+                f"{prefix}: 上一 shot 尾帧/first_frame 输入。只用于硬切后承接上一段末尾的人物姿态、"
+                "空间方向、道具位置、能量位置和环境粒子；本片段仍按当前描述继续动作，不做软转场，不拖上一段声音。"
+            )
+        if asset_type == "ref_frame":
+            return (
+                f"{prefix}: 本段视频参考图，作为本段空间参考锚点。锁定当前片段的主体站位、构图方向、"
+                "关键道具位置、光影和环境状态；它不是视频首帧或尾帧，不要求逐像素复刻。"
+            )
+        if asset_type == "layout":
+            return (
+                f"{prefix}: 场景图，作为空间锚点。锁定场景结构、材质、光照基调、关键背景物和空间尺度；"
+                "不要从场景图擅自添加当前 shot 未出现的人物或剧情动作。"
+            )
+        if asset_type == "role_full_body":
+            return (
+                f"{prefix}: 画面中央人物全身图，作为当前视觉主体的静态外观锚点。锁定该人物的完整身体比例、"
+                "脸型、发型、服装层次、配饰、色彩和材质；人物在本段中的站位、动作、表情和口型仍以当前 shot "
+                "的 video_prompt 与对白空间约束为准，不把全身图姿势当作本段动作。"
+            )
+        if asset_type == "role_appearance":
+            return (
+                f"{prefix}: 人物设计图，作为角色静态参考锚点。锁定脸型、发型、服装、配饰、身体比例、"
+                "色彩和材质；不把设计图姿势当作本段动作。"
+            )
+        if asset_type == "prop":
+            return (
+                f"{prefix}: 道具设计图，作为道具静态参考锚点。锁定造型、材质、颜色、尺寸感和可识别细节；"
+                "道具在画面中的位置和运动以当前 shot 描述为准。"
+            )
+        if asset_type == "continuity_ref_frame":
+            return (
+                f"{prefix}: 历史空间参考帧。只用于辅助锁定同一物理空间中的左右、前后、远近关系和背景结构；"
+                "当前 shot 的人物动作以主体描述为准。"
+            )
+        return f"{prefix}: 图片参考素材。只用于与其来源一致的静态外观或空间约束，不作为首帧或尾帧。"
+
+    @classmethod
+    def _shot_video_audio_ref_instruction(cls, ref, index: int) -> str:
+        asset_type = cls._shot_video_ref_asset_type(ref)
+        label = cls._shot_video_ref_label(ref)
+        prefix = f"音频{index}（{label}）"
+        if asset_type == "shot_dialogue_audio":
+            return (
+                f"{prefix}: 本段对白音频。用于当前台词的口型节奏、语气、情绪强弱和停顿；"
+                "声音只发生在本片段内部，不提前入场，不拖尾到下一片段。"
+            )
+        if asset_type == "role_audio":
+            return (
+                f"{prefix}: 角色说话声音锚点。锁定该角色音色、年龄感、性别感、语速、咬字和基础情绪；"
+                "台词内容必须以当前 shot 的 dialogue/video_prompt 为准，不复述参考音频文本。"
+            )
+        return f"{prefix}: 音频参考素材。只用于声音质感、语气和口型节奏，不改变当前台词内容。"
+
+    @classmethod
+    def _shot_video_video_ref_instruction(cls, ref, index: int) -> str:
+        asset_type = cls._shot_video_ref_asset_type(ref)
+        label = cls._shot_video_ref_label(ref)
+        prefix = f"视频{index}（{label}）"
+        if asset_type == "role_intro_video":
+            return (
+                f"{prefix}: 画面中央人物 intro video，作为当前视觉主体的动态参考锚点。锁定该人物整体形象、"
+                "站姿、走姿、手势习惯、动作气质、衣料/发丝/随身特效的动态规律；不复刻其中的场景、剧情或镜头。"
+            )
+        if asset_type == "reference_video":
+            return (
+                f"{prefix}: 同场景镜头视频，作为空间锚点。锁定同一潜在三维空间中的场景结构、人物/道具相对位置、"
+                "环境动态、人群/光影规律；允许当前 shot 根据剧情换机位，但不能无故镜像、越轴或反转空间拓扑。"
+            )
+        if asset_type == "previous_shot_video":
+            return (
+                f"{prefix}: 上一 shot 镜头视频，作为逻辑连贯性锚点。只承接上一镜硬切前后的动作因果、情绪余韵、"
+                "人物/道具状态和节奏，不要求首帧等于上一镜尾帧，不做 J-Cut/L-Cut，不逐帧复刻。"
+            )
+        if asset_type == "reference_and_previous_shot_video":
+            return (
+                f"{prefix}: 同场景镜头视频与上一 shot 镜头是同一个素材。它同时承担空间锚点和逻辑连贯性锚点："
+                "既保持同一物理空间结构，又承接上一镜硬切后的动作因果、情绪和道具状态；仍然不要逐帧复刻。"
+            )
+        return f"{prefix}: 视频参考素材。只使用其动态规律或空间关系，不复刻画面内容。"
+
+    def _shot_video_reference_material_prompt(
+        self,
+        state: ProjectState,
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        *,
+        provider=None,
+        project_dir: Path | None = None,
+    ) -> str:
+        if project_dir is None:
+            return (
+                "参考素材使用方式: 按实际传入的视频模型素材，以模态内编号理解为图片1、图片2、视频1、音频1等；"
+                "图片只管静态外观或空间，视频只管动态/空间/连续性，音频只管声音和口型，不互相覆盖职责。"
+            )
+        try:
+            refs = self._shot_video_refs(project_dir, state, shot, provider=provider, episode=episode)
+        except Exception:
+            refs = []
+        groups = self._shot_video_prompt_ref_groups(refs, provider=provider)
+        image_refs = groups["image"]
+        audio_refs = groups["audio"]
+        video_refs = groups["video"]
+
+        parts = [
+            "参考素材编号与职责（按实际传入视频模型的模态内顺序编号：图片1/图片2、视频1/视频2、音频1/音频2；不同模态编号互不共享）:"
+        ]
+        if image_refs:
+            parts.append(
+                "图片参考: "
+                + "；".join(
+                    self._shot_video_image_ref_instruction(ref, index)
+                    for index, ref in enumerate(image_refs, start=1)
+                )
+            )
+        if video_refs:
+            parts.append(
+                "视频参考: "
+                + "；".join(
+                    self._shot_video_video_ref_instruction(ref, index)
+                    for index, ref in enumerate(video_refs, start=1)
+                )
+            )
+        if audio_refs:
+            parts.append(
+                "音频参考: "
+                + "；".join(
+                    self._shot_video_audio_ref_instruction(ref, index)
+                    for index, ref in enumerate(audio_refs, start=1)
+                )
+            )
+        if not (image_refs or video_refs or audio_refs):
+            parts.append("本次没有可用参考素材；完全依据当前 shot 主体描述生成。")
+        asset_types = {
+            self._shot_video_ref_asset_type(ref)
+            for ref in [*image_refs, *video_refs, *audio_refs]
+        }
+        visual_ref_names = []
+        seen_visual_ref_names: set[str] = set()
+        for ref in [*image_refs, *video_refs]:
+            if self._shot_video_ref_asset_type(ref) not in {"role_full_body", "role_intro_video"}:
+                continue
+            name = self._shot_video_ref_label(ref)
+            if name and name not in seen_visual_ref_names:
+                seen_visual_ref_names.add(name)
+                visual_ref_names.append(name)
+        audio_ref_names = []
+        seen_audio_ref_names: set[str] = set()
+        for ref in audio_refs:
+            if self._shot_video_ref_asset_type(ref) not in {"role_audio", "shot_dialogue_audio"}:
+                continue
+            name = self._shot_video_ref_label(ref)
+            if name and name not in seen_audio_ref_names:
+                seen_audio_ref_names.add(name)
+                audio_ref_names.append(name)
+        if visual_ref_names:
+            parts.append(
+                "画面中央人物绑定: "
+                + "、".join(visual_ref_names)
+                + " 是当前 shot 的视觉主体；对应的人物全身图和 intro video 必须共同锁定同一位画面中央人物，"
+                "不要用说话人音频反向改变画面主体身份。"
+            )
+        if audio_ref_names:
+            parts.append(
+                "说话人音频绑定: "
+                + "、".join(audio_ref_names)
+                + " 的音频只绑定当前 dialogue/video_prompt 中的说话人；如果说话人与画面中央人物不同，"
+                "画面中央人物不能替他说话、不能对口型。"
+            )
+        boundary_clauses: list[str] = []
+        if "layout" in asset_types:
+            boundary_clauses.append("场景图只锁定无人物空场景的空间结构、材质、光照和尺度")
+        if "ref_frame" in asset_types:
+            boundary_clauses.append("本段参考图只锁定当前片段空间参考")
+        if "role_full_body" in asset_types:
+            boundary_clauses.append("人物全身图只锁定画面中央人物的静态全身外观")
+        if "role_appearance" in asset_types:
+            boundary_clauses.append("人物设计图只锁定静态角色外观")
+        if "prop" in asset_types:
+            boundary_clauses.append("道具设计图只锁定道具造型与材质")
+        if "role_intro_video" in asset_types:
+            boundary_clauses.append("角色基础介绍视频只锁定人物形象、动态气质和动作规律")
+        if asset_types.intersection({"reference_video", "reference_and_previous_shot_video"}):
+            boundary_clauses.append("同场景镜头只锁定空间连续性和环境动态")
+        if asset_types.intersection({"previous_shot_video", "reference_and_previous_shot_video"}):
+            boundary_clauses.append("上一 shot 镜头只锁定硬切后的逻辑连贯性")
+        if asset_types.intersection({"role_audio", "shot_dialogue_audio"}):
+            boundary_clauses.append("音频只锁定说话声音、口型节奏和对白情绪")
+        if boundary_clauses:
+            parts.append("素材职责边界: " + "；".join(boundary_clauses) + "。")
+        if asset_types.intersection({"reference_video", "previous_shot_video", "reference_and_previous_shot_video"}):
+            parts.append(
+                "同场景镜头视频和上一 shot 镜头视频通常是同一个素材；只有转场、回忆、极大角度切镜或跨空间切换时才会不同。"
+                "若二者不同，同场景镜头优先解决空间一致性，上一 shot 镜头只解决硬切后的动作、情绪和叙事连续。"
+            )
+        conflict_parts = [
+            "当前 shot 的 video_prompt 是剧情、动作和对白内容的唯一来源",
+            "参考素材不能新增剧情、改台词、改角色关系",
+        ]
+        if asset_types.intersection({"layout", "reference_video", "reference_and_previous_shot_video"}):
+            conflict_parts.append("空间冲突优先听场景图或同场景镜头视频")
+        if "role_full_body" in asset_types:
+            conflict_parts.append("画面中央人物外观冲突优先听人物全身图")
+        if "role_appearance" in asset_types:
+            conflict_parts.append("人物外观冲突优先听人物设计图")
+        if "role_intro_video" in asset_types:
+            conflict_parts.append("画面中央人物动态气质冲突优先听 intro video")
+        if asset_types.intersection({"role_audio", "shot_dialogue_audio"}):
+            conflict_parts.append("声音冲突优先听音频")
+        parts.append("冲突处理: " + "；".join(conflict_parts) + "。")
+        return "\n".join(parts)
+
+    def _shot_video_dialogue_spatial_prompt(self, state: ProjectState, shot: StoryboardShot) -> str:
+        if not shot.dialogue:
+            return ""
+
+        visual_role_names = [
+            state.roles[role_id].name
+            for role_id in self._shot_intro_role_ids(state, shot)
+            if role_id in state.roles
+        ]
+        visual_subject = "、".join(visual_role_names) or "画面内角色"
+        parts: list[str] = []
+        for dialogue_line in shot.dialogue:
+            role, dialogue_text, speaker_name = self._role_for_dialogue_line(state, shot, dialogue_line)
+            speaker = role.name if role is not None else (speaker_name or "说话者")
+            if self._dialogue_speaker_is_voiceover(dialogue_line):
+                parts.append(
+                    f"{speaker}的台词“{dialogue_text}”是画外音/VO，声音来自画面外或非实体旁白；"
+                    f"不要让{visual_subject}张嘴、对口型或用{speaker}的声音说这句台词。"
+                    f"{visual_subject}只能保持当前动作、表情变化或对画外声音做反应。"
+                )
+            else:
+                parts.append(
+                    f"{speaker}的台词“{dialogue_text}”必须由{speaker}本人说出；"
+                    "其他画面内角色不能替他说话、不能对这句台词做口型，只能做听者反应。"
+                )
+        return "对白空间约束: " + " ".join(parts)
+
     def _shot_video_prompt(
         self,
         state: ProjectState,
@@ -231,11 +544,27 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         parts: list[str] = [self._cg_character_safety_prompt()]
         if reference_mode in {"ref_frame_only", "ref_frame"}:
             parts.append(self._ref_frame_only_video_prompt())
-        if shot.start_frame_source == "previous_shot_last_frame":
-            lead = (
-                "本片段按硬切进入当前画面；图片1是上一段视频尾帧，仅用于承接上一段末尾的人物姿态、"
-                "空间方向、道具位置、能量位置和环境粒子，再从该状态继续本片段动作。"
+        parts.append(
+            self._shot_video_reference_material_prompt(
+                state,
+                episode,
+                shot,
+                provider=provider,
+                project_dir=project_dir,
             )
+        )
+        parts.append(self._no_flat_front_facing_video_prompt())
+        if shot.start_frame_source == "previous_shot_last_frame":
+            if self._video_reference_mode_uses_frame_images(reference_mode):
+                lead = (
+                    "本片段按硬切进入当前画面；若参考素材中存在上一 shot 尾帧/first_frame，"
+                    "只从该状态继续当前片段动作，不把它理解成软转场或声音延续。"
+                )
+            else:
+                lead = (
+                    "本片段按硬切进入当前画面；当前参考模式不传上一 shot 尾帧图片。"
+                    "若参考素材中存在上一 shot 镜头视频，只承接动作因果、情绪余韵和叙事连续。"
+                )
             if shot.start_frame_inheritance_reason:
                 lead = f"{lead} 延续原因是{shot.start_frame_inheritance_reason.rstrip('。')}。"
             for prefix in ("首帧承接上一段视频尾帧，", "首帧为上一段视频尾帧，", "首帧为图片1，"):
@@ -254,53 +583,23 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     body = body.removeprefix(prefix).lstrip()
                     break
             parts.append(
-                "本片段按硬切进入当前画面。参考图仅作为静态锚点，保持当前片段中人物外观、服装、"
-                "道具造型和场景表现一致；参考视频仅作为动态锚点，保持角色动态气质、动作节奏和动态特效表现一致；"
-                "参考音频或对白音频仅用于锁定角色音色、语气、口型节奏和对白情绪。"
-                "不要把任何参考素材当作本片段首帧或尾帧，不要逐帧复刻参考素材。"
+                "本片段按硬切进入当前画面。不要把任何参考素材当作本片段首帧或尾帧，不要逐帧复刻参考素材；"
+                "参考素材只按上方编号职责提供外观、空间、动态、声音或连续性约束。"
             )
+        if dialogue_spatial_prompt := self._shot_video_dialogue_spatial_prompt(state, shot):
+            parts.append(dialogue_spatial_prompt)
+        parts.append("当前 shot 主体视频描述:")
         parts.append(body)
         parts.append(
             "片段首尾只允许硬切；任何 J-Cut 或 L-Cut 只能发生在本片段内部中段，"
             "不要让声音提前进入本片段之前，也不要让声音拖尾到下一片段。"
         )
-        video_reference_context = (
-            "none"
-            if (
-                shot.start_frame_source == "previous_shot_last_frame"
-                or not self._video_reference_mode_uses_previous_scene_video(reference_mode)
-            )
-            else self._shot_video_reference_context(project_dir, episode, shot, provider=provider)
-        )
-        if video_reference_context == "shared_reference_and_previous_video":
-            parts.append(
-                "视频参考关系: 参考视频与上一镜视频为同一个素材。该视频同时用于锁定同一潜在三维空间中的场景结构、"
-                "人物/道具相对位置、环境动态规律，并用于承接上一镜的画面内容、动作节奏和情绪余韵；"
-                "可以改变机位和镜头朝向，但不能无故反转空间左右、前后、远近关系，不要逐帧复刻。"
-            )
-        elif video_reference_context == "separate_reference_and_previous_video":
-            parts.append(
-                "视频参考关系: 本片段有两个不同的视频参考。参考视频用于场景一致性，只锁定同一潜在三维空间中的场景结构、"
-                "关键物体位置、环境动态、人群/光影规律，不要求镜头朝向一致，可以换机位；上一镜视频用于承接上一镜的"
-                "画面内容、动作节奏、情绪余韵和硬切前后的视觉衔接，不用于覆盖当前场景设定。两者冲突时，"
-                "以当前 shot 描述和参考图为主体，参考视频负责场景一致，上一镜视频负责衔接连续。"
-            )
-        elif video_reference_context == "reference_video_only":
-            parts.append(
-                "视频参考关系: 参考视频用于场景一致性，只锁定同一潜在三维空间中的场景结构、关键物体位置、"
-                "环境动态、人群/光影规律，不要求镜头朝向一致，可以换机位，不要逐帧复刻。"
-            )
-        elif video_reference_context == "previous_video_only":
-            parts.append(
-                "视频参考关系: 上一镜视频只用于承接上一镜的画面内容、动作节奏、情绪余韵和硬切前后的视觉衔接，"
-                "不用于覆盖当前场景设定，不要逐帧复刻。"
-            )
         parts.append(
             "如果背景中存在人群或群众，不要让他们静止不动；让他们进行符合场景逻辑、"
             "情绪氛围和空间关系的自然移动、避让、聚散或反应，但不要抢占主体动作。"
         )
         parts.append("全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。")
-        return " ".join(item for item in parts if item)
+        return "\n".join(item for item in parts if item)
 
     async def _run_generation_node_for_episode(
         self,
@@ -352,6 +651,71 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     def _save_run_outputs(self, project_dir: Path, run_outputs: dict[str, BaseModel]) -> None:
         for node_name, output in run_outputs.items():
             self.repo.save_node_output(project_dir, node_name, output)
+
+    def _shot_generation_saved_path(
+        self,
+        project_dir: Path,
+        *,
+        node_name: str,
+        output: BaseModel,
+        episode_key: str,
+        shot: StoryboardShot,
+    ) -> str:
+        if node_name == "ref_frame_generation" and isinstance(output, RefFrameGenerationOutput):
+            for item in output.generated_ref_frames:
+                if item.episode_key == episode_key and item.shot_id == shot.shot_id and item.asset_path:
+                    return item.asset_path
+        if node_name == "shot_video_generation" and isinstance(output, ShotVideoGenerationOutput):
+            for item in output.generated_videos:
+                if item.episode_key == episode_key and item.shot_id == shot.shot_id and item.asset_path:
+                    return item.asset_path
+        if node_name == "dynamic_asset_solidification":
+            return self._project_relative(project_dir, self.dynamic_assets.index_path(project_dir))
+        return self._project_relative(project_dir, self.layout.node_output_path(project_dir, node_name))
+
+    @staticmethod
+    def _log_shot_generation_started(logger, episode_key: str, shot: StoryboardShot, node_name: str) -> None:
+        logger.info(
+            "%s shot %d %s started",
+            episode_key,
+            shot.index,
+            node_name,
+            extra={"episode_key": episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
+        )
+
+    @staticmethod
+    def _log_shot_generation_finished(
+        logger,
+        episode_key: str,
+        shot: StoryboardShot,
+        node_name: str,
+        saved_path: str,
+    ) -> None:
+        logger.info(
+            "%s shot %d %s finished successfully, saved in %s",
+            episode_key,
+            shot.index,
+            node_name,
+            saved_path,
+            extra={"episode_key": episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
+        )
+
+    @staticmethod
+    def _log_shot_generation_failed(
+        logger,
+        episode_key: str,
+        shot: StoryboardShot,
+        node_name: str,
+        exc: Exception,
+    ) -> None:
+        logger.error(
+            "%s shot %d %s failed, %s",
+            episode_key,
+            shot.index,
+            node_name,
+            exc,
+            extra={"episode_key": episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
+        )
 
     @staticmethod
     def _should_run_shot_serial_generation(
@@ -615,54 +979,69 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 )
                 return
             logger.info(
-                "episode %s shot %s serial pipeline started nodes=%s",
+                "%s shot %d serial pipeline started nodes=%s",
                 episode_key,
-                shot.shot_id,
+                shot.index,
                 ",".join(downstream_nodes),
-                extra={"episode_key": episode_key, "shot_id": shot.shot_id},
+                extra={"episode_key": episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
             )
             if context is not None:
                 context.shot_selectors = {shot.shot_id}
             self._active_shot_selectors = {shot.shot_id}
             try:
                 for node_index, node_name in enumerate(downstream_nodes, start=2):
+                    del node_index
                     with log_context(node_name=node_name, episode_key=episode_key, shot_id=shot.shot_id):
-                        logger.info(
-                            "episode %s shot %s node %d/%d %s started",
-                            episode_key,
-                            shot.shot_id,
-                            node_index,
-                            len(target_nodes),
-                            node_name,
-                        )
-                        output = await self._run_generation_node_for_episode(
-                            project_dir,
-                            state,
-                            node_name,
-                            episode_key,
-                        )
-                        self._merge_run_output(run_outputs, node_name, output)
-                        if node_name == "dynamic_asset_solidification":
-                            if not isinstance(output, DynamicAssetSolidificationOutput):
-                                raise TypeError("dynamic_asset_solidification output type mismatch")
-                            self._merge_shot_dynamic_assets(
-                                project_dir,
-                                episode_key,
-                                shot.shot_id,
-                                cast(DynamicAssetSolidificationOutput, output),
+                        self._log_shot_generation_started(logger, episode_key, shot, node_name)
+                        try:
+                            previous_internal_log_suppression = getattr(
+                                self,
+                                "_suppress_internal_generation_shot_logs",
+                                None,
                             )
-                        state.mark_completed(node_name)
-                        self.repo.save_state(project_dir, state)
-                        self._save_run_outputs(project_dir, run_outputs)
-                        logger.info(
-                            "episode %s shot %s node %d/%d %s completed current_node=%s",
-                            episode_key,
-                            shot.shot_id,
-                            node_index,
-                            len(target_nodes),
-                            node_name,
-                            state.current_node,
-                        )
+                            self._suppress_internal_generation_shot_logs = True
+                            try:
+                                output = await self._run_generation_node_for_episode(
+                                    project_dir,
+                                    state,
+                                    node_name,
+                                    episode_key,
+                                )
+                            finally:
+                                if previous_internal_log_suppression is None:
+                                    if hasattr(self, "_suppress_internal_generation_shot_logs"):
+                                        delattr(self, "_suppress_internal_generation_shot_logs")
+                                else:
+                                    self._suppress_internal_generation_shot_logs = previous_internal_log_suppression
+                            self._merge_run_output(run_outputs, node_name, output)
+                            if node_name == "dynamic_asset_solidification":
+                                if not isinstance(output, DynamicAssetSolidificationOutput):
+                                    raise TypeError("dynamic_asset_solidification output type mismatch")
+                                self._merge_shot_dynamic_assets(
+                                    project_dir,
+                                    episode_key,
+                                    shot.shot_id,
+                                    cast(DynamicAssetSolidificationOutput, output),
+                                )
+                            state.mark_completed(node_name)
+                            self.repo.save_state(project_dir, state)
+                            self._save_run_outputs(project_dir, run_outputs)
+                            self._log_shot_generation_finished(
+                                logger,
+                                episode_key,
+                                shot,
+                                node_name,
+                                self._shot_generation_saved_path(
+                                    project_dir,
+                                    node_name=node_name,
+                                    output=output,
+                                    episode_key=episode_key,
+                                    shot=shot,
+                                ),
+                            )
+                        except Exception as exc:
+                            self._log_shot_generation_failed(logger, episode_key, shot, node_name, exc)
+                            raise
             finally:
                 if context is not None and previous_context_shot_selectors is not None:
                     context.shot_selectors = set(previous_context_shot_selectors)
@@ -673,23 +1052,16 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     self._active_shot_selectors = previous_active_shot_selectors
             self._sync_storyboard_progress_from_disk(project_dir, episode_key, progress_episode)
             logger.info(
-                "episode %s shot %s serial pipeline completed",
+                "%s shot %d serial pipeline completed",
                 episode_key,
-                shot.shot_id,
-                extra={"episode_key": episode_key, "shot_id": shot.shot_id},
+                shot.index,
+                extra={"episode_key": episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
             )
 
         self._storyboard_shot_generated_callback = run_downstream_for_shot
         self._storyboard_progress_merge_callback = self._merge_storyboard_progress_episode
         try:
             with log_context(node_name="storyboard_generation", episode_key=episode_key):
-                logger.info(
-                    "episode %s node %d/%d %s started",
-                    episode_key,
-                    1,
-                    len(target_nodes),
-                    "storyboard_generation",
-                )
                 output = await self._run_generation_node_for_episode(
                     project_dir,
                     state,
@@ -708,14 +1080,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     state.current_node = target_nodes[-1]
                 self.repo.save_state(project_dir, state)
                 self._save_run_outputs(project_dir, run_outputs)
-                logger.info(
-                    "episode %s node %d/%d %s completed current_node=%s",
-                    episode_key,
-                    1,
-                    len(target_nodes),
-                    "storyboard_generation",
-                    state.current_node,
-                )
         finally:
             if previous_callback is None:
                 if hasattr(self, "_storyboard_shot_generated_callback"):
@@ -892,15 +1256,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                             run_outputs=run_outputs,
                         )
                     else:
-                        for node_index, node_name in enumerate(target_nodes, start=1):
+                        for node_name in target_nodes:
                             with log_context(node_name=node_name, episode_key=episode_key):
-                                logger.info(
-                                    "episode %s node %d/%d %s started",
-                                    episode_key,
-                                    node_index,
-                                    len(target_nodes),
-                                    node_name,
-                                )
                                 output = await self._run_generation_node_for_episode(
                                     project_dir,
                                     state,
@@ -927,14 +1284,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                                 state.mark_completed(node_name)
                                 self.repo.save_state(project_dir, state)
                                 self._save_run_outputs(project_dir, run_outputs)
-                                logger.info(
-                                    "episode %s node %d/%d %s completed current_node=%s",
-                                    episode_key,
-                                    node_index,
-                                    len(target_nodes),
-                                    node_name,
-                                    state.current_node,
-                                )
                 except Exception:
                     update_checklist_from_state(
                         self.repo,

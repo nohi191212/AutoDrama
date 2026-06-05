@@ -827,6 +827,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 "参考图片1中的人物三视图、全身比例和绑定物品设计，保持人物形象一致性但不要求和图片像素级一致以防动作僵硬，人物动作和画面表现需要符合基本逻辑",
                 f"人物设计风格要求：{role_style_prompt}" if role_style_prompt else "",
                 base_intro_prompt,
+                "人物朝向约束：角色介绍视频中人物不要呈现证件照式、完全正对镜头的僵硬构图；脸部和身体保持轻微侧转，可使用约15-45度三分之二侧脸、侧身、低头抬眼或视线看向镜头旁侧。即使需要表现人物注意到观众方向，也避免双肩水平、脸部完全平贴镜头和长时间直盯镜头。",
                 "全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。",
             )
             if part
@@ -1144,6 +1145,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 appearance.intro_video_generation_status = "skipped"
                 appearance.intro_video_asset_id = None
                 appearance.intro_video_asset_path = None
+                appearance.intro_video_asset_url = None
                 self.logger.info(
                     "%s skipped role intro video for functional role %s/%s",
                     appearance.id,
@@ -1173,6 +1175,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 existing_path = self.layout.existing_project_file(project_dir, output_path)
             if reuse_existing_assets and existing_path is not None:
                 asset_path = existing_path
+                asset_url = appearance.intro_video_asset_url
                 provider_name = str(getattr(video_provider, "name", "unknown"))
                 model = str(getattr(video_provider, "model", ""))
                 request_id = None
@@ -1203,7 +1206,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 result = await video_provider.generate_video(
                     prompt_item.prompt,
                     refs=refs,
-                    duration=8,
+                    duration=3,
                     wait=True,
                     metadata={
                         "node_name": node_name,
@@ -1215,6 +1218,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                     },
                 )
                 asset_path = await self.media_store.write_generated_video(project_dir, output_path, result)
+                asset_url = result.video_url
                 provider_name = result.provider
                 model = result.model
                 request_id = result.request_id
@@ -1223,6 +1227,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 self.logger.info("%s generated successfully, saved in %s", intro_video_asset_id, asset_path)
             appearance.intro_video_asset_id = intro_video_asset_id
             appearance.intro_video_asset_path = asset_path
+            appearance.intro_video_asset_url = asset_url
             appearance.intro_video_generation_status = "generated"
             item = StaticAssetGenerationItem(
                 asset_id=intro_video_asset_id,
@@ -1231,6 +1236,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 name=f"{role.name}/{appearance.name}/intro_video",
                 prompt=prompt_item.prompt,
                 asset_path=asset_path,
+                asset_url=asset_url,
                 provider=provider_name,
                 model=model,
                 request_id=request_id,

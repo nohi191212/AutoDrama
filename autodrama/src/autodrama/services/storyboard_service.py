@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from typing import Any, Callable
 
 from autodrama.core.schemas import (
@@ -20,6 +21,8 @@ class StoryboardService:
     MAX_GENERATION_STEPS_PER_CHAPTER = 10
     _STORY_END_MARKERS = frozenset({"（未完待续）", "(未完待续)", "未完待续"})
     _ANCHOR_BOUNDARY_CHARS = frozenset("。！？；，：、“”‘’\"'（）()[]【】")
+    _SCENE_HEADING_PATTERN = re.compile(r"(?m)^\s*\d+\s*[-－]\s*\d+\s*[：:]")
+    _EPISODE_HEADING_PATTERN = re.compile(r"(?m)^\s*第[一二三四五六七八九十百千万零〇两0-9]+集\s*[：:]")
     _REFERENCE_USAGE_PROMPT = (
         "参考素材使用要求：参考图只用于锁定人物外观、服装、场景、道具造型和静态质感，"
         "不能当作本片段首帧或尾帧；参考视频只用于锁定人物动态气质、动作节奏、镜头运动和动态特效规律，"
@@ -169,15 +172,11 @@ class StoryboardService:
             duration = float(data.get("duration_seconds", 6))
         except (TypeError, ValueError):
             duration = 6.0
-        data["duration_seconds"] = min(15.0, max(4.0, duration))
+        data["duration_seconds"] = min(10.0, max(4.0, duration))
         return StoryboardShot.model_validate(data)
 
     @staticmethod
-    def _story_text_start_offset(text: str, start_offset: int = 0) -> int:
-        cursor = max(0, start_offset)
-        while cursor < len(text) and text[cursor].isspace():
-            cursor += 1
-
+    def _line_after_optional_source_chapter(text: str, cursor: int) -> int:
         line_end = text.find("\n", cursor)
         first_line_end = len(text) if line_end < 0 else line_end
         first_line = text[cursor:first_line_end].strip()
@@ -185,6 +184,31 @@ class StoryboardService:
             cursor = first_line_end
             while cursor < len(text) and text[cursor].isspace():
                 cursor += 1
+        return cursor
+
+    @classmethod
+    def _mature_screenplay_story_start_offset(cls, text: str, cursor: int) -> int | None:
+        scene_match = cls._SCENE_HEADING_PATTERN.search(text, cursor)
+        if scene_match is not None:
+            return scene_match.start()
+
+        episode_match = cls._EPISODE_HEADING_PATTERN.search(text, cursor)
+        if episode_match is not None:
+            return episode_match.start()
+
+        return None
+
+    @classmethod
+    def _story_text_start_offset(cls, text: str, start_offset: int = 0) -> int:
+        cursor = max(0, start_offset)
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+
+        cursor = cls._line_after_optional_source_chapter(text, cursor)
+        if start_offset <= 0:
+            mature_story_start = cls._mature_screenplay_story_start_offset(text, cursor)
+            if mature_story_start is not None:
+                return mature_story_start
         return cursor
 
     @classmethod
@@ -223,6 +247,30 @@ class StoryboardService:
             if char.isspace():
                 continue
             compact_chars.append(char)
+            compact_offsets.append(index)
+        return "".join(compact_chars), compact_offsets
+
+    @staticmethod
+    def _anchor_match_char(char: str) -> str:
+        if char in "“”":
+            return '"'
+        if char in "‘’":
+            return "'"
+        return char
+
+    @classmethod
+    def _anchor_match_text(cls, text: str) -> str:
+        return "".join(cls._anchor_match_char(char) for char in text)
+
+    @classmethod
+    def _matchable_compact_text_with_offsets(cls, text: str, *, search_start: int) -> tuple[str, list[int]]:
+        compact_chars: list[str] = []
+        compact_offsets: list[int] = []
+        for index in range(max(0, search_start), len(text)):
+            char = text[index]
+            if char.isspace():
+                continue
+            compact_chars.append(cls._anchor_match_char(char))
             compact_offsets.append(index)
         return "".join(compact_chars), compact_offsets
 
@@ -312,6 +360,20 @@ class StoryboardService:
         )
         if span is not None:
             return span
+
+        matchable_compact_text, matchable_compact_offsets = cls._matchable_compact_text_with_offsets(
+            text,
+            search_start=search_start,
+        )
+        matchable_compact_anchor = cls._anchor_match_text(compact_anchor)
+        if matchable_compact_text != compact_text or matchable_compact_anchor != compact_anchor:
+            span = cls._compact_anchor_span(
+                matchable_compact_text,
+                matchable_compact_offsets,
+                matchable_compact_anchor,
+            )
+            if span is not None:
+                return span
 
         compact_preview = copied_text[:120]
         if compact_anchor != copied_text:
@@ -421,6 +483,7 @@ class StoryboardService:
             raise ValueError("Storyboard source_coverage.next_start_text must point at remaining story text")
         if end_span is not None and end_span[0] >= next_start_offset:
             raise ValueError("Storyboard source_coverage.end_text must not start after source_coverage.next_start_text")
+        coverage.next_start_text, _ = self._source_anchor(current_novel_full, next_start_offset)
         return next_start_offset
 
     async def storyboard_episode(
@@ -434,6 +497,9 @@ class StoryboardService:
         episode_story: str | None = None,
         previous_storyboard_history: dict[str, Any] | None = None,
         on_shot_generated: Callable[[StoryboardEpisodeOutput, StoryboardShot], Any] | None = None,
+        on_shot_started: Callable[[str, int], Any] | None = None,
+        on_shot_failed: Callable[[str, int, Exception], Any] | None = None,
+        on_prompt_ready: Callable[[str, int, str], Any] | None = None,
         max_shots: int | None = None,
         initial_shots: list[StoryboardShot] | None = None,
     ) -> StoryboardEpisodeOutput:
@@ -479,48 +545,67 @@ class StoryboardService:
                     )
                 current_start_offset = next_start_offset
         for generation_step in range(len(shots) + 1, max_generation_steps + 1):
-            prompt = self.prompts.render(
-                "storyboard_generate",
-                title=state.title,
-                episode_key=episode_key,
-                novel_extract_all=self.format_json(novel_extract_all),
-                current_novel_full=current_novel_full,
-                generated_storyboard=self.format_json(self._generated_shots_context(shots)),
-                current_shot_start_text=current_shot_start_text,
-                roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
-                props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),
-                layouts=self.format_json(
-                    {layout_id: layout.model_dump(mode="json") for layout_id, layout in state.layouts.items()}
-                ),
-            )
-            output = await provider.generate_json(
-                prompt,
-                StoryboardNextShotOutput,
-                temperature=0.6,
-                metadata={
-                    "node_name": "storyboard_generation",
-                    "project_id": state.project_id,
-                    "episode_key": episode_key,
-                    "generation_step": generation_step,
-                    "generated_shot_count": len(shots),
-                    "current_shot_start_text": current_shot_start_text,
-                    "current_novel_full": current_novel_full,
-                },
-            )
-            self.last_text_call_count += 1
-            if output.episode_key != episode_key:
-                raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")
+            if on_shot_started is not None:
+                callback_result = on_shot_started(episode_key, generation_step)
+                if inspect.isawaitable(callback_result):
+                    await callback_result
+            try:
+                prompt = self.prompts.render(
+                    "storyboard_generate",
+                    title=state.title,
+                    episode_key=episode_key,
+                    novel_extract_all=self.format_json(novel_extract_all),
+                    current_novel_full=current_novel_full,
+                    generated_storyboard=self.format_json(self._generated_shots_context(shots)),
+                    current_shot_start_text=current_shot_start_text,
+                    roles=self.format_json(
+                        {role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}
+                    ),
+                    props=self.format_json(
+                        {prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}
+                    ),
+                    layouts=self.format_json(
+                        {layout_id: layout.model_dump(mode="json") for layout_id, layout in state.layouts.items()}
+                    ),
+                )
+                if on_prompt_ready is not None:
+                    callback_result = on_prompt_ready(episode_key, generation_step, prompt)
+                    if inspect.isawaitable(callback_result):
+                        await callback_result
+                output = await provider.generate_json(
+                    prompt,
+                    StoryboardNextShotOutput,
+                    temperature=0.6,
+                    metadata={
+                        "node_name": "storyboard_generation",
+                        "project_id": state.project_id,
+                        "episode_key": episode_key,
+                        "generation_step": generation_step,
+                        "generated_shot_count": len(shots),
+                        "current_shot_start_text": current_shot_start_text,
+                        "current_novel_full": current_novel_full,
+                    },
+                )
+                self.last_text_call_count += 1
+                if output.episode_key != episode_key:
+                    raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")
 
-            next_start_offset = self._validate_source_coverage(
-                output.shot.source_coverage,
-                current_novel_full=current_novel_full,
-                current_shot_start_text=current_shot_start_text,
-                current_start_offset=current_start_offset,
-                is_chapter_complete=output.is_chapter_complete,
-                source_end_offset=source_end_offset,
-            )
-            shot_index = len(shots) + 1
-            shot = self._normalize_generated_shot(output.shot, episode_key=episode_key, shot_index=shot_index)
+                next_start_offset = self._validate_source_coverage(
+                    output.shot.source_coverage,
+                    current_novel_full=current_novel_full,
+                    current_shot_start_text=current_shot_start_text,
+                    current_start_offset=current_start_offset,
+                    is_chapter_complete=output.is_chapter_complete,
+                    source_end_offset=source_end_offset,
+                )
+                shot_index = len(shots) + 1
+                shot = self._normalize_generated_shot(output.shot, episode_key=episode_key, shot_index=shot_index)
+            except Exception as exc:
+                if on_shot_failed is not None:
+                    callback_result = on_shot_failed(episode_key, generation_step, exc)
+                    if inspect.isawaitable(callback_result):
+                        await callback_result
+                raise
             shots.append(shot)
             if on_shot_generated is not None:
                 callback_result = on_shot_generated(StoryboardEpisodeOutput(episode_key=episode_key, shots=list(shots)), shot)

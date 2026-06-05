@@ -229,7 +229,7 @@ async def main_async() -> int:
         require(item["selection_source"] == "text_shortlist", f"expected text shortlist: {item}")
         require(item["selected_voice_type"] == "zh_male_candidate_1", f"candidate_id did not lock selection: {item}")
         require(len(item["top_candidates"]) == 3, f"expected top 3 candidates: {item['top_candidates']}")
-        require(item["raw_response"]["selection_prompt_version"].endswith("filtered_flash_top3.v3"), "prompt version mismatch")
+        require(item["raw_response"]["selection_prompt_version"].endswith("visual_refs.v4"), "prompt version mismatch")
 
     print("voice_select_parallel_top3_smoke=ok")
     print(f"project_dir={project_dir}")

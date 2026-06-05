@@ -13,7 +13,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from autodrama.config import load_settings  # noqa: E402
-from autodrama.core.schemas import Role, RoleAudio, StoryboardShot  # noqa: E402
+from autodrama.core.schemas import Layout, Role, RoleAudio, StoryboardEpisodeOutput, StoryboardShot  # noqa: E402
 from autodrama.providers.router import ProviderRouter  # noqa: E402
 from autodrama.repositories.project_repo import ProjectRepository  # noqa: E402
 from autodrama.workflows.generation import GenerationWorkflow  # noqa: E402
@@ -48,11 +48,21 @@ def main() -> int:
     state = repo.load_state(project_dir)
 
     ref_frame_path = project_dir / "assets" / "images" / "ref_frames" / "episode_001_shot_001_ref_frame.png"
+    layout_image_path = project_dir / "assets" / "images" / "layouts" / "layout_room.png"
     role_audio_path = project_dir / "assets" / "audios" / "role_voices" / "role_linz_normal.mp3"
     write_png(ref_frame_path)
+    write_png(layout_image_path)
     role_audio_path.parent.mkdir(parents=True, exist_ok=True)
     role_audio_path.write_bytes(b"fake role voice audio")
 
+    state.layouts["layout_room"] = Layout(
+        id="layout_room",
+        name="会议室",
+        desc="无人物冷色会议室。",
+        prompt="无人物会议室空场景。",
+        asset_path="assets/images/layouts/layout_room.png",
+        asset_url="https://example.invalid/layout-room.png",
+    )
     state.roles["role_linz"] = Role(
         id="role_linz",
         name="林舟",
@@ -90,13 +100,22 @@ def main() -> int:
     refs = workflow._shot_video_refs(project_dir, state, shot, provider=provider)
     image_refs = [ref for ref in refs if ref.type == "image"]
     audio_refs = [ref for ref in refs if ref.type == "audio"]
-    require(len(image_refs) == 1, f"Expected one ref-frame image ref, got {len(image_refs)}")
+    require(len(image_refs) == 1, f"Expected one empty layout image ref, got {len(image_refs)}")
+    require(image_refs[0].metadata.get("asset_type") == "layout", image_refs[0].model_dump())
     require(
-        image_refs[0].url == "https://example.invalid/generated-ref-frame.png",
-        f"Shot video ref did not prefer saved image URL: {image_refs[0].model_dump()}",
+        image_refs[0].url == "https://example.invalid/layout-room.png",
+        f"Shot video layout ref did not prefer saved image URL: {image_refs[0].model_dump()}",
     )
+    require(all(ref.metadata.get("asset_type") != "ref_frame" for ref in image_refs), "Ref frame image should be skipped")
     require(len(audio_refs) == 1, f"Expected one role audio ref, got {len(audio_refs)}")
     require(audio_refs[0].metadata.get("role_id") == "role_linz", "Role audio ref missing role metadata")
+
+    episode = StoryboardEpisodeOutput(episode_key="episode_001", shots=[shot])
+    final_prompt = workflow._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
+    require("图片1" in final_prompt and "场景图，作为空间锚点" in final_prompt, final_prompt)
+    require("本段视频参考图，作为本段空间参考锚点" not in final_prompt, final_prompt)
+    require("音频1" in final_prompt and "角色说话声音锚点" in final_prompt, final_prompt)
+    require("当前 shot 主体视频描述:" in final_prompt, final_prompt)
 
     payload = provider.build_payload("测试短视频生成。", refs=refs, duration=6)
     output_dir = ROOT_DIR / ".tmp" / "smoke" / "shot_video_ref_url_audio"
@@ -106,7 +125,7 @@ def main() -> int:
 
     image_items = [item for item in payload["content"] if item["type"] == "image_url"]
     audio_items = [item for item in payload["content"] if item["type"] == "audio_url"]
-    require(image_items[0]["image_url"]["url"] == "https://example.invalid/generated-ref-frame.png", payload["content"])
+    require(image_items[0]["image_url"]["url"] == "https://example.invalid/layout-room.png", payload["content"])
     require(audio_items[0]["audio_url"]["url"].startswith("data:audio/mpeg;base64,"), payload["content"])
 
     print("shot_video_ref_url_audio_smoke=ok")
