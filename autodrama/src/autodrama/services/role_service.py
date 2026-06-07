@@ -13,6 +13,7 @@ from autodrama.core.schemas import (
     RoleVoiceDesignOutput,
 )
 from autodrama.providers.base import TextLLM
+from autodrama.services.director_service import DirectorService
 from autodrama.utils.prompts import PromptStore
 
 
@@ -49,6 +50,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             existing_roles=self.format_json(existing_roles),
             episode_keys=", ".join(novel_full),
         )
@@ -78,6 +80,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             existing_primary_roles=self.format_json(existing_primary_roles),
             episode_keys=", ".join(novel_full),
         )
@@ -108,6 +111,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(existing_functional_roles),
             episode_keys=", ".join(novel_full),
@@ -165,6 +169,7 @@ class RoleService:
             "role_duplicate_audit",
             title=state.title,
             novel_full=self.format_json(novel_full),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             role_index=self.format_json(role_index),
         )
         return await provider.generate_json(
@@ -193,6 +198,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(functional_roles),
             episode_keys=", ".join(novel_full),
@@ -228,6 +234,7 @@ class RoleService:
             role_extract_item=self.format_json(role_item.model_dump(mode="json")),
             role_novel_extract=self.format_json(role_novel_extract),
             role_novel_full=self.format_json(role_novel_full),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(role_novel_full)),
             role_index=self.format_json(role_index),
             designed_role_voices=self.format_json(designed_role_voices),
             available_voices=self.format_json(available_voices),

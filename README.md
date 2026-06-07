@@ -175,7 +175,7 @@ $env:PYTHONPATH="autodrama/src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli import-script --config config.yaml --project huyao --script inputs/狐妖.md --detail-expand --expanded-script-out inputs/狐妖_细化.md --preserve-assets
 ```
 
-Windows 下也可以直接用快捷脚本。它默认会保留已有资产、执行保守细化，并自动刷新 `script_novel_extract`：
+Windows 下也可以直接用快捷脚本。它默认会保留已有资产、执行保守细化，并自动刷新 `director_prep` 和 `script_novel_extract`：
 
 ```powershell
 run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐妖.md --expanded-script-out inputs/狐妖_细化.md
@@ -187,10 +187,10 @@ run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐�
 run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐妖.md --expanded-script-out inputs/狐妖_细化.md --storyboard --episodes 1
 ```
 
-`--preserve-assets` 会保留角色、道具、场景、图片、音频、视频状态，只把 `script_novel_extract` 和动态分镜生成节点标记为需要重跑。导入后先刷新剧情摘要：
+`--preserve-assets` 会保留角色、道具、场景、图片、音频、视频状态，只把 `director_prep`、`script_novel_extract` 和动态分镜生成节点标记为需要重跑。导入后先刷新导演前期和剧情摘要：
 
 ```powershell
-run\start.cmd --config config.yaml --project huyao --only script_novel_extract
+run\start.cmd --config config.yaml --project huyao --until script_novel_extract
 ```
 
 再按需要重新生成后续分镜：
@@ -199,7 +199,7 @@ run\start.cmd --config config.yaml --project huyao --only script_novel_extract
 run\start.cmd --generation --config config.yaml --project huyao --only storyboard_generation --episodes 1
 ```
 
-`import-script` 会写入 `assets/json/scripts/novel_full/episode_001.json`，并把 `script_outline`、`script_novel` 标记为已完成。后续普通预生成会跳过重写型脚本节点，直接从 `script_novel_extract` 继续：
+`import-script` 会写入 `assets/json/scripts/novel_full/episode_001.json`，并把 `script_outline`、`script_novel` 标记为已完成。后续普通预生成会跳过重写型脚本节点，先生成 `director_prep`，再从 `script_novel_extract` 继续：
 
 ```powershell
 run\start.cmd --config config.yaml --project huyao
@@ -233,6 +233,7 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config con
 ```text
 script_outline
 script_novel
+director_prep
 script_novel_extract
 role_extract_primary
 role_extract_functional

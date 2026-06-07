@@ -28,6 +28,7 @@ from autodrama.core.schemas import (
 from autodrama.logging import get_logger, log_context
 from autodrama.providers.base import ImageGenerationResult, VideoGenerationResult
 from autodrama.repositories.dynamic_asset_repo import DynamicAssetRepository
+from autodrama.services.director_service import DirectorService
 from autodrama.workflows.generation_tasks import (
     find_generation_task,
     generation_tasks_path,
@@ -465,6 +466,7 @@ class DynamicAssetNodeMixin:
             episode_key=episode_key,
             novel_extract_all=self._episode_stories(project_dir, state),
             current_novel_full=self._novel_full_contents(project_dir, state, [episode_key]).get(episode_key, ""),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=[episode_key]),
             on_shot_generated=save_storyboard_progress,
             on_shot_started=log_storyboard_shot_started,
             on_shot_failed=log_storyboard_shot_failed,

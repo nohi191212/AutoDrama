@@ -535,6 +535,7 @@ class StoryboardService:
         novel_extract_all: dict[str, str] | None = None,
         current_novel_full: str | None = None,
         episode_story: str | None = None,
+        director_prep: str | None = None,
         previous_storyboard_history: dict[str, Any] | None = None,
         on_shot_generated: Callable[[StoryboardEpisodeOutput, StoryboardShot], Any] | None = None,
         on_shot_started: Callable[[str, int], Any] | None = None,
@@ -597,6 +598,7 @@ class StoryboardService:
                     episode_key=episode_key,
                     novel_extract_all=self.format_json(novel_extract_all),
                     current_novel_full=current_novel_full,
+                    director_prep=director_prep or "（暂无导演前期。）",
                     generated_storyboard=self.format_json(self._generated_shots_context(shots)),
                     previous_shot_preroll_instruction=self._previous_shot_preroll_instruction(
                         shots[-1] if shots else None,

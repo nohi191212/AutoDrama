@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from autodrama.core.schemas import (
     AmbientEntityOutput,
     BGMDesignOutput,
+    DirectorPrepOutput,
     LayoutDedupeReviewOutput,
     LayoutDesignOutput,
     LayoutExtractOutput,
@@ -174,6 +175,97 @@ class FakeTextProvider:
                     "苏晚把旧邮件截图推到他面前，附件时间像一枚钉子，把赵启的谎言钉在屏幕上。"
                     "林舟没有立刻说话，他把证据一页页拍下，听着窗外雨声，第一次决定不再退让。"
                 ),
+            }
+        elif schema is DirectorPrepOutput or node_name == "director_prep":
+            expected_keys = metadata.get("expected_keys") or episode_keys
+            director_episode_keys = [str(key) for key in expected_keys]
+            data = {
+                "story_core": "林舟在被合同调包陷害后，从隐忍调查转向公开反击。",
+                "worldview": "现代职场悬疑短剧，证据链、会议权力关系和雨夜空间氛围推动戏剧张力。",
+                "visual_tone": "克制写实的短剧摄影，冷白办公光、雨夜反射、低饱和色彩和稳定推进镜头。",
+                "immutable_rules": [
+                    "合同关键页被调包是核心证据，不得改成其他案件。",
+                    "林舟的反击建立在邮件截图和合同细节上，不是凭空爆发。",
+                ],
+                "character_locks": [
+                    {
+                        "name": "林舟",
+                        "identity": "被陷害的职场青年，调查合同调包并准备反击。",
+                        "arc": "从沉默观察到冷静确认证据。",
+                        "visual_invariants": ["短发", "深灰职场衬衫", "疲惫但克制的眼神"],
+                        "performance_invariants": ["语气压低", "动作克制", "先观察再行动"],
+                        "must_not_change": ["不能变成冲动鲁莽的复仇者"],
+                    },
+                    {
+                        "name": "苏晚",
+                        "identity": "提供旧邮件截图的协助者。",
+                        "arc": "以理性证据帮助林舟稳住局面。",
+                        "visual_invariants": ["清冷理性", "数据分析气质"],
+                        "performance_invariants": ["递交证据时简洁果断"],
+                        "must_not_change": ["不能替代林舟完成正面反击"],
+                    },
+                ],
+                "scene_locks": [
+                    {
+                        "name": "雨夜办公室",
+                        "description": "林舟发现合同异常和邮件证据的深夜办公空间。",
+                        "spatial_facts": ["办公桌承载合同和电脑屏幕", "窗外有雨痕和城市霓虹反射"],
+                        "lighting_mood": "冷白顶灯和电脑冷蓝光压低环境。",
+                        "must_not_change": ["不要改成白天明亮空间"],
+                    },
+                    {
+                        "name": "会议室",
+                        "description": "后续公开对峙和证据展示空间。",
+                        "spatial_facts": ["长会议桌", "投影屏", "玻璃墙雨痕"],
+                        "lighting_mood": "投影冷光与窗外蓝色雨光形成压迫感。",
+                        "must_not_change": ["不要移除投影屏和会议桌"],
+                    },
+                ],
+                "episodes": [
+                    {
+                        "episode_key": key,
+                        "story_function": "建立合同调包疑点，并让林舟完成从忍耐到准备反击的情绪转向。",
+                        "emotional_curve": ["疲惫压抑", "发现异常", "证据确认", "决定反击"],
+                        "shot_beats": [
+                            {
+                                "beat_index": 1,
+                                "title": "雨夜办公室建立",
+                                "source_anchor": f"{key}，雨夜办公室的灯只剩下一排。",
+                                "dramatic_intent": "建立压抑空间和调查氛围。",
+                                "what_to_shoot": "林舟独自在雨夜办公室检查合同。",
+                                "camera_language": "低位近景，缓慢推近合同和人物侧脸。",
+                                "emotion": "疲惫压抑",
+                                "must_keep": ["雨夜办公室", "合同在桌上"],
+                                "must_not_change": ["不要提前进入会议室"],
+                            },
+                            {
+                                "beat_index": 2,
+                                "title": "合同异常确认",
+                                "source_anchor": "发现关键页纸张颜色比其他页浅了半分，装订孔也错开了一线。",
+                                "dramatic_intent": "揭示案件核心证据。",
+                                "what_to_shoot": "合同色差和装订孔错位被林舟发现。",
+                                "camera_language": "合同特写到林舟眼神反应。",
+                                "emotion": "警觉确认",
+                                "must_keep": ["纸张色差", "装订孔错位"],
+                                "must_not_change": ["不要把证据改成口头传闻"],
+                            },
+                            {
+                                "beat_index": 3,
+                                "title": "决定不再退让",
+                                "source_anchor": "第一次决定不再退让。",
+                                "dramatic_intent": "完成本集情绪转折。",
+                                "what_to_shoot": "林舟拍下证据并抬眼看向屏幕。",
+                                "camera_language": "稳定近景停在半侧脸和证据同框。",
+                                "emotion": "克制反击",
+                                "must_keep": ["拍下证据", "雨声压低环境"],
+                                "must_not_change": ["不要写成外放怒吼"],
+                            },
+                        ],
+                        "must_keep": ["合同调包", "旧邮件截图", "林舟冷静确认证据"],
+                        "must_not_change": ["不要新增无关案件", "不要删除苏晚提供证据的功能"],
+                    }
+                    for key in director_episode_keys
+                ],
             }
         elif schema is ScriptNovelExtractBatchOutput or node_name == "script_novel_extract":
             batch_episode_keys = metadata.get("batch_episode_keys") or expected_keys or episode_keys

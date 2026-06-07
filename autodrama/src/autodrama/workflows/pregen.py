@@ -41,6 +41,7 @@ from autodrama.services.audio_duration import (
     limit_audio_duration,
     provider_max_generated_audio_duration_seconds,
 )
+from autodrama.services.director_service import DirectorService
 from autodrama.services.media_store import MediaStore
 from autodrama.services.role_service import RoleService
 from autodrama.services.script_service import ScriptService
@@ -53,6 +54,7 @@ from autodrama.workflows.nodes.script_nodes import (
     ScriptNodeBase,
     build_script_node_runners,
 )
+from autodrama.workflows.nodes.director_nodes import DirectorNodeBase, build_director_node_runners
 from autodrama.workflows.nodes.role_nodes import RoleNodeBase, build_role_node_runners
 from autodrama.workflows.nodes.static_asset_nodes import (
     StaticAssetNodeBase,
@@ -100,6 +102,7 @@ class PregenWorkflow:
         self.router = router
         self.prompts = prompts or PromptStore()
         self.script_service = ScriptService(self.prompts)
+        self.director_service = DirectorService(self.prompts)
         self.role_service = RoleService(self.prompts)
         self.asset_service = AssetService(self.prompts)
         self.storyboard_service = StoryboardService(self.prompts)
@@ -728,6 +731,12 @@ class PregenWorkflow:
 
     async def _run_script_novel(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._script_node_runner("script_novel").run(project_dir, state)
+
+    def _director_node_runner(self, node_name: str) -> DirectorNodeBase:
+        return build_director_node_runners(self)[node_name]
+
+    async def _run_director_prep(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._director_node_runner("director_prep").run(project_dir, state)
 
     async def _run_script_novel_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._script_node_runner("script_novel_extract").run(project_dir, state)

@@ -25,6 +25,7 @@ from autodrama.workflows.selection import (
 
 SCRIPT_IMPORT_BOOTSTRAP_NODES = {"script_detail_expand", "script_outline", "script_novel"}
 SCRIPT_IMPORT_INVALIDATE_ON_PRESERVE = {
+    "director_prep",
     "script_novel_extract",
     *GENERATION_NODES,
 }
@@ -94,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Allow importing into a project with downstream assets. Role/prop/layout/media state is preserved; "
-            "script_novel_extract and dynamic generation nodes are marked stale."
+            "director_prep, script_novel_extract, and dynamic generation nodes are marked stale."
         ),
     )
 
@@ -622,7 +623,7 @@ async def cmd_import_script(args: argparse.Namespace) -> int:
                 "completed_nodes": state.completed_nodes,
                 "next_script_extract_command": (
                     f"run\\start.cmd --config {args.config} --project {state.project_id} "
-                    "--only script_novel_extract"
+                    "--until script_novel_extract"
                 ),
                 "next_review_command": (
                     f"D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli inspect nodes "

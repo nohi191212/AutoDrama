@@ -119,7 +119,7 @@ async def main_async() -> int:
     state = await workflow.run(project_dir, until="script_novel_extract")
 
     require(
-        state.completed_nodes == ["script_outline", "script_novel", "script_novel_extract"],
+        state.completed_nodes == ["script_outline", "script_novel", "director_prep", "script_novel_extract"],
         f"Unexpected completed nodes: {state.completed_nodes}",
     )
     require(
@@ -131,6 +131,7 @@ async def main_async() -> int:
         "Novel extract keys mismatch",
     )
     require(state.metadata["script_novel_target_char_count"] == 300, "Unexpected target char count")
+    require(state.metadata["director_prep_episode_keys"] == ["episode_001", "episode_002", "episode_003"], "Unexpected director prep keys")
 
     novel_prompts = interrupted_provider.prompts.get("script_novel_episode", [])
     require(len(novel_prompts) == 3, f"Interrupted run should attempt three prompts, got {len(novel_prompts)}")
@@ -140,6 +141,7 @@ async def main_async() -> int:
     extract_prompts = extract_provider.prompts.get("script_novel_extract", [])
     require(len(extract_prompts) == 1, f"Expected one script_novel_extract prompt, got {len(extract_prompts)}")
     require("全本完整小说" in extract_prompts[0], "script_novel_extract prompt missing full novel section")
+    require("导演前期约束" in extract_prompts[0], "script_novel_extract prompt missing director prep section")
     require("episode_003" in extract_prompts[0], "script_novel_extract prompt missing episode key")
 
     node_output = json.loads((project_dir / "assets" / "json" / "nodes" / "script_novel.json").read_text(encoding="utf-8"))

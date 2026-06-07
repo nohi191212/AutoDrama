@@ -18,6 +18,10 @@ from autodrama.workflows.nodes.bgm_nodes import (  # noqa: E402
     BGMDesignNode,
     BGMGenerationNode,
 )
+from autodrama.workflows.nodes.director_nodes import (  # noqa: E402
+    DIRECTOR_NODE_NAMES,
+    DirectorPrepNode,
+)
 from autodrama.workflows.nodes.script_nodes import (  # noqa: E402
     SCRIPT_NODE_NAMES,
     ScriptNovelExtractNode,
@@ -89,6 +93,19 @@ def main() -> int:
         )
         require(owner.repo is workflow.repo, f"{node_name} repo dependency was not wired from workflow")
         require(owner.script_service is workflow.script_service, f"{node_name} script service dependency drifted")
+
+    expected_director_owners = {
+        "director_prep": DirectorPrepNode,
+    }
+    for node_name in DIRECTOR_NODE_NAMES:
+        owner = getattr(by_name[node_name].run, "__self__", None)
+        require(owner is not None, f"{node_name} is not backed by a node instance")
+        require(
+            isinstance(owner, expected_director_owners[node_name]),
+            f"{node_name} should be owned by {expected_director_owners[node_name].__name__}",
+        )
+        require(owner.repo is workflow.repo, f"{node_name} repo dependency was not wired from workflow")
+        require(owner.director_service is workflow.director_service, f"{node_name} director service dependency drifted")
 
     expected_role_owners = {
         "role_extract_primary": RolePrimaryExtractNode,

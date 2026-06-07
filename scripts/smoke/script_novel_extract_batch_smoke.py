@@ -84,7 +84,10 @@ async def main_async() -> int:
     state = await workflow.run(project_dir, until="script_novel_extract", force=True)
 
     expected_keys = {f"episode_{index:03d}" for index in range(1, 7)}
-    require(state.completed_nodes == ["script_outline", "script_novel", "script_novel_extract"], "Unexpected nodes")
+    require(
+        state.completed_nodes == ["script_outline", "script_novel", "director_prep", "script_novel_extract"],
+        "Unexpected nodes",
+    )
     require(set(state.script.novel_full) == expected_keys, "Novel full keys mismatch")
     require(set(state.script.novel_extract) == expected_keys, "Novel extract keys mismatch")
     require(
@@ -96,7 +99,11 @@ async def main_async() -> int:
         "Novel extract state should store per-episode JSON paths",
     )
     require(state.metadata["script_novel_extract_batch_size"] == 5, "Unexpected extract batch size")
+    require(state.metadata["director_prep_episode_keys"] == sorted(expected_keys), "Unexpected director prep keys")
 
+    director_prompts = provider.prompts.get("director_prep", [])
+    require(len(director_prompts) == 1, f"Expected one director_prep prompt, got {len(director_prompts)}")
+    require("完整剧本/小说正文" in director_prompts[0], "director_prep prompt missing full novel section")
     extract_prompts = provider.prompts.get("script_novel_extract", [])
     extract_metadata = provider.metadata.get("script_novel_extract", [])
     require(len(extract_prompts) == 2, f"Expected two extract batch prompts, got {len(extract_prompts)}")

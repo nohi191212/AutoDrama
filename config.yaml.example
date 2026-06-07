@@ -347,6 +347,7 @@ providers:
 routing:
   text:
     script: aliyun
+    director: deepseek
     role: deepseek
     voice_select: deepseek
     prop: deepseek

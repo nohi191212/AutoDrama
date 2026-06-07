@@ -8,6 +8,7 @@ from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.repositories.script_content_repo import ScriptContentRepository
+from autodrama.services.director_service import DirectorService
 from autodrama.services.script_service import ScriptService
 from autodrama.workflows.runner import WorkflowNode
 
@@ -320,6 +321,7 @@ class ScriptNovelExtractNode(ScriptNodeBase):
                 novel_full=novel_contents,
                 previous_extract=previous_extract,
                 extract_hints=extract_hints,
+                director_prep=DirectorService.director_prep_context(state, episode_keys=batch_keys),
             )
             actual_keys = set(output.novel_extract)
             expected_keys = set(batch_keys)
@@ -384,12 +386,15 @@ def build_script_node_runners(workflow: Any) -> dict[str, ScriptNodeBase]:
     }
 
 
-def build_script_nodes(workflow: Any) -> list[WorkflowNode]:
+def build_script_nodes(workflow: Any, after_novel_nodes: list[WorkflowNode] | None = None) -> list[WorkflowNode]:
     runners = build_script_node_runners(workflow)
-    return [
-        WorkflowNode(name=node_name, run=runners[node_name].run)
-        for node_name in SCRIPT_NODE_NAMES
-    ]
+    after_novel_nodes = after_novel_nodes or []
+    nodes: list[WorkflowNode] = []
+    for node_name in SCRIPT_NODE_NAMES:
+        nodes.append(WorkflowNode(name=node_name, run=runners[node_name].run))
+        if node_name == "script_novel":
+            nodes.extend(after_novel_nodes)
+    return nodes
 
 
 __all__ = [

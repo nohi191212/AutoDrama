@@ -117,7 +117,7 @@ def main() -> int:
             str(config_path),
             "--project",
             project_id,
-            "--only",
+            "--until",
             "script_novel_extract",
             "--provider",
             "fake",
@@ -126,7 +126,9 @@ def main() -> int:
     require(extract_code == 0, f"script_novel_extract exited with {extract_code}")
 
     state = read_json(state_path)
+    require("director_prep" in state["completed_nodes"], state["completed_nodes"])
     require("script_novel_extract" in state["completed_nodes"], state["completed_nodes"])
+    require((project_dir / "assets" / "json" / "nodes" / "director_prep.json").exists(), "director_prep output missing")
     extract_ref = state["script"]["novel_extract"]["episode_001"]
     require((project_dir / extract_ref).exists(), f"novel_extract path missing: {extract_ref}")
     bgm_code = cli_main(
@@ -189,9 +191,11 @@ def main() -> int:
 
     state = read_json(state_path)
     completed = set(state["completed_nodes"])
+    require("director_prep" not in completed, state["completed_nodes"])
     require("script_novel_extract" not in completed, state["completed_nodes"])
     require("bgm_design" in completed, state["completed_nodes"])
     require(state["metadata"]["mature_script_preserved_assets"] is True, state["metadata"])
+    require("director_prep" in state["metadata"]["mature_script_invalidated_nodes"], state["metadata"])
     require("script_novel_extract" in state["metadata"]["mature_script_invalidated_nodes"], state["metadata"])
     require(state["script"]["novel_extract"]["episode_001"] is False, state["script"]["novel_extract"])
 
@@ -203,7 +207,7 @@ def main() -> int:
             str(config_path),
             "--project",
             project_id,
-            "--only",
+            "--until",
             "script_novel_extract",
             "--provider",
             "fake",
@@ -212,6 +216,7 @@ def main() -> int:
     require(reextract_code == 0, f"reextract after preserve-assets exited with {reextract_code}")
 
     state = read_json(state_path)
+    require("director_prep" in state["completed_nodes"], state["completed_nodes"])
     require("script_novel_extract" in state["completed_nodes"], state["completed_nodes"])
     print(f"project_dir={project_dir}")
     print(f"novel_full={novel_ref}")

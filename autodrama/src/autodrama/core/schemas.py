@@ -216,6 +216,54 @@ class ScriptNovelExtractOutput(BaseModel):
     novel_extract: dict[str, str]
 
 
+class DirectorShotBeat(BaseModel):
+    beat_index: int
+    title: str
+    source_anchor: str | None = None
+    dramatic_intent: str
+    what_to_shoot: str
+    camera_language: str | None = None
+    emotion: str | None = None
+    must_keep: list[str] = Field(default_factory=list)
+    must_not_change: list[str] = Field(default_factory=list)
+
+
+class DirectorCharacterLock(BaseModel):
+    name: str
+    identity: str
+    arc: str | None = None
+    visual_invariants: list[str] = Field(default_factory=list)
+    performance_invariants: list[str] = Field(default_factory=list)
+    must_not_change: list[str] = Field(default_factory=list)
+
+
+class DirectorSceneLock(BaseModel):
+    name: str
+    description: str
+    spatial_facts: list[str] = Field(default_factory=list)
+    lighting_mood: str | None = None
+    must_not_change: list[str] = Field(default_factory=list)
+
+
+class DirectorEpisodePrep(BaseModel):
+    episode_key: str
+    story_function: str
+    emotional_curve: list[str] = Field(default_factory=list)
+    shot_beats: list[DirectorShotBeat] = Field(default_factory=list)
+    must_keep: list[str] = Field(default_factory=list)
+    must_not_change: list[str] = Field(default_factory=list)
+
+
+class DirectorPrepOutput(BaseModel):
+    story_core: str
+    worldview: str
+    visual_tone: str | None = None
+    immutable_rules: list[str] = Field(default_factory=list)
+    character_locks: list[DirectorCharacterLock] = Field(default_factory=list)
+    scene_locks: list[DirectorSceneLock] = Field(default_factory=list)
+    episodes: list[DirectorEpisodePrep] = Field(default_factory=list)
+
+
 class ScriptNovelEpisodeOutput(BaseModel):
     episode_key: str
     target_char_count: int

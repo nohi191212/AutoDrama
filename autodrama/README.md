@@ -8,27 +8,28 @@ Implemented scope:
 
 1. `script_outline`
 2. `script_novel`
-3. `script_novel_extract`
-4. `role_extract_primary`
-5. `role_extract_functional`
-6. `role_extract`
-7. `role_episode_key_audit`
-8. `ambient_entity_extract`
-9. `role_design`
-10. `voice_select`
-11. `role_voice_generation`
-12. `role_full_body_generation`
-13. `role_multiview_generation`
-14. `role_intro_video_generation`
-15. `prop_extract`
-16. `prop_design`
-17. `prop_generation`
-18. `layout_extract`
-19. `layout_design`
-20. `layout_dedupe_review`
-21. `layout_image_generation`
-22. `bgm_design`
-23. `bgm_generation`
+3. `director_prep`
+4. `script_novel_extract`
+5. `role_extract_primary`
+6. `role_extract_functional`
+7. `role_extract`
+8. `role_episode_key_audit`
+9. `ambient_entity_extract`
+10. `role_design`
+11. `voice_select`
+12. `role_voice_generation`
+13. `role_full_body_generation`
+14. `role_multiview_generation`
+15. `role_intro_video_generation`
+16. `prop_extract`
+17. `prop_design`
+18. `prop_generation`
+19. `layout_extract`
+20. `layout_design`
+21. `layout_dedupe_review`
+22. `layout_image_generation`
+23. `bgm_design`
+24. `bgm_generation`
 
 `run pregen` covers script, reusable static assets, BGM design, and BGM audio generation. It stops at `bgm_generation` by default.
 
@@ -37,6 +38,8 @@ Script episode content is stored as per-episode JSON files:
 - `script_outline`: `assets/json/scripts/outlines/episode_XXX.json`
 - `script_novel`: `assets/json/scripts/novel_full/episode_XXX.json`
 - `script_novel_extract`: `assets/json/scripts/novel_extract/episode_XXX.json`
+
+`director_prep` runs after `script_novel` and before `script_novel_extract`. It reads the full `novel_full` set and writes `assets/json/nodes/director_prep.json`, with story core, worldview, role/scene locks, emotional curves, and per-episode shot-beat maps. Downstream text nodes use it as a director constraint reference, while `novel_full` remains the source of truth for script facts.
 
 Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at most one direct source path such as `source_novel_full_path`. The state stores the JSON path when an episode is generated, or `false` when it is not generated yet.
 

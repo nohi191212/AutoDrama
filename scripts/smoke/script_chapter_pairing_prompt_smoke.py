@@ -52,6 +52,7 @@ def main() -> int:
         novel_full='{"episode_001": "源章节：第1章-第2章。韩默踏入秘境，落地遇险。"}',
         previous_extract="（暂无，当前是第一批。）",
         extract_hints='{"episode_001": "源章节：第1章-第2章。传送入秘境并落地遇险。"}',
+        director_prep="（暂无导演前期。）",
         batch_episode_keys=", ".join(f"episode_{index:03d}" for index in range(1, 6)),
         episode_count=50,
         episode_duration_seconds=180,

@@ -14,6 +14,7 @@ from autodrama.core.schemas import (
     RoleAppearanceDesignOutput,
 )
 from autodrama.providers.base import TextLLM
+from autodrama.services.director_service import DirectorService
 from autodrama.utils.prompts import PromptStore
 
 
@@ -55,6 +56,7 @@ class AssetService:
             "role_appearance_design",
             title=state.title,
             episode_stories=self.format_json(episode_stories),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(episode_stories)),
             roles=self.format_json(
                 [
                     {
@@ -94,6 +96,7 @@ class AssetService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             episode_keys=", ".join(novel_full),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
             role_bound_props=self.format_json(role_bound_props),
@@ -130,6 +133,7 @@ class AssetService:
             raw_script=state.raw_script,
             prop_extract_item=self.format_json(prop_item.model_dump(mode="json")),
             prop_novel_full=self.format_json(prop_novel_full),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(prop_novel_full)),
             all_prop_extracts=self.format_json(all_prop_extracts),
             existing_prop_designs=self.format_json(existing_prop_designs),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
@@ -161,6 +165,7 @@ class AssetService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             episode_keys=", ".join(novel_full),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
             props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),
@@ -189,6 +194,7 @@ class AssetService:
             title=state.title,
             layout_extracts=self.format_json(layout_extracts),
             episode_stories=self.format_json(episode_stories),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(episode_stories)),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
             props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),
             layout_design_style_prompt=self.layout_design_style_prompt(state),
@@ -225,6 +231,7 @@ class AssetService:
             "bgm_design",
             title=state.title,
             episode_stories=self.format_json(episode_stories),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=list(episode_stories)),
             bgm_count=bgm_count,
         )
         return await provider.generate_json(

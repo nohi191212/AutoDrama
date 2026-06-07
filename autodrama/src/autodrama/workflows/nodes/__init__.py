@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from autodrama.workflows.nodes.bgm_nodes import BGM_NODE_NAMES, build_bgm_nodes
+from autodrama.workflows.nodes.director_nodes import DIRECTOR_NODE_NAMES, build_director_nodes
 from autodrama.workflows.nodes.dynamic_asset_solidification_node import (
     DYNAMIC_ASSET_SOLIDIFICATION_NODE_NAME,
     build_dynamic_asset_solidification_episode_node,
@@ -21,7 +22,7 @@ from autodrama.workflows.runner import EpisodeWorkflowNode, WorkflowNode
 
 def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
     return [
-        *build_script_nodes(workflow),
+        *build_script_nodes(workflow, after_novel_nodes=build_director_nodes(workflow)),
         *build_role_nodes(workflow),
         *build_voice_nodes(workflow),
         *build_static_asset_nodes(workflow),
@@ -30,7 +31,9 @@ def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
 
 
 PREGEN_NODE_NAMES = [
-    *SCRIPT_NODE_NAMES,
+    *SCRIPT_NODE_NAMES[:2],
+    *DIRECTOR_NODE_NAMES,
+    *SCRIPT_NODE_NAMES[2:],
     *ROLE_NODE_NAMES,
     *VOICE_NODE_NAMES,
     *STATIC_ASSET_NODE_NAMES,
@@ -56,6 +59,7 @@ def build_generation_episode_nodes(workflow: Any) -> list[EpisodeWorkflowNode]:
 
 __all__ = [
     "BGM_NODE_NAMES",
+    "DIRECTOR_NODE_NAMES",
     "DYNAMIC_ASSET_SOLIDIFICATION_NODE_NAME",
     "GENERATION_NODE_NAMES",
     "PREGEN_NODE_NAMES",
@@ -67,6 +71,7 @@ __all__ = [
     "STATIC_ASSET_NODE_NAMES",
     "VOICE_NODE_NAMES",
     "build_bgm_nodes",
+    "build_director_nodes",
     "build_dynamic_asset_solidification_episode_node",
     "build_generation_episode_nodes",
     "build_pregen_nodes",
