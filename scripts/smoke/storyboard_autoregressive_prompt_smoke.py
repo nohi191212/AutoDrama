@@ -475,6 +475,8 @@ async def main_async() -> int:
     require(schema_names == {StoryboardNextShotOutput.__name__}, f"Unexpected schemas: {schema_names}")
     require("已经生成并已覆盖的分镜" in provider.calls[0]["prompt"], "Prompt missing covered storyboard guidance")
     require("当前 shot 起点原文" in provider.calls[0]["prompt"], "Prompt missing next shot source cursor")
+    require("当前是本集第一镜，没有上一镜头视频可承接" in provider.calls[0]["prompt"], "First prompt missing no-previous-shot guidance")
+    require("0-2秒取上一镜视频最后2秒作为开场预滚" not in provider.calls[0]["prompt"], "First prompt should not request previous-shot preroll")
     require("0-3 秒：" in provider.calls[0]["prompt"], "Prompt missing official-style timed video_prompt guidance/example")
     require("方括号标签" in provider.calls[0]["prompt"], "Prompt missing guidance against old bracketed style")
     require("硬切到" in provider.calls[0]["prompt"], "Prompt missing natural explicit cut guidance/example")
@@ -519,6 +521,8 @@ async def main_async() -> int:
     require("人物小传" not in first_cursor_section, f"First cursor section should not include character bios: {first_cursor_section}")
     require('"source_coverage"' in provider.calls[1]["prompt"], "Second prompt missing first shot source coverage")
     require("episode_001_shot_001" in provider.calls[1]["prompt"], "Second prompt missing first shot id")
+    require("当前配置不使用上一镜视频预滚" in provider.calls[1]["prompt"], "Second prompt missing disabled-preroll guidance")
+    require("0-2秒取上一镜视频最后2秒作为开场预滚" not in provider.calls[1]["prompt"], "Second prompt should not request previous-shot preroll by default")
     require("episode_001_shot_002" in provider.calls[2]["prompt"], "Third prompt missing two generated shots context")
 
     capped_max_shots = 4

@@ -34,6 +34,13 @@ from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.repositories.role_design_repo import RoleDesignRepository
 from autodrama.repositories.script_content_repo import ScriptContentRepository
 from autodrama.services.asset_service import AssetService
+from autodrama.services.audio_duration import (
+    AudioDurationLimitResult,
+    audio_duration_limit_metadata,
+    compact_tts_text,
+    limit_audio_duration,
+    provider_max_generated_audio_duration_seconds,
+)
 from autodrama.services.media_store import MediaStore
 from autodrama.services.role_service import RoleService
 from autodrama.services.script_service import ScriptService
@@ -68,6 +75,10 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "prop_design",
     "prop_generation",
     "layout_image_generation",
+}
+ROLE_SCOPED_PREGEN_ONLY_NODES = {
+    "voice_select",
+    "role_voice_generation",
 }
 PREGEN_ONLY_ALIASES = {"prop_image_generation": "prop_generation"}
 
@@ -223,7 +234,10 @@ class PregenWorkflow:
     @staticmethod
     def _default_voice_sample_text(role: Role) -> str:
         intro = role.intro.rstrip("。")
-        return f"我是{role.name}。{intro}。面对眼前的问题，我会保持冷静，按照自己的判断继续向前。"
+        return compact_tts_text(
+            f"我是{role.name}。{intro}。面对眼前的问题，我会保持冷静。",
+            max_chars=40,
+        )
 
     @classmethod
     def _validate_voice_sample_text(cls, label: str, sample_text: str | None) -> None:
@@ -601,6 +615,7 @@ class PregenWorkflow:
         force: bool = False,
         only: str | None = None,
         episode_keys: list[str] | None = None,
+        role_names: list[str] | None = None,
     ) -> ProjectState:
         if only is not None:
             only = PREGEN_ONLY_ALIASES.get(only, only)
@@ -614,6 +629,7 @@ class PregenWorkflow:
         self._apply_script_plan_settings(state)
         target_nodes = [only] if only else PREGEN_NODES[: PREGEN_NODES.index(until) + 1]
         selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
+        selected_role_names = self._select_role_names(role_names) if role_names else None
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
                 "--episodes is only supported for pregen --only role_design, voice_select, role_voice_generation, "
@@ -621,17 +637,21 @@ class PregenWorkflow:
                 "role_intro_video_generation, prop_design, prop_generation, or layout_image_generation. "
                 "Use run generation --only storyboard_generation --episodes ... for storyboard shots."
             )
+        if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
+            raise ValueError("--roles is only supported for pregen --only voice_select or role_voice_generation.")
         logger.info(
-            "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s completed=%s",
+            "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s completed=%s",
             state.project_id,
             until,
             only or "-",
             force,
             ",".join(selected_episode_keys or []) or "-",
+            ",".join(selected_role_names or []) or "-",
             ",".join(state.completed_nodes) or "-",
         )
 
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
+        previous_active_role_names = getattr(self, "_active_role_names", None)
         previous_force_pregen = getattr(self, "_force_pregen", None)
         previous_run_context = getattr(self, "_run_context", None)
         self._run_context = WorkflowRunContext(
@@ -641,10 +661,13 @@ class PregenWorkflow:
             only=only,
             force=force,
             selected_episode_keys=selected_episode_keys,
+            selected_role_names=selected_role_names,
         )
         self._force_pregen = bool(force)
         if selected_episode_keys is not None:
             self._active_episode_keys = set(selected_episode_keys)
+        if selected_role_names is not None:
+            self._active_role_names = list(selected_role_names)
         try:
             node_by_name = {node.name: node for node in build_pregen_nodes(self)}
             state = await self.runner.run_nodes(
@@ -660,6 +683,11 @@ class PregenWorkflow:
                     delattr(self, "_active_episode_keys")
                 else:
                     self._active_episode_keys = previous_active_episode_keys
+            if selected_role_names is not None:
+                if previous_active_role_names is None:
+                    delattr(self, "_active_role_names")
+                else:
+                    self._active_role_names = previous_active_role_names
             if previous_force_pregen is None:
                 if hasattr(self, "_force_pregen"):
                     delattr(self, "_force_pregen")
@@ -676,6 +704,21 @@ class PregenWorkflow:
 
     def _select_episode_keys(self, state: ProjectState, episode_keys: list[str] | None) -> list[str]:
         return select_episode_keys(state, episode_keys)
+
+    @staticmethod
+    def _select_role_names(role_names: list[str] | None) -> list[str]:
+        selected: list[str] = []
+        seen: set[str] = set()
+        for role_name in role_names or []:
+            value = str(role_name).strip()
+            if not value:
+                continue
+            key = value.casefold()
+            if key in seen:
+                continue
+            selected.append(value)
+            seen.add(key)
+        return selected
 
     def _script_node_runner(self, node_name: str) -> ScriptNodeBase:
         return build_script_node_runners(self)[node_name]
@@ -1008,7 +1051,7 @@ class PregenWorkflow:
         return f"ad_{digest[:13]}"
 
     def _preview_text(self, role: Role, audio: RoleAudio) -> str:
-        return (audio.sample_text or f"我是{role.name}。")[:1024]
+        return compact_tts_text(audio.sample_text or f"我是{role.name}。", max_chars=40)[:1024]
 
     def _voice_prompt(self, role: Role, audio: RoleAudio) -> str:
         return audio.desc or f"{role.name}的{audio.emotion}音色。{role.intro}"
@@ -1129,6 +1172,36 @@ class PregenWorkflow:
             audio_data=audio_data,
             audio_url=audio_url,
         )
+
+    def _limit_generated_audio_duration(
+        self,
+        project_dir: Path,
+        asset_path: str | None,
+        *,
+        provider: object,
+    ) -> AudioDurationLimitResult:
+        max_duration_seconds = provider_max_generated_audio_duration_seconds(provider)
+        if not asset_path:
+            return AudioDurationLimitResult(
+                max_duration_seconds=max_duration_seconds,
+                skipped_reason="audio_path_missing",
+            )
+        path = Path(asset_path)
+        if not path.is_absolute():
+            path = project_dir / path
+        result = limit_audio_duration(
+            path,
+            max_duration_seconds=max_duration_seconds,
+            ffmpeg_path=self.settings.runtime.ffmpeg_path,
+        )
+        if result.trimmed:
+            get_logger().info(
+                "trimmed generated audio %s from %.3fs to %.3fs",
+                asset_path,
+                result.original_duration_seconds or 0.0,
+                result.duration_seconds or result.max_duration_seconds or 0.0,
+            )
+        return result
 
     async def _write_generated_video(
         self,
@@ -1679,6 +1752,9 @@ class PregenWorkflow:
                         "emotion": audio.emotion,
                         "voice": audio.voice_type,
                         "voice_name": audio.voice_name,
+                        "duration_seconds": audio.duration_seconds,
+                        "original_duration_seconds": audio.original_duration_seconds,
+                        "duration_limited": audio.duration_limited,
                     },
                 )
             )
@@ -1731,9 +1807,10 @@ class PregenWorkflow:
                 "role_full_body": 0,
                 "layout": 1,
                 "ref_frame": 2,
-                "previous_shot_last_frame": 3,
-                "role_appearance": 4,
-                "prop": 5,
+                "previous_shot_last_ref_frame": 3,
+                "previous_shot_last_frame": 4,
+                "role_appearance": 5,
+                "prop": 6,
             }.get(asset_type, 9)
             return priority, str(getattr(ref, "id", "") or "")
 
@@ -2097,6 +2174,40 @@ class PregenWorkflow:
             metadata=metadata,
         )
 
+    def _previous_shot_last_ref_frame_ref(
+        self,
+        project_dir: Path,
+        previous_shot: StoryboardShot | None,
+    ):
+        from autodrama.providers.base import AssetRef
+
+        if previous_shot is None:
+            return None
+        if not (previous_shot.ref_frame_asset_path or previous_shot.ref_frame_asset_url):
+            return None
+        return AssetRef(
+            id=f"{previous_shot.ref_frame_asset_id or previous_shot.shot_id}_last_ref_frame",
+            type="image",
+            path=str(project_dir / previous_shot.ref_frame_asset_path)
+            if previous_shot.ref_frame_asset_path
+            else None,
+            url=previous_shot.ref_frame_asset_url,
+            metadata={
+                "asset_type": "previous_shot_last_ref_frame",
+                "reference_source": "previous_shot_ref_frame_url"
+                if previous_shot.ref_frame_asset_url
+                else "previous_shot_ref_frame_file",
+                "reference_role": "previous_shot_last_state",
+                "source_shot_id": previous_shot.shot_id,
+                "previous_shot_id": previous_shot.shot_id,
+                "source_ref_frame_asset_id": previous_shot.ref_frame_asset_id,
+                "layout_id": previous_shot.layout_id,
+                "physical_space_key": previous_shot.physical_space_key,
+                "seedance_role": "reference_image",
+                "name": f"{previous_shot.shot_id} 最后参考帧",
+            },
+        )
+
     def _shot_context_video_refs(
         self,
         project_dir: Path,
@@ -2214,6 +2325,10 @@ class PregenWorkflow:
                     },
                 )
             )
+        if reference_mode in {"ref_frame", "ref_frame_only"}:
+            previous_ref_frame_ref = self._previous_shot_last_ref_frame_ref(project_dir, previous_shot)
+            if previous_ref_frame_ref is not None:
+                refs.append(previous_ref_frame_ref)
         if self._video_reference_mode_uses_layout_intro_refs(reference_mode):
             refs.extend(self._shot_role_full_body_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
             refs.extend(
@@ -2264,6 +2379,9 @@ class PregenWorkflow:
                             "asset_type": "shot_dialogue_audio",
                             "role_id": audio.role_id,
                             "line_index": audio.line_index,
+                            "duration_seconds": audio.duration_seconds,
+                            "original_duration_seconds": audio.original_duration_seconds,
+                            "duration_limited": audio.duration_limited,
                         },
                     )
                 )
@@ -2373,6 +2491,7 @@ class PregenWorkflow:
         voice_resource_id = self._role_synthesis_resource_id(provider, role, voice)
         emotion_instruction, emotion_params = self._role_emotion_synthesis_plan(provider, role_audio)
         asset_id = normalize_id(f"{shot.shot_id}_dialogue", f"{line_index:03d}_{role.name}")
+        max_duration_seconds = provider_max_generated_audio_duration_seconds(provider)
         result = await provider.synthesize_speech(
             voice=voice,
             text=dialogue_text[:1024],
@@ -2392,6 +2511,7 @@ class PregenWorkflow:
                 "emotion_params": emotion_params,
                 "resource_id": voice_resource_id,
                 "target_model": voice_resource_id or getattr(provider, "model", None),
+                "max_generated_audio_duration_seconds": max_duration_seconds,
             },
         )
         asset_path = await self._write_generated_audio(
@@ -2399,6 +2519,7 @@ class PregenWorkflow:
             self._audio_asset_path(project_dir, "shot_dialogues", asset_id, result.audio_format),
             audio_data=result.audio_data,
         )
+        duration_result = self._limit_generated_audio_duration(project_dir, asset_path, provider=provider)
         return (
             ShotDialogueAudioAsset(
                 asset_id=asset_id,
@@ -2416,10 +2537,15 @@ class PregenWorkflow:
                 asset_path=asset_path,
                 provider=result.provider,
                 model=result.model,
+                duration_seconds=duration_result.duration_seconds,
+                original_duration_seconds=(
+                    duration_result.original_duration_seconds if duration_result.trimmed else None
+                ),
+                duration_limited=duration_result.trimmed,
                 sample_rate=result.audio_sample_rate,
                 response_format=result.audio_format,
                 request_id=result.request_id,
-                usage=result.usage,
+                usage={**result.usage, **audio_duration_limit_metadata(duration_result)},
                 raw_response=result.raw_response,
             ),
             None,

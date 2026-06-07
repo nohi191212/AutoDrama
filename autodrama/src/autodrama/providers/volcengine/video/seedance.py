@@ -12,6 +12,7 @@ from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef, VideoGenerationResult
 from autodrama.providers.http import request_id_from_response
 from autodrama.providers.media_refs import asset_uri, file_to_data_url
+from autodrama.services.audio_duration import probe_audio_duration_seconds
 
 
 class VolcengineSeedanceVideoProvider:
@@ -51,6 +52,9 @@ class VolcengineSeedanceVideoProvider:
         self.max_reference_images = int(settings.options.get("max_reference_images", 2))
         self.max_reference_audio = int(settings.options.get("max_reference_audio", 1))
         self.max_reference_videos = int(settings.options.get("max_reference_videos", 2))
+        self.max_reference_audio_duration_seconds = float(
+            settings.options.get("max_reference_audio_duration_seconds", 15.2)
+        )
         self.max_reference_video_total_duration_seconds = float(
             settings.options.get("max_reference_video_total_duration_seconds", 15.2)
         )
@@ -172,6 +176,8 @@ class VolcengineSeedanceVideoProvider:
 
         for ref in other_refs:
             if ref.type == "audio" and audio_count < self.max_reference_audio:
+                if self._audio_ref_exceeds_duration_limit(ref):
+                    continue
                 url = self._ref_url_or_data(ref, expected_type="audio")
                 if not url:
                     continue
@@ -192,6 +198,41 @@ class VolcengineSeedanceVideoProvider:
         role = ref.metadata.get("seedance_role") or ref.metadata.get("role") or "reference_image"
         role_text = str(role).strip().lower()
         return role_text if role_text in self._IMAGE_ROLES else "reference_image"
+
+    def _audio_ref_exceeds_duration_limit(self, ref: AssetRef) -> bool:
+        if self.max_reference_audio_duration_seconds <= 0:
+            return False
+
+        duration = self._audio_ref_duration_seconds(ref)
+        if duration is None or duration <= self.max_reference_audio_duration_seconds:
+            return False
+
+        get_logger().warning(
+            "Seedance skipped audio reference %s because duration %.3fs exceeds max %.3fs",
+            ref.id or ref.path or ref.url or "-",
+            duration,
+            self.max_reference_audio_duration_seconds,
+        )
+        return True
+
+    def _audio_ref_duration_seconds(self, ref: AssetRef) -> float | None:
+        for key in ("duration_seconds", "duration"):
+            value = ref.metadata.get(key)
+            if value is None:
+                continue
+            try:
+                duration = float(value)
+            except (TypeError, ValueError):
+                continue
+            if duration > 0:
+                return duration
+
+        if not ref.path:
+            return None
+        path = Path(ref.path)
+        if not path.exists() or not path.is_file():
+            return None
+        return probe_audio_duration_seconds(path, ffmpeg_path=self.runtime.ffmpeg_path)
 
     def _ref_url_or_data(self, ref: AssetRef, *, expected_type: str) -> str | None:
         if expected_type == "video":

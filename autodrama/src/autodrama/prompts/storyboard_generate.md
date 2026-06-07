@@ -60,6 +60,10 @@
 
 {{generated_storyboard}}
 
+## 上一镜头开场衔接
+
+{{previous_shot_preroll_instruction}}
+
 ## 当前下一条 shot 的正文起点
 
 下面文字是当前章节完整小说正文中的原文锚点。当前这一次生成的 shot 必须从这个原文位置开始继续切分。

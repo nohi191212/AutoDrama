@@ -74,6 +74,21 @@ def main(argv: list[str] | None = None) -> int:
         for item in payload["content"]
     )
 
+    long_audio_payload = provider.build_payload(
+        "测试 Seedance 2.0 超长音频引用过滤。",
+        refs=[
+            AssetRef(
+                id="too_long_role_voice",
+                type="audio",
+                path=str(audio_path),
+                metadata={"duration_seconds": 21.48},
+            ),
+        ],
+        duration=args.duration,
+        metadata=metadata,
+    )
+    assert all(item["type"] != "audio_url" for item in long_audio_payload["content"])
+
     first_frame_payload = provider.build_payload(
         "测试 Seedance 2.0 首帧模式。以上一镜头尾帧作为本镜头第一帧，从既有姿态继续动作。",
         refs=[

@@ -19,6 +19,7 @@ from autodrama.utils.prompts import PromptStore
 
 class StoryboardService:
     MAX_GENERATION_STEPS_PER_CHAPTER = 10
+    DEFAULT_PREVIOUS_VIDEO_PREROLL_SECONDS = 0.0
     _STORY_END_MARKERS = frozenset({"（未完待续）", "(未完待续)", "未完待续"})
     _ANCHOR_BOUNDARY_CHARS = frozenset("。！？；，：、“”‘’\"'（）()[]【】")
     _SCENE_HEADING_PATTERN = re.compile(r"(?m)^\s*\d+\s*[-－]\s*\d+\s*[：:]")
@@ -37,6 +38,45 @@ class StoryboardService:
     @staticmethod
     def format_json(value: object) -> str:
         return json.dumps(value, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _format_seconds(value: float) -> str:
+        return f"{value:.1f}".rstrip("0").rstrip(".")
+
+    @classmethod
+    def _previous_shot_preroll_instruction(
+        cls,
+        previous_shot: StoryboardShot | None,
+        *,
+        preroll_seconds: float | None = None,
+    ) -> str:
+        if previous_shot is None:
+            return (
+                "当前是本集第一镜，没有上一镜头视频可承接；生成当前 shot 时按原来的方式硬切进入当前画面，"
+                "不要写任何上一镜开场预滚。"
+            )
+
+        try:
+            resolved_preroll_seconds = float(
+                cls.DEFAULT_PREVIOUS_VIDEO_PREROLL_SECONDS if preroll_seconds is None else preroll_seconds
+            )
+        except (TypeError, ValueError):
+            resolved_preroll_seconds = 0.0
+        if resolved_preroll_seconds <= 0:
+            return (
+                f"本集已有上一镜 {previous_shot.shot_id}（{previous_shot.title}），但当前配置不使用上一镜视频预滚；"
+                "生成当前 shot 时按原来的方式硬切进入当前画面，不要写取上一镜最后几秒作为开场。"
+            )
+
+        preroll_text = cls._format_seconds(resolved_preroll_seconds)
+        return (
+            f"本集已有上一镜 {previous_shot.shot_id}（{previous_shot.title}）。生成当前 shot 时，"
+            f"`video_prompt` 必须明确写出：0-{preroll_text}秒取上一镜视频最后{preroll_text}秒作为开场预滚，"
+            f"只承接上一镜尾部视觉状态、动作因果和情绪余韵；第{preroll_text}秒必须发生清晰硬切；"
+            f"{preroll_text}-duration_seconds 秒才进入当前 shot 的正文动作、对白和剧情推进。"
+            "这段预滚不计入 `source_coverage` 的新剧情，不要重复上一镜对白，不要把上一镜继续演成新剧情。"
+            "`anchor_frame_prompt` 仍只描述当前 shot 的静态锚点，不要写首帧、上一镜尾帧或预滚。"
+        )
 
     @staticmethod
     def _split_dialogue_line(raw_line: str) -> tuple[str | None, str]:
@@ -502,6 +542,7 @@ class StoryboardService:
         on_prompt_ready: Callable[[str, int, str], Any] | None = None,
         max_shots: int | None = None,
         initial_shots: list[StoryboardShot] | None = None,
+        previous_video_preroll_seconds: float | None = None,
     ) -> StoryboardEpisodeOutput:
         del previous_storyboard_history
         shots: list[StoryboardShot] = list(initial_shots or [])
@@ -557,6 +598,10 @@ class StoryboardService:
                     novel_extract_all=self.format_json(novel_extract_all),
                     current_novel_full=current_novel_full,
                     generated_storyboard=self.format_json(self._generated_shots_context(shots)),
+                    previous_shot_preroll_instruction=self._previous_shot_preroll_instruction(
+                        shots[-1] if shots else None,
+                        preroll_seconds=previous_video_preroll_seconds,
+                    ),
                     current_shot_start_text=current_shot_start_text,
                     roles=self.format_json(
                         {role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from autodrama.core.errors import ProviderBadResponseError
 from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
     Layout,
@@ -18,11 +19,12 @@ from autodrama.core.schemas import (
     RoleAppearance,
     RoleIntroVideoPromptItem,
     RoleIntroVideoPromptOutput,
+    SafeImagePromptRewriteOutput,
     StaticAssetGenerationItem,
     StaticAssetGenerationOutput,
 )
 from autodrama.logging import get_logger
-from autodrama.providers.base import AssetRef
+from autodrama.providers.base import AssetRef, ImageGenerationResult
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.repositories.prop_design_repo import PropDesignRepository
@@ -48,6 +50,8 @@ STATIC_ASSET_NODE_NAMES = [
 
 
 class StaticAssetNodeBase:
+    IMAGE_SAFETY_PROMPT_REWRITE_MAX_ATTEMPTS = 3
+
     def __init__(
         self,
         *,
@@ -85,6 +89,162 @@ class StaticAssetNodeBase:
                 f"{label} must contain exactly {', '.join(expected_keys)}; "
                 f"got {', '.join(sorted(actual)) or '-'}"
             )
+
+    @staticmethod
+    def _is_image_safety_failure(exc: Exception) -> bool:
+        text = str(exc).lower()
+        return any(
+            marker in text
+            for marker in (
+                "image_unsafe",
+                "appear to be unsafe",
+                "generated images appear to be unsafe",
+            )
+        )
+
+    @staticmethod
+    def _image_prompt_safety_rewrite_purposes(node_name: str) -> list[str]:
+        if node_name.startswith("role_"):
+            preferred = ["role"]
+        elif node_name.startswith("prop_"):
+            preferred = ["prop"]
+        elif node_name.startswith("layout_"):
+            preferred = ["layout"]
+        else:
+            preferred = []
+        fallback = ["storyboard", "role", "prop", "layout"]
+        ordered: list[str] = []
+        for purpose in [*preferred, *fallback]:
+            if purpose not in ordered:
+                ordered.append(purpose)
+        return ordered
+
+    def _safe_image_prompt_rewrite_provider(self, node_name: str):
+        last_error: Exception | None = None
+        for purpose in self._image_prompt_safety_rewrite_purposes(node_name):
+            try:
+                return self.router.text(purpose)
+            except Exception as exc:
+                last_error = exc
+        raise ProviderBadResponseError(f"No text provider is available for image prompt safety rewrite: {last_error}")
+
+    async def _rewrite_static_image_prompt_for_safety(
+        self,
+        *,
+        state: ProjectState,
+        node_name: str,
+        asset_id: str,
+        current_prompt: str,
+        safety_error: Exception,
+        rewrite_attempt: int,
+        context: dict[str, Any] | None = None,
+    ) -> SafeImagePromptRewriteOutput:
+        provider = self._safe_image_prompt_rewrite_provider(node_name)
+        rewrite_prompt = (
+            "你是图像生成 prompt 安全改写器。请把下方图像生成 prompt 改写得更容易通过图像安全策略，"
+            "但不要改变资产职责、角色身份、道具身份、场景设定、构图关系、参考图片编号或核心视觉连续性。\n"
+            "只移除或弱化可能触发安全策略的视觉表达：血液、血迹、开放性伤口、尸体、内脏、断肢、"
+            "写实暴力、恐怖 gore、裸露、性暗示、仇恨标识、危险违法细节、可读文字、logo、水印等。\n"
+            "优先改写为低风险替代表达：尘土、泥污、旧污渍、暗色纹理、衣物破损、疲惫或紧张神情、"
+            "非写实符号化痕迹、CG 动画电影质感、克制的冲突氛围。保持画面仍然可作为当前资产使用。\n"
+            "输出 JSON，只包含改写后的 prompt 和简短 notes。\n\n"
+            f"## 节点\n{node_name}\n\n"
+            f"## 资产 ID\n{asset_id}\n\n"
+            f"## 资产上下文\n{context or {}}\n\n"
+            f"## 原始图像生成 prompt\n{current_prompt}\n\n"
+            f"## 安全失败信息\n{str(safety_error)[:2000]}\n\n"
+            f"## 改写轮次\n{rewrite_attempt}/{self.IMAGE_SAFETY_PROMPT_REWRITE_MAX_ATTEMPTS}"
+        )
+        output = await provider.generate_json(
+            rewrite_prompt,
+            SafeImagePromptRewriteOutput,
+            temperature=0.2,
+            metadata={
+                "node_name": "image_prompt_safety_rewrite",
+                "project_id": state.project_id,
+                "asset_id": asset_id,
+                "source_node_name": node_name,
+                "rewrite_attempt": rewrite_attempt,
+            },
+        )
+        state.budget.used_text_calls += 1
+        output.prompt = str(output.prompt or "").strip()
+        if not output.prompt:
+            raise ProviderBadResponseError("Image prompt safety rewrite returned an empty prompt")
+        return output
+
+    async def _generate_image_with_safety_prompt_rewrites(
+        self,
+        *,
+        provider,
+        state: ProjectState,
+        node_name: str,
+        asset_id: str,
+        prompt: str,
+        refs: list[AssetRef] | None = None,
+        metadata: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> tuple[ImageGenerationResult, str, list[dict[str, Any]]]:
+        current_prompt = prompt
+        rewrite_records: list[dict[str, Any]] = []
+        rewrite_attempt = 0
+        metadata = metadata or {}
+        while True:
+            try:
+                result = await provider.generate_image(
+                    current_prompt,
+                    refs=refs,
+                    metadata={
+                        **metadata,
+                        "safety_prompt_rewrite_attempt": rewrite_attempt,
+                        "safety_prompt_rewritten": rewrite_attempt > 0,
+                    },
+                )
+                if rewrite_records:
+                    raw_response = dict(result.raw_response or {})
+                    raw_response["safety_prompt_rewrite"] = {
+                        "original_prompt": prompt,
+                        "final_prompt": current_prompt,
+                        "rewrite_attempts": rewrite_records,
+                    }
+                    result.raw_response = raw_response
+                return result, current_prompt, rewrite_records
+            except ProviderBadResponseError as exc:
+                if not self._is_image_safety_failure(exc):
+                    raise
+                if rewrite_attempt >= self.IMAGE_SAFETY_PROMPT_REWRITE_MAX_ATTEMPTS:
+                    raise ProviderBadResponseError(
+                        "Image generation still failed safety checks after "
+                        f"{rewrite_attempt} prompt rewrite attempt(s): {exc}"
+                    ) from exc
+
+                rewrite_attempt += 1
+                self.logger.warning(
+                    "%s safety failure for asset=%s; rewriting prompt attempt %d/%d",
+                    node_name,
+                    asset_id,
+                    rewrite_attempt,
+                    self.IMAGE_SAFETY_PROMPT_REWRITE_MAX_ATTEMPTS,
+                    extra={"asset_id": asset_id, "node_name": node_name},
+                )
+                rewritten = await self._rewrite_static_image_prompt_for_safety(
+                    state=state,
+                    node_name=node_name,
+                    asset_id=asset_id,
+                    current_prompt=current_prompt,
+                    safety_error=exc,
+                    rewrite_attempt=rewrite_attempt,
+                    context=context,
+                )
+                rewrite_records.append(
+                    {
+                        "attempt": rewrite_attempt,
+                        "error": str(exc),
+                        "prompt": rewritten.prompt,
+                        "notes": rewritten.notes,
+                    }
+                )
+                current_prompt = rewritten.prompt
 
     def episode_stories(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
         episode_keys = self.expected_episode_keys(state)
@@ -641,6 +801,7 @@ class RoleAppearanceDesignNode(StaticAssetNodeBase):
 
 class RoleAppearanceGenerationBase(StaticAssetNodeBase):
     ROLE_DESIGN_STYLE_PROMPT_HEADER = "统一人物设计风格要求（优先级高于角色设计 JSON 中的旧画面风格模板）"
+    ROLE_INTRO_VIDEO_DURATION_SECONDS = 4
     STYLE_REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
     def role_design_style_reference_refs(self) -> list[AssetRef]:
@@ -816,9 +977,9 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         intro_video_asset_id = self.role_intro_video_asset_id(appearance)
         base_intro_prompt = appearance.intro_video_prompt or (
             f"{role.name}站在洁净、亮度适中的虚空圆台上；"
-            f"0-2 秒：圆台缓慢转动，人物保持{appearance.desc}的稳定外观，镜头以中景平稳观察；"
-            "2-5 秒：人物做几个符合身份和性格的常见动作，如有随身物品，展示佩戴、握持或使用方式；"
-            "5-8 秒：镜头轻微推近并停在人物稳定识别角度，背景保持干净抽象，无其他人物、无字幕、水印或文字标识。"
+            f"0-1.5 秒：圆台缓慢转动，人物保持{appearance.desc}的稳定外观，镜头以中景平稳观察；"
+            "1.5-3 秒：人物做一个符合身份和性格的常见动作，如有随身物品，展示佩戴、握持或使用方式；"
+            "3-4 秒：镜头轻微推近并停在人物稳定识别角度，背景保持干净抽象，无其他人物、无字幕、水印或文字标识。"
         )
         role_style_prompt = self.role_design_style_prompt()
         intro_prompt = "\n".join(
@@ -827,6 +988,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 "参考图片1中的人物三视图、全身比例和绑定物品设计，保持人物形象一致性但不要求和图片像素级一致以防动作僵硬，人物动作和画面表现需要符合基本逻辑",
                 f"人物设计风格要求：{role_style_prompt}" if role_style_prompt else "",
                 base_intro_prompt,
+                f"人物介绍视频时长硬性约束：全片总时长 {self.ROLE_INTRO_VIDEO_DURATION_SECONDS} 秒，时间段必须只覆盖 0-{self.ROLE_INTRO_VIDEO_DURATION_SECONDS} 秒；如果上方旧提示词出现超过 {self.ROLE_INTRO_VIDEO_DURATION_SECONDS} 秒的时间段，请压缩动作并在 4 秒内完成，结尾停在稳定识别角度。",
                 "人物朝向约束：角色介绍视频中人物不要呈现证件照式、完全正对镜头的僵硬构图；脸部和身体保持轻微侧转，可使用约15-45度三分之二侧脸、侧身、低头抬眼或视线看向镜头旁侧。即使需要表现人物注意到观众方向，也避免双肩水平、脸部完全平贴镜头和长时间直盯镜头。",
                 "全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。",
             )
@@ -935,8 +1097,12 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                     role.name,
                     appearance.name,
                 )
-                result = await provider.generate_image(
-                    full_body_prompt,
+                result, full_body_prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
+                    provider=provider,
+                    state=state,
+                    node_name=node_name,
+                    asset_id=full_body_asset_id,
+                    prompt=full_body_prompt,
                     refs=style_refs,
                     metadata={
                         "node_name": node_name,
@@ -946,6 +1112,13 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                         "asset_id": full_body_asset_id,
                         "asset_type": "role_full_body",
                         "style_reference_count": len(style_refs),
+                    },
+                    context={
+                        "asset_type": "role_full_body",
+                        "role_id": role.id,
+                        "role_name": role.name,
+                        "appearance_id": appearance.id,
+                        "appearance_name": appearance.name,
                     },
                 )
                 asset_path = await self.media_store.write_first_generated_image(project_dir, output_path, result)
@@ -1063,8 +1236,12 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                     role.name,
                     appearance.name,
                 )
-                result = await provider.generate_image(
-                    multiview_prompt,
+                result, multiview_prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
+                    provider=provider,
+                    state=state,
+                    node_name=node_name,
+                    asset_id=multiview_asset_id,
+                    prompt=multiview_prompt,
                     refs=refs,
                     metadata={
                         "node_name": node_name,
@@ -1075,6 +1252,13 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                         "asset_type": "role_multiview",
                         "style_reference_count": len(style_refs),
                         "identity_reference_index": len(style_refs) + 1,
+                    },
+                    context={
+                        "asset_type": "role_multiview",
+                        "role_id": role.id,
+                        "role_name": role.name,
+                        "appearance_id": appearance.id,
+                        "appearance_name": appearance.name,
                     },
                 )
                 asset_path = await self.media_store.write_first_generated_image(project_dir, output_path, result)
@@ -1206,7 +1390,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 result = await video_provider.generate_video(
                     prompt_item.prompt,
                     refs=refs,
-                    duration=3,
+                    duration=self.ROLE_INTRO_VIDEO_DURATION_SECONDS,
                     wait=True,
                     metadata={
                         "node_name": node_name,
@@ -1215,6 +1399,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                         "appearance_id": appearance.id,
                         "asset_id": intro_video_asset_id,
                         "asset_type": "role_intro_video",
+                        "duration": self.ROLE_INTRO_VIDEO_DURATION_SECONDS,
                     },
                 )
                 asset_path = await self.media_store.write_generated_video(project_dir, output_path, result)
@@ -1713,14 +1898,26 @@ class PropGenerationNode(StaticAssetNodeBase):
                 refs = self.role_bound_prop_reference_refs(project_dir, state, prop)
                 if refs is None:
                     refs = self.prop_reference_refs(project_dir, prop, normal_props_by_base)
-            result = await provider.generate_image(
-                prompt,
+            result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
+                provider=provider,
+                state=state,
+                node_name=self.name,
+                asset_id=prop.id,
+                prompt=prompt,
                 refs=refs,
                 metadata={
                     "node_name": self.name,
                     "project_id": state.project_id,
                     "prop_id": prop.id,
                     "asset_id": prop.id,
+                },
+                context={
+                    "asset_type": "prop",
+                    "prop_id": prop.id,
+                    "prop_name": prop.name,
+                    "prop_status": prop.status,
+                    "owner_role_id": prop.owner_role_id,
+                    "owner_role_name": prop.owner_role_name,
                 },
             )
             asset_path = await self.media_store.write_first_generated_image(
@@ -1729,6 +1926,7 @@ class PropGenerationNode(StaticAssetNodeBase):
                 result,
             )
             asset_url = self.first_image_url(result)
+            prop.prompt = prompt
             prop.asset_id = prop.id
             prop.asset_path = asset_path
             prop.asset_url = asset_url
@@ -1894,13 +2092,23 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
                 except Exception as exc:
                     self.logger.warning("layout_image_generation ignored invalid existing node output %s: %s", path, exc)
         for layout in layouts:
-            result = await provider.generate_image(
-                layout.prompt,
+            prompt = layout.prompt
+            result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
+                provider=provider,
+                state=state,
+                node_name=self.name,
+                asset_id=layout.id,
+                prompt=prompt,
                 metadata={
                     "node_name": self.name,
                     "project_id": state.project_id,
                     "layout_id": layout.id,
                     "asset_id": layout.id,
+                },
+                context={
+                    "asset_type": "layout",
+                    "layout_id": layout.id,
+                    "layout_name": layout.name,
                 },
             )
             asset_path = await self.media_store.write_first_generated_image(
@@ -1909,6 +2117,7 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
                 result,
             )
             asset_url = self.first_image_url(result)
+            layout.prompt = prompt
             layout.asset_id = layout.id
             layout.asset_path = asset_path
             layout.asset_url = asset_url

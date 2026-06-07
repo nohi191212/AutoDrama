@@ -28,6 +28,9 @@ class RoleAudio(BaseModel):
     generation_status: str = "pending"
     asset_id: str | None = None
     asset_path: str | None = None
+    duration_seconds: float | None = None
+    original_duration_seconds: float | None = None
+    duration_limited: bool = False
     voice_name: str | None = None
     voice_type: str | None = None
     voice_resource_id: str | None = None
@@ -297,9 +300,10 @@ class RoleVoiceItem(BaseModel):
     sample_text: str | None = Field(
         default=None,
         description=(
-            "Voice-design reference text in first person. It should be 2-4 sentences in the format "
-            "'identity self-introduction + early inner monologue', reflect the role identity/personality/tone, "
-            "and avoid late key plot, final twists, key evidence, endings, or outcome spoilers."
+            "Voice-design reference text in first person. It should be 1-2 short sentences in the format "
+            "'identity self-introduction + early goal/attitude', reflect the role identity/personality/tone, "
+            "fit roughly within 30-45 Chinese characters / 10 seconds of generated audio, and avoid late key plot, "
+            "final twists, key evidence, endings, or outcome spoilers."
         ),
     )
 
@@ -405,6 +409,9 @@ class RoleVoiceGenerationItem(BaseModel):
     emotion_instruction: str | None = None
     emotion_params: dict[str, Any] = Field(default_factory=dict)
     preview_audio_path: str | None = None
+    duration_seconds: float | None = None
+    original_duration_seconds: float | None = None
+    duration_limited: bool = False
     provider: str
     model: str
     target_model: str | None = None
@@ -511,6 +518,11 @@ class StaticAssetGenerationOutput(BaseModel):
     generated_assets: list[StaticAssetGenerationItem]
 
 
+class SafeImagePromptRewriteOutput(BaseModel):
+    prompt: str
+    notes: str = ""
+
+
 class RoleIntroVideoPromptItem(BaseModel):
     asset_id: str
     role_id: str
@@ -544,6 +556,9 @@ class ShotDialogueAudioAsset(BaseModel):
     asset_path: str | None = None
     provider: str | None = None
     model: str | None = None
+    duration_seconds: float | None = None
+    original_duration_seconds: float | None = None
+    duration_limited: bool = False
     sample_rate: int | None = None
     response_format: str | None = None
     request_id: str | None = None

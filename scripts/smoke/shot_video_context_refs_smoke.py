@@ -57,6 +57,9 @@ def main() -> int:
     state = repo.load_state(project_dir)
 
     ref_frame_path = project_dir / "assets" / "images" / "ref_frames" / "episode_001_shot_002_ref_frame.png"
+    previous_ref_frame_path = (
+        project_dir / "assets" / "images" / "ref_frames" / "episode_001_shot_001_ref_frame.png"
+    )
     role_image_path = project_dir / "assets" / "images" / "roles" / "role_linz_appearance_base.png"
     role_full_body_path = project_dir / "assets" / "images" / "roles" / "role_linz_appearance_base_full_body.png"
     prop_image_path = project_dir / "assets" / "images" / "props" / "prop_contract.png"
@@ -66,7 +69,14 @@ def main() -> int:
     role_intro_video_path = project_dir / "assets" / "videos" / "roles" / "role_linz_appearance_base_intro.mp4"
     zhao_intro_video_path = project_dir / "assets" / "videos" / "roles" / "role_zhao_appearance_base_intro.mp4"
     previous_video_path = project_dir / "assets" / "videos" / "shots" / "episode_001_shot_001.mp4"
-    for path in (ref_frame_path, role_image_path, role_full_body_path, prop_image_path, layout_image_path):
+    for path in (
+        ref_frame_path,
+        previous_ref_frame_path,
+        role_image_path,
+        role_full_body_path,
+        prop_image_path,
+        layout_image_path,
+    ):
         write_png(path)
     role_audio_path.parent.mkdir(parents=True, exist_ok=True)
     role_audio_path.write_bytes(b"fake role voice audio")
@@ -162,6 +172,9 @@ def main() -> int:
         ref_frame_prompt="林舟站在桌边。",
         video_prompt="林舟看向桌面合同。",
         physical_space_key="layout_room::main_table",
+        ref_frame_asset_id="episode_001_shot_001_ref_frame",
+        ref_frame_asset_path="assets/images/ref_frames/episode_001_shot_001_ref_frame.png",
+        ref_frame_asset_url="https://example.invalid/previous-ref-frame.png",
         video_asset_id="video_episode_001_shot_001",
         video_asset_path="assets/videos/shots/episode_001_shot_001.mp4",
         video_raw_response={
@@ -197,43 +210,48 @@ def main() -> int:
     asset_types = [str(ref.metadata.get("asset_type") or "") for ref in refs]
 
     require(
-        asset_types == ["role_full_body", "layout", "role_intro_video", "previous_shot_video", "role_audio"],
+        asset_types == ["ref_frame", "previous_shot_last_ref_frame", "role_audio"],
         asset_types,
     )
-    require(all(item != "ref_frame" for item in asset_types), f"Ref frame should not be sent: {asset_types}")
+    require(refs[0].url == "https://example.invalid/ref-frame.png", "Ref frame URL should be preferred")
+    require(refs[0].metadata.get("reference_source") == "seedream_url", "Ref frame source mismatch")
+    require(refs[1].url == "https://example.invalid/previous-ref-frame.png", "Previous ref frame URL should be preferred")
+    require(
+        refs[1].metadata.get("reference_source") == "previous_shot_ref_frame_url",
+        "Previous ref frame source mismatch",
+    )
+    require(refs[1].metadata.get("seedance_role") == "reference_image", "Previous ref frame should be reference image")
+    require(refs[1].metadata.get("previous_shot_id") == "episode_001_shot_001", "Previous shot id mismatch")
+    require(refs[2].metadata.get("reference_source") == "storyboard_role_audio_ids", "Role audio source mismatch")
+    require(refs[2].metadata.get("role_id") == "role_zhao", "Voiceover speaker audio should be selected")
+    require(all(item != "previous_shot_video" for item in asset_types), f"Previous video should not be sent: {asset_types}")
+    require(all(item != "role_intro_video" for item in asset_types), f"Role intro video should not be sent: {asset_types}")
     require(all(item != "role_appearance" for item in asset_types), f"Old role design image should not be sent: {asset_types}")
     require(all(item != "prop" for item in asset_types), f"Prop image should not be sent: {asset_types}")
-    require(refs[0].url == "https://example.invalid/role-linz-full-body.png", "Full-body image URL should be preferred")
-    require(
-        refs[1].url == "https://example.invalid/layout.png",
-        "Layout image URL should be preferred",
-    )
-    require(refs[2].url == "https://example.invalid/role-linz-intro.mp4", "Role intro URL should be preferred")
-    require(
-        refs[3].metadata.get("reference_source") == "previous_shot_content_continuity",
-        "Previous video source mismatch",
-    )
-    require(refs[3].url == "https://example.invalid/episode_001_shot_001.mp4", refs[3])
-    require(refs[4].metadata.get("reference_source") == "storyboard_role_audio_ids", "Role audio source mismatch")
-    require(refs[4].metadata.get("role_id") == "role_zhao", "Voiceover speaker audio should be selected")
     require(
         all(ref.url != "https://example.invalid/role-zhao-intro.mp4" for ref in refs),
         "Voiceover speaker intro video should not be selected when another role is the visual subject",
     )
 
     final_prompt = workflow._shot_video_prompt(state, episode, current_shot, provider=provider, project_dir=project_dir)
-    require("图片1（林舟）" in final_prompt and "画面中央人物全身图" in final_prompt, final_prompt)
-    require("图片2（会议室）" in final_prompt and "场景图，作为空间锚点" in final_prompt, final_prompt)
-    require("视频1（林舟）" in final_prompt and "画面中央人物 intro video" in final_prompt, final_prompt)
-    require("视频2" in final_prompt and "上一 shot 镜头视频，作为逻辑连贯性锚点" in final_prompt, final_prompt)
+    require("Seedance ref_frame_only 参考图处理要求" in final_prompt, final_prompt)
+    require("图片1（episode_001_shot_002_ref_frame）" in final_prompt, final_prompt)
+    require("本段视频参考图，作为本段空间参考锚点" in final_prompt, final_prompt)
+    require("图片2（episode_001_shot_001 最后参考帧）" in final_prompt, final_prompt)
+    require("上一 shot 最后一帧提示图，由上一 shot 的 ref_frame 提供" in final_prompt, final_prompt)
+    require("上一 shot 最后参考帧只提示硬切前状态，不作为当前片段首帧" in final_prompt, final_prompt)
+    require("上一 shot 最后参考帧只保留连续性提示" in final_prompt, final_prompt)
+    require("上一 shot 镜头视频，作为逻辑连贯性锚点" not in final_prompt, final_prompt)
+    require("上一镜预滚与硬切结构" not in final_prompt, final_prompt)
+    first_prompt = workflow._shot_video_prompt(state, episode, previous_shot, provider=provider, project_dir=project_dir)
+    require("上一镜预滚与硬切结构" not in first_prompt, first_prompt)
+    require("本片段按硬切进入当前画面" in first_prompt, first_prompt)
     require("音频1（赵启）" in final_prompt and "角色说话声音锚点" in final_prompt, final_prompt)
-    require("画面中央人物绑定: 林舟 是当前 shot 的视觉主体" in final_prompt, final_prompt)
     require("说话人音频绑定: 赵启 的音频只绑定当前 dialogue/video_prompt 中的说话人" in final_prompt, final_prompt)
     require("人物朝向约束" in final_prompt and "不要呈现证件照式、完全正对镜头" in final_prompt, final_prompt)
     require("对白空间约束" in final_prompt, final_prompt)
     require("赵启的台词“这份证据没有意义。”是画外音/VO" in final_prompt, final_prompt)
     require("不要让林舟张嘴、对口型或用赵启的声音说这句台词" in final_prompt, final_prompt)
-    require("本段视频参考图，作为本段空间参考锚点" not in final_prompt, final_prompt)
     require("人物设计图，作为角色静态参考锚点" not in final_prompt, final_prompt)
     require("道具设计图，作为道具静态参考锚点" not in final_prompt, final_prompt)
 
@@ -278,6 +296,7 @@ def main() -> int:
     require("道具设计图，作为道具静态参考锚点" not in full_prompt, full_prompt)
     require("视频1（林舟）" in full_prompt and "画面中央人物 intro video" in full_prompt, full_prompt)
     require("音频1（赵启）" in full_prompt and "角色说话声音锚点" in full_prompt, full_prompt)
+    require("上一镜预滚与硬切结构" not in full_prompt, full_prompt)
 
     payload = provider.build_payload("测试视频参考组合。", refs=refs, duration=6)
     output_dir = ROOT_DIR / ".tmp" / "smoke" / "shot_video_context_refs"
@@ -289,14 +308,13 @@ def main() -> int:
     audio_items = [item for item in payload["content"] if item["type"] == "audio_url"]
     video_items = [item for item in payload["content"] if item["type"] == "video_url"]
     require([item["image_url"]["url"] for item in image_items] == [
-        "https://example.invalid/role-linz-full-body.png",
-        "https://example.invalid/layout.png",
+        "https://example.invalid/ref-frame.png",
+        "https://example.invalid/previous-ref-frame.png",
     ], payload["content"])
+    require([item["role"] for item in image_items] == ["reference_image", "reference_image"], payload["content"])
     require(len(audio_items) == 1, payload["content"])
     require(audio_items[0]["audio_url"]["url"].startswith("data:audio/mpeg;base64,"), payload["content"])
-    require(len(video_items) == 2, payload["content"])
-    require(video_items[0]["video_url"]["url"] == "https://example.invalid/role-linz-intro.mp4", payload["content"])
-    require(video_items[1]["video_url"]["url"] == "https://example.invalid/episode_001_shot_001.mp4", payload["content"])
+    require(len(video_items) == 0, payload["content"])
 
     intro_output_path = project_dir / "assets" / "json" / "nodes" / "role_intro_video_generation.json"
     intro_output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -319,16 +337,18 @@ def main() -> int:
     capped_refs = workflow._shot_video_refs(project_dir, state, current_shot, provider=provider, episode=episode)
     capped_asset_types = [str(ref.metadata.get("asset_type") or "") for ref in capped_refs]
     require(
-        capped_asset_types == ["role_full_body", "layout", "role_intro_video", "role_audio"],
+        capped_asset_types == ["ref_frame", "previous_shot_last_ref_frame", "role_audio"],
         capped_asset_types,
     )
     capped_prompt = workflow._shot_video_prompt(state, episode, current_shot, provider=provider, project_dir=project_dir)
-    require("视频1（林舟）" in capped_prompt and "画面中央人物 intro video" in capped_prompt, capped_prompt)
+    require("本段视频参考图，作为本段空间参考锚点" in capped_prompt, capped_prompt)
+    require("上一 shot 最后一帧提示图，由上一 shot 的 ref_frame 提供" in capped_prompt, capped_prompt)
     require("上一 shot 镜头视频，作为逻辑连贯性锚点" not in capped_prompt, capped_prompt)
+    require("上一镜预滚与硬切结构" not in capped_prompt, capped_prompt)
 
     print("shot_video_context_refs_smoke=ok")
     print(f"payload_path={output_path}")
-    print("refs=role_full_body,layout,role_intro_video,previous_shot_video,role_audio")
+    print("refs=ref_frame,previous_shot_last_ref_frame,role_audio")
     return 0
 
 

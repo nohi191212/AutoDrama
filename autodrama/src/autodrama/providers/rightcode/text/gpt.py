@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, TypeVar
 from uuid import uuid4
 
@@ -11,20 +12,28 @@ from pydantic import BaseModel
 from autodrama.config import ProviderSettings, RuntimeSettings
 from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError
 from autodrama.logging import get_pregen_detail_logger
+from autodrama.providers.base import AssetRef
 from autodrama.providers.json_utils import parse_json_object
+from autodrama.providers.media_refs import ref_url_or_data
 
 T = TypeVar("T", bound=BaseModel)
 
 
 class RightCodeTextProvider:
-    """RightCode text provider via the OpenAI-compatible Chat Completions API."""
+    """RightCode text provider via the OpenAI-compatible Responses API."""
 
     name = "rightcode"
 
     def __init__(self, settings: ProviderSettings, runtime: RuntimeSettings, *, model_key: str = "text") -> None:
         self.settings = settings
         self.runtime = runtime
-        self.base_url = (settings.base_url or "https://www.right.codes/draw").rstrip("/")
+        base_url = (
+            settings.options.get(f"{model_key}_base_url")
+            or settings.options.get("text_base_url")
+            or settings.base_url
+            or "https://www.right.codes/codex"
+        )
+        self.base_url = str(base_url).rstrip("/")
         self.endpoint = self._resolve_endpoint(self.base_url)
         self.model_key = model_key
         self.model = settings.models.get(model_key) or settings.models.get("text", "gpt-5.5")
@@ -43,6 +52,8 @@ class RightCodeTextProvider:
     @staticmethod
     def _resolve_endpoint(base_url: str) -> str:
         for suffix in (
+            "/v1/responses",
+            "/responses",
             "/v1/images/generations",
             "/images/generations",
             "/v1/chat/completions",
@@ -51,9 +62,11 @@ class RightCodeTextProvider:
             if base_url.endswith(suffix):
                 base_url = base_url[: -len(suffix)].rstrip("/")
                 break
+        if base_url.endswith("/draw"):
+            base_url = f"{base_url[:-5]}/codex"
         if base_url.endswith("/v1"):
-            return f"{base_url}/chat/completions"
-        return f"{base_url}/v1/chat/completions"
+            return f"{base_url}/responses"
+        return f"{base_url}/v1/responses"
 
     @staticmethod
     def _bool_option(value: object, *, default: bool) -> bool:
@@ -124,6 +137,57 @@ class RightCodeTextProvider:
             merged.update(metadata_parameters)
         return merged
 
+    @staticmethod
+    def _audio_format(ref: AssetRef) -> str:
+        metadata = ref.metadata or {}
+        explicit = metadata.get("format") or metadata.get("audio_format") or metadata.get("response_format")
+        if explicit:
+            return str(explicit).lower().lstrip(".")
+        for value in (ref.url, ref.path):
+            if not value:
+                continue
+            suffix = Path(str(value).split("?", 1)[0]).suffix.lower().lstrip(".")
+            if suffix in {"mp3", "wav", "m4a", "aac", "ogg", "opus", "pcm"}:
+                return suffix
+        return "mp3"
+
+    @staticmethod
+    def _media_part(ref: AssetRef) -> dict[str, Any] | None:
+        if ref.type == "image":
+            value = ref_url_or_data(ref, expected_type="image", default_mime="image/png")
+            if not value:
+                raise ProviderBadResponseError(f"RightCode image ref {ref.id or '-'} is missing a usable URL/path")
+            return {"type": "input_image", "image_url": value}
+        if ref.type == "video":
+            value = ref_url_or_data(ref, expected_type="video", default_mime="video/mp4")
+            if not value:
+                raise ProviderBadResponseError(f"RightCode video ref {ref.id or '-'} is missing a usable URL/path")
+            return {
+                "type": "input_file",
+                "filename": Path(str(ref.path or ref.url or ref.id or "video.mp4")).name,
+                "file_data": value,
+            }
+        if ref.type == "audio":
+            audio_format = RightCodeTextProvider._audio_format(ref)
+            value = ref_url_or_data(ref, expected_type="audio", default_mime=f"audio/{audio_format}")
+            if not value:
+                raise ProviderBadResponseError(f"RightCode audio ref {ref.id or '-'} is missing a usable URL/path")
+            return {
+                "type": "input_file",
+                "filename": Path(str(ref.path or ref.url or ref.id or f"audio.{audio_format}")).name,
+                "file_data": value,
+            }
+        return None
+
+    @classmethod
+    def _input_content_parts(cls, prompt: str, refs: list[AssetRef]) -> list[dict[str, Any]]:
+        parts: list[dict[str, Any]] = [{"type": "input_text", "text": prompt}]
+        for ref in refs:
+            part = cls._media_part(ref)
+            if part is not None:
+                parts.append(part)
+        return parts
+
     def build_payload(
         self,
         prompt: str,
@@ -131,11 +195,13 @@ class RightCodeTextProvider:
         *,
         temperature: float = 0.7,
         metadata: dict[str, Any] | None = None,
+        refs: list[AssetRef] | None = None,
         repair: bool = False,
         original_content: str | None = None,
         parse_error: Exception | None = None,
     ) -> dict[str, Any]:
         metadata = metadata or {}
+        refs = refs or []
         schema_dict = schema.model_json_schema()
         schema_json = json.dumps(schema_dict, ensure_ascii=False)
         schema_pretty_json = json.dumps(schema_dict, ensure_ascii=False, indent=2)
@@ -171,18 +237,49 @@ class RightCodeTextProvider:
 
         payload: dict[str, Any] = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+            "instructions": system_prompt,
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": self._input_content_parts(user_prompt, refs if not repair else []),
+                },
             ],
             "temperature": temperature,
+            "stream": False,
         }
         if self.use_response_format:
-            payload["response_format"] = {"type": "json_object"}
+            payload["text"] = {"format": {"type": "json_object"}}
         if self.reasoning_effort:
-            payload["reasoning_effort"] = self.reasoning_effort
+            payload["reasoning"] = {"effort": self.reasoning_effort}
         payload.update(self._extra_parameters(metadata))
         return payload
+
+    @staticmethod
+    def _safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        sanitized = json.loads(json.dumps(payload, ensure_ascii=False))
+        for message in sanitized.get("input", []):
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "input_image" and isinstance(part.get("image_url"), str):
+                    if str(part["image_url"]).startswith("data:"):
+                        part["image_url"] = "<base64 image omitted>"
+                if part.get("type") == "input_video" and isinstance(part.get("video_url"), str):
+                    if str(part["video_url"]).startswith("data:"):
+                        part["video_url"] = "<base64 video omitted>"
+                if part.get("type") == "input_file" and isinstance(part.get("file_data"), str):
+                    if str(part["file_data"]).startswith("data:"):
+                        part["file_data"] = "<base64 file omitted>"
+                if part.get("type") == "input_audio":
+                    input_audio = part.get("input_audio")
+                    if isinstance(input_audio, dict) and isinstance(input_audio.get("data"), str):
+                        if str(input_audio["data"]).startswith("data:"):
+                            input_audio["data"] = "<base64 audio omitted>"
+        return sanitized
 
     def _write_detail_log(
         self,
@@ -233,7 +330,7 @@ class RightCodeTextProvider:
         except Exception:
             return
 
-    async def _post_chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post_responses(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.api_key:
             raise ProviderAuthError("Missing RightCode API key environment variable")
 
@@ -255,13 +352,80 @@ class RightCodeTextProvider:
         try:
             body = response.json()
         except ValueError as exc:
-            raise ProviderBadResponseError(f"RightCode text response is not JSON: {exc}") from exc
+            body = self._parse_sse_response(response.text)
+            if body is None:
+                raise ProviderBadResponseError(
+                    "RightCode text response is not JSON: "
+                    f"{exc}; status={response.status_code}; content_type={response.headers.get('content-type')}; "
+                    f"body={response.text[:500]!r}"
+                ) from exc
         if not isinstance(body, dict):
             raise ProviderBadResponseError(f"RightCode text response must be a JSON object: {body!r}")
         return body
 
     @classmethod
+    def _parse_sse_response(cls, text: str) -> dict[str, Any] | None:
+        events: list[dict[str, Any]] = []
+        chunks: list[str] = []
+        completed_response: dict[str, Any] | None = None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            events.append(event)
+            event_type = str(event.get("type") or "")
+            delta = event.get("delta")
+            if event_type.endswith(".delta") and isinstance(delta, str):
+                chunks.append(delta)
+            if event_type in {"response.output_text.done", "response.output_text.completed"}:
+                text_value = event.get("text")
+                if isinstance(text_value, str):
+                    chunks.append(text_value)
+            response = event.get("response")
+            if event_type == "response.completed" and isinstance(response, dict):
+                completed_response = response
+
+        if completed_response is not None:
+            return completed_response
+        output_text = "".join(chunks).strip()
+        if output_text:
+            return {"output_text": output_text, "raw_events": events[-5:]}
+        return None
+
+    @classmethod
     def _message_content(cls, payload: dict[str, Any]) -> str:
+        output_text = payload.get("output_text")
+        if isinstance(output_text, str) and output_text.strip():
+            return output_text
+
+        texts: list[str] = []
+        output = payload.get("output")
+        if isinstance(output, list):
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if not isinstance(content, list):
+                    continue
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    text = part.get("text") or part.get("content")
+                    if isinstance(text, str):
+                        texts.append(text)
+            if texts:
+                return "\n".join(texts)
+
+        # Compatibility for older OpenAI-compatible chat responses.
         try:
             content = payload["choices"][0]["message"]["content"]
         except Exception as exc:
@@ -290,8 +454,10 @@ class RightCodeTextProvider:
         *,
         temperature: float = 0.7,
         metadata: dict[str, Any] | None = None,
+        refs: list[AssetRef] | None = None,
     ) -> T:
         metadata = metadata or {}
+        refs = refs or []
         if not self.api_key:
             raise ProviderAuthError("Missing RightCode API key environment variable")
 
@@ -301,7 +467,7 @@ class RightCodeTextProvider:
 
         for attempt in range(1, max_attempts + 1):
             content = ""
-            payload = self.build_payload(prompt, schema, temperature=temperature, metadata=metadata)
+            payload = self.build_payload(prompt, schema, temperature=temperature, metadata=metadata, refs=refs)
             self._write_detail_log(
                 "RIGHTCODE TEXT REQUEST",
                 metadata=metadata,
@@ -310,17 +476,17 @@ class RightCodeTextProvider:
                     "attempt": f"{attempt}/{max_attempts}",
                     "schema": schema.__name__,
                     "temperature": temperature,
-                    "response_format": payload.get("response_format"),
+                    "response_format": payload.get("text"),
                     "reasoning_effort": self.reasoning_effort,
                 },
                 sections=[
-                    ("SYSTEM MESSAGE", str(payload["messages"][0]["content"])),
-                    ("USER MESSAGE SENT TO RIGHTCODE", str(payload["messages"][1]["content"])),
+                    ("INSTRUCTIONS", str(payload.get("instructions"))),
+                    ("REQUEST PAYLOAD SENT TO RIGHTCODE", json.dumps(self._safe_payload(payload), ensure_ascii=False, indent=2)),
                 ],
             )
 
             try:
-                response_payload = await self._post_chat_completion(payload)
+                response_payload = await self._post_responses(payload)
                 content = self._message_content(response_payload)
                 if not content.strip():
                     raise ProviderBadResponseError("RightCode text response content is empty")
@@ -368,11 +534,12 @@ class RightCodeTextProvider:
                     prompt,
                     schema,
                     metadata=metadata,
+                    refs=[],
                     repair=True,
                     original_content=content,
                     parse_error=last_error,
                 )
-                repaired_response_payload = await self._post_chat_completion(repair_payload)
+                repaired_response_payload = await self._post_responses(repair_payload)
                 repaired_content = self._message_content(repaired_response_payload)
                 if not repaired_content.strip():
                     raise ProviderBadResponseError("RightCode JSON repair response content is empty")

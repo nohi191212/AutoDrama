@@ -38,6 +38,13 @@ def parse_shot_selectors(value: str | None) -> list[str] | None:
     return parse_shot_selectors_value(value)
 
 
+def parse_role_names(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items or None
+
+
 def build_parser() -> argparse.ArgumentParser:
     pregen_only_choices = [*PREGEN_NODES]
     if "prop_image_generation" not in pregen_only_choices:
@@ -112,6 +119,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Supported with pregen --only role_design, voice_select, role_voice_generation, role_full_body_generation, "
             "role_multiview_generation, role_intro_video_prompt, role_intro_video_generation, "
             "prop_design, prop_generation, or layout_image_generation (legacy alias: prop_image_generation)."
+        ),
+    )
+    pregen_parser.add_argument(
+        "--roles",
+        "--role",
+        dest="roles",
+        help=(
+            "Comma-separated role names or role ids to regenerate with pregen --only voice_select "
+            "or role_voice_generation, for example 九韶 or role_jiushao."
         ),
     )
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
@@ -641,6 +657,7 @@ async def cmd_run_pregen(args: argparse.Namespace) -> int:
         force=args.force,
         only=args.only,
         episode_keys=parse_episode_keys(args.episodes),
+        role_names=parse_role_names(args.roles),
     )
     get_logger().info(
         "run summary project_id=%s current_node=%s role_count=%d project_dir=%s",

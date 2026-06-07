@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from autodrama.core.errors import ProviderError
+from autodrama.core.errors import ProviderBadResponseError, ProviderError
 from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import (
     DynamicAssetSolidificationItem,
@@ -16,6 +16,7 @@ from autodrama.core.schemas import (
     RefFrameGenerationItem,
     RefFrameGenerationOutput,
     RefFrameSpatialPlan,
+    SafeImagePromptRewriteOutput,
     ShotDialogueAudioGenerationItem,
     ShotDialogueAudioGenerationOutput,
     ShotVideoGenerationItem,
@@ -44,6 +45,8 @@ from autodrama.workflows.selection import (
 
 
 class DynamicAssetNodeMixin:
+    IMAGE_SAFETY_PROMPT_REWRITE_MAX_ATTEMPTS = 3
+
     def _active_shots_for_episode(self, episode: StoryboardEpisodeOutput) -> list[StoryboardShot]:
         context = getattr(self, "_run_context", None)
         if context is not None and getattr(context, "has_shot_selectors", False):
@@ -217,6 +220,167 @@ class DynamicAssetNodeMixin:
             extra={"episode_key": episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
         )
 
+    @staticmethod
+    def _is_image_safety_failure(exc: Exception) -> bool:
+        text = str(exc).lower()
+        return any(
+            marker in text
+            for marker in (
+                "image_unsafe",
+                "appear to be unsafe",
+                "generated images appear to be unsafe",
+            )
+        )
+
+    def _safe_image_prompt_rewrite_provider(self):
+        last_error: Exception | None = None
+        for purpose in ("ref_frame_prompt_safety", "ref_frame_spatial", "storyboard"):
+            try:
+                return self.router.text(purpose)
+            except Exception as exc:
+                last_error = exc
+        raise ProviderBadResponseError(f"No text provider is available for image prompt safety rewrite: {last_error}")
+
+    async def _rewrite_image_prompt_for_safety(
+        self,
+        *,
+        state: ProjectState,
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        node_name: str,
+        asset_id: str,
+        current_prompt: str,
+        safety_error: Exception,
+        rewrite_attempt: int,
+    ) -> SafeImagePromptRewriteOutput:
+        provider = self._safe_image_prompt_rewrite_provider()
+        rewrite_prompt = (
+            "你是图像生成 prompt 安全改写器。请把下方图像生成 prompt 改写得更容易通过图像安全策略，"
+            "但不要改变剧情事实、角色身份、场景、镜头构图、空间关系、参考图片编号或素材职责。\n"
+            "只移除或弱化可能触发安全策略的视觉表达：血液、血迹、开放性伤口、尸体、内脏、断肢、"
+            "写实暴力、恐怖 gore、裸露、性暗示、仇恨标识、危险违法细节、可读文字、logo、水印等。\n"
+            "优先改写为低风险替代表达：尘土、泥污、旧污渍、暗色纹理、衣物破损、疲惫或紧张神情、"
+            "非写实符号化痕迹、CG 动画电影质感、克制的冲突氛围。保持画面仍然可用于当前 shot 的参考帧。\n"
+            "输出 JSON，只包含改写后的 prompt 和简短 notes。\n\n"
+            f"## 原始图像生成 prompt\n{current_prompt}\n\n"
+            f"## 安全失败信息\n{str(safety_error)[:2000]}\n\n"
+            f"## 改写轮次\n{rewrite_attempt}/{self.IMAGE_SAFETY_PROMPT_REWRITE_MAX_ATTEMPTS}"
+        )
+        output = await provider.generate_json(
+            rewrite_prompt,
+            SafeImagePromptRewriteOutput,
+            temperature=0.2,
+            metadata={
+                "node_name": "image_prompt_safety_rewrite",
+                "project_id": state.project_id,
+                "episode_key": episode.episode_key,
+                "shot_id": shot.shot_id,
+                "asset_id": asset_id,
+                "source_node_name": node_name,
+                "rewrite_attempt": rewrite_attempt,
+            },
+        )
+        state.budget.used_text_calls += 1
+        output.prompt = str(output.prompt or "").strip()
+        if not output.prompt:
+            raise ProviderBadResponseError("Image prompt safety rewrite returned an empty prompt")
+        return output
+
+    async def _generate_image_with_safety_prompt_rewrites(
+        self,
+        *,
+        provider,
+        project_dir: Path,
+        state: ProjectState,
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        node_name: str,
+        asset_id: str,
+        prompt: str,
+        refs: list | None,
+        metadata: dict[str, Any],
+    ) -> tuple[ImageGenerationResult, str, list[dict[str, Any]]]:
+        current_prompt = prompt
+        rewrite_records: list[dict[str, Any]] = []
+        rewrite_attempt = 0
+        while True:
+            try:
+                result = await provider.generate_image(
+                    current_prompt,
+                    refs=refs,
+                    metadata={
+                        **metadata,
+                        "safety_prompt_rewrite_attempt": rewrite_attempt,
+                        "safety_prompt_rewritten": rewrite_attempt > 0,
+                    },
+                )
+                if rewrite_records:
+                    raw_response = dict(result.raw_response or {})
+                    raw_response["safety_prompt_rewrite"] = {
+                        "original_prompt": prompt,
+                        "final_prompt": current_prompt,
+                        "rewrite_attempts": rewrite_records,
+                    }
+                    result.raw_response = raw_response
+                return result, current_prompt, rewrite_records
+            except ProviderBadResponseError as exc:
+                if not self._is_image_safety_failure(exc):
+                    raise
+                if rewrite_attempt >= self.IMAGE_SAFETY_PROMPT_REWRITE_MAX_ATTEMPTS:
+                    raise ProviderBadResponseError(
+                        "Image generation still failed safety checks after "
+                        f"{rewrite_attempt} prompt rewrite attempt(s): {exc}"
+                    ) from exc
+
+                rewrite_attempt += 1
+                get_logger().warning(
+                    "%s shot %d %s safety failure for asset=%s; rewriting prompt attempt %d/%d",
+                    episode.episode_key,
+                    shot.index,
+                    node_name,
+                    asset_id,
+                    rewrite_attempt,
+                    self.IMAGE_SAFETY_PROMPT_REWRITE_MAX_ATTEMPTS,
+                    extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id, "shot_index": shot.index},
+                )
+                rewritten = await self._rewrite_image_prompt_for_safety(
+                    state=state,
+                    episode=episode,
+                    shot=shot,
+                    node_name=node_name,
+                    asset_id=asset_id,
+                    current_prompt=current_prompt,
+                    safety_error=exc,
+                    rewrite_attempt=rewrite_attempt,
+                )
+                rewrite_records.append(
+                    {
+                        "attempt": rewrite_attempt,
+                        "error": str(exc),
+                        "prompt": rewritten.prompt,
+                        "notes": rewritten.notes,
+                    }
+                )
+                current_prompt = rewritten.prompt
+                self._write_generation_prompt_log(
+                    project_dir,
+                    episode_key=episode.episode_key,
+                    shot=shot,
+                    node_name=node_name,
+                    sections=[
+                        ("image_generation_prompt", current_prompt),
+                        ("safety_rewrite_attempts", rewrite_records),
+                        ("reference_assets", self._asset_refs_for_prompt_log(refs)),
+                    ],
+                    metadata={
+                        "provider": getattr(provider, "name", "unknown"),
+                        "model": getattr(provider, "model", "-"),
+                        "model_call": "image.generate_image",
+                        "asset_id": asset_id,
+                        "safety_prompt_rewrite_attempt": rewrite_attempt,
+                    },
+                )
+
     async def _run_storyboard_generation_for_episode(
         self,
         project_dir: Path,
@@ -288,6 +452,13 @@ class DynamicAssetNodeMixin:
             max_shots = self.settings.generation.max_shots
         initial_shots_by_episode = getattr(self, "_storyboard_initial_shots_by_episode", {})
         initial_shots = list(initial_shots_by_episode.get(episode_key, []))
+        previous_video_preroll_seconds = 0.0
+        previous_video_preroll_seconds_for_provider = getattr(self, "_previous_video_preroll_seconds", None)
+        if callable(previous_video_preroll_seconds_for_provider):
+            try:
+                previous_video_preroll_seconds = float(previous_video_preroll_seconds_for_provider(self.router.video("shot")))
+            except Exception:
+                previous_video_preroll_seconds = 0.0
         output = await self.storyboard_service.storyboard_episode(
             state,
             provider,
@@ -300,6 +471,7 @@ class DynamicAssetNodeMixin:
             on_prompt_ready=write_storyboard_prompt_log,
             max_shots=max_shots,
             initial_shots=initial_shots,
+            previous_video_preroll_seconds=previous_video_preroll_seconds,
         )
         if output.episode_key != episode_key:
             raise ValueError(f"Storyboard episode_key must be {episode_key}; got {output.episode_key}")
@@ -861,8 +1033,15 @@ class DynamicAssetNodeMixin:
                             "spatial_reference_shot_ids": shot.spatial_reference_shot_ids,
                         },
                     )
-                    result = await provider.generate_image(
-                        prompt,
+                    result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
+                        provider=provider,
+                        project_dir=project_dir,
+                        state=state,
+                        episode=episode,
+                        shot=shot,
+                        node_name="ref_frame_generation",
+                        asset_id=asset_id,
+                        prompt=prompt,
                         refs=refs,
                         metadata={
                             "node_name": "ref_frame_generation",
@@ -1620,6 +1799,9 @@ class DynamicAssetNodeMixin:
                                 "line_index": audio.line_index,
                                 "text": audio.text,
                                 "emotion": audio.emotion,
+                                "duration_seconds": audio.duration_seconds,
+                                "original_duration_seconds": audio.original_duration_seconds,
+                                "duration_limited": audio.duration_limited,
                             },
                         )
                     )

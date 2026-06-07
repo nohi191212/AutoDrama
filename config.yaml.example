@@ -158,10 +158,10 @@ providers:
       role_full_body_resolution: 4K
       prop_size: "1:1"
       prop_resolution: 2K
-      layout_size: "16:9"
+      layout_size: "9:16"
       layout_resolution: 4K
-      # Shot-level reference frames.
-      ref_frame_size: "16:9"
+      # Shot-level reference frames for 9:16 shot video generation.
+      ref_frame_size: "9:16"
       ref_frame_resolution: 4K
       response_format: url
       n: 1
@@ -239,6 +239,8 @@ providers:
       language: cn
       sample_rate: 24000
       response_format: mp3
+      max_generated_audio_duration_seconds: 10
+      role_voice_preview_text_chars: 40
       seed_tts_api_key_env: SEED_TTS_API_KEY
       seedream_base_url: https://ark.cn-beijing.volces.com
       seedream_api_key_env: VOLCENGINE_API_KEY
@@ -246,7 +248,7 @@ providers:
       seedream_role_full_body_size: 1600x2848
       seedream_role_design_size: 2848x1600
       seedream_prop_size: 2048x2048
-      seedream_layout_size: 2848x1600
+      seedream_layout_size: 1600x2848
       seedream_ref_frame_size: 1600x2848
       seedream_output_format: png
       seedream_response_format: url
@@ -257,16 +259,19 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # Seedance video refs: skip shot reference frames, broad role sheets, and prop sheets for now.
-      # Images are limited to the visual-subject full-body image plus empty layout/scene image.
-      # Videos can include the visual-subject intro video and previous shot video.
+      # Seedance video refs: use each shot's generated ref frame as the main visual anchor.
+      # From the second shot onward, pass the previous shot ref frame as previous_shot_last_ref_frame
+      # to hint the last visual state before the hard cut.
+      # Previous generated shot videos are disabled by default to avoid quality drift across long shot chains.
       # Role/dialogue audio anchors are still allowed for the only speaking role.
-      video_reference_mode: layout_role_intro_previous_video
-      # Shot video refs are capped to: visual-subject full-body image, layout/scene image,
-      # visual-subject intro video, previous shot video, and one speaking-role audio reference.
-      # Keep role intro videos short so previous-shot video + intro video stays within Seedance r2v limits.
+      video_reference_mode: ref_frame
+      previous_video_preroll_seconds: 0
+      # Ref-frame mode sends the current shot ref frame, the previous shot last-state ref frame when available,
+      # plus one speaking-role audio reference.
+      # max_reference_* values are still kept for other video_reference_mode experiments.
       max_reference_images: 2
       max_reference_audio: 1
+      max_reference_audio_duration_seconds: 15.2
       max_reference_videos: 2
       max_reference_video_total_duration_seconds: 15.2
       video_poll_interval_seconds: 30

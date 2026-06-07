@@ -12,6 +12,7 @@ class WorkflowRunContext:
     only: str | None = None
     force: bool = False
     selected_episode_keys: list[str] | None = None
+    selected_role_names: list[str] | None = None
     shot_selectors: set[str] = field(default_factory=set)
     max_shots: int | None = None
     burn_subtitles: bool = True

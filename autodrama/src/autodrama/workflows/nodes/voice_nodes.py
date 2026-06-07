@@ -28,6 +28,14 @@ from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.repositories.voice_catalog_repo import VoiceCatalogRepository
 from autodrama.repositories.script_content_repo import ScriptContentRepository
+from autodrama.services.audio_duration import (
+    AudioDurationLimitResult,
+    audio_duration_limit_metadata,
+    compact_tts_text,
+    limit_audio_duration,
+    provider_max_generated_audio_duration_seconds,
+    provider_role_voice_preview_text_chars,
+)
 from autodrama.services.media_store import MediaStore
 from autodrama.services.voice_catalog_service import VoiceCatalogService
 from autodrama.services.role_service import RoleService
@@ -94,6 +102,45 @@ class VoiceNodeBase:
             response_format=response_format,
         )
 
+    def limit_preview_audio_duration(
+        self,
+        project_dir: Path,
+        preview_audio_path: str | None,
+        *,
+        provider: object,
+    ) -> AudioDurationLimitResult:
+        max_duration_seconds = provider_max_generated_audio_duration_seconds(provider)
+        if not preview_audio_path:
+            return AudioDurationLimitResult(
+                max_duration_seconds=max_duration_seconds,
+                skipped_reason="audio_path_missing",
+            )
+
+        audio_path = Path(preview_audio_path)
+        if not audio_path.is_absolute():
+            audio_path = project_dir / audio_path
+        result = limit_audio_duration(
+            audio_path,
+            max_duration_seconds=max_duration_seconds,
+            ffmpeg_path=self.repo.settings.runtime.ffmpeg_path,
+        )
+        if result.trimmed:
+            self.logger.info(
+                "role_voice_generation trimmed preview audio %s from %.3fs to %.3fs",
+                preview_audio_path,
+                result.original_duration_seconds or 0.0,
+                result.duration_seconds or result.max_duration_seconds or 0.0,
+            )
+        return result
+
+    @staticmethod
+    def apply_role_audio_duration(audio: RoleAudio, result: AudioDurationLimitResult) -> None:
+        if result.duration_seconds is not None:
+            audio.duration_seconds = result.duration_seconds
+        if result.original_duration_seconds is not None and result.original_duration_seconds != result.duration_seconds:
+            audio.original_duration_seconds = result.original_duration_seconds
+        audio.duration_limited = bool(result.trimmed)
+
     def absolute_project_path(self, project_dir: Path, relative_path: str) -> str:
         return self.layout.absolute_project_path(project_dir, relative_path)
 
@@ -111,6 +158,12 @@ class VoiceNodeBase:
         active = {str(key) for key in active_episode_keys}
         return [episode_key for episode_key in self.expected_episode_keys(state) if episode_key in active]
 
+    def active_role_names(self) -> list[str]:
+        context = getattr(self.workflow, "_run_context", None)
+        if context is not None and getattr(context, "selected_role_names", None) is not None:
+            return list(context.selected_role_names or [])
+        return list(getattr(self.workflow, "_active_role_names", None) or [])
+
     @staticmethod
     def role_matches_active_episode_keys(role: Role, active_episode_keys: list[str], *, label: str) -> bool:
         if not active_episode_keys:
@@ -120,12 +173,52 @@ class VoiceNodeBase:
             raise ValueError(f"{label} cannot scope role {role.name}: missing episode_keys")
         return bool(set(role_episode_keys).intersection(active_episode_keys))
 
+    @staticmethod
+    def normalize_role_selector(value: str) -> str:
+        return str(value or "").strip().casefold()
+
+    @classmethod
+    def role_selector_keys(cls, role: Role) -> set[str]:
+        return {
+            cls.normalize_role_selector(role.id),
+            cls.normalize_role_selector(role.name),
+        }
+
     def target_roles(self, state: ProjectState, active_episode_keys: list[str], *, label: str) -> list[Role]:
-        return [
+        roles = list(state.roles.values())
+        active_role_names = [name for name in self.active_role_names() if str(name).strip()]
+        if active_role_names:
+            selector_keys = {
+                self.normalize_role_selector(name): str(name).strip()
+                for name in active_role_names
+                if self.normalize_role_selector(name)
+            }
+            matched_selector_keys: set[str] = set()
+            filtered_roles: list[Role] = []
+            for role in roles:
+                role_keys = self.role_selector_keys(role)
+                matched = role_keys.intersection(selector_keys)
+                if not matched:
+                    continue
+                matched_selector_keys.update(matched)
+                filtered_roles.append(role)
+            missing = [selector_keys[key] for key in selector_keys if key not in matched_selector_keys]
+            if missing:
+                available = ", ".join(role.name for role in roles) or "-"
+                raise ValueError(f"{label} role selector(s) not found: {', '.join(missing)}. Available roles: {available}")
+            roles = filtered_roles
+
+        filtered = [
             role
-            for role in state.roles.values()
+            for role in roles
             if self.role_matches_active_episode_keys(role, active_episode_keys, label=label)
         ]
+        if active_role_names and active_episode_keys and not filtered:
+            raise ValueError(
+                f"{label} selected role(s) {', '.join(active_role_names)} do not appear in selected episodes: "
+                f"{', '.join(active_episode_keys)}"
+            )
+        return filtered
 
 
 class VoiceSelectNode(VoiceNodeBase):
@@ -799,6 +892,7 @@ class VoiceSelectNode(VoiceNodeBase):
         )
 
         active_episode_keys = self.active_episode_keys(state)
+        active_role_names = self.active_role_names()
         target_roles = [
             role
             for role in self.target_roles(state, active_episode_keys, label=self.name)
@@ -808,6 +902,12 @@ class VoiceSelectNode(VoiceNodeBase):
             self.logger.info(
                 "node=voice_select episode-scoped rerun episodes=%s target_roles=%s",
                 ",".join(active_episode_keys),
+                ",".join(role.name for role in target_roles) or "-",
+            )
+        if active_role_names:
+            self.logger.info(
+                "node=voice_select role-scoped rerun roles=%s target_roles=%s",
+                ",".join(active_role_names),
                 ",".join(role.name for role in target_roles) or "-",
             )
 
@@ -884,6 +984,52 @@ class RoleVoiceDesignNode(VoiceNodeBase):
 class RoleVoiceGenerationNode(VoiceNodeBase):
     name = "role_voice_generation"
 
+    def load_existing_output(self, project_dir: Path) -> RoleVoiceGenerationOutput | None:
+        path = self.layout.node_output_path(project_dir, self.name)
+        if not path.exists():
+            return None
+        return RoleVoiceGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def ordered_output(state: ProjectState, items: list[RoleVoiceGenerationItem]) -> RoleVoiceGenerationOutput:
+        by_role: dict[str, list[RoleVoiceGenerationItem]] = {}
+        extra: list[RoleVoiceGenerationItem] = []
+        for item in items:
+            if item.role_id in state.roles:
+                by_role.setdefault(item.role_id, []).append(item)
+            else:
+                extra.append(item)
+        ordered: list[RoleVoiceGenerationItem] = []
+        for role in state.roles.values():
+            ordered.extend(by_role.pop(role.id, []))
+        for role_items in by_role.values():
+            ordered.extend(role_items)
+        ordered.extend(extra)
+        return RoleVoiceGenerationOutput(generated_voices=ordered)
+
+    def save_generated_output(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        generated: list[RoleVoiceGenerationItem],
+        *,
+        target_roles: list[Role],
+    ) -> None:
+        active_role_names = self.active_role_names()
+        if not active_role_names:
+            self.repo.save_node_output(project_dir, self.name, RoleVoiceGenerationOutput(generated_voices=generated))
+            return
+
+        existing_output = self.load_existing_output(project_dir)
+        target_role_ids = {role.id for role in target_roles}
+        merged = [
+            item
+            for item in (existing_output.generated_voices if existing_output else [])
+            if item.role_id not in target_role_ids
+        ]
+        merged.extend(generated)
+        self.repo.save_node_output(project_dir, self.name, self.ordered_output(state, merged))
+
     def apply_voice_select_output(self, project_dir: Path, state: ProjectState) -> None:
         path = self.layout.node_output_path(project_dir, VoiceSelectNode.name)
         if not path.exists():
@@ -901,8 +1047,8 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         return f"ad_{digest[:13]}"
 
     @staticmethod
-    def preview_text(role: Role, audio: RoleAudio) -> str:
-        return (audio.sample_text or f"我是{role.name}。")[:1024]
+    def preview_text(role: Role, audio: RoleAudio, *, max_chars: int = 40) -> str:
+        return compact_tts_text(audio.sample_text or f"我是{role.name}。", max_chars=max_chars)[:1024]
 
     @staticmethod
     def voice_prompt(role: Role, audio: RoleAudio) -> str:
@@ -940,7 +1086,8 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         role: Role,
         audio: RoleAudio,
     ) -> RoleVoiceGenerationItem:
-        preview_text = self.preview_text(role, audio)
+        max_duration_seconds = provider_max_generated_audio_duration_seconds(provider)
+        preview_text = self.preview_text(role, audio, max_chars=provider_role_voice_preview_text_chars(provider))
         voice_prompt = self.voice_prompt(role, audio)
         result = await provider.create_voice(
             voice_prompt=voice_prompt,
@@ -954,6 +1101,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
                 "audio_id": audio.id,
                 "emotion": audio.emotion,
                 "generation_method": "design",
+                "max_generated_audio_duration_seconds": max_duration_seconds,
             },
         )
         preview_audio_path = self.write_preview_audio(
@@ -962,6 +1110,8 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             data=result.preview_audio_data,
             response_format=result.preview_audio_format,
         )
+        duration_result = self.limit_preview_audio_duration(project_dir, preview_audio_path, provider=provider)
+        self.apply_role_audio_duration(audio, duration_result)
         audio.asset_id = result.voice
         audio.asset_path = preview_audio_path
         audio.generation_status = "generated" if preview_audio_path or result.voice else "pending"
@@ -975,13 +1125,16 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             voice_prompt=voice_prompt,
             preview_text=preview_text,
             preview_audio_path=preview_audio_path,
+            duration_seconds=duration_result.duration_seconds,
+            original_duration_seconds=duration_result.original_duration_seconds if duration_result.trimmed else None,
+            duration_limited=duration_result.trimmed,
             provider=result.provider,
             model=result.model,
             target_model=result.target_model,
             sample_rate=result.preview_audio_sample_rate,
             response_format=result.preview_audio_format,
             request_id=result.request_id,
-            usage=result.usage,
+            usage={**result.usage, **audio_duration_limit_metadata(duration_result)},
             raw_response=result.raw_response,
         )
 
@@ -998,7 +1151,8 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         if not normal_audio.asset_path:
             raise ValueError(f"Cannot clone {role.name}/{audio.emotion}: normal voice preview audio is missing")
 
-        preview_text = self.preview_text(role, audio)
+        max_duration_seconds = provider_max_generated_audio_duration_seconds(provider)
+        preview_text = self.preview_text(role, audio, max_chars=provider_role_voice_preview_text_chars(provider))
         voice_prompt = self.voice_prompt(role, audio)
         clone_result = await provider.clone_voice_from_audio(
             source_audio_path=self.absolute_project_path(project_dir, normal_audio.asset_path),
@@ -1013,6 +1167,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
                 "generation_method": "clone",
                 "source_audio_id": normal_audio.id,
                 "source_audio_path": normal_audio.asset_path,
+                "max_generated_audio_duration_seconds": max_duration_seconds,
             },
         )
         synthesis_result = await provider.synthesize_speech(
@@ -1029,6 +1184,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
                 "source_audio_id": normal_audio.id,
                 "source_audio_path": normal_audio.asset_path,
                 "target_model": clone_result.target_model,
+                "max_generated_audio_duration_seconds": max_duration_seconds,
             },
         )
         preview_audio_path = self.write_preview_audio(
@@ -1037,6 +1193,8 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             data=synthesis_result.audio_data,
             response_format=synthesis_result.audio_format,
         )
+        duration_result = self.limit_preview_audio_duration(project_dir, preview_audio_path, provider=provider)
+        self.apply_role_audio_duration(audio, duration_result)
         audio.asset_id = clone_result.voice
         audio.asset_path = preview_audio_path
         audio.generation_status = "generated" if preview_audio_path or clone_result.voice else "pending"
@@ -1052,6 +1210,9 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             voice_prompt=voice_prompt,
             preview_text=preview_text,
             preview_audio_path=preview_audio_path,
+            duration_seconds=duration_result.duration_seconds,
+            original_duration_seconds=duration_result.original_duration_seconds if duration_result.trimmed else None,
+            duration_limited=duration_result.trimmed,
             provider=clone_result.provider,
             model=clone_result.model,
             target_model=clone_result.target_model,
@@ -1061,6 +1222,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             usage={
                 "clone": clone_result.usage,
                 "synthesis": synthesis_result.usage,
+                "duration_limit": audio_duration_limit_metadata(duration_result),
             },
             raw_response={
                 "clone": clone_result.raw_response,
@@ -1081,7 +1243,8 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         if not normal_audio.asset_id:
             raise ValueError(f"Cannot reuse {role.name}/{audio.emotion}: normal voice id is missing")
 
-        preview_text = self.preview_text(role, audio)
+        max_duration_seconds = provider_max_generated_audio_duration_seconds(provider)
+        preview_text = self.preview_text(role, audio, max_chars=provider_role_voice_preview_text_chars(provider))
         voice_prompt = self.voice_prompt(role, audio)
         synthesis_result = await provider.synthesize_speech(
             voice=normal_audio.asset_id,
@@ -1097,6 +1260,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
                 "source_audio_id": normal_audio.id,
                 "source_audio_path": normal_audio.asset_path,
                 "target_model": getattr(provider, "target_model", None),
+                "max_generated_audio_duration_seconds": max_duration_seconds,
             },
         )
         preview_audio_path = self.write_preview_audio(
@@ -1105,6 +1269,8 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             data=synthesis_result.audio_data,
             response_format=synthesis_result.audio_format,
         )
+        duration_result = self.limit_preview_audio_duration(project_dir, preview_audio_path, provider=provider)
+        self.apply_role_audio_duration(audio, duration_result)
         audio.asset_id = normal_audio.asset_id
         audio.asset_path = preview_audio_path
         audio.generation_status = "generated" if preview_audio_path or normal_audio.asset_id else "pending"
@@ -1120,13 +1286,16 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             voice_prompt=voice_prompt,
             preview_text=preview_text,
             preview_audio_path=preview_audio_path,
+            duration_seconds=duration_result.duration_seconds,
+            original_duration_seconds=duration_result.original_duration_seconds if duration_result.trimmed else None,
+            duration_limited=duration_result.trimmed,
             provider=synthesis_result.provider,
             model=synthesis_result.model,
             target_model=synthesis_result.model,
             sample_rate=synthesis_result.audio_sample_rate,
             response_format=synthesis_result.audio_format,
             request_id=synthesis_result.request_id,
-            usage=synthesis_result.usage,
+            usage={**synthesis_result.usage, **audio_duration_limit_metadata(duration_result)},
             raw_response=synthesis_result.raw_response,
         )
 
@@ -1192,7 +1361,8 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         voice: str,
         voice_resource_id: str | None = None,
     ) -> RoleVoiceGenerationItem:
-        preview_text = self.preview_text(role, audio)
+        max_duration_seconds = provider_max_generated_audio_duration_seconds(provider)
+        preview_text = self.preview_text(role, audio, max_chars=provider_role_voice_preview_text_chars(provider))
         voice_prompt = self.voice_prompt(role, audio)
         emotion_instruction, emotion_params = self.role_emotion_synthesis_plan(provider, audio)
         target_model = voice_resource_id or getattr(provider, "model", None)
@@ -1212,6 +1382,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
                 "emotion_params": emotion_params,
                 "resource_id": voice_resource_id,
                 "target_model": target_model,
+                "max_generated_audio_duration_seconds": max_duration_seconds,
             },
         )
         preview_audio_path = self.write_preview_audio(
@@ -1220,6 +1391,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             data=synthesis_result.audio_data,
             response_format=synthesis_result.audio_format,
         )
+        duration_result = self.limit_preview_audio_duration(project_dir, preview_audio_path, provider=provider)
         resolved_voice = synthesis_result.voice or voice
         audio.asset_id = resolved_voice
         audio.voice_name = role.voice_name
@@ -1229,6 +1401,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         audio.asset_path = preview_audio_path
         audio.emotion_instruction = emotion_instruction
         audio.emotion_params = emotion_params
+        self.apply_role_audio_duration(audio, duration_result)
         audio.generation_status = "generated" if preview_audio_path or resolved_voice else "pending"
         return RoleVoiceGenerationItem(
             role_id=role.id,
@@ -1246,13 +1419,16 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             emotion_instruction=emotion_instruction,
             emotion_params=emotion_params,
             preview_audio_path=preview_audio_path,
+            duration_seconds=duration_result.duration_seconds,
+            original_duration_seconds=duration_result.original_duration_seconds if duration_result.trimmed else None,
+            duration_limited=duration_result.trimmed,
             provider=synthesis_result.provider,
             model=synthesis_result.model,
             target_model=voice_resource_id or synthesis_result.model,
             sample_rate=synthesis_result.audio_sample_rate,
             response_format=synthesis_result.audio_format,
             request_id=synthesis_result.request_id,
-            usage=synthesis_result.usage,
+            usage={**synthesis_result.usage, **audio_duration_limit_metadata(duration_result)},
             raw_response=synthesis_result.raw_response,
         )
 
@@ -1292,8 +1468,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
                     )
                 )
 
-        output = RoleVoiceGenerationOutput(generated_voices=generated)
-        self.repo.save_node_output(project_dir, self.name, output)
+        self.save_generated_output(project_dir, state, generated, target_roles=target_roles)
         return state
 
     async def run_design_clone_generation(
@@ -1350,8 +1525,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
                     )
                 )
 
-        output = RoleVoiceGenerationOutput(generated_voices=generated)
-        self.repo.save_node_output(project_dir, self.name, output)
+        self.save_generated_output(project_dir, state, generated, target_roles=target_roles)
         return state
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
@@ -1365,11 +1539,18 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         self.apply_voice_select_output(project_dir, state)
         self.workflow._repair_role_voice_design_if_needed(project_dir, state, speech_provider=provider)
         active_episode_keys = self.active_episode_keys(state)
+        active_role_names = self.active_role_names()
         roles = self.target_roles(state, active_episode_keys, label=self.name)
         if active_episode_keys:
             self.logger.info(
                 "node=role_voice_generation episode-scoped rerun episodes=%s target_roles=%s",
                 ",".join(active_episode_keys),
+                ",".join(role.name for role in roles) or "-",
+            )
+        if active_role_names:
+            self.logger.info(
+                "node=role_voice_generation role-scoped rerun roles=%s target_roles=%s",
+                ",".join(active_role_names),
                 ",".join(role.name for role in roles) or "-",
             )
 

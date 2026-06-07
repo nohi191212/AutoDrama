@@ -78,8 +78,8 @@ def main() -> int:
         f"storyboard should use xhigh reasoning effort: {storyboard_provider.reasoning_effort}",
     )
     require(
-        storyboard_provider.endpoint == "https://www.right.codes/draw/v1/chat/completions",
-        f"storyboard should use RightCode chat endpoint: {storyboard_provider.endpoint}",
+        storyboard_provider.endpoint == "https://www.right.codes/codex/v1/responses",
+        f"storyboard should use RightCode responses endpoint: {storyboard_provider.endpoint}",
     )
     payload = storyboard_provider.build_payload(
         "Return ok=true.",
@@ -90,10 +90,10 @@ def main() -> int:
         },
     )
     require(payload["model"] == "gpt-5.5", f"payload model mismatch: {payload['model']}")
-    require(payload["reasoning_effort"] == "xhigh", f"payload reasoning mismatch: {payload['reasoning_effort']}")
-    require(payload["response_format"] == {"type": "json_object"}, "payload should request JSON object output")
+    require(payload["text"] == {"format": {"type": "json_object"}}, "payload should request JSON object output")
+    require(payload["reasoning"] == {"effort": "xhigh"}, f"payload reasoning mismatch: {payload}")
     require(payload["seed"] == 1234, "metadata parameters should pass through to RightCode payload")
-    require("Required JSON schema" in payload["messages"][1]["content"], "payload should inject the schema")
+    require("Required JSON schema" in payload["input"][0]["content"][0]["text"], "payload should inject the schema")
     require(
         edit_provider.model == "deepseek-chat",
         f"other deepseek text purposes should keep default text model: {edit_provider.model}",

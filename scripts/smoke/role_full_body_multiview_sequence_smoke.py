@@ -53,8 +53,21 @@ class RecordingVideoProvider:
     name = "recording_video"
     model = "recording-video-model"
 
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
     async def generate_video(self, prompt: str, refs=None, *, duration=None, wait=False, metadata=None):
         metadata = metadata or {}
+        refs = refs or []
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "refs": refs,
+                "duration": duration,
+                "wait": wait,
+                "metadata": metadata,
+            }
+        )
         asset_id = str(metadata.get("asset_id") or "video")
         return VideoGenerationResult(
             provider=self.name,
@@ -91,7 +104,8 @@ async def main_async() -> int:
     settings.output.root_dir = tmp_root
     repo = ProjectRepository(settings)
     image_provider = RecordingImageProvider()
-    workflow = PregenWorkflow(repo=repo, router=Router(image_provider))  # type: ignore[arg-type]
+    router = Router(image_provider)
+    workflow = PregenWorkflow(repo=repo, router=router)  # type: ignore[arg-type]
     project_dir = tmp_root / "project"
 
     role = Role(id="role_hero", name="Hero", intro="Hero intro")
@@ -102,7 +116,6 @@ async def main_async() -> int:
         desc="stable hero look",
         prompt="draw the original role multiview sheet",
         full_body_prompt="draw the front full body reference",
-        intro_video_prompt="show the hero",
     )
     state = ProjectState(
         project_id="role-full-body-multiview-sequence",
@@ -142,10 +155,30 @@ async def main_async() -> int:
 
     output_path = project_dir / "assets" / "json" / "nodes" / "role_multiview_generation.json"
     require(output_path.is_file(), "role_multiview_generation node output was not written")
+
+    state = await workflow._run_role_intro_video_prompt(project_dir, state)
+    state = await workflow._run_role_intro_video_generation(project_dir, state)
+    appearance = state.roles[role.id].appearances["base"]
+    require(len(router.video_provider.calls) == 1, f"Expected one role intro video call, got {len(router.video_provider.calls)}")
+    intro_call = router.video_provider.calls[0]
+    require(intro_call["duration"] == 4, f"Role intro video duration should be 4s: {intro_call}")
+    require(intro_call["wait"] is True, f"Role intro video generation should wait for completion: {intro_call}")
+    require("0-1.5 秒" in intro_call["prompt"] and "3-4 秒" in intro_call["prompt"], intro_call["prompt"])
+    require("总时长 4 秒" in intro_call["prompt"] and "0-4 秒" in intro_call["prompt"], intro_call["prompt"])
+    require(
+        appearance.intro_video_asset_path == "assets/videos/roles/role_hero_appearance_base_intro_video.mp4",
+        f"Unexpected intro video path: {appearance.intro_video_asset_path}",
+    )
+
+    intro_output_path = project_dir / "assets" / "json" / "nodes" / "role_intro_video_generation.json"
+    intro_output = intro_output_path.read_text(encoding="utf-8")
+    require('"duration":4' in intro_output.replace(" ", ""), f"Intro output should record 4s duration: {intro_output}")
     print("role_full_body_multiview_sequence_smoke=ok")
     print("image_call_order=full_body,multiview")
+    print("intro_video_duration=4")
     print(f"full_body_path={appearance.full_body_image_asset_path}")
     print(f"design_path={appearance.design_image_asset_path}")
+    print(f"intro_video_path={appearance.intro_video_asset_path}")
     return 0
 
 

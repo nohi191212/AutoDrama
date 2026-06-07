@@ -634,7 +634,21 @@ class ToAPIImageProvider:
             return default
 
     @classmethod
+    def is_safety_provider_error(cls, exc: ProviderBadResponseError) -> bool:
+        text = str(exc).lower()
+        return any(
+            marker in text
+            for marker in (
+                "image_unsafe",
+                "appear to be unsafe",
+                "generated images appear to be unsafe",
+            )
+        )
+
+    @classmethod
     def _is_retryable_provider_error(cls, exc: ProviderBadResponseError) -> bool:
+        if cls.is_safety_provider_error(exc):
+            return False
         text = str(exc).lower()
         non_retryable_markers = (
             "missing toapi api key",

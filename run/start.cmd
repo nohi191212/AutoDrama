@@ -12,6 +12,7 @@ set "UNTIL=bgm_generation"
 set "ONLY="
 set "EPISODES="
 set "SHOTS="
+set "ROLES="
 set "FORCE="
 
 :parse
@@ -80,6 +81,18 @@ if "%~1"=="--episode" (
   shift
   goto parse
 )
+if "%~1"=="--roles" (
+  set "ROLES=%~2"
+  shift
+  shift
+  goto parse
+)
+if "%~1"=="--role" (
+  set "ROLES=%~2"
+  shift
+  shift
+  goto parse
+)
 if "%~1"=="--shots" (
   set "SHOTS=%~2"
   shift
@@ -100,9 +113,10 @@ goto help_error
 :help
 echo Usage:
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
-echo   run\start.cmd [--only NODE] [--episodes 1,3] [--shots 1-3]
+echo   run\start.cmd [--only NODE] [--episodes 1,3] [--roles ROLE1,ROLE2] [--shots 1-3]
 echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force]
 echo   --episode is accepted as an alias for --episodes.
+echo   --role is accepted as an alias for --roles.
 echo   run\start.cmd --workflow pregen^|generation [options]
 echo.
 echo This is the native Windows entry point. It uses runtime.python.windows
@@ -115,14 +129,17 @@ echo.
 echo Notes:
 echo   pregen writes reusable/static assets through bgm_generation.
 echo   pregen role audio chain is role_design, voice_select, then role_voice_generation.
+echo   pregen --roles is supported with --only voice_select or --only role_voice_generation.
 echo   generation starts with storyboard_generation, then processes selected episodes.
 goto end
 
 :help_error
 echo Usage: 1>&2
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force] 1>&2
+echo   run\start.cmd [--only NODE] [--episodes 1,3] [--roles ROLE1,ROLE2] 1>&2
 echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force] 1>&2
 echo   --episode is accepted as an alias for --episodes. 1>&2
+echo   --role is accepted as an alias for --roles. 1>&2
 exit /b 2
 
 :run
@@ -156,6 +173,7 @@ call :log "workflow: %WORKFLOW%"
 call :log "until: %UNTIL%"
 if not "%EPISODES%"=="" call :log "episodes: %EPISODES%"
 if not "%SHOTS%"=="" call :log "shots: %SHOTS%"
+if not "%ROLES%"=="" call :log "roles: %ROLES%"
 if not "%ONLY%"=="" call :log "only: %ONLY%"
 
 set "PROJECT_ARGS="
@@ -167,10 +185,13 @@ if not "%EPISODES%"=="" set "EPISODE_ARGS=--episodes "%EPISODES%""
 set "SHOT_ARGS="
 if /I "%WORKFLOW%"=="generation" if not "%SHOTS%"=="" set "SHOT_ARGS=--shots "%SHOTS%""
 
+set "ROLE_ARGS="
+if /I "%WORKFLOW%"=="pregen" if not "%ROLES%"=="" set "ROLE_ARGS=--roles "%ROLES%""
+
 set "ONLY_ARGS="
 if not "%ONLY%"=="" set "ONLY_ARGS=--only "%ONLY%""
 
-"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
+"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %ROLE_ARGS% %SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
 set "EXIT_CODE=%ERRORLEVEL%"
 
 popd >nul

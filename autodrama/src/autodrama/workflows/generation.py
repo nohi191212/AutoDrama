@@ -117,6 +117,49 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         )
 
     @staticmethod
+    def _previous_video_preroll_seconds(provider=None) -> float:
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        value = options.get("previous_video_preroll_seconds") or options.get("video_previous_preroll_seconds") or 0
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, seconds)
+
+    @staticmethod
+    def _format_seconds(value: float) -> str:
+        return f"{value:.1f}".rstrip("0").rstrip(".")
+
+    @classmethod
+    def _previous_video_preroll_prompt(cls, shot: StoryboardShot, preroll_seconds: float) -> str:
+        preroll_text = cls._format_seconds(preroll_seconds)
+        total_duration = float(shot.duration_seconds)
+        total_text = cls._format_seconds(total_duration)
+        return (
+            f"上一镜预滚与硬切结构: 0-{preroll_text}秒取上一镜视频最后{preroll_text}秒作为开场内容，"
+            "只承接上一镜尾部视觉状态、动作因果和情绪余韵，不重复上一镜对白，不把上一镜继续演成新剧情；"
+            f"第{preroll_text}秒必须发生一次清晰硬切；"
+            f"{preroll_text}-{total_text}秒才是当前 shot 正文内容，按当前 shot 的剧情、动作和对白推进。"
+        )
+
+    def _shot_has_previous_video_reference(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        *,
+        provider=None,
+    ) -> bool:
+        refs = self._shot_video_refs(project_dir, state, shot, provider=provider, episode=episode)
+        groups = self._shot_video_prompt_ref_groups(refs, provider=provider)
+        return any(
+            self._shot_video_ref_asset_type(ref) in {"previous_shot_video", "reference_and_previous_shot_video"}
+            for ref in groups["video"]
+        )
+
+    @staticmethod
     def _shot_spatial_continuity_prompt(shot: StoryboardShot) -> str:
         if not (shot.physical_space_note or shot.spatial_structure_summary or shot.spatial_constraints):
             return ""
@@ -291,6 +334,12 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         label = cls._shot_video_ref_label(ref)
         seedance_role = cls._shot_video_ref_seedance_role(ref)
         prefix = f"图片{index}（{label}）"
+        if asset_type == "previous_shot_last_ref_frame":
+            return (
+                f"{prefix}: 上一 shot 最后一帧提示图，由上一 shot 的 ref_frame 提供。"
+                "只用于理解硬切前一刻的人物/道具位置、姿态、视线方向、情绪余韵和空间方向；"
+                "它不是当前 shot 的首帧，不要逐像素复刻，不要覆盖本段参考图或当前 video_prompt。"
+            )
         if asset_type == "previous_shot_last_frame" or seedance_role == "first_frame":
             return (
                 f"{prefix}: 上一 shot 尾帧/first_frame 输入。只用于硬切后承接上一段末尾的人物姿态、"
@@ -466,6 +515,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             boundary_clauses.append("场景图只锁定无人物空场景的空间结构、材质、光照和尺度")
         if "ref_frame" in asset_types:
             boundary_clauses.append("本段参考图只锁定当前片段空间参考")
+        if "previous_shot_last_ref_frame" in asset_types:
+            boundary_clauses.append("上一 shot 最后参考帧只提示硬切前状态，不作为当前片段首帧")
         if "role_full_body" in asset_types:
             boundary_clauses.append("人物全身图只锁定画面中央人物的静态全身外观")
         if "role_appearance" in asset_types:
@@ -491,6 +542,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             "当前 shot 的 video_prompt 是剧情、动作和对白内容的唯一来源",
             "参考素材不能新增剧情、改台词、改角色关系",
         ]
+        if "previous_shot_last_ref_frame" in asset_types:
+            conflict_parts.append("当前画面冲突优先听本段参考图和当前 video_prompt，上一 shot 最后参考帧只保留连续性提示")
         if asset_types.intersection({"layout", "reference_video", "reference_and_previous_shot_video"}):
             conflict_parts.append("空间冲突优先听场景图或同场景镜头视频")
         if "role_full_body" in asset_types:
@@ -541,6 +594,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     ) -> str:
         body = shot.video_prompt.strip()
         reference_mode = self._video_reference_mode(provider)
+        preroll_seconds = self._previous_video_preroll_seconds(provider)
+        use_previous_video_preroll = (
+            preroll_seconds > 0
+            and float(shot.duration_seconds) > preroll_seconds
+            and shot.start_frame_source != "previous_shot_last_frame"
+            and project_dir is not None
+            and self._shot_has_previous_video_reference(project_dir, state, episode, shot, provider=provider)
+        )
         parts: list[str] = [self._cg_character_safety_prompt()]
         if reference_mode in {"ref_frame_only", "ref_frame"}:
             parts.append(self._ref_frame_only_video_prompt())
@@ -572,6 +633,17 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     body = body.removeprefix(prefix).lstrip()
                     break
             parts.append(lead)
+        elif use_previous_video_preroll:
+            for prefix in (
+                "首帧为参考帧，",
+                "首帧为本片段参考帧，",
+                "首帧为图片1，",
+                "首帧为锚点参考帧，",
+            ):
+                if body.startswith(prefix):
+                    body = body.removeprefix(prefix).lstrip()
+                    break
+            parts.append(self._previous_video_preroll_prompt(shot, preroll_seconds))
         else:
             for prefix in (
                 "首帧为参考帧，",
