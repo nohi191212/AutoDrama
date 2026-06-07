@@ -69,7 +69,7 @@ class BGMDesignNode(BGMNodeBase):
             self.logger.info("bgm_design skipped because project.bgm_count is 0")
             return state
 
-        provider = self.router.text("bgm_plan")
+        provider = self.router.text("bgm_plan", node_name=self.name)
         self.logger.info(
             "node=bgm_design provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -104,7 +104,7 @@ class BGMGenerationNode(BGMNodeBase):
     name = "bgm_generation"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.music("bgm")
+        provider = self.router.music("bgm", node_name=self.name)
         self.logger.info(
             "node=bgm_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),

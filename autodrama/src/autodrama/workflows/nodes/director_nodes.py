@@ -54,9 +54,9 @@ class DirectorNodeBase:
 
     def text_provider(self):
         try:
-            return self.router.text("director")
+            return self.router.text("director", node_name=self.name)
         except KeyError:
-            return self.router.text("script")
+            return self.router.text("script", node_name=self.name)
 
 
 class DirectorPrepNode(DirectorNodeBase):

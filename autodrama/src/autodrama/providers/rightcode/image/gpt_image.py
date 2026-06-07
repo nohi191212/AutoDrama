@@ -375,7 +375,7 @@ class RightCodeImageProvider:
 
     @staticmethod
     def _is_role_design_image(metadata: dict[str, Any]) -> bool:
-        return str(metadata.get("node_name") or "") in {"role_appearance_generation", "role_multiview_generation"}
+        return str(metadata.get("node_name") or "") == "role_multiview_generation"
 
     @staticmethod
     def _is_role_full_body_image(metadata: dict[str, Any]) -> bool:

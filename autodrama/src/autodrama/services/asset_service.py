@@ -11,7 +11,6 @@ from autodrama.core.schemas import (
     PropDesignOutput,
     PropExtractItem,
     PropExtractOutput,
-    RoleAppearanceDesignOutput,
 )
 from autodrama.providers.base import TextLLM
 from autodrama.services.director_service import DirectorService
@@ -27,57 +26,12 @@ class AssetService:
         return json.dumps(value, ensure_ascii=False, indent=2)
 
     @staticmethod
-    def role_design_style_prompt(state: ProjectState) -> str:
-        return str(state.metadata.get("role_design_style_prompt") or "").strip()
-
-    @staticmethod
     def prop_design_style_prompt(state: ProjectState) -> str:
         return str(state.metadata.get("prop_design_style_prompt") or "").strip()
 
     @staticmethod
     def layout_design_style_prompt(state: ProjectState) -> str:
         return str(state.metadata.get("layout_design_style_prompt") or "").strip()
-
-    @staticmethod
-    def role_appearance_view_requirement() -> str:
-        return (
-            "角色形象分两步生成：先生成单人正面全身图，再以该全身图为身份参考生成同一角色正面、侧面、背面三视图"
-            "和绑定物品设计图。三视图必须统一身高比例、脸型、发型、服装和道具细节。"
-        )
-
-    async def role_appearance_design(
-        self,
-        state: ProjectState,
-        provider: TextLLM,
-        *,
-        episode_stories: dict[str, str],
-    ) -> RoleAppearanceDesignOutput:
-        prompt = self.prompts.render(
-            "role_appearance_design",
-            title=state.title,
-            episode_stories=self.format_json(episode_stories),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(episode_stories)),
-            roles=self.format_json(
-                [
-                    {
-                        "name": role.name,
-                        "intro": role.intro,
-                        "personality": role.personality,
-                        "aliases": role.aliases,
-                        "voice_summary": role.voice_summary,
-                    }
-                    for role in state.roles.values()
-                ]
-            ),
-            role_design_style_prompt=self.role_design_style_prompt(state),
-            role_appearance_view_requirement=self.role_appearance_view_requirement(),
-        )
-        return await provider.generate_json(
-            prompt,
-            RoleAppearanceDesignOutput,
-            temperature=0.6,
-            metadata={"node_name": "role_appearance_design", "project_id": state.project_id},
-        )
 
     async def prop_extract(
         self,
@@ -89,7 +43,7 @@ class AssetService:
         role_bound_props = [
             prop.model_dump(mode="json")
             for prop in state.props.values()
-            if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
+            if prop.source == "role_design" or prop.owner_role_id
         ]
         prompt = self.prompts.render(
             "prop_extract",
@@ -125,7 +79,7 @@ class AssetService:
         role_bound_props = [
             prop.model_dump(mode="json")
             for prop in state.props.values()
-            if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
+            if prop.source == "role_design" or prop.owner_role_id
         ]
         prompt = self.prompts.render(
             "prop_design",

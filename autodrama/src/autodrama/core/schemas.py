@@ -314,10 +314,6 @@ class RoleAppearanceDesignItem(BaseModel):
     intro_video_prompt: str | None = None
 
 
-class RoleAppearanceDesignOutput(BaseModel):
-    appearances: list[RoleAppearanceDesignItem]
-
-
 class RoleRelationshipDesignItem(BaseModel):
     target_role_name: str
     relation: str
@@ -354,10 +350,6 @@ class RoleVoiceItem(BaseModel):
             "final twists, key evidence, endings, or outcome spoilers."
         ),
     )
-
-
-class RoleVoiceDesignOutput(BaseModel):
-    role_voices: list[RoleVoiceItem]
 
 
 class RoleExtractOutput(BaseModel):

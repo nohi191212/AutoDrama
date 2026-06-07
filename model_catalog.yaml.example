@@ -1,0 +1,272 @@
+models:
+  aliyun:qwen-plus:
+    provider: aliyun
+    family: qwen
+    capability: text
+    input_modalities: [text]
+    output_modalities: [json]
+    limits:
+      max_output_tokens: 8192
+    params_schema:
+      temperature:
+        type: number
+        min: 0
+        max: 2
+      response_format:
+        type: string
+        enum: [json_object, text]
+
+  deepseek:deepseek-v4-pro:
+    provider: deepseek
+    family: deepseek
+    capability: text
+    input_modalities: [text]
+    output_modalities: [json]
+    limits:
+      max_output_tokens: 8192
+    params_schema:
+      temperature:
+        type: number
+        min: 0
+        max: 2
+      reasoning_effort:
+        type: string
+        enum: [low, medium, high, max]
+      thinking_enabled:
+        type: boolean
+
+  deepseek:deepseek-v4-flash:
+    provider: deepseek
+    family: deepseek
+    capability: text
+    input_modalities: [text]
+    output_modalities: [json]
+    limits:
+      max_output_tokens: 8192
+    params_schema:
+      temperature:
+        type: number
+        min: 0
+        max: 2
+      reasoning_effort:
+        type: string
+        enum: [low, medium, high, max]
+      thinking_enabled:
+        type: boolean
+
+  toapi:gpt-image-2:
+    provider: toapi
+    family: gpt-image
+    capability: image
+    input_modalities: [text, image]
+    output_modalities: [image]
+    limits:
+      max_reference_images: 16
+      max_images: 4
+    params_schema:
+      size:
+        type: string
+        enum: ["1:1", "1:2", "9:16", "16:9", "1024x1024", "1024x1536", "3840x2160"]
+      resolution:
+        type: string
+        enum: [2K, 4K]
+      n:
+        type: integer
+        min: 1
+        max: 4
+      response_format:
+        type: string
+        enum: [url, b64_json]
+      max_reference_images:
+        type: integer
+        min: 0
+        max: 16
+
+  rightcode:gpt-image-2:
+    provider: rightcode
+    family: gpt-image
+    capability: image
+    input_modalities: [text, image]
+    output_modalities: [image]
+    limits:
+      max_reference_images: 16
+      max_images: 4
+    params_schema:
+      size:
+        type: string
+      n:
+        type: integer
+        min: 1
+        max: 4
+      quality:
+        type: string
+        enum: [low, medium, high, auto]
+      response_format:
+        type: string
+        enum: [url, b64_json]
+      max_reference_images:
+        type: integer
+        min: 0
+        max: 16
+
+  volcengine:doubao-seedream-5-0-260128:
+    provider: volcengine
+    family: seedream
+    capability: image
+    input_modalities: [text, image]
+    output_modalities: [image]
+    limits:
+      max_reference_images: 14
+      max_images: 4
+    params_schema:
+      size:
+        type: string
+      response_format:
+        type: string
+        enum: [url, b64_json]
+      output_format:
+        type: string
+        enum: [png, jpeg, webp]
+      watermark:
+        type: boolean
+      max_reference_images:
+        type: integer
+        min: 0
+        max: 14
+
+  volcengine:doubao-seedance-2-0-260128:
+    provider: volcengine
+    family: seedance
+    capability: video
+    input_modalities: [text, image, audio, video]
+    output_modalities: [video, image]
+    limits:
+      min_duration_seconds: 4
+      max_duration_seconds: 10
+      max_reference_images: 2
+      max_reference_audio: 1
+      max_reference_videos: 2
+    params_schema:
+      ratio:
+        type: string
+        enum: ["16:9", "9:16", "1:1"]
+      resolution:
+        type: string
+        enum: [720p, 1080p]
+      duration:
+        type: integer
+        min: 4
+        max: 10
+      generate_audio:
+        type: boolean
+      return_last_frame:
+        type: boolean
+      watermark:
+        type: boolean
+      max_reference_images:
+        type: integer
+        min: 0
+        max: 2
+      max_reference_audio:
+        type: integer
+        min: 0
+        max: 1
+      max_reference_videos:
+        type: integer
+        min: 0
+        max: 2
+      max_reference_audio_duration_seconds:
+        type: number
+        min: 0
+      max_reference_video_total_duration_seconds:
+        type: number
+        min: 0
+
+  volcengine:seed-tts-2.0:
+    provider: volcengine
+    family: seed-tts
+    capability: audio
+    input_modalities: [text]
+    output_modalities: [audio]
+    limits:
+      max_generated_audio_duration_seconds: 10
+    params_schema:
+      sample_rate:
+        type: integer
+        enum: [16000, 24000, 48000]
+      response_format:
+        type: string
+        enum: [mp3, wav, pcm]
+      max_generated_audio_duration_seconds:
+        type: number
+        min: 1
+
+  minimax:music-2.6:
+    provider: minimax
+    family: minimax-music
+    capability: music
+    input_modalities: [text]
+    output_modalities: [audio]
+    limits:
+      max_duration_seconds: 240
+    params_schema:
+      sample_rate:
+        type: integer
+        enum: [16000, 24000, 32000, 44100]
+      bitrate:
+        type: integer
+        min: 32000
+      format:
+        type: string
+        enum: [mp3, wav, pcm]
+      output_format:
+        type: string
+        enum: [url, hex]
+      is_instrumental:
+        type: boolean
+      lyrics_optimizer:
+        type: boolean
+      aigc_watermark:
+        type: boolean
+      duration:
+        type: number
+        min: 1
+        max: 240
+
+  elevenlabs:music_v1:
+    provider: elevenlabs
+    family: elevenlabs-music
+    capability: music
+    input_modalities: [text]
+    output_modalities: [audio]
+    limits:
+      max_duration_seconds: 300
+    params_schema:
+      output_format:
+        type: string
+      force_instrumental:
+        type: boolean
+      respect_sections_durations:
+        type: boolean
+      duration:
+        type: number
+        min: 1
+        max: 300
+
+  aliyun_omni:qwen3.5-omni-plus:
+    provider: aliyun_omni
+    family: qwen-omni
+    capability: judge
+    input_modalities: [text, image, audio]
+    output_modalities: [json]
+    limits:
+      max_reference_images: 4
+      max_reference_audio: 20
+    params_schema:
+      temperature:
+        type: number
+        min: 0
+        max: 2
+      response_format:
+        type: string
+        enum: [json_object, text]

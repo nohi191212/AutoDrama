@@ -122,7 +122,7 @@ async def assert_failed_task_retries() -> None:
 
     result = await provider().generate_image(
         "test prompt",
-        metadata={"node_name": "role_appearance_generation", "asset_id": "role_retry_task"},
+        metadata={"node_name": "role_multiview_generation", "asset_id": "role_retry_task"},
     )
 
     if result.image_urls != ["https://example.invalid/generated.png"]:

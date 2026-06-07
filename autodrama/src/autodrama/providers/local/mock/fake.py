@@ -16,12 +16,10 @@ from autodrama.core.schemas import (
     PropDesignOutput,
     PropExtractOutput,
     RefFrameSpatialPlan,
-    RoleAppearanceDesignOutput,
     RoleDesignOutput,
     RoleDuplicateAuditReviewOutput,
     RoleEpisodeKeyAuditReviewOutput,
     RoleExtractOutput,
-    RoleVoiceDesignOutput,
     SafeImagePromptRewriteOutput,
     ScriptDetailExpandOutput,
     ScriptNovelExtractBatchOutput,
@@ -536,69 +534,6 @@ class FakeTextProvider:
             if role_name:
                 selected_roles = [role for role in data["roles"] if role.get("name") == role_name]
                 data["roles"] = selected_roles or data["roles"][:1]
-        elif schema is RoleAppearanceDesignOutput or node_name == "role_appearance_design":
-            if "爱死机写实CG风" in prompt or "爱死机风格写实CG" in prompt or "CG动画电影风" in prompt or "cg_animation" in prompt:
-                appearance_style = "爱死机写实CG风"
-            elif "3D动漫" in prompt or "anime_3d" in prompt:
-                appearance_style = "3D动漫"
-            elif "2D动漫" in prompt or "anime_2d" in prompt:
-                appearance_style = "2D动漫"
-            else:
-                appearance_style = "真人电影质感"
-            view_requirement = (
-                "正面、侧面、背面三视图角色设定图，character turnaround sheet，同一角色并排，统一身高比例和服装细节，干净背景，无其他人物"
-                if "三视图" in prompt
-                else "半身角色设定图，干净背景，无其他人物"
-            )
-            data = {
-                "appearances": [
-                    {
-                        "role_name": "林舟",
-                        "name": "base",
-                        "desc": "二十八岁职场青年，身形偏瘦，短发，眼下有轻微疲惫感，五官清秀但神情克制。",
-                        "prompt": (
-                            f"{appearance_style}，左侧为二十八岁中国职场青年男性形象，短发，身形偏瘦，"
-                            f"五官清秀，眼神疲惫但冷静，{view_requirement}；右侧为黑色录音笔和合同夹设计图，"
-                            "与左侧人物保持同一比例尺单独陈列，用左侧人物身高和大腿高度直接参照大小，不出现手部细节。"
-                        ),
-                        "role_bound_props": [
-                            {
-                                "name": "黑色录音笔",
-                                "desc": "林舟随身携带的证据记录工具，细长黑色金属外壳，约15厘米长。",
-                                "prompt": "黑色录音笔设计图，细长金属外壳，按钮和拾音孔清晰，与左侧人物保持同一比例尺单独陈列，靠近合同夹边缘显示真实大小，不出现手掌或手部持握姿态。",
-                                "status": "normal",
-                                "scale_relation": "与左侧人物同一比例尺，长度约为人物身高的十二分之一，可放入西装内袋",
-                                "usage": "林舟常放在合同旁或随身携带记录证据。",
-                            }
-                        ],
-                        "intro_video_prompt": "参考图片1中的林舟外观和黑色录音笔设计，林舟站在洁净、亮度适中的虚空圆台上；0-1.5 秒：圆台缓慢转动，他低头整理袖口，保持疲惫但冷静的神情；1.5-3 秒：他拿起黑色录音笔，展示右手握持方式，衣料和金属按键有轻微声响；3-4 秒：镜头轻微推近到稳定识别角度，他抬眼看向镜头旁侧，背景干净抽象，无其他人物、字幕或水印。",
-                    },
-                    {
-                        "role_name": "苏晚",
-                        "name": "base",
-                        "desc": "二十六岁数据分析师，身形修长，眉眼清冷，气质理性克制。",
-                        "prompt": (
-                            f"{appearance_style}，左侧为二十六岁中国女性数据分析师形象，身形修长，"
-                            f"眉眼清冷，气质理性克制，{view_requirement}；右侧为细框眼镜和数据平板设计图，"
-                            "与左侧人物保持同一比例尺单独陈列，用左侧人物肩宽和前臂长度直接参照大小，不出现手部细节。"
-                        ),
-                        "role_bound_props": [],
-                        "intro_video_prompt": "参考图片1中的苏晚外观和数据平板设计，苏晚站在洁净、亮度适中的虚空圆台上；0-1.5 秒：圆台缓慢转动，她推正细框眼镜，神情清冷克制；1.5-3 秒：她单手划过数据平板，展示持握和操作方式，动作准确利落；3-4 秒：镜头轻微推近到稳定识别角度，背景干净抽象，无其他人物、字幕或水印。",
-                    },
-                    {
-                        "role_name": "赵启",
-                        "name": "base",
-                        "desc": "三十五岁部门主管，体型中等偏壮，五官锐利，神情自负，压迫感强。",
-                        "prompt": (
-                            f"{appearance_style}，左侧为三十五岁中国男性部门主管形象，体型中等偏壮，"
-                            f"五官锐利，神情自负，{view_requirement}；右侧为深色文件夹和钢笔设计图，"
-                            "与左侧人物保持同一比例尺单独陈列，用左侧人物身高和西装口袋位置直接参照大小，不出现手部细节。"
-                        ),
-                        "role_bound_props": [],
-                        "intro_video_prompt": "参考图片1中的赵启外观和深色文件夹设计，赵启站在洁净、亮度适中的虚空圆台上；0-1.5 秒：圆台缓慢转动，他整理西装下摆，维持强势站姿；1.5-3 秒：他夹起深色文件夹，展示文件夹与手臂的比例和使用方式；3-4 秒：短暂停顿后他抬眼露出压迫感强的目光，背景干净抽象，无其他人物、字幕或水印。",
-                    },
-                ]
-            }
         elif schema is VoiceSelectShortlistOutput or node_name == "voice_select_shortlist":
             candidates = metadata.get("heuristic_candidates")
             if not isinstance(candidates, list) or not candidates:
@@ -626,61 +561,6 @@ class FakeTextProvider:
                     }
                     for candidate in candidates[: int(metadata.get("limit") or 5)]
                     if isinstance(candidate, dict) and candidate.get("voice_type")
-                ]
-            }
-        elif schema is RoleVoiceDesignOutput or node_name == "role_voice_design":
-            data = {
-                "role_voices": [
-                    {
-                        "role_name": "林舟",
-                        "emotion": "normal",
-                        "voice_name": "云舟 2.0",
-                        "voice_type": "zh_male_m191_uranus_bigtts",
-                        "voice_resource_id": "seed-tts-2.0",
-                        "voice_selection_reason": "青年男性音色，表达克制清晰，适合职场男主的冷静和疲惫感。",
-                        "desc": "二十八岁青年男声，低沉克制，略带疲惫感，语速中等，咬字清晰。",
-                        "sample_text": "我是林舟，一个总在办公室熬到深夜的普通职员。我不擅长争辩，只习惯把每个细节记在心里。最近的风向不太对，但我相信只要冷静下来，总能找到问题的源头。",
-                    },
-                    {
-                        "role_name": "林舟",
-                        "emotion": "tense",
-                        "voice_name": "云舟 2.0",
-                        "voice_type": "zh_male_m191_uranus_bigtts",
-                        "voice_resource_id": "seed-tts-2.0",
-                        "voice_selection_reason": "青年男性音色，表达克制清晰，适合职场男主的冷静和疲惫感。",
-                        "desc": "同一青年男声，压低音量，呼吸略紧，语尾收住，表现强忍怒意。",
-                        "sample_text": "我是林舟，一个被压力推到角落的职员。我知道现在每句话都可能被误解，所以只能把情绪压住。越是混乱的时候，我越要盯紧那些不该被忽略的细节。",
-                    },
-                    {
-                        "role_name": "苏晚",
-                        "emotion": "normal",
-                        "voice_name": "小何 2.0",
-                        "voice_type": "zh_female_xiaohe_uranus_bigtts",
-                        "voice_resource_id": "seed-tts-2.0",
-                        "voice_selection_reason": "女性音色干净稳定，带情绪变化能力，适合理性克制的数据分析师。",
-                        "desc": "二十六岁女性声音，清冷理性，音色干净，语速稳定。",
-                        "sample_text": "我是苏晚，负责数据分析，也习惯用证据说话。很多人只看结果，我更在意过程里那些微小的偏差。只要线索还在，我就不会轻易下结论。",
-                    },
-                    {
-                        "role_name": "赵启",
-                        "emotion": "normal",
-                        "voice_name": "霸气青叔 2.0",
-                        "voice_type": "zh_male_baqiqingshu_uranus_bigtts",
-                        "voice_resource_id": "seed-tts-2.0",
-                        "voice_selection_reason": "成熟男性音色有压迫感，适合主管角色的强势和控制欲。",
-                        "desc": "三十五岁男性声音，成熟强势，语气带压迫感，习惯短暂停顿后下判断。",
-                        "sample_text": "我是赵启，这个部门的负责人。会议室里的节奏必须由我来掌控，任何失误都要有人承担。一个团队想往上走，就不能让犹豫和软弱拖慢脚步。",
-                    },
-                    {
-                        "role_name": "赵启",
-                        "emotion": "tense",
-                        "voice_name": "霸气青叔 2.0",
-                        "voice_type": "zh_male_baqiqingshu_uranus_bigtts",
-                        "voice_resource_id": "seed-tts-2.0",
-                        "voice_selection_reason": "成熟男性音色有压迫感，适合主管角色的强势和控制欲。",
-                        "desc": "同一成熟男声，音量变虚，语速变快，带掩饰慌张的强硬。",
-                        "sample_text": "我是赵启，我必须让所有事情看起来仍在掌控之中。越有人追问，我越不能露出破绽。只要会议还没结束，局面就还有被我拉回来的机会。",
-                    },
                 ]
             }
         elif schema is PropExtractOutput or node_name == "prop_extract":

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,8 +18,7 @@ from autodrama.core.schemas import (
     RoleDesignOutput,
     RoleExtractItem,
     RoleExtractOutput,
-    RoleVoiceDesignOutput,
-    RoleVoiceGenerationItem,
+    RoleVoiceItem,
     ShotDialogueAudioAsset,
     StoryboardEpisodeOutput,
     StoryboardShot,
@@ -61,6 +59,7 @@ from autodrama.workflows.nodes.static_asset_nodes import (
     build_static_asset_node_runners,
 )
 from autodrama.workflows.nodes.voice_nodes import VoiceNodeBase, build_voice_node_runners
+from autodrama.workflows.router_adapter import adapt_workflow_router
 from autodrama.workflows.runner import WorkflowRunner
 from autodrama.workflows.selection import select_episode_keys
 
@@ -99,7 +98,7 @@ class PregenWorkflow:
         self.repo = repo
         self.settings = getattr(repo, "settings", Settings())
         self.layout = getattr(repo, "layout", ProjectLayout(self.settings))
-        self.router = router
+        self.router = adapt_workflow_router(router)
         self.prompts = prompts or PromptStore()
         self.script_service = ScriptService(self.prompts)
         self.director_service = DirectorService(self.prompts)
@@ -175,57 +174,6 @@ class PregenWorkflow:
         return PregenWorkflow._available_speakers(provider)
 
     @staticmethod
-    def _speaker_lookup(provider) -> dict[str, dict[str, Any]]:
-        try:
-            speakers = PregenWorkflow._available_speakers(provider)
-        except Exception as exc:
-            get_logger().warning("Could not load speech voice catalog for validation: %s", exc)
-            return {}
-        return {
-            str(speaker["voice_type"]): speaker
-            for speaker in speakers
-            if speaker.get("voice_type")
-        }
-
-    @staticmethod
-    def _clean_optional_text(value: object) -> str | None:
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
-
-    @classmethod
-    def _role_voice_speaker(cls, item, speaker_lookup: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
-        voice_type = cls._clean_optional_text(getattr(item, "voice_type", None))
-        if not voice_type:
-            return None
-        if speaker_lookup:
-            return speaker_lookup.get(voice_type)
-        return {
-            "name": cls._clean_optional_text(getattr(item, "voice_name", None)),
-            "voice_type": voice_type,
-            "resource_id": cls._clean_optional_text(getattr(item, "voice_resource_id", None)),
-        }
-
-    @staticmethod
-    def _voice_candidate_priority(emotion: object) -> int:
-        return 2 if str(emotion).strip().lower() == "normal" else 1
-
-    @classmethod
-    def _bind_role_voice(cls, role: Role, item, speaker: dict[str, Any]) -> None:
-        role.voice_name = cls._clean_optional_text(speaker.get("name")) or cls._clean_optional_text(
-            getattr(item, "voice_name", None)
-        )
-        role.voice_type = cls._clean_optional_text(speaker.get("voice_type")) or cls._clean_optional_text(
-            getattr(item, "voice_type", None)
-        )
-        role.voice_resource_id = cls._clean_optional_text(
-            speaker.get("resource_id")
-        ) or cls._clean_optional_text(getattr(item, "voice_resource_id", None))
-        role.voice_model_family = cls._clean_optional_text(speaker.get("model_family"))
-        role.voice_selection_reason = cls._clean_optional_text(getattr(item, "voice_selection_reason", None))
-
-    @staticmethod
     def _copy_role_voice_to_audio(role: Role, audio: RoleAudio) -> None:
         if not role.voice_type:
             return
@@ -288,37 +236,24 @@ class PregenWorkflow:
         self._copy_role_voice_to_audio(role, role.audio["normal"])
         role.voice_summary = desc
 
-    def _apply_role_voice_design_output(
+    def _apply_role_voice_items(
         self,
         state: ProjectState,
-        output: RoleVoiceDesignOutput,
+        role_voices: list[RoleVoiceItem],
         *,
-        speech_provider=None,
         preserve_assets: bool = False,
         validate_sample_text: bool = True,
-        bind_voice_choice: bool = True,
     ) -> None:
         roles_by_key = self._role_lookup(state)
-        speaker_lookup = self._speaker_lookup(speech_provider) if speech_provider is not None else {}
         unmatched_role_names: list[str] = []
-        invalid_voice_types: list[str] = []
-        voice_candidates: dict[str, tuple[int, object, dict[str, Any]]] = {}
 
-        for item in output.role_voices:
+        for item in role_voices:
             role = self._resolve_role(roles_by_key, item.role_name)
             if role is None:
                 unmatched_role_names.append(item.role_name)
                 continue
             if not self._role_needs_voice(role):
                 continue
-            speaker = self._role_voice_speaker(item, speaker_lookup) if bind_voice_choice else None
-            if bind_voice_choice and getattr(item, "voice_type", None) and speaker is None:
-                invalid_voice_types.append(f"{role.name}:{item.voice_type}")
-            if bind_voice_choice and speaker is not None:
-                priority = self._voice_candidate_priority(item.emotion)
-                current = voice_candidates.get(role.id)
-                if current is None or priority > current[0]:
-                    voice_candidates[role.id] = (priority, item, speaker)
             audio_id = normalize_id(f"{role.id}_audio", str(item.emotion))
             existing_audio = role.audio.get(str(item.emotion))
             audio = RoleAudio(
@@ -330,7 +265,7 @@ class PregenWorkflow:
             )
             if validate_sample_text:
                 self._validate_voice_sample_text(
-                    f"role_voice_design for {role.name} voices[{item.emotion or 'normal'}].sample_text",
+                    f"role_design voices for {role.name} voices[{item.emotion or 'normal'}].sample_text",
                     audio.sample_text,
                 )
             if preserve_assets and existing_audio is not None:
@@ -338,19 +273,10 @@ class PregenWorkflow:
                 audio.asset_id = existing_audio.asset_id
                 audio.asset_path = existing_audio.asset_path
             role.audio[str(item.emotion)] = audio
-        for role_id, (_, item, speaker) in voice_candidates.items():
-            role = state.roles.get(role_id)
-            if role is not None:
-                self._bind_role_voice(role, item, speaker)
         if unmatched_role_names:
             get_logger().warning(
-                "node=role_voice_design ignored unmatched role_name values: %s",
+                "role_design voices ignored unmatched role_name values: %s",
                 ", ".join(unmatched_role_names),
-            )
-        if invalid_voice_types:
-            get_logger().warning(
-                "node=role_voice_design ignored invalid voice_type values: %s",
-                ", ".join(invalid_voice_types),
             )
         for role in state.roles.values():
             if not self._role_needs_voice(role):
@@ -366,17 +292,11 @@ class PregenWorkflow:
             for audio in role.audio.values():
                 self._copy_role_voice_to_audio(role, audio)
 
-    def _repair_role_voice_design_if_needed(self, project_dir: Path, state: ProjectState, *, speech_provider=None) -> None:
+    def _ensure_role_voice_audio_if_needed(self, state: ProjectState) -> None:
         if all(
             not self._role_needs_voice(role) or ("normal" in role.audio and role.voice_type)
             for role in state.roles.values()
         ):
-            return
-
-        path = project_dir / "assets" / "json" / "nodes" / "role_voice_design.json"
-        if path.exists():
-            output = RoleVoiceDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
-            self._apply_role_voice_design_output(state, output, speech_provider=speech_provider)
             return
 
         for role in state.roles.values():
@@ -838,7 +758,7 @@ class PregenWorkflow:
         state.props = {
             prop_id: prop
             for prop_id, prop in state.props.items()
-            if not prop.owner_role_id and prop.source not in {"role_design", "role_appearance_design"}
+            if not prop.owner_role_id and prop.source != "role_design"
         }
 
     def _apply_role_design_item(
@@ -847,7 +767,6 @@ class PregenWorkflow:
         state: ProjectState,
         item: RoleDesignItem,
         *,
-        speech_provider=None,
         design_path: str | None = None,
         preserve_assets: bool = False,
         validate_voice_sample_text: bool = True,
@@ -897,13 +816,11 @@ class PregenWorkflow:
         }
 
         if self._role_design_item_needs_voice(item):
-            self._apply_role_voice_design_output(
+            self._apply_role_voice_items(
                 state,
-                RoleVoiceDesignOutput(role_voices=item.voices),
-                speech_provider=speech_provider,
+                item.voices,
                 preserve_assets=preserve_assets,
                 validate_sample_text=validate_voice_sample_text,
-                bind_voice_choice=False,
             )
         else:
             role.voice_summary = None
@@ -1005,8 +922,6 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         state: ProjectState,
-        *,
-        speech_provider=None,
     ) -> None:
         for role in list(state.roles.values()):
             item = self._load_role_design_item_for_role(project_dir, role)
@@ -1016,7 +931,6 @@ class PregenWorkflow:
                 project_dir,
                 state,
                 item,
-                speech_provider=speech_provider,
                 design_path=role.design_path or self._role_design_relative_path(project_dir, role.id),
                 preserve_assets=True,
                 validate_voice_sample_text=False,
@@ -1049,49 +963,8 @@ class PregenWorkflow:
     def _voice_node_runner(self, node_name: str) -> VoiceNodeBase:
         return build_voice_node_runners(self)[node_name]
 
-    async def _run_role_voice_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._voice_node_runner("role_voice_design").run(project_dir, state)
-
     async def _run_voice_select(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._voice_node_runner("voice_select").run(project_dir, state)
-
-    def _voice_preferred_name(self, state: ProjectState, audio: RoleAudio) -> str:
-        digest = hashlib.sha1(f"{state.project_id}:{audio.id}".encode("utf-8")).hexdigest()
-        return f"ad_{digest[:13]}"
-
-    def _preview_text(self, role: Role, audio: RoleAudio) -> str:
-        return compact_tts_text(audio.sample_text or f"我是{role.name}。", max_chars=40)[:1024]
-
-    def _voice_prompt(self, role: Role, audio: RoleAudio) -> str:
-        return audio.desc or f"{role.name}的{audio.emotion}音色。{role.intro}"
-
-    def _synthesis_text(self, provider, audio: RoleAudio, preview_text: str) -> str:
-        if not getattr(provider, "is_cosyvoice", False):
-            return preview_text
-
-        emotion_tags = {
-            "angry": "<|ANGRY|>",
-            "sad": "<|SAD|>",
-            "happy": "<|HAPPY|>",
-            "tense": "<|NEUTRAL|><|1.10|>",
-            "whisper": "<|CALM|><|0.80|>",
-        }
-        return f"{emotion_tags.get(audio.emotion, '')}{preview_text}"
-
-    def _write_preview_audio(
-        self,
-        project_dir: Path,
-        *,
-        audio: RoleAudio,
-        data: str | None,
-        response_format: str | None,
-    ) -> str | None:
-        return self.media_store.write_preview_audio(
-            project_dir,
-            audio_id=audio.id,
-            data=data,
-            response_format=response_format,
-        )
 
     def _absolute_project_path(self, project_dir: Path, relative_path: str) -> str:
         return self.layout.absolute_project_path(project_dir, relative_path)
@@ -1220,64 +1093,6 @@ class PregenWorkflow:
     ) -> str | None:
         return await self.media_store.write_generated_video(project_dir, output_path, result)
 
-    async def _generate_designed_voice(
-        self,
-        *,
-        provider,
-        project_dir: Path,
-        state: ProjectState,
-        role: Role,
-        audio: RoleAudio,
-    ) -> RoleVoiceGenerationItem:
-        node = self._voice_node_runner("role_voice_generation")
-        return await node.generate_designed_voice(
-            provider=provider,
-            project_dir=project_dir,
-            state=state,
-            role=role,
-            audio=audio,
-        )
-
-    async def _generate_cloned_voice(
-        self,
-        *,
-        provider,
-        project_dir: Path,
-        state: ProjectState,
-        role: Role,
-        audio: RoleAudio,
-        normal_audio: RoleAudio,
-    ) -> RoleVoiceGenerationItem:
-        node = self._voice_node_runner("role_voice_generation")
-        return await node.generate_cloned_voice(
-            provider=provider,
-            project_dir=project_dir,
-            state=state,
-            role=role,
-            audio=audio,
-            normal_audio=normal_audio,
-        )
-
-    async def _generate_reused_voice(
-        self,
-        *,
-        provider,
-        project_dir: Path,
-        state: ProjectState,
-        role: Role,
-        audio: RoleAudio,
-        normal_audio: RoleAudio,
-    ) -> RoleVoiceGenerationItem:
-        node = self._voice_node_runner("role_voice_generation")
-        return await node.generate_reused_voice(
-            provider=provider,
-            project_dir=project_dir,
-            state=state,
-            role=role,
-            audio=audio,
-            normal_audio=normal_audio,
-        )
-
     def _role_synthesis_voice(self, provider, role: Role) -> str:
         if role.voice_type:
             return role.voice_type
@@ -1327,28 +1142,6 @@ class PregenWorkflow:
         else:
             params = {key: value for key, value in plan.items() if key != "instruction"}
         return instruction, dict(params)
-
-    async def _generate_synthesized_voice(
-        self,
-        *,
-        provider,
-        project_dir: Path,
-        state: ProjectState,
-        role: Role,
-        audio: RoleAudio,
-        voice: str,
-        voice_resource_id: str | None = None,
-    ) -> RoleVoiceGenerationItem:
-        node = self._voice_node_runner("role_voice_generation")
-        return await node.generate_synthesized_voice(
-            provider=provider,
-            project_dir=project_dir,
-            state=state,
-            role=role,
-            audio=audio,
-            voice=voice,
-            voice_resource_id=voice_resource_id,
-        )
 
     def _shot_ref_asset_refs(
         self,
@@ -2560,37 +2353,11 @@ class PregenWorkflow:
             None,
         )
 
-    async def _run_role_voice_synthesis_generation(
-        self,
-        *,
-        provider,
-        project_dir: Path,
-        state: ProjectState,
-    ) -> ProjectState:
-        node = self._voice_node_runner("role_voice_generation")
-        return await node.run_synthesis_generation(provider=provider, project_dir=project_dir, state=state)
-
-    async def _run_role_voice_design_clone_generation(
-        self,
-        *,
-        provider,
-        project_dir: Path,
-        state: ProjectState,
-    ) -> ProjectState:
-        node = self._voice_node_runner("role_voice_generation")
-        return await node.run_design_clone_generation(provider=provider, project_dir=project_dir, state=state)
-
     async def _run_role_voice_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._voice_node_runner("role_voice_generation").run(project_dir, state)
 
     def _static_asset_node_runner(self, node_name: str) -> StaticAssetNodeBase:
         return build_static_asset_node_runners(self)[node_name]
-
-    async def _run_role_appearance_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("role_appearance_design").run(project_dir, state)
-
-    async def _run_role_appearance_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("role_appearance_generation").run(project_dir, state)
 
     async def _run_role_full_body_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("role_full_body_generation").run(project_dir, state)

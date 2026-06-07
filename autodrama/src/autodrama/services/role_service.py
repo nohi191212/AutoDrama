@@ -10,7 +10,6 @@ from autodrama.core.schemas import (
     RoleEpisodeKeyAuditReviewOutput,
     RoleExtractItem,
     RoleExtractOutput,
-    RoleVoiceDesignOutput,
 )
 from autodrama.providers.base import TextLLM
 from autodrama.services.director_service import DirectorService
@@ -251,41 +250,4 @@ class RoleService:
                 "role_name": role_item.name,
                 "episode_keys": list(role_novel_full),
             },
-        )
-
-    async def role_voice_design(
-        self,
-        state: ProjectState,
-        provider: TextLLM,
-        *,
-        episode_stories: dict[str, str],
-        available_voices: list[dict[str, object]] | None = None,
-    ) -> RoleVoiceDesignOutput:
-        available_voices = available_voices or []
-        prompt = self.prompts.render(
-            "role_voice_design",
-            title=state.title,
-            episode_stories=self.format_json(episode_stories),
-            roles=self.format_json(
-                [
-                    {
-                        "name": role.name,
-                        "intro": role.intro,
-                        "personality": role.personality,
-                        "role_tier": role.role_tier,
-                        "has_dialogue": role.has_dialogue,
-                        "visual_reuse_required": role.visual_reuse_required,
-                        "aliases": role.aliases,
-                    }
-                    for role in state.roles.values()
-                ]
-            ),
-            available_voice_count=len(available_voices),
-            available_voices=self.format_json(available_voices),
-        )
-        return await provider.generate_json(
-            prompt,
-            RoleVoiceDesignOutput,
-            temperature=0.6,
-            metadata={"node_name": "role_voice_design", "project_id": state.project_id},
         )

@@ -8,6 +8,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from autodrama.core.model_catalog import ModelCatalog, NodeModelSettings
+
 
 class AppSettings(BaseModel):
     env: str = "dev"
@@ -100,8 +102,11 @@ class Settings(BaseModel):
     generation: GenerationSettings = Field(default_factory=GenerationSettings)
     providers: dict[str, ProviderSettings] = Field(default_factory=dict)
     routing: dict[str, dict[str, str]] = Field(default_factory=dict)
+    model_catalog_file: Path | None = Path("./model_catalog.yaml")
+    nodes: dict[str, NodeModelSettings] = Field(default_factory=dict)
     apikeys_file: Path | None = Path("./apikeys.yaml")
     api_keys: dict[str, str] = Field(default_factory=dict, exclude=True, repr=False)
+    model_catalog: ModelCatalog = Field(default_factory=ModelCatalog, exclude=True, repr=False)
     config_path: Path | None = None
 
     def project_dir(self, project_id: str) -> Path:
@@ -148,6 +153,45 @@ def _load_api_keys(settings: Settings, config_path: Path) -> dict[str, str]:
     return _flatten_api_keys(data)
 
 
+def _resolve_optional_path(path: Path | None, config_path: Path) -> Path | None:
+    if path is None:
+        return None
+    if not path.is_absolute():
+        return (config_path.parent / path).resolve()
+    return path.resolve()
+
+
+def _load_model_catalog(settings: Settings, config_path: Path) -> ModelCatalog:
+    catalog_path = _resolve_optional_path(settings.model_catalog_file, config_path)
+    settings.model_catalog_file = catalog_path
+    if catalog_path is None:
+        if settings.nodes:
+            raise ValueError("nodes configuration requires model_catalog_file")
+        return ModelCatalog()
+    if not catalog_path.exists():
+        if settings.nodes:
+            raise FileNotFoundError(f"Model catalog file not found: {catalog_path}")
+        return ModelCatalog()
+
+    data = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
+    return ModelCatalog.from_mapping(data)
+
+
+def _validate_node_model_settings(settings: Settings) -> None:
+    if not settings.nodes:
+        return
+    for node_name, node_settings in settings.nodes.items():
+        spec = settings.model_catalog.validate_node_settings(node_name, node_settings)
+        provider = spec.provider_name
+        if not provider:
+            raise ValueError(f"Model catalog entry {spec.id} must declare or imply a provider")
+        if provider != "fake" and provider not in settings.providers:
+            raise ValueError(
+                f"nodes.{node_name}.model uses provider {provider!r}, "
+                "but that provider is not configured under providers"
+            )
+
+
 def load_settings(config_path: str | Path) -> Settings:
     path = Path(config_path).expanduser().resolve()
     if not path.exists():
@@ -157,6 +201,8 @@ def load_settings(config_path: str | Path) -> Settings:
     settings = Settings.model_validate(data)
     settings.config_path = path
     settings.api_keys = _load_api_keys(settings, path)
+    settings.model_catalog = _load_model_catalog(settings, path)
+    _validate_node_model_settings(settings)
     for provider in settings.providers.values():
         provider.api_keys = settings.api_keys
 
@@ -174,7 +220,6 @@ def load_settings(config_path: str | Path) -> Settings:
         settings.generation.role_design_style_reference_dir = (
             path.parent / settings.generation.role_design_style_reference_dir
         ).resolve()
-    if settings.apikeys_file and not settings.apikeys_file.is_absolute():
-        settings.apikeys_file = (path.parent / settings.apikeys_file).resolve()
+    settings.apikeys_file = _resolve_optional_path(settings.apikeys_file, path)
 
     return settings

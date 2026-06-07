@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 from autodrama.config import Settings
+from autodrama.core.model_catalog import ModelBinding, ModelCapability
 from autodrama.providers.aliyun.audio.qwen_tts import QwenVoiceDesignProvider
 from autodrama.providers.aliyun.image.wanxiang import WanxiangImageProvider
 from autodrama.providers.aliyun.music.fun_music import BailianMusicProvider
@@ -46,6 +49,136 @@ ALIYUN_MUSIC_PROVIDER_NAMES = {"aliyun", "bailian"}
 MINIMAX_MUSIC_PROVIDER_NAMES = {"minimax", "minimax_music"}
 ELEVENLABS_MUSIC_PROVIDER_NAMES = {"elevenlabs", "elevenlabs_music"}
 VOLCENGINE_IMAGE_PROVIDER_NAMES = {"volcengine", "seedream", "volcengine_seedream"}
+
+
+class BoundProviderProxy:
+    def __init__(self, provider: Any, binding: ModelBinding) -> None:
+        self._provider = provider
+        self.model_binding = binding
+        self.name = getattr(provider, "name", binding.provider)
+        self.model = binding.provider_model_name
+        self._apply_provider_model()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._provider, name)
+
+    def _apply_provider_model(self) -> None:
+        for attr in ("model",):
+            if hasattr(self._provider, attr):
+                try:
+                    setattr(self._provider, attr, self.model)
+                except Exception:
+                    pass
+        for key, value in self.model_binding.params.items():
+            if hasattr(self._provider, key):
+                try:
+                    setattr(self._provider, key, value)
+                except Exception:
+                    pass
+        if "response_format" in self.model_binding.params and hasattr(self._provider, "use_response_format"):
+            response_format = self.model_binding.params["response_format"]
+            try:
+                use_response_format = str(response_format).strip().lower() in {"1", "true", "json_object"}
+                setattr(self._provider, "use_response_format", use_response_format)
+            except Exception:
+                pass
+
+    def _metadata(self, metadata: dict[str, Any] | None) -> dict[str, Any]:
+        merged = dict(metadata or {})
+        merged.update(self.model_binding.params)
+        merged.setdefault("node_name", self.model_binding.node_name)
+        merged["model"] = self.model_binding.provider_model_name
+        return merged
+
+    def _validate_media_request(
+        self,
+        *,
+        refs: list[Any] | None = None,
+        duration: Any = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        context = f"node {self.model_binding.node_name} model {self.model_binding.model_id}"
+        self.model_binding.spec.validate_refs(refs, context=context)
+        effective_duration = duration
+        if effective_duration is None and metadata is not None:
+            effective_duration = metadata.get("duration", metadata.get("duration_seconds"))
+        self.model_binding.spec.validate_duration(effective_duration, context=context)
+
+    async def generate_json(self, prompt, schema, *, temperature: float = 0.7, metadata=None):
+        temperature = self.model_binding.params.get("temperature", temperature)
+        return await self._provider.generate_json(
+            prompt,
+            schema,
+            temperature=temperature,
+            metadata=self._metadata(metadata),
+        )
+
+    async def judge_audio_json(self, prompt, schema, *, refs, temperature: float = 0.2, metadata=None):
+        temperature = self.model_binding.params.get("temperature", temperature)
+        self._validate_media_request(refs=refs, metadata=metadata)
+        return await self._provider.judge_audio_json(
+            prompt,
+            schema,
+            refs=refs,
+            temperature=temperature,
+            metadata=self._metadata(metadata),
+        )
+
+    async def generate_image(self, prompt, refs=None, *, size=None, metadata=None):
+        merged_metadata = self._metadata(metadata)
+        self._validate_media_request(refs=refs, metadata=merged_metadata)
+        return await self._provider.generate_image(
+            prompt,
+            refs=refs,
+            size=size,
+            metadata=merged_metadata,
+        )
+
+    async def generate_music(self, prompt, *, lyrics=None, metadata=None):
+        merged_metadata = self._metadata(metadata)
+        self._validate_media_request(metadata=merged_metadata)
+        return await self._provider.generate_music(prompt, lyrics=lyrics, metadata=merged_metadata)
+
+    async def submit_video(self, prompt, refs=None, *, duration=None, metadata=None):
+        merged_metadata = self._metadata(metadata)
+        self._validate_media_request(refs=refs, duration=duration, metadata=merged_metadata)
+        return await self._provider.submit_video(prompt, refs=refs, duration=duration, metadata=merged_metadata)
+
+    async def query_video_task(self, task_id):
+        return await self._provider.query_video_task(task_id)
+
+    async def generate_video(self, prompt, refs=None, *, duration=None, wait: bool = False, metadata=None):
+        merged_metadata = self._metadata(metadata)
+        self._validate_media_request(refs=refs, duration=duration, metadata=merged_metadata)
+        return await self._provider.generate_video(
+            prompt,
+            refs=refs,
+            duration=duration,
+            wait=wait,
+            metadata=merged_metadata,
+        )
+
+    async def create_voice(self, *, voice_prompt, preview_text, preferred_name, metadata=None):
+        return await self._provider.create_voice(
+            voice_prompt=voice_prompt,
+            preview_text=preview_text,
+            preferred_name=preferred_name,
+            metadata=self._metadata(metadata),
+        )
+
+    async def clone_voice_from_audio(self, *, source_audio_path, preferred_name, metadata=None):
+        return await self._provider.clone_voice_from_audio(
+            source_audio_path=source_audio_path,
+            preferred_name=preferred_name,
+            metadata=self._metadata(metadata),
+        )
+
+    async def synthesize_speech(self, *, voice, text, metadata=None):
+        return await self._provider.synthesize_speech(
+            voice=voice,
+            text=text,
+            metadata=self._metadata(metadata),
+        )
 
 
 class ProviderRouter:
@@ -208,11 +341,56 @@ class ProviderRouter:
             ),
         )
 
-    def _provider_from_registry(self, capability: str, provider_name: str, purpose: str):
+    def _provider_from_registry(
+        self,
+        capability: str,
+        provider_name: str,
+        purpose: str,
+        *,
+        binding: ModelBinding | None = None,
+    ):
         factory = self.registry.factory_for(capability, provider_name)
         if factory is None:
             raise ValueError(f"Unsupported {capability} provider: {provider_name}")
-        return factory(provider_name=provider_name, purpose=purpose)
+        provider = factory(provider_name=provider_name, purpose=purpose)
+        if binding is None:
+            return provider
+        return BoundProviderProxy(provider, binding)
+
+    def _binding_for_node(self, capability: ModelCapability, node_name: str | None) -> ModelBinding | None:
+        if self.provider_override or not node_name:
+            return None
+        node_settings = self.settings.nodes.get(node_name)
+        if node_settings is None:
+            return None
+        spec = self.settings.model_catalog.validate_node_settings(node_name, node_settings)
+        if spec.capability != capability:
+            raise ValueError(
+                f"nodes.{node_name}.model {node_settings.model} has capability {spec.capability!r}; "
+                f"expected {capability!r}"
+            )
+        provider = spec.provider_name
+        if not provider:
+            raise ValueError(f"Model catalog entry {spec.id} must declare or imply a provider")
+        return ModelBinding(
+            node_name=node_name,
+            model_id=node_settings.model,
+            provider=provider,
+            capability=capability,
+            params=dict(node_settings.params),
+            spec=spec,
+        )
+
+    def _provider_name_for(
+        self,
+        capability: ModelCapability,
+        purpose: str,
+        node_name: str | None,
+    ) -> tuple[str, ModelBinding | None]:
+        binding = self._binding_for_node(capability, node_name)
+        if binding is not None:
+            return binding.provider, binding
+        return self.provider_override or self.settings.provider_for(capability, purpose), None
 
     def _settings_for(self, provider_name: str):
         if provider_name == "aliyun":
@@ -270,37 +448,39 @@ class ProviderRouter:
             return self._aliyun_settings(base_url=base_url)
         return self._settings_for(provider_name)
 
-    def text(self, purpose: str) -> TextLLM:
-        provider_name = self.provider_override or self.settings.provider_for("text", purpose)
-        return self._provider_from_registry("text", provider_name, purpose)
+    def text(self, purpose: str, *, node_name: str | None = None) -> TextLLM:
+        provider_name, binding = self._provider_name_for("text", purpose, node_name)
+        return self._provider_from_registry("text", provider_name, purpose, binding=binding)
 
-    def image(self, purpose: str) -> ImageGenerator:
-        provider_name = self.provider_override or self.settings.provider_for("image", purpose)
-        return self._provider_from_registry("image", provider_name, purpose)
+    def image(self, purpose: str, *, node_name: str | None = None) -> ImageGenerator:
+        provider_name, binding = self._provider_name_for("image", purpose, node_name)
+        return self._provider_from_registry("image", provider_name, purpose, binding=binding)
 
-    def video(self, purpose: str) -> VideoGenerator:
-        provider_name = self.provider_override or self.settings.provider_for("video", purpose)
-        return self._provider_from_registry("video", provider_name, purpose)
+    def video(self, purpose: str, *, node_name: str | None = None) -> VideoGenerator:
+        provider_name, binding = self._provider_name_for("video", purpose, node_name)
+        return self._provider_from_registry("video", provider_name, purpose, binding=binding)
 
-    def audio(self, purpose: str) -> VoiceDesigner | SpeechSynthesizer:
-        provider_name = self.provider_override or self.settings.provider_for("audio", purpose)
-        return self._provider_from_registry("audio", provider_name, purpose)
+    def audio(self, purpose: str, *, node_name: str | None = None) -> VoiceDesigner | SpeechSynthesizer:
+        provider_name, binding = self._provider_name_for("audio", purpose, node_name)
+        return self._provider_from_registry("audio", provider_name, purpose, binding=binding)
 
-    def judge(self, purpose: str) -> AudioJudgeLLM:
-        provider_name = self.provider_override
+    def judge(self, purpose: str, *, node_name: str | None = None) -> AudioJudgeLLM:
+        binding = self._binding_for_node("judge", node_name)
+        provider_name = self.provider_override or (binding.provider if binding else None)
         if not provider_name:
             try:
                 provider_name = self.settings.provider_for("judge", purpose)
             except KeyError:
                 provider_name = "aliyun_omni"
-        return self._provider_from_registry("judge", provider_name, purpose)
+        return self._provider_from_registry("judge", provider_name, purpose, binding=binding)
 
-    def music(self, purpose: str) -> MusicGenerator:
-        provider_name = self.provider_override
+    def music(self, purpose: str, *, node_name: str | None = None) -> MusicGenerator:
+        binding = self._binding_for_node("music", node_name)
+        provider_name = self.provider_override or (binding.provider if binding else None)
         if not provider_name:
             try:
                 provider_name = self.settings.provider_for("music", purpose)
             except KeyError:
                 provider_name = self.settings.provider_for("audio", "music")
 
-        return self._provider_from_registry("music", provider_name, purpose)
+        return self._provider_from_registry("music", provider_name, purpose, binding=binding)

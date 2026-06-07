@@ -4,7 +4,7 @@ from pathlib import Path
 from autodrama.config import load_settings
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
-from autodrama.workflows.pregen import PregenWorkflow
+from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow
 
 
 def write_config(tmp_path: Path) -> Path:
@@ -43,24 +43,7 @@ def test_pregen_runs_integrated_role_pipeline(tmp_path: Path) -> None:
     workflow = PregenWorkflow(repo=repo, router=router)
     state = asyncio.run(workflow.run(project_dir))
 
-    assert state.completed_nodes == [
-        "script_outline",
-        "script_novel",
-        "script_novel_extract",
-        "role_extract",
-        "role_design",
-        "role_voice_generation",
-        "role_appearance_generation",
-        "prop_extract",
-        "prop_design",
-        "prop_generation",
-        "script_compress",
-        "layout_design",
-        "layout_dedupe_review",
-        "layout_image_generation",
-        "bgm_design",
-        "bgm_generation",
-    ]
+    assert state.completed_nodes == PREGEN_NODES
     assert state.metadata["episode_count"] == 3
     assert state.metadata["episode_duration_seconds"] == 45
     assert set(state.script.episode_outlines) == {"episode_001", "episode_002", "episode_003"}

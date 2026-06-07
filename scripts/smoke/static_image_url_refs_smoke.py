@@ -153,7 +153,7 @@ async def main_async() -> int:
                 episode_keys=["episode_001"],
                 owner_role_id=role.id,
                 owner_role_name=role.name,
-                source="role_appearance_design",
+                source="role_design",
             ),
         },
         layouts={

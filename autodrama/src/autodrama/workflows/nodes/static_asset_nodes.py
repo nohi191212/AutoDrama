@@ -123,7 +123,7 @@ class StaticAssetNodeBase:
         last_error: Exception | None = None
         for purpose in self._image_prompt_safety_rewrite_purposes(node_name):
             try:
-                return self.router.text(purpose)
+                return self.router.text(purpose, node_name="image_prompt_safety_rewrite")
             except Exception as exc:
                 last_error = exc
         raise ProviderBadResponseError(f"No text provider is available for image prompt safety rewrite: {last_error}")
@@ -519,7 +519,7 @@ class StaticAssetNodeBase:
         return {
             prop_id: prop
             for prop_id, prop in state.props.items()
-            if prop.source in {"role_design", "role_appearance_design"} or prop.owner_role_id
+            if prop.source == "role_design" or prop.owner_role_id
         }
 
     def apply_prop_design_item(
@@ -720,83 +720,6 @@ class StaticAssetNodeBase:
                 },
             )
         ]
-
-
-class RoleAppearanceDesignNode(StaticAssetNodeBase):
-    name = "role_appearance_design"
-
-    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
-        self.logger.info(
-            "node=role_appearance_design provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        output = await self.asset_service.role_appearance_design(
-            state,
-            provider,
-            episode_stories=self.episode_stories(project_dir, state),
-        )
-        roles_by_key = self.workflow._role_lookup(state)
-        unmatched_role_names: list[str] = []
-        for item in output.appearances:
-            role = self.workflow._resolve_role(roles_by_key, item.role_name)
-            if role is None:
-                unmatched_role_names.append(item.role_name)
-                continue
-            appearance_id = normalize_id(f"{role.id}_appearance", item.name)
-            role_bound_prop_ids: list[str] = []
-            for prop_item in item.role_bound_props:
-                prop_id = normalize_id(f"{role.id}_prop", prop_item.name)
-                status_key = self.prop_status_key(prop_item.status)
-                if status_key != "normal" and not prop_id.endswith(f"_{status_key}"):
-                    prop_id = f"{prop_id}_{status_key}"
-                desc_parts = [prop_item.desc]
-                if prop_item.scale_relation:
-                    desc_parts.append(f"比例关系：{prop_item.scale_relation}")
-                if prop_item.usage:
-                    desc_parts.append(f"使用方式：{prop_item.usage}")
-                prop = Prop(
-                    id=prop_id,
-                    name=prop_item.name,
-                    desc="；".join(part.strip("；") for part in desc_parts if part),
-                    prompt=prop_item.prompt,
-                    status=prop_item.status,
-                    episode_keys=role.episode_keys,
-                    owner_role_id=role.id,
-                    owner_role_name=role.name,
-                    source="role_appearance_design",
-                )
-                prop.design_path = self.save_prop_design_record(
-                    project_dir,
-                    prop,
-                    prompt=prop_item.prompt,
-                    node_name=self.name,
-                    extra_content={
-                        "scale_relation": prop_item.scale_relation,
-                        "usage": prop_item.usage,
-                    },
-                )
-                state.props[prop_id] = prop
-                role_bound_prop_ids.append(prop_id)
-            role.appearances[item.name] = RoleAppearance(
-                id=appearance_id,
-                role_id=role.id,
-                name=item.name,
-                desc=item.desc,
-                prompt=item.prompt,
-                full_body_prompt=item.full_body_prompt,
-                role_bound_prop_ids=role_bound_prop_ids,
-                intro_video_prompt=item.intro_video_prompt,
-            )
-        if unmatched_role_names:
-            self.logger.warning(
-                "node=role_appearance_design ignored unmatched role_name values: %s",
-                ", ".join(unmatched_role_names),
-            )
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, self.name, output)
-        return state
 
 
 class RoleAppearanceGenerationBase(StaticAssetNodeBase):
@@ -1437,7 +1360,7 @@ class RoleFullBodyGenerationNode(RoleAppearanceGenerationBase):
     name = "role_full_body_generation"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("role")
+        provider = self.router.image("role", node_name=self.name)
         self.logger.info(
             "node=role_full_body_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -1485,7 +1408,7 @@ class RoleMultiviewGenerationNode(RoleAppearanceGenerationBase):
     name = "role_multiview_generation"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("role")
+        provider = self.router.image("role", node_name=self.name)
         self.logger.info(
             "node=role_multiview_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -1569,9 +1492,9 @@ class RoleIntroVideoGenerationNode(RoleAppearanceGenerationBase):
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         try:
-            video_provider = self.router.video("role")
+            video_provider = self.router.video("role", node_name=self.name)
         except Exception:
-            video_provider = self.router.video("shot")
+            video_provider = self.router.video("shot", node_name=self.name)
         self.logger.info(
             "node=role_intro_video_generation provider=%s model=%s",
             getattr(video_provider, "name", "unknown"),
@@ -1625,79 +1548,11 @@ class RoleIntroVideoGenerationNode(RoleAppearanceGenerationBase):
         return state
 
 
-class RoleAppearanceGenerationNode(RoleAppearanceGenerationBase):
-    """Backward-compatible combined role appearance generation entry point."""
-
-    name = "role_appearance_generation"
-
-    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("role")
-        try:
-            video_provider = self.router.video("role")
-        except Exception:
-            video_provider = self.router.video("shot")
-        self.logger.info(
-            "node=role_appearance_generation image_provider=%s image_model=%s video_provider=%s video_model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-            getattr(video_provider, "name", "unknown"),
-            getattr(video_provider, "model", "-"),
-        )
-        self.workflow._hydrate_roles_from_design_files(project_dir, state)
-        active_episode_keys = self.active_episode_keys(state)
-        appearances = self.target_role_appearances(state, active_episode_keys, label=self.name)
-        generated_by_asset_id: dict[str, StaticAssetGenerationItem] = {}
-        generated: list[StaticAssetGenerationItem] = []
-        generated.extend(
-            await self.generate_full_body_assets(
-                provider=provider,
-                project_dir=project_dir,
-                state=state,
-                appearances=appearances,
-                node_name=RoleFullBodyGenerationNode.name,
-                generated_by_asset_id=generated_by_asset_id,
-            )
-        )
-        generated.extend(
-            await self.generate_multiview_assets(
-                provider=provider,
-                project_dir=project_dir,
-                state=state,
-                appearances=appearances,
-                node_name=RoleMultiviewGenerationNode.name,
-                generated_by_asset_id=generated_by_asset_id,
-            )
-        )
-        prompt_by_asset_id: dict[str, RoleIntroVideoPromptItem] = {}
-        for role, appearance in appearances:
-            item = self.render_intro_video_prompt_item(project_dir, state, role, appearance)
-            if item is not None:
-                prompt_by_asset_id[item.asset_id] = item
-        self.repo.save_node_output(
-            project_dir,
-            RoleIntroVideoPromptNode.name,
-            RoleIntroVideoPromptOutput(prompts=list(prompt_by_asset_id.values())),
-        )
-        generated.extend(
-            await self.generate_intro_video_assets(
-                video_provider=video_provider,
-                project_dir=project_dir,
-                state=state,
-                appearances=appearances,
-                node_name=RoleIntroVideoGenerationNode.name,
-                generated_by_asset_id=generated_by_asset_id,
-                prompt_by_asset_id=prompt_by_asset_id,
-            )
-        )
-        self.repo.save_node_output(project_dir, self.name, StaticAssetGenerationOutput(generated_assets=generated))
-        return state
-
-
 class PropExtractNode(StaticAssetNodeBase):
     name = "prop_extract"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("prop")
+        provider = self.router.text("prop", node_name=self.name)
         self.logger.info(
             "node=prop_extract provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -1744,7 +1599,7 @@ class PropDesignNode(StaticAssetNodeBase):
     name = "prop_design"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("prop")
+        provider = self.router.text("prop", node_name=self.name)
         self.logger.info(
             "node=prop_design provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -1857,7 +1712,7 @@ class PropGenerationNode(StaticAssetNodeBase):
     name = "prop_generation"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("prop")
+        provider = self.router.image("prop", node_name=self.name)
         self.logger.info(
             "node=prop_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -1973,7 +1828,7 @@ class LayoutExtractNode(StaticAssetNodeBase):
     name = "layout_extract"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("layout")
+        provider = self.router.text("layout", node_name=self.name)
         self.logger.info(
             "node=layout_extract provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -2018,7 +1873,7 @@ class LayoutDesignNode(StaticAssetNodeBase):
     name = "layout_design"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("layout")
+        provider = self.router.text("layout", node_name=self.name)
         self.logger.info(
             "node=layout_design provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -2041,7 +1896,7 @@ class LayoutDedupeReviewNode(StaticAssetNodeBase):
     name = "layout_dedupe_review"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("layout")
+        provider = self.router.text("layout", node_name=self.name)
         self.logger.info(
             "node=layout_dedupe_review provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -2058,7 +1913,7 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
     name = "layout_image_generation"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("layout")
+        provider = self.router.image("layout", node_name=self.name)
         self.logger.info(
             "node=layout_image_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -2179,12 +2034,10 @@ def build_static_asset_node_runners(workflow: Any) -> dict[str, StaticAssetNodeB
         "logger": getattr(workflow, "logger", None) or get_logger(),
     }
     return {
-        RoleAppearanceDesignNode.name: RoleAppearanceDesignNode(**deps),
         RoleFullBodyGenerationNode.name: RoleFullBodyGenerationNode(**deps),
         RoleMultiviewGenerationNode.name: RoleMultiviewGenerationNode(**deps),
         RoleIntroVideoPromptNode.name: RoleIntroVideoPromptNode(**deps),
         RoleIntroVideoGenerationNode.name: RoleIntroVideoGenerationNode(**deps),
-        RoleAppearanceGenerationNode.name: RoleAppearanceGenerationNode(**deps),
         PropExtractNode.name: PropExtractNode(**deps),
         PropDesignNode.name: PropDesignNode(**deps),
         PropGenerationNode.name: PropGenerationNode(**deps),
@@ -2212,8 +2065,6 @@ __all__ = [
     "PropDesignNode",
     "PropExtractNode",
     "PropGenerationNode",
-    "RoleAppearanceDesignNode",
-    "RoleAppearanceGenerationNode",
     "RoleFullBodyGenerationNode",
     "RoleIntroVideoGenerationNode",
     "RoleIntroVideoPromptNode",

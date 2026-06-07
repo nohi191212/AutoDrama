@@ -81,17 +81,6 @@ def main() -> int:
     if role_multiview_payload["quality"] != "high":
         raise AssertionError(f"Unexpected role multiview quality: {role_multiview_payload['quality']}")
 
-    legacy_role_design_payload = provider.build_payload(
-        "A clean legacy role design sheet.",
-        metadata={"node_name": "role_appearance_generation", "asset_type": "role_appearance"},
-    )
-    if legacy_role_design_payload["model"] != "gpt-image-2-multiview":
-        raise AssertionError(f"Unexpected legacy role appearance model: {legacy_role_design_payload['model']}")
-    if legacy_role_design_payload["size"] != "4096x2304":
-        raise AssertionError(f"Unexpected legacy role appearance size: {legacy_role_design_payload['size']}")
-    if legacy_role_design_payload["quality"] != "high":
-        raise AssertionError(f"Unexpected legacy role appearance quality: {legacy_role_design_payload['quality']}")
-
     full_body_payload = provider.build_payload(
         "A clean role full-body reference.",
         metadata={"node_name": "role_full_body_generation", "asset_type": "role_full_body"},

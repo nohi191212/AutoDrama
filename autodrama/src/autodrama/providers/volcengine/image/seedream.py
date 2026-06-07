@@ -133,7 +133,7 @@ class VolcengineSeedreamImageProvider:
                 self.settings.options.get("seedream_role_full_body_size")
                 or self.settings.options.get("role_full_body_size")
             )
-        if node_name in {"role_appearance_generation", "role_multiview_generation"}:
+        if node_name == "role_multiview_generation":
             return (
                 self.settings.options.get("seedream_role_multiview_size")
                 or self.settings.options.get("seedream_role_design_size")

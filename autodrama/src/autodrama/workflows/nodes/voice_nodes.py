@@ -228,6 +228,15 @@ class VoiceSelectNode(VoiceNodeBase):
     text_shortlist_model = "deepseek-v4-flash"
     text_shortlist_batch_size = 80
 
+    @staticmethod
+    def call_router_getter(getter, purpose: str, *, node_name: str):
+        try:
+            return getter(purpose, node_name=node_name)
+        except TypeError as exc:
+            if "node_name" not in str(exc):
+                raise
+            return getter(purpose)
+
     @classmethod
     def role_design_hash(cls, role: Role) -> str:
         payload = {
@@ -365,7 +374,7 @@ class VoiceSelectNode(VoiceNodeBase):
         errors: list[str] = []
         for purpose in ("voice_select", "role"):
             try:
-                return text_getter(purpose), None
+                return self.call_router_getter(text_getter, purpose, node_name=self.name), None
             except Exception as exc:
                 errors.append(f"{purpose}: {exc!r}")
         return None, "; ".join(errors)
@@ -377,6 +386,8 @@ class VoiceSelectNode(VoiceNodeBase):
         settings = getattr(self.repo, "settings", None)
         provider_settings = getattr(settings, "providers", {}).get("deepseek") if settings is not None else None
         runtime_settings = getattr(settings, "runtime", None)
+        if settings is not None and self.name in getattr(settings, "nodes", {}):
+            return self.text_shortlist_provider()
         if provider_settings is None or runtime_settings is None:
             return self.text_shortlist_provider()
 
@@ -398,7 +409,9 @@ class VoiceSelectNode(VoiceNodeBase):
         judge_getter = getattr(self.router, "judge", None)
         if callable(judge_getter):
             try:
-                judge_model = self.provider_model_label(judge_getter("voice_select"))
+                judge_model = self.provider_model_label(
+                    self.call_router_getter(judge_getter, "voice_select", node_name="voice_select_audio_judge")
+                )
             except Exception as exc:
                 judge_model = f"unavailable:{exc!r}"
         else:
@@ -649,7 +662,7 @@ class VoiceSelectNode(VoiceNodeBase):
         judge_getter = getattr(self.router, "judge", None)
         if not callable(judge_getter):
             return None
-        judge = judge_getter("voice_select")
+        judge = self.call_router_getter(judge_getter, "voice_select", node_name="voice_select_audio_judge")
         prompts = getattr(self.workflow, "prompts", None)
         if prompts is None:
             return None
@@ -863,7 +876,7 @@ class VoiceSelectNode(VoiceNodeBase):
         return self.with_selection_metadata(selection, manifest)
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.audio("speech")
+        provider = self.router.audio("speech", node_name="voice_select_speech")
         self.logger.info(
             "node=voice_select provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -872,7 +885,7 @@ class VoiceSelectNode(VoiceNodeBase):
 
         hydrate = getattr(self.workflow, "_hydrate_roles_from_design_files", None)
         if callable(hydrate):
-            hydrate(project_dir, state, speech_provider=None)
+            hydrate(project_dir, state)
         ensure_normal_audio = getattr(self.workflow, "_ensure_normal_role_audio", None)
         if callable(ensure_normal_audio):
             for role in state.roles.values():
@@ -948,36 +961,6 @@ class VoiceSelectNode(VoiceNodeBase):
             raise
 
         self.save_progress_output(project_dir, state, merged_by_role)
-        return state
-
-
-class RoleVoiceDesignNode(VoiceNodeBase):
-    name = "role_voice_design"
-
-    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
-        speech_provider = None
-        available_voices: list[dict[str, Any]] = []
-        try:
-            speech_provider = self.router.audio("speech")
-            available_voices = self.workflow._available_speakers_for_prompt(speech_provider)
-        except Exception as exc:
-            self.logger.warning("node=role_voice_design could not load speech voice catalog: %s", exc)
-        self.logger.info(
-            "node=role_voice_design provider=%s model=%s available_voices=%d",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-            len(available_voices),
-        )
-        output = await self.role_service.role_voice_design(
-            state,
-            provider,
-            episode_stories=self.episode_stories(project_dir, state),
-            available_voices=available_voices,
-        )
-        self.workflow._apply_role_voice_design_output(state, output, speech_provider=speech_provider)
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, self.name, output)
         return state
 
 
@@ -1529,15 +1512,15 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         return state
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.audio("speech")
+        provider = self.router.audio("speech", node_name=self.name)
         self.logger.info(
             "node=role_voice_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        self.workflow._hydrate_roles_from_design_files(project_dir, state, speech_provider=provider)
+        self.workflow._hydrate_roles_from_design_files(project_dir, state)
         self.apply_voice_select_output(project_dir, state)
-        self.workflow._repair_role_voice_design_if_needed(project_dir, state, speech_provider=provider)
+        self.workflow._ensure_role_voice_audio_if_needed(state)
         active_episode_keys = self.active_episode_keys(state)
         active_role_names = self.active_role_names()
         roles = self.target_roles(state, active_episode_keys, label=self.name)
@@ -1587,7 +1570,6 @@ def build_voice_node_runners(workflow: Any) -> dict[str, VoiceNodeBase]:
     }
     return {
         VoiceSelectNode.name: VoiceSelectNode(**deps),
-        RoleVoiceDesignNode.name: RoleVoiceDesignNode(**deps),
         RoleVoiceGenerationNode.name: RoleVoiceGenerationNode(**deps),
     }
 
@@ -1602,7 +1584,6 @@ def build_voice_nodes(workflow: Any) -> list[WorkflowNode]:
 
 __all__ = [
     "VOICE_NODE_NAMES",
-    "RoleVoiceDesignNode",
     "RoleVoiceGenerationNode",
     "VoiceSelectNode",
     "VoiceNodeBase",

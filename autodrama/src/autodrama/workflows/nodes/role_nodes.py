@@ -242,7 +242,7 @@ class RolePrimaryExtractNode(RoleNodeBase):
     max_iterations = 10
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
+        provider = self.router.text("role", node_name=self.name)
         self.logger.info(
             "node=role_extract_primary provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -307,7 +307,7 @@ class RoleFunctionalExtractNode(RoleNodeBase):
     max_iterations = 10
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
+        provider = self.router.text("role", node_name=self.name)
         self.logger.info(
             "node=role_extract_functional provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -729,7 +729,7 @@ class RoleEpisodeKeyAuditNode(RoleNodeBase):
                 role.source_chapters = self._merge_texts(role.source_chapters, audit_item.added_source_chapters)
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
+        provider = self.router.text("role", node_name=self.name)
         self.logger.info(
             "node=role_episode_key_audit provider=%s model=%s concurrency=%d",
             getattr(provider, "name", "unknown"),
@@ -1037,7 +1037,7 @@ class RoleDuplicateAuditNode(RoleNodeBase):
         state.metadata["role_refs"] = role_refs
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
+        provider = self.router.text("role", node_name=self.name)
         self.logger.info(
             "node=role_duplicate_audit provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -1105,7 +1105,7 @@ class AmbientEntityExtractNode(RoleNodeBase):
     name = "ambient_entity_extract"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
+        provider = self.router.text("role", node_name=self.name)
         self.logger.info(
             "node=ambient_entity_extract provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -1157,13 +1157,18 @@ class RoleDesignNode(RoleNodeBase):
     name = "role_design"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role")
-        speech_provider = None
+        provider = self.router.text("role", node_name=self.name)
         available_voices: list[dict[str, Any]] = []
+        try:
+            speech_provider = self.router.audio("speech", node_name="role_design_speech")
+            available_voices = self.workflow._available_speakers_for_prompt(speech_provider)
+        except Exception as exc:
+            self.logger.warning("node=role_design could not load speech voice catalog: %s", exc)
         self.logger.info(
-            "node=role_design provider=%s model=%s voice_selection=deferred",
+            "node=role_design provider=%s model=%s available_voices=%d voice_selection=deferred",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
+            len(available_voices),
         )
         extract_output = self.role_designs.load_extract_output(project_dir)
         if not extract_output.roles:
@@ -1251,7 +1256,6 @@ class RoleDesignNode(RoleNodeBase):
                         project_dir,
                         state,
                         existing_item,
-                        speech_provider=speech_provider,
                         design_path=existing_design_path,
                         preserve_assets=True,
                         validate_voice_sample_text=False,
@@ -1306,7 +1310,6 @@ class RoleDesignNode(RoleNodeBase):
                 project_dir,
                 state,
                 item,
-                speech_provider=speech_provider,
                 design_path=design_path,
             )
             role = state.roles[normalize_id("role", item.name)]

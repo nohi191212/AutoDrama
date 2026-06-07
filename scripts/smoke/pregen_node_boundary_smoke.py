@@ -47,7 +47,6 @@ from autodrama.workflows.nodes.static_asset_nodes import (  # noqa: E402
     PropDesignNode,
     PropExtractNode,
     PropGenerationNode,
-    RoleAppearanceGenerationNode,
     RoleFullBodyGenerationNode,
     RoleIntroVideoGenerationNode,
     RoleIntroVideoPromptNode,

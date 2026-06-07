@@ -80,7 +80,7 @@ class ScriptOutlineNode(ScriptNodeBase):
     name = "script_outline"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("script")
+        provider = self.router.text("script", node_name=self.name)
         self.logger.info(
             "node=script_outline provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -121,7 +121,7 @@ class ScriptNovelNode(ScriptNodeBase):
     name = "script_novel"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("script")
+        provider = self.router.text("script", node_name=self.name)
         self.logger.info(
             "node=script_novel provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -253,7 +253,7 @@ class ScriptNovelExtractNode(ScriptNodeBase):
     name = "script_novel_extract"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("script")
+        provider = self.router.text("script", node_name=self.name)
         self.logger.info(
             "node=script_novel_extract provider=%s model=%s",
             getattr(provider, "name", "unknown"),

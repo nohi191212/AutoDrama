@@ -4,6 +4,198 @@ app:
   enable_human_review: false
 
 apikeys_file: ./apikeys.yaml
+model_catalog_file: ./model_catalog.yaml.example
+
+# Node-level model bindings. If a node is omitted here, AutoDrama falls back to the legacy routing section.
+# Params are validated against model_catalog_file when the config is loaded.
+nodes:
+  script_outline:
+    model: aliyun:qwen-plus
+    params:
+      temperature: 0.4
+      response_format: json_object
+  script_novel:
+    model: aliyun:qwen-plus
+    params:
+      temperature: 0.7
+      response_format: json_object
+  script_novel_extract:
+    model: aliyun:qwen-plus
+    params:
+      temperature: 0.3
+      response_format: json_object
+  director_prep:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.4
+  role_extract_primary:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.3
+  role_extract_functional:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.3
+  role_episode_key_audit:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.2
+  role_duplicate_audit:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.2
+  ambient_entity_extract:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.3
+  role_design:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.4
+  role_full_body_generation:
+    model: toapi:gpt-image-2
+    params:
+      size: "1:2"
+      resolution: 4K
+      n: 1
+      response_format: url
+  role_multiview_generation:
+    model: toapi:gpt-image-2
+    params:
+      size: "16:9"
+      resolution: 4K
+      n: 1
+      response_format: url
+  prop_extract:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.3
+  prop_design:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.4
+  prop_generation:
+    model: toapi:gpt-image-2
+    params:
+      size: "1:1"
+      resolution: 2K
+      n: 1
+      response_format: url
+  layout_extract:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.3
+  layout_design:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.4
+  layout_dedupe_review:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.2
+  layout_image_generation:
+    model: toapi:gpt-image-2
+    params:
+      size: "9:16"
+      resolution: 4K
+      n: 1
+      response_format: url
+  bgm_design:
+    model: aliyun:qwen-plus
+    params:
+      temperature: 0.4
+      response_format: json_object
+  bgm_generation:
+    model: minimax:music-2.6
+    params:
+      format: mp3
+      sample_rate: 44100
+      output_format: url
+      is_instrumental: true
+  storyboard_generation:
+    model: deepseek:deepseek-v4-pro
+    params:
+      reasoning_effort: max
+      thinking_enabled: true
+      temperature: 0.4
+  ref_frame_spatial_planning:
+    model: deepseek:deepseek-v4-flash
+    params:
+      reasoning_effort: low
+      thinking_enabled: false
+      temperature: 0.2
+  ref_frame_generation:
+    model: toapi:gpt-image-2
+    params:
+      size: "9:16"
+      resolution: 4K
+      n: 1
+      response_format: url
+  shot_video_generation:
+    model: volcengine:doubao-seedance-2-0-260128
+    params:
+      ratio: "9:16"
+      resolution: 720p
+      generate_audio: false
+      return_last_frame: true
+  role_intro_video_generation:
+    model: volcengine:doubao-seedance-2-0-260128
+    params:
+      ratio: "9:16"
+      resolution: 720p
+      generate_audio: false
+  shot_dialogue_audio_generation:
+    model: volcengine:seed-tts-2.0
+    params:
+      sample_rate: 24000
+      response_format: mp3
+      max_generated_audio_duration_seconds: 10
+  role_voice_generation:
+    model: volcengine:seed-tts-2.0
+    params:
+      sample_rate: 24000
+      response_format: mp3
+      max_generated_audio_duration_seconds: 10
+  voice_select:
+    model: deepseek:deepseek-v4-flash
+    params:
+      reasoning_effort: low
+      thinking_enabled: false
+      temperature: 0.2
+  voice_select_audio_judge:
+    model: aliyun_omni:qwen3.5-omni-plus
+    params:
+      temperature: 0.2
+  image_prompt_safety_rewrite:
+    model: deepseek:deepseek-v4-flash
+    params:
+      reasoning_effort: low
+      thinking_enabled: false
+      temperature: 0.2
 
 project:
   # Stable ID is recommended because resume relies on it.

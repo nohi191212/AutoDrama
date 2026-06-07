@@ -1,8 +1,8 @@
 # Pregen Node Dependency Inventory
 
 This inventory captures the phase A0 baseline from `schedule2.md`. It reflects the current registry in
-`workflows/nodes/__init__.py`; helper-only methods such as `_run_role_voice_design` and
-`_run_role_appearance_design` are noted under shared/helper risk because they are not registered pregen nodes.
+`workflows/nodes/__init__.py`; removed compatibility-only role voice and role appearance entry points are no
+longer included.
 
 ## Registry Owners
 
@@ -15,7 +15,10 @@ This inventory captures the phase A0 baseline from `schedule2.md`. It reflects t
 | `role_extract` | `workflows/nodes/role_nodes.py` | `ProviderRouter.text("role")`, `RoleService.role_extract` | Script content helpers for novel text, `RoleDesignRepository` | `state.roles` refs via per-role JSON, `state.budget.used_text_calls` | `assets/json/nodes/role_extract.json`; per-role `assets/json/roles/{role_id}.json` |
 | `role_design` | `workflows/nodes/role_nodes.py` | `ProviderRouter.text("role")`, `ProviderRouter.audio("speech")`, `RoleService.role_design` | Role design JSON helpers, prop design helpers | `state.roles`, role-bound `state.props`, `state.metadata.role_design_*`, `state.budget.used_text_calls` | `assets/json/nodes/role_design.json`; per-role `assets/json/roles/{role_id}.json`; role-bound prop JSON |
 | `role_voice_generation` | `workflows/nodes/voice_nodes.py` | `ProviderRouter.audio("speech")`, voice creation/clone/reuse/synthesis provider APIs | `MediaStore.write_preview_audio`, role design hydration helpers | `state.roles[*].audio`, role voice binding fields | `assets/json/nodes/role_voice_generation.json`; preview audio under configured audio preview path |
-| `role_appearance_generation` | `workflows/nodes/static_asset_nodes.py` | `ProviderRouter.image("role")`, `ProviderRouter.video("role"|"shot")` | `MediaStore.write_first_generated_image`, `MediaStore.write_generated_video`, role design hydration, prop design update | role appearance image/video fields, role-bound prop asset fields | `assets/json/nodes/role_appearance_generation.json`; `assets/images/roles/*`; `assets/videos/roles/*` |
+| `role_full_body_generation` | `workflows/nodes/static_asset_nodes.py` (`RoleFullBodyGenerationNode`) | `ProviderRouter.image("role")` | `MediaStore.write_first_generated_image`, role design hydration | role full-body image fields | `assets/json/nodes/role_full_body_generation.json`; `assets/images/roles/*` |
+| `role_multiview_generation` | `workflows/nodes/static_asset_nodes.py` (`RoleMultiviewGenerationNode`) | `ProviderRouter.image("role")` | `MediaStore.write_first_generated_image`, role design hydration, full-body reference resolver, prop design update | role multiview image fields, role-bound prop asset fields | `assets/json/nodes/role_multiview_generation.json`; `assets/images/roles/*`; `assets/images/props/*` |
+| `role_intro_video_prompt` | `workflows/nodes/static_asset_nodes.py` (`RoleIntroVideoPromptNode`) | prompt rendering from role design state | role design hydration, intro prompt cache | intro video prompt records | `assets/json/nodes/role_intro_video_prompt.json` |
+| `role_intro_video_generation` | `workflows/nodes/static_asset_nodes.py` (`RoleIntroVideoGenerationNode`) | `ProviderRouter.video("role"|"shot")` | `MediaStore.write_generated_video`, multiview reference resolver | role intro video fields | `assets/json/nodes/role_intro_video_generation.json`; `assets/videos/roles/*` |
 | `prop_extract` | `workflows/nodes/static_asset_nodes.py` | `ProviderRouter.text("prop")`, `AssetService.prop_extract` | Script content helpers, role-bound prop state, `PropDesignRepository` | `state.budget.used_text_calls` | `assets/json/nodes/prop_extract.json`; per-prop `assets/json/props/{prop_id}.json` |
 | `prop_design` | `workflows/nodes/static_asset_nodes.py` | `ProviderRouter.text("prop")`, `AssetService.prop_design` | `PropDesignRepository`; script content helpers | `state.props`, `state.metadata.prop_design_*`, `state.budget.used_text_calls` | `assets/json/nodes/prop_design.json`; per-prop `assets/json/props/{prop_id}.json` |
 | `prop_generation` | `workflows/nodes/static_asset_nodes.py` | `ProviderRouter.image("prop")` | `MediaStore.write_first_generated_image`, prop design update helpers, reference resolver candidate | `state.props[*].asset_*`, provider/model/request fields | `assets/json/nodes/prop_generation.json`; `assets/images/props/*` |
@@ -35,11 +38,11 @@ This inventory captures the phase A0 baseline from `schedule2.md`. It reflects t
 | Role design files | `_role_design_json_path`, `_save_role_design_item`, `_load_role_design_item*` | `repositories/role_design_repo.py` | Must preserve per-role JSON format and fallback to legacy `nodes/role_design.json`. |
 | Role design merge/hydration | `_select_role_design_item`, `_merge_role_extract_into_design`, `_ordered_role_design_items`, `_apply_role_design_item`, `_hydrate_roles_from_design_files` | `services/role_design_merge.py` | Highest risk in `run pregen --only role_design --episodes ...`. |
 | Prop design files/references | `_save_prop_design_record`, `_load_prop_design_content`, `_prop_reference_refs`, `_role_bound_prop_reference_refs` | `repositories/prop_design_repo.py`, `services/asset_reference_resolver.py` | Must preserve variant ordering and role-bound reference ordering. |
-| Media writes | `_write_generated_*`, `_write_preview_audio` | `services/media_store.py` | Already delegated to `MediaStore`; wrapper remains for generation/editing delegate compatibility. |
+| Media writes | `_write_generated_*` | `services/media_store.py` | Already delegated to `MediaStore`; wrappers remain for generation/editing delegate compatibility. |
 | Storyboard IO | `_load_storyboard_episode`, `_save_storyboard_episode`, `_iter_storyboard_episodes` | `repositories/storyboard_repo.py` plus shared workflow helper | Required before removing `PregenWorkflowDelegateMixin`. |
 | Shot reference resolution | `_shot_ref_asset_refs`, `_shot_video_refs` | `services/shot_reference_service.py` | Must preserve provider reference ordering and reference mode behavior. |
 | Dialogue audio | `_role_for_dialogue_line`, `_generate_shot_dialogue_audio`, role synthesis helpers | `services/dialogue_audio_service.py` | Depends on role lookup and voice provider capability differences. |
-| Voice catalog/design/generation | `_available_speakers*`, `_speaker_lookup`, `_generate_*_voice` | `services/voice_catalog.py`, `services/voice_generation_service.py` | Provider capability differences make this a later, higher-risk phase. |
+| Voice catalog/generation | `_available_speakers*`, role synthesis helpers | `services/voice_catalog.py`, `services/voice_generation_service.py` | Provider capability differences make this a later, higher-risk phase. |
 
 ## Migration Status
 
@@ -49,7 +52,7 @@ This inventory captures the phase A0 baseline from `schedule2.md`. It reflects t
 | A1 script node migration | `script_outline`, `script_novel`, and `script_novel_extract` are owned by `Script*Node` classes; `director_prep` is owned by `DirectorPrepNode` and inserted between `script_novel` and `script_novel_extract`; `PregenWorkflow` wrappers remain for compatibility. |
 | A2 role node migration | `role_extract` and `role_design` are owned by `Role*Node` classes; role design JSON persistence is in `RoleDesignRepository`; merge/hydrate helpers remain as shared compatibility methods. |
 | A5 BGM node migration | `bgm_design` and `bgm_generation` are owned by `BGM*Node` classes; media writing goes directly through `MediaStore`. |
-| A4 static asset node migration | Registered static asset nodes are owned by `StaticAsset*Node` classes; prop design JSON persistence is in `PropDesignRepository`; `role_appearance_design` has a compatibility runner but remains unregistered. |
-| A3 voice node migration | `role_voice_generation` is owned by `RoleVoiceGenerationNode`; `role_voice_design` has a compatibility runner but remains unregistered; voice generation helpers have wrapper methods on `PregenWorkflow` for delegate compatibility. |
+| A4 static asset node migration | Registered static asset nodes are owned by `StaticAsset*Node` classes; prop design JSON persistence is in `PropDesignRepository`; old `role_appearance_design` and combined role appearance generation entry points have been removed. |
+| A3 voice node migration | `voice_select` is owned by `VoiceSelectNode`; `role_voice_generation` is owned by `RoleVoiceGenerationNode`; old standalone role voice design and voice generation wrapper entry points have been removed. |
 | E1 pregen node boundary smoke | `scripts/smoke/pregen_node_boundary_smoke.py` checks script node class ownership and registry order. |
 | E1 project layout contract smoke | `scripts/smoke/project_layout_contract_smoke.py` checks critical output paths used by migrated repositories/helpers. |

@@ -237,7 +237,7 @@ class DynamicAssetNodeMixin:
         last_error: Exception | None = None
         for purpose in ("ref_frame_prompt_safety", "ref_frame_spatial", "storyboard"):
             try:
-                return self.router.text(purpose)
+                return self.router.text(purpose, node_name="image_prompt_safety_rewrite")
             except Exception as exc:
                 last_error = exc
         raise ProviderBadResponseError(f"No text provider is available for image prompt safety rewrite: {last_error}")
@@ -388,7 +388,7 @@ class DynamicAssetNodeMixin:
         state: ProjectState,
         episode_key: str,
     ) -> StoryboardGenerationOutput:
-        provider = self.router.text("storyboard")
+        provider = self.router.text("storyboard", node_name="storyboard_generation")
         get_logger().info(
             "node=storyboard_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -457,7 +457,11 @@ class DynamicAssetNodeMixin:
         previous_video_preroll_seconds_for_provider = getattr(self, "_previous_video_preroll_seconds", None)
         if callable(previous_video_preroll_seconds_for_provider):
             try:
-                previous_video_preroll_seconds = float(previous_video_preroll_seconds_for_provider(self.router.video("shot")))
+                previous_video_preroll_seconds = float(
+                    previous_video_preroll_seconds_for_provider(
+                        self.router.video("shot", node_name="shot_video_generation")
+                    )
+                )
             except Exception:
                 previous_video_preroll_seconds = 0.0
         output = await self.storyboard_service.storyboard_episode(
@@ -500,7 +504,7 @@ class DynamicAssetNodeMixin:
         state: ProjectState,
         episode_key: str,
     ) -> ShotDialogueAudioGenerationOutput:
-        provider = self.router.audio("speech")
+        provider = self.router.audio("speech", node_name="shot_dialogue_audio_generation")
         get_logger().info(
             "node=shot_dialogue_audio_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -699,7 +703,9 @@ class DynamicAssetNodeMixin:
 
     def _ref_frame_spatial_text_provider(self):
         try:
-            provider = self.router.text("ref_frame_spatial")
+            provider = self.router.text("ref_frame_spatial", node_name="ref_frame_spatial_planning")
+            if getattr(provider, "model_binding", None) is not None:
+                return provider
             if getattr(provider, "name", None) == "deepseek":
                 settings = getattr(provider, "settings", None)
                 models = getattr(settings, "models", {}) if settings is not None else {}
@@ -724,7 +730,7 @@ class DynamicAssetNodeMixin:
             provider_settings.options.setdefault("ref_frame_spatial_reasoning_effort", "low")
             provider_settings.options.setdefault("ref_frame_spatial_thinking_enabled", False)
             return DeepSeekTextProvider(provider_settings, self.settings.runtime, model_key="ref_frame_spatial")
-        return self.router.text("storyboard")
+        return self.router.text("storyboard", node_name="ref_frame_spatial_planning")
 
     async def _plan_ref_frame_spatial_continuity(
         self,
@@ -982,7 +988,7 @@ class DynamicAssetNodeMixin:
         state: ProjectState,
         episode_key: str,
     ) -> RefFrameGenerationOutput:
-        provider = self.router.image("ref_frame")
+        provider = self.router.image("ref_frame", node_name="ref_frame_generation")
         get_logger().info(
             "node=ref_frame_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -1313,7 +1319,7 @@ class DynamicAssetNodeMixin:
         state: ProjectState,
         episode_key: str,
     ) -> ShotVideoGenerationOutput:
-        provider = self.router.video("shot")
+        provider = self.router.video("shot", node_name="shot_video_generation")
         get_logger().info(
             "node=shot_video_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
@@ -1774,7 +1780,7 @@ class DynamicAssetNodeMixin:
         get_logger().info("node=dynamic_asset_solidification provider=local model=-")
         solidified: list[DynamicAssetSolidificationItem] = []
         episode = self._load_storyboard_episode(project_dir, episode_key)
-        video_provider = self.router.video("shot")
+        video_provider = self.router.video("shot", node_name="shot_video_generation")
         for shot in self._active_shots_for_episode(episode):
             self._log_generation_shot_started(episode.episode_key, shot, "dynamic_asset_solidification")
             try:
