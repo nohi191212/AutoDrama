@@ -216,15 +216,15 @@ nodes:
 
 project:
   # Stable ID is recommended because resume relies on it.
-  id: review_demo
-  title: 测试短片
-  script_outline_file: ./inputs/story_outline.md
+  id: huyao
+  title: 狐妖太会撩，我靠吓哭游客狂赚千亿
+  script_outline_file: ./inputs/狐妖.md
   # The script pipeline lets the text model split the story into this many episodes.
   episode_count: 1
   # Target duration for each episode, in seconds.
-  episode_duration_seconds: 30
+  episode_duration_seconds: 180
   # Exact number of reusable BGM tracks; set 0 to skip BGM design/generation.
-  bgm_count: 3
+  bgm_count: 1
 output:
   # All generated assets are saved under this directory.
   # Relative paths are resolved from the working directory.
@@ -250,7 +250,7 @@ runtime:
     default: python3
   max_text_retry: 3
   max_media_retry: 2
-  request_timeout_seconds: 120
+  request_timeout_seconds: 1200
   ffmpeg_path: ffmpeg
 
 budget:
@@ -265,25 +265,28 @@ generation:
   # Passing --shots to generation derives the storyboard run limit from the selected shot range.
   max_shots: 10
   # Used by role_full_body_generation and role_multiview_generation as Image 2 style references.
-  role_design_style_reference_dir: ./.assets/sample
+  role_design_style_reference_dir: ./.assets/sample_urban_fantasy
   # Global visual style prompt used by design_key_vision_prompt.
   visual_style_prompt: >
-    保持国漫CG/动画电影短剧主视觉质感，人物、场景、道具和光影属于同一美术体系；
-    画面有明确戏剧冲突、纵深层次和电影镜头感，色彩克制但记忆点清晰。
-    避免真人照片质感、可读文字、字幕、水印、logo和无关装饰。
+    保持高质量国漫3D/现代都市玄幻CG短剧主视觉质感，强化现代都市、系统全息、
+    古风神话造物与沉浸式惊悚空间的融合。画面应有明确主体、纵深层次、戏剧冲突、
+    稳定光影方向和统一色彩关系，避免可读文字、字幕、水印、logo、UI和无关装饰。
   # Unified role image style prompt used by role design, role_full_body_generation, and role_multiview_generation.
   role_design_style_prompt: >
     使用参考图片作为统一人物美术风格、材质质感、光影、色彩和画面气质参考。
-    人物保持国漫CG/动画电影角色质感，明显非真人摄影，脸部为风格化CG美术表现，
-    避免真实人脸毛孔、汗渍、微血管等照片级细节。保留东方修仙题材的服饰层次、
-    旧布料、金属、石材和随身道具材质差异，背景保持干净，不出现文字、水印或logo。
+    人物保持高质量国漫3D/现代都市玄幻CG质感，脸部为风格化CG表现，避免真人照片级毛孔瑕疵。
+    重点表现“现代都市”与“系统全息”元素的融合，支持新中式服装、现代常服与古风元素的混搭。
+    保留衣物布料、金属配饰的区别，并在AI/系统类角色身上增加轻微的数字粒子、全息投影或边缘发光特效。
+    背景保持干净，不出现文字、水印或logo。
   prop_design_style_prompt: >
     道具图保持国漫CG/动画电影资产设定图质感，材质区分清楚，轮廓完整可读；
+    兼顾古风神话造物（如青铜、玉石、残破古卷）与系统全息造物（如发光的令牌、数据流态物品）。
     光影干净，背景简洁，无人物、无手持、无文字、水印或logo。重点表现尺寸比例、
-    材质、磨损、能量状态和一眼可识别的结构细节。
+    材质磨损、危险气息（如血迹、锈迹）以及系统激活时的能量发光状态。
   layout_design_style_prompt: >
-    场景图保持国漫CG/动画电影无人物空场景质感，空间结构清晰，前中后景层次明确；
-    材质、光源、阴影、空气粒子和色彩关系稳定可复用，适配16:9短剧构图。
+    场景图保持国漫CG/3D动画无人物空场景质感，空间结构清晰，前中后景层次明确，适配9:16短剧构图。
+    重点突出“沉浸式惊悚密室”与“全息重构”的氛围感，强化环境光影对比（如幽暗冷色调环境与红灯笼等诡异暖光源的碰撞）。
+    材质需体现出现代废墟、古老遗迹与幻象交叠的视觉差，光源、阴影和空气粒子（如灰尘、悬浮光点）关系稳定可复用。
     不出现人物、背影、手、剪影、字幕、水印、文字标识或无关logo。
 
 providers:
@@ -580,6 +583,7 @@ routing:
     storyboard: rightcode
     ref_frame_prompt_safety: rightcode
     ref_frame_spatial: rightcode
+    shot_bgm: rightcode
     edit_plan: rightcode
     bgm_plan: rightcode
   image:
@@ -598,6 +602,7 @@ routing:
     music: minimax
   music:
     bgm: minimax
+    shot_bgm: elevenlabs
   judge:
     voice_catalog_profile: aliyun_omni
     voice_select: aliyun_omni

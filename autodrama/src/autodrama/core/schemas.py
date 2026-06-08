@@ -264,6 +264,10 @@ class DirectorPrepOutput(BaseModel):
     episodes: list[DirectorEpisodePrep] = Field(default_factory=list)
 
 
+class KeyVisionPromptOutput(BaseModel):
+    prompt: str
+
+
 class ScriptNovelEpisodeOutput(BaseModel):
     episode_key: str
     target_char_count: int
@@ -538,6 +542,7 @@ class StaticAssetGenerationItem(BaseModel):
         "role_multiview",
         "role_appearance_video",
         "role_intro_video",
+        "key_vision",
         "prop",
         "layout",
         "bgm",

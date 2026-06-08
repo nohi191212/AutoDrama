@@ -21,11 +21,11 @@ def write_config(path: Path, *, bad_param: bool = False) -> None:
     config = {
         "model_catalog_file": str(ROOT_DIR / "model_catalog.yaml.example"),
         "providers": {
-            "deepseek": {
-                "base_url": "https://api.deepseek.com",
-                "api_key_env": "DEEPSEEK_API_KEY",
-                "models": {"text": "deepseek-v4-pro"},
-                "options": {"reasoning_effort": "max", "thinking_enabled": True},
+            "rightcode": {
+                "base_url": "https://www.right.codes/codex",
+                "api_key_env": "RIGHTCODE_API_KEY",
+                "models": {"text": "gpt-5.5", "storyboard": "gpt-5.5"},
+                "options": {"text_response_format": True, "reasoning_effort": "xhigh"},
             },
             "toapi": {
                 "base_url": "https://toapis.com",
@@ -48,17 +48,33 @@ def write_config(path: Path, *, bad_param: bool = False) -> None:
             },
         },
         "routing": {
-            "text": {"storyboard": "deepseek"},
-            "image": {"role": "toapi"},
+            "text": {"director": "rightcode", "storyboard": "rightcode"},
+            "image": {"key_vision": "toapi", "role": "toapi"},
             "video": {"shot": "volcengine"},
         },
         "nodes": {
-            "storyboard_generation": {
-                "model": "deepseek:deepseek-v4-flash",
+            "design_key_vision_prompt": {
+                "model": "rightcode:gpt-5.5",
                 "params": {
-                    "reasoning_effort": "low",
-                    "thinking_enabled": False,
+                    "reasoning_effort": "xhigh",
                     "temperature": 0.2,
+                    "response_format": "json_object",
+                },
+            },
+            "design_key_vision_image": {
+                "model": "toapi:gpt-image-2",
+                "params": {
+                    "size": "9:16",
+                    "resolution": "4K",
+                    "n": 1,
+                },
+            },
+            "storyboard_generation": {
+                "model": "rightcode:gpt-5.5",
+                "params": {
+                    "reasoning_effort": "xhigh",
+                    "temperature": 0.2,
+                    "response_format": "json_object",
                 },
             },
             "role_full_body_generation": {
@@ -112,13 +128,21 @@ def main() -> int:
     settings = load_settings(config_path)
     router = ProviderRouter(settings)
 
+    key_vision_text_provider = router.text("director", node_name="design_key_vision_prompt")
+    if getattr(key_vision_text_provider, "model", None) != "gpt-5.5":
+        raise AssertionError(f"Unexpected key vision text model: {getattr(key_vision_text_provider, 'model', None)}")
+    if getattr(key_vision_text_provider, "reasoning_effort", None) != "xhigh":
+        raise AssertionError("Key vision prompt params did not update RightCode reasoning_effort")
+    if getattr(key_vision_text_provider, "use_response_format", None) is not True:
+        raise AssertionError("Key vision prompt params did not enable RightCode JSON response format")
+
     text_provider = router.text("storyboard", node_name="storyboard_generation")
-    if getattr(text_provider, "model", None) != "deepseek-v4-flash":
+    if getattr(text_provider, "model", None) != "gpt-5.5":
         raise AssertionError(f"Unexpected text model: {getattr(text_provider, 'model', None)}")
-    if getattr(text_provider, "reasoning_effort", None) != "low":
-        raise AssertionError("Node params did not update DeepSeek reasoning_effort")
-    if getattr(text_provider, "thinking_enabled", None) is not False:
-        raise AssertionError("Node params did not update DeepSeek thinking_enabled")
+    if getattr(text_provider, "reasoning_effort", None) != "xhigh":
+        raise AssertionError("Node params did not update RightCode reasoning_effort")
+    if getattr(text_provider, "use_response_format", None) is not True:
+        raise AssertionError("Node params did not enable RightCode JSON response format")
 
     image_provider = router.image("role", node_name="role_full_body_generation")
     payload = image_provider._provider.build_payload(
@@ -131,6 +155,14 @@ def main() -> int:
         raise AssertionError(f"Unexpected image size: {payload['size']}")
     if payload["resolution"] != "4K":
         raise AssertionError(f"Unexpected image resolution: {payload['resolution']}")
+
+    key_vision_image_provider = router.image("key_vision", node_name="design_key_vision_image")
+    key_vision_payload = key_vision_image_provider._provider.build_payload(
+        "test key vision",
+        metadata=key_vision_image_provider._metadata({"asset_id": "key_vision_original"}),
+    )
+    if key_vision_payload["size"] != "9:16":
+        raise AssertionError(f"Unexpected key vision image size: {key_vision_payload['size']}")
 
     asyncio.run(assert_runtime_ref_limit(router))
 
@@ -147,11 +179,14 @@ def main() -> int:
     example_settings = load_settings(ROOT_DIR / "config.yaml.example")
     if "shot_video_generation" not in example_settings.nodes:
         raise AssertionError("config.yaml.example did not load node model settings")
+    if "design_key_vision_image" not in example_settings.nodes:
+        raise AssertionError("config.yaml.example did not load key vision node model settings")
 
     print("model_catalog_node_binding_smoke=ok")
     print(f"config_path={config_path}")
     print(f"text_model={text_provider.model}")
     print(f"image_payload_size={payload['size']}")
+    print(f"key_vision_payload_size={key_vision_payload['size']}")
     return 0
 
 

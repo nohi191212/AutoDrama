@@ -20,6 +20,8 @@ from autodrama.workflows.nodes.bgm_nodes import (  # noqa: E402
 )
 from autodrama.workflows.nodes.director_nodes import (  # noqa: E402
     DIRECTOR_NODE_NAMES,
+    DesignKeyVisionImageNode,
+    DesignKeyVisionPromptNode,
     DirectorPrepNode,
 )
 from autodrama.workflows.nodes.script_nodes import (  # noqa: E402
@@ -95,6 +97,8 @@ def main() -> int:
 
     expected_director_owners = {
         "director_prep": DirectorPrepNode,
+        "design_key_vision_prompt": DesignKeyVisionPromptNode,
+        "design_key_vision_image": DesignKeyVisionImageNode,
     }
     for node_name in DIRECTOR_NODE_NAMES:
         owner = getattr(by_name[node_name].run, "__self__", None)
@@ -105,6 +109,7 @@ def main() -> int:
         )
         require(owner.repo is workflow.repo, f"{node_name} repo dependency was not wired from workflow")
         require(owner.director_service is workflow.director_service, f"{node_name} director service dependency drifted")
+        require(owner.media_store is workflow.media_store, f"{node_name} media store dependency drifted")
 
     expected_role_owners = {
         "role_extract_primary": RolePrimaryExtractNode,

@@ -10,6 +10,7 @@ from autodrama.core.schemas import (
     AmbientEntityOutput,
     BGMDesignOutput,
     DirectorPrepOutput,
+    KeyVisionPromptOutput,
     LayoutDedupeReviewOutput,
     LayoutDesignOutput,
     LayoutExtractOutput,
@@ -264,6 +265,16 @@ class FakeTextProvider:
                     }
                     for key in director_episode_keys
                 ],
+            }
+        elif schema is KeyVisionPromptOutput or node_name == "design_key_vision_prompt":
+            data = {
+                "prompt": (
+                    "真人电影质感，短剧主视觉原图，9:16 竖版海报式构图，雨夜现代办公室与玻璃会议室空间交叠。"
+                    "林舟站在画面中央偏前，深灰职场衬衫，神情疲惫但克制，手中压着被调包的合同关键页；"
+                    "苏晚位于左后方冷蓝电脑光边缘，递出旧邮件截图；赵启在右侧会议桌阴影里后撤，形成三角对峙。"
+                    "前景是纸张色差、错位装订孔和半杯冷咖啡，背景窗玻璃有雨痕和城市霓虹反射，投影冷光与顶灯冷白光压低环境。"
+                    "低饱和蓝灰色调，克制悬疑张力，稳定电影镜头感，细节清晰，无可读文字、字幕、水印、logo和无关人物。"
+                )
             }
         elif schema is ScriptNovelExtractBatchOutput or node_name == "script_novel_extract":
             batch_episode_keys = metadata.get("batch_episode_keys") or expected_keys or episode_keys

@@ -337,6 +337,8 @@ class RightCodeImageProvider:
             )
         if str(metadata.get("node_name") or "") == "ref_frame_generation":
             return self.settings.models.get("rightcode_ref_frame") or self.settings.models.get("ref_frame")
+        if str(metadata.get("node_name") or "") == "design_key_vision_image":
+            return self.settings.models.get("rightcode_key_vision") or self.settings.models.get("key_vision")
         return None
 
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
@@ -355,6 +357,8 @@ class RightCodeImageProvider:
             )
         if str(metadata.get("node_name") or "") == "ref_frame_generation":
             return self.settings.options.get("rightcode_ref_frame_size") or self.settings.options.get("ref_frame_size")
+        if str(metadata.get("node_name") or "") == "design_key_vision_image":
+            return self.settings.options.get("rightcode_key_vision_size") or self.settings.options.get("key_vision_size")
         return None
 
     def _purpose_parameter(self, key: str, metadata: dict[str, Any]) -> object | None:
@@ -370,6 +374,11 @@ class RightCodeImageProvider:
                     or self.settings.options.get("role_multiview_quality")
                     or self.settings.options.get("rightcode_role_design_quality")
                     or self.settings.options.get("role_design_quality")
+                )
+            if str(metadata.get("node_name") or "") == "design_key_vision_image":
+                return (
+                    self.settings.options.get("rightcode_key_vision_quality")
+                    or self.settings.options.get("key_vision_quality")
                 )
         return None
 

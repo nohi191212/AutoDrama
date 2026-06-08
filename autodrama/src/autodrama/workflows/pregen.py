@@ -319,6 +319,7 @@ class PregenWorkflow:
         state.metadata["episode_count"] = self.repo.settings.project.episode_count
         state.metadata["episode_duration_seconds"] = self.repo.settings.project.episode_duration_seconds
         state.metadata["bgm_count"] = self.repo.settings.project.bgm_count
+        state.metadata["visual_style_prompt"] = self.repo.settings.generation.visual_style_prompt
         state.metadata["role_design_style_prompt"] = self.repo.settings.generation.role_design_style_prompt
         state.metadata["prop_design_style_prompt"] = self.repo.settings.generation.prop_design_style_prompt
         state.metadata["layout_design_style_prompt"] = self.repo.settings.generation.layout_design_style_prompt

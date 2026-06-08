@@ -114,6 +114,7 @@ class ProjectRepository:
                 "episode_count": resolved_episode_count,
                 "episode_duration_seconds": resolved_episode_duration_seconds,
                 "bgm_count": self.settings.project.bgm_count,
+                "visual_style_prompt": self.settings.generation.visual_style_prompt,
                 "role_design_style_prompt": self.settings.generation.role_design_style_prompt,
                 "prop_design_style_prompt": self.settings.generation.prop_design_style_prompt,
                 "layout_design_style_prompt": self.settings.generation.layout_design_style_prompt,

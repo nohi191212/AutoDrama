@@ -26,6 +26,8 @@ from autodrama.workflows.selection import (
 SCRIPT_IMPORT_BOOTSTRAP_NODES = {"script_detail_expand", "script_outline", "script_novel"}
 SCRIPT_IMPORT_INVALIDATE_ON_PRESERVE = {
     "director_prep",
+    "design_key_vision_prompt",
+    "design_key_vision_image",
     "script_novel_extract",
     *GENERATION_NODES,
 }

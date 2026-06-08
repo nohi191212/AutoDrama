@@ -4,7 +4,7 @@ import json
 from copy import deepcopy
 from typing import Any
 
-from autodrama.core.schemas import DirectorPrepOutput, ProjectState
+from autodrama.core.schemas import DirectorPrepOutput, KeyVisionPromptOutput, ProjectState
 from autodrama.providers.base import TextLLM
 from autodrama.utils.prompts import PromptStore
 
@@ -51,6 +51,10 @@ class DirectorService:
                 ]
         return cls.format_json(data)
 
+    @staticmethod
+    def visual_style_prompt(state: ProjectState) -> str:
+        return str(state.metadata.get("visual_style_prompt") or "").strip()
+
     async def director_prep(
         self,
         state: ProjectState,
@@ -80,6 +84,32 @@ class DirectorService:
                 "target_shot_beats": 12,
             },
         )
+
+    async def design_key_vision_prompt(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+    ) -> KeyVisionPromptOutput:
+        prompt = self.prompts.render(
+            "design_key_vision_prompt",
+            title=state.title,
+            raw_script=state.raw_script,
+            visual_style_prompt=self.visual_style_prompt(state) or "（未单独配置。请严格继承导演前期中的 visual_tone。）",
+            director_prep=self.director_prep_context(state),
+        )
+        output = await provider.generate_json(
+            prompt,
+            KeyVisionPromptOutput,
+            temperature=0.45,
+            metadata={
+                "node_name": "design_key_vision_prompt",
+                "project_id": state.project_id,
+            },
+        )
+        output.prompt = str(output.prompt or "").strip()
+        if not output.prompt:
+            raise ValueError("design_key_vision_prompt returned an empty prompt")
+        return output
 
 
 __all__ = ["DirectorService"]

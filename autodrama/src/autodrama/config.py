@@ -62,6 +62,7 @@ class BudgetSettings(BaseModel):
 class GenerationSettings(BaseModel):
     max_shots: int = Field(default=10, ge=1)
     role_design_style_reference_dir: Path | None = None
+    visual_style_prompt: str = ""
     role_design_style_prompt: str = ""
     prop_design_style_prompt: str = ""
     layout_design_style_prompt: str = ""

@@ -16,6 +16,26 @@ models:
         type: string
         enum: [json_object, text]
 
+  rightcode:gpt-5.5:
+    provider: rightcode
+    family: gpt
+    capability: text
+    input_modalities: [text]
+    output_modalities: [json]
+    limits:
+      max_output_tokens: 8192
+    params_schema:
+      temperature:
+        type: number
+        min: 0
+        max: 2
+      response_format:
+        type: string
+        enum: [json_object, text]
+      reasoning_effort:
+        type: string
+        enum: [low, medium, high, xhigh]
+
   deepseek:deepseek-v4-pro:
     provider: deepseek
     family: deepseek

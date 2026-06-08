@@ -56,7 +56,11 @@ class WanxiangImageProvider:
         content.append({"text": prompt[:5000]})
 
         parameters: dict[str, Any] = {
-            "size": size or self.settings.options.get("image_size", self.settings.options.get("size", "2K")),
+            "size": (
+                metadata.get("size")
+                or size
+                or self.settings.options.get("image_size", self.settings.options.get("size", "2K"))
+            ),
             "n": int(metadata.get("n", self.settings.options.get("n", 1))),
             "watermark": bool(self.settings.options.get("watermark", False)),
         }
