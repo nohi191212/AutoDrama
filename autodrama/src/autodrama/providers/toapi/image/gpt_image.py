@@ -164,10 +164,8 @@ class ToAPIImageProvider:
 
     def _purpose_model(self, metadata: dict[str, Any]) -> str | None:
         node_name = str(metadata.get("node_name") or "")
-        if node_name == "role_full_body_generation":
-            return self.settings.models.get("role_full_body")
-        if node_name == "role_multiview_generation":
-            return self.settings.models.get("role_multiview") or self.settings.models.get("role_design")
+        if node_name == "roleboard_generation":
+            return self.settings.models.get("roleboard")
         if node_name == "prop_generation":
             return self.settings.models.get("prop")
         if node_name == "layout_image_generation":
@@ -180,10 +178,11 @@ class ToAPIImageProvider:
 
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
         node_name = str(metadata.get("node_name") or "")
-        if node_name == "role_full_body_generation":
-            return self.settings.options.get("role_full_body_size") or "1:2"
-        if node_name == "role_multiview_generation":
-            return self.settings.options.get("role_multiview_size") or self.settings.options.get("role_design_size") or "16:9"
+        if node_name == "roleboard_generation":
+            return (
+                self.settings.options.get("roleboard_size")
+                or "16:9"
+            )
         if node_name == "prop_generation":
             return self.settings.options.get("prop_size") or "1:1"
         if node_name == "layout_image_generation":
@@ -196,10 +195,8 @@ class ToAPIImageProvider:
 
     def _purpose_resolution(self, metadata: dict[str, Any]) -> object | None:
         node_name = str(metadata.get("node_name") or "")
-        if node_name == "role_full_body_generation":
-            return self.settings.options.get("role_full_body_resolution")
-        if node_name == "role_multiview_generation":
-            return self.settings.options.get("role_multiview_resolution") or self.settings.options.get("role_design_resolution")
+        if node_name == "roleboard_generation":
+            return self.settings.options.get("roleboard_resolution")
         if node_name == "prop_generation":
             return self.settings.options.get("prop_resolution")
         if node_name == "layout_image_generation":

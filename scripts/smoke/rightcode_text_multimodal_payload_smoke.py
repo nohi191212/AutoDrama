@@ -55,8 +55,8 @@ def write_tiny_wav(path: Path) -> None:
 def existing_sample_video() -> Path | None:
     candidates = [
         ROOT_DIR / ".tmp" / "seedance_4s_720p_smoke" / "seedance_4s_720p.mp4",
-        ROOT_DIR / ".tmp" / "role_video_originals" / "role_江未晞_appearance_base_intro_video.mp4",
-        ROOT_DIR / ".tmp" / "role_video_originals" / "role_九韶_appearance_base_intro_video.mp4",
+        ROOT_DIR / ".tmp" / "sample_videos" / "roleboard_motion_ref_a.mp4",
+        ROOT_DIR / ".tmp" / "sample_videos" / "roleboard_motion_ref_b.mp4",
     ]
     for path in candidates:
         if path.exists() and path.is_file():

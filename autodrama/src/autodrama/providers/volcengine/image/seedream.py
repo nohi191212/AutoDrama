@@ -128,17 +128,10 @@ class VolcengineSeedreamImageProvider:
 
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
         node_name = str(metadata.get("node_name") or "")
-        if node_name == "role_full_body_generation":
+        if node_name == "roleboard_generation":
             return (
-                self.settings.options.get("seedream_role_full_body_size")
-                or self.settings.options.get("role_full_body_size")
-            )
-        if node_name == "role_multiview_generation":
-            return (
-                self.settings.options.get("seedream_role_multiview_size")
-                or self.settings.options.get("seedream_role_design_size")
-                or self.settings.options.get("role_multiview_size")
-                or self.settings.options.get("role_design_size")
+                self.settings.options.get("seedream_roleboard_size")
+                or self.settings.options.get("roleboard_size")
             )
         if node_name == "prop_generation":
             return self.settings.options.get("seedream_prop_size") or self.settings.options.get("prop_size")

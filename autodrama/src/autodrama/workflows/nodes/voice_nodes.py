@@ -43,7 +43,7 @@ from autodrama.services.script_service import ScriptService
 from autodrama.workflows.runner import WorkflowNode
 
 VOICE_NODE_NAMES = [
-    "voice_select",
+    "role_voice_select",
     "role_voice_generation",
 ]
 
@@ -221,9 +221,9 @@ class VoiceNodeBase:
         return filtered
 
 
-class VoiceSelectNode(VoiceNodeBase):
-    name = "voice_select"
-    selection_prompt_version = "voice_select.text_shortlist.filtered_flash_top3.visual_refs.v4"
+class RoleVoiceSelectNode(VoiceNodeBase):
+    name = "role_voice_select"
+    selection_prompt_version = "role_voice_select.text_shortlist.filtered_flash_top3.visual_refs.v4"
     candidate_limit = 3
     text_shortlist_model = "deepseek-v4-flash"
     text_shortlist_batch_size = 80
@@ -238,7 +238,7 @@ class VoiceSelectNode(VoiceNodeBase):
             return getter(purpose)
 
     @classmethod
-    def role_design_hash(cls, role: Role) -> str:
+    def role_profile_hash(cls, role: Role) -> str:
         payload = {
             "role_id": role.id,
             "role_name": role.name,
@@ -253,8 +253,6 @@ class VoiceSelectNode(VoiceNodeBase):
                 name: {
                     "id": appearance.id,
                     "desc": appearance.desc,
-                    "full_body_image_asset_path": appearance.full_body_image_asset_path,
-                    "full_body_image_asset_url": appearance.full_body_image_asset_url,
                     "asset_path": appearance.asset_path,
                     "asset_url": appearance.asset_url,
                     "design_image_asset_path": appearance.design_image_asset_path,
@@ -331,7 +329,7 @@ class VoiceSelectNode(VoiceNodeBase):
         self,
         *,
         existing: RoleVoiceSelectionItem | None,
-        role_design_hash: str,
+        role_profile_hash: str,
         manifest: VoiceCatalogManifest,
         catalog_hash: str,
         force: bool,
@@ -339,7 +337,7 @@ class VoiceSelectNode(VoiceNodeBase):
     ) -> RoleVoiceSelectionItem | None:
         if force or existing is None:
             return None
-        if existing.role_design_hash != role_design_hash:
+        if existing.role_profile_hash != role_profile_hash:
             return None
         if existing.catalog_version != manifest.catalog_version:
             return None
@@ -372,14 +370,14 @@ class VoiceSelectNode(VoiceNodeBase):
             return None, "router has no text provider"
 
         errors: list[str] = []
-        for purpose in ("voice_select", "role"):
+        for purpose in ("role_voice_select", "role"):
             try:
                 return self.call_router_getter(text_getter, purpose, node_name=self.name), None
             except Exception as exc:
                 errors.append(f"{purpose}: {exc!r}")
         return None, "; ".join(errors)
 
-    def voice_select_text_provider(self) -> tuple[Any | None, str | None]:
+    def role_voice_select_text_provider(self) -> tuple[Any | None, str | None]:
         if str(getattr(self.router, "provider_override", "") or ""):
             return self.text_shortlist_provider()
 
@@ -391,16 +389,16 @@ class VoiceSelectNode(VoiceNodeBase):
         if provider_settings is None or runtime_settings is None:
             return self.text_shortlist_provider()
 
-        voice_select_settings = provider_settings.model_copy(deep=True)
-        voice_select_settings.models = dict(voice_select_settings.models)
-        voice_select_settings.models["text"] = self.text_shortlist_model
-        voice_select_settings.options = dict(voice_select_settings.options)
-        voice_select_settings.options["thinking_enabled"] = False
-        voice_select_settings.options["reasoning_effort"] = "low"
-        return DeepSeekTextProvider(voice_select_settings, runtime_settings), None
+        role_voice_select_settings = provider_settings.model_copy(deep=True)
+        role_voice_select_settings.models = dict(role_voice_select_settings.models)
+        role_voice_select_settings.models["text"] = self.text_shortlist_model
+        role_voice_select_settings.options = dict(role_voice_select_settings.options)
+        role_voice_select_settings.options["thinking_enabled"] = False
+        role_voice_select_settings.options["reasoning_effort"] = "low"
+        return DeepSeekTextProvider(role_voice_select_settings, runtime_settings), None
 
     def selection_model(self, manifest: VoiceCatalogManifest) -> str:
-        text_provider, text_error = self.voice_select_text_provider()
+        text_provider, text_error = self.role_voice_select_text_provider()
         if text_provider is not None:
             text_model = self.provider_model_label(text_provider)
         else:
@@ -410,7 +408,7 @@ class VoiceSelectNode(VoiceNodeBase):
         if callable(judge_getter):
             try:
                 judge_model = self.provider_model_label(
-                    self.call_router_getter(judge_getter, "voice_select", node_name="voice_select_audio_judge")
+                    self.call_router_getter(judge_getter, "role_voice_select", node_name="role_voice_select_audio_judge")
                 )
             except Exception as exc:
                 judge_model = f"unavailable:{exc!r}"
@@ -442,15 +440,9 @@ class VoiceSelectNode(VoiceNodeBase):
         appearances = list(role.appearances.values())
         appearances.sort(key=lambda item: (0 if item.name == "base" else 1, item.name, item.id))
         for appearance in appearances:
-            asset_type = "role_full_body"
-            asset_path = appearance.full_body_image_asset_path
-            asset_url = appearance.full_body_image_asset_url
-            asset_id = appearance.full_body_image_asset_id
-            if not (asset_path or asset_url):
-                asset_type = "role_appearance"
-                asset_path = appearance.asset_path or appearance.design_image_asset_path
-                asset_url = appearance.asset_url or appearance.design_image_asset_url
-                asset_id = appearance.asset_id or appearance.design_image_asset_id or appearance.id
+            asset_path = appearance.asset_path or appearance.design_image_asset_path
+            asset_url = appearance.asset_url or appearance.design_image_asset_url
+            asset_id = appearance.asset_id or appearance.design_image_asset_id or appearance.id
             if not (asset_path or asset_url):
                 continue
             path = None
@@ -464,8 +456,8 @@ class VoiceSelectNode(VoiceNodeBase):
                     path=path,
                     url=asset_url,
                     metadata={
-                        "asset_type": asset_type,
-                        "reference_source": "voice_select_role_visual",
+                        "asset_type": "roleboard",
+                        "reference_source": "role_voice_select_role_visual",
                         "role_id": role.id,
                         "role_name": role.name,
                         "appearance_id": appearance.id,
@@ -496,8 +488,8 @@ class VoiceSelectNode(VoiceNodeBase):
         ]
 
     @classmethod
-    def role_design_for_prompt(cls, project_dir: Path, role: Role) -> dict[str, Any]:
-        design = {
+    def role_profile_for_prompt(cls, project_dir: Path, role: Role) -> dict[str, Any]:
+        profile = {
             "role_id": role.id,
             "role_name": role.name,
             "intro": role.intro,
@@ -516,12 +508,12 @@ class VoiceSelectNode(VoiceNodeBase):
         }
         visual_refs = cls.role_visual_refs_for_prompt(project_dir, role)
         if visual_refs:
-            design["visual_reference_assets"] = visual_refs
-            design["visual_voice_matching_requirement"] = (
+            profile["visual_reference_assets"] = visual_refs
+            profile["visual_voice_matching_requirement"] = (
                 "选择音色时必须参考人物图呈现的视觉年龄、体态、气质、服装风格和角色能量；"
                 "避免声线年龄感、厚度、甜度、成熟度或压迫感与人物形象明显脱节。"
             )
-        return design
+        return profile
 
     async def text_shortlist(
         self,
@@ -537,10 +529,10 @@ class VoiceSelectNode(VoiceNodeBase):
     ) -> tuple[list[VoiceCandidateItem], dict[str, Any]]:
         del heuristic_candidates
         if candidate_pool is None or filter_metadata is None:
-            candidate_pool, filter_metadata = service.voice_select_candidate_pool(role, manifest)
+            candidate_pool, filter_metadata = service.role_voice_select_candidate_pool(role, manifest)
         fallback_candidates = candidate_pool[:limit]
 
-        provider, provider_error = self.voice_select_text_provider()
+        provider, provider_error = self.role_voice_select_text_provider()
         if provider is None:
             return fallback_candidates, {
                 "text_shortlist_skipped": provider_error or "text provider is unavailable",
@@ -554,7 +546,7 @@ class VoiceSelectNode(VoiceNodeBase):
                 "text_shortlist_filters": filter_metadata,
             }
 
-        role_design = self.role_design_for_prompt(project_dir, role)
+        role_profile = self.role_profile_for_prompt(project_dir, role)
         voice_profiles = service.voice_profiles_for_prompt(role, manifest, candidates=candidate_pool)
         candidate_by_id = {
             str(candidate.candidate_id): candidate
@@ -563,18 +555,18 @@ class VoiceSelectNode(VoiceNodeBase):
         }
         if not voice_profiles:
             return fallback_candidates, {
-                "text_shortlist_skipped": "no voice_select candidates after language/gender/model filters",
+                "text_shortlist_skipped": "no role_voice_select candidates after language/gender/model filters",
                 "text_shortlist_filters": filter_metadata,
                 "text_shortlist_provider": self.provider_model_label(provider),
             }
 
         prompt = prompts.render(
-            "voice_select_shortlist",
-            role_design=json.dumps(role_design, ensure_ascii=False, indent=2),
+            "role_voice_select_shortlist",
+            role_profile=json.dumps(role_profile, ensure_ascii=False, indent=2),
             voice_profiles=json.dumps(voice_profiles, ensure_ascii=False, indent=2),
         )
         self.logger.info(
-            "voice_select model_call=text_shortlist role=%s provider=%s voices=%d limit=%d filters=%s",
+            "role_voice_select model_call=text_shortlist role=%s provider=%s voices=%d limit=%d filters=%s",
             role.name,
             self.provider_model_label(provider),
             len(voice_profiles),
@@ -586,7 +578,7 @@ class VoiceSelectNode(VoiceNodeBase):
             VoiceSelectShortlistOutput,
             temperature=0.2,
             metadata={
-                "node_name": "voice_select_shortlist",
+                "node_name": "role_voice_select_shortlist",
                 "role_id": role.id,
                 "role_name": role.name,
                 "provider": manifest.provider,
@@ -662,7 +654,7 @@ class VoiceSelectNode(VoiceNodeBase):
         judge_getter = getattr(self.router, "judge", None)
         if not callable(judge_getter):
             return None
-        judge = self.call_router_getter(judge_getter, "voice_select", node_name="voice_select_audio_judge")
+        judge = self.call_router_getter(judge_getter, "role_voice_select", node_name="role_voice_select_audio_judge")
         prompts = getattr(self.workflow, "prompts", None)
         if prompts is None:
             return None
@@ -679,8 +671,8 @@ class VoiceSelectNode(VoiceNodeBase):
             for candidate in top_candidates
         ]
         prompt = prompts.render(
-            "voice_select_audio_judge",
-            role_design=json.dumps(self.role_design_for_prompt(project_dir, role), ensure_ascii=False, indent=2),
+            "role_voice_select_audio_judge",
+            role_profile=json.dumps(self.role_profile_for_prompt(project_dir, role), ensure_ascii=False, indent=2),
             candidate_profiles=json.dumps(candidate_profiles, ensure_ascii=False, indent=2),
             role_visual_refs=json.dumps(
                 [
@@ -716,7 +708,7 @@ class VoiceSelectNode(VoiceNodeBase):
             ),
         )
         self.logger.info(
-            "voice_select model_call=audio_judge role=%s provider=%s candidates=%d refs=%d sample_emotions=%s",
+            "role_voice_select model_call=audio_judge role=%s provider=%s candidates=%d refs=%d sample_emotions=%s",
             role.name,
             self.provider_model_label(judge),
             len(top_candidates),
@@ -762,7 +754,7 @@ class VoiceSelectNode(VoiceNodeBase):
         existing: RoleVoiceSelectionItem | None,
         force: bool,
     ) -> RoleVoiceSelectionItem:
-        role_hash = self.role_design_hash(role)
+        role_hash = self.role_profile_hash(role)
         manual_candidate = service.manual_override_candidate(
             provider=provider,
             manifest=manifest,
@@ -773,7 +765,7 @@ class VoiceSelectNode(VoiceNodeBase):
                 role=role,
                 candidate=manual_candidate,
                 top_candidates=[manual_candidate],
-                role_design_hash=role_hash,
+                role_profile_hash=role_hash,
                 manifest=manifest,
                 catalog_hash=catalog_hash,
                 selection_source="manual_override",
@@ -783,7 +775,7 @@ class VoiceSelectNode(VoiceNodeBase):
 
         cached = self.cached_selection(
             existing=existing,
-            role_design_hash=role_hash,
+            role_profile_hash=role_hash,
             manifest=manifest,
             catalog_hash=catalog_hash,
             force=force,
@@ -793,7 +785,7 @@ class VoiceSelectNode(VoiceNodeBase):
             return cached
 
         limit = max(1, int(self.candidate_limit))
-        candidate_pool, filter_metadata = service.voice_select_candidate_pool(role, manifest)
+        candidate_pool, filter_metadata = service.role_voice_select_candidate_pool(role, manifest)
         heuristic_candidates = candidate_pool[:limit]
         top_candidates = heuristic_candidates
         shortlist_response: dict[str, Any] = {
@@ -842,7 +834,7 @@ class VoiceSelectNode(VoiceNodeBase):
                 role=role,
                 candidate=selected_candidate,
                 top_candidates=top_candidates,
-                role_design_hash=role_hash,
+                role_profile_hash=role_hash,
                 manifest=manifest,
                 catalog_hash=catalog_hash,
                 selection_source=(
@@ -862,12 +854,12 @@ class VoiceSelectNode(VoiceNodeBase):
             role=role,
         )
         if fallback_candidate is None:
-            raise ValueError(f"voice_select cannot select a voice for {role.name}: catalog is empty")
+            raise ValueError(f"role_voice_select cannot select a voice for {role.name}: catalog is empty")
         selection = service.selection_from_candidate(
             role=role,
             candidate=fallback_candidate,
             top_candidates=[fallback_candidate],
-            role_design_hash=role_hash,
+            role_profile_hash=role_hash,
             manifest=manifest,
             catalog_hash=catalog_hash,
             selection_source="provider_fallback",
@@ -876,9 +868,9 @@ class VoiceSelectNode(VoiceNodeBase):
         return self.with_selection_metadata(selection, manifest)
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.audio("speech", node_name="voice_select_speech")
+        provider = self.router.audio("speech", node_name="role_voice_select_speech")
         self.logger.info(
-            "node=voice_select provider=%s model=%s",
+            "node=role_voice_select provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
@@ -898,7 +890,7 @@ class VoiceSelectNode(VoiceNodeBase):
         catalog_hash = catalog_repo.manifest_hash(manifest)
         manifest_path = catalog_repo.manifest_path(manifest.provider, manifest.model)
         self.logger.info(
-            "node=voice_select catalog=%s voices=%d catalog_version=%s",
+            "node=role_voice_select catalog=%s voices=%d catalog_version=%s",
             manifest_path,
             len(manifest.voices),
             manifest.catalog_version,
@@ -913,13 +905,13 @@ class VoiceSelectNode(VoiceNodeBase):
         ]
         if active_episode_keys:
             self.logger.info(
-                "node=voice_select episode-scoped rerun episodes=%s target_roles=%s",
+                "node=role_voice_select episode-scoped rerun episodes=%s target_roles=%s",
                 ",".join(active_episode_keys),
                 ",".join(role.name for role in target_roles) or "-",
             )
         if active_role_names:
             self.logger.info(
-                "node=voice_select role-scoped rerun roles=%s target_roles=%s",
+                "node=role_voice_select role-scoped rerun roles=%s target_roles=%s",
                 ",".join(active_role_names),
                 ",".join(role.name for role in target_roles) or "-",
             )
@@ -1013,8 +1005,8 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
         merged.extend(generated)
         self.repo.save_node_output(project_dir, self.name, self.ordered_output(state, merged))
 
-    def apply_voice_select_output(self, project_dir: Path, state: ProjectState) -> None:
-        path = self.layout.node_output_path(project_dir, VoiceSelectNode.name)
+    def apply_role_voice_select_output(self, project_dir: Path, state: ProjectState) -> None:
+        path = self.layout.node_output_path(project_dir, RoleVoiceSelectNode.name)
         if not path.exists():
             return
         output = VoiceSelectOutput.model_validate_json(path.read_text(encoding="utf-8"))
@@ -1022,7 +1014,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             role = state.roles.get(item.role_id)
             if role is None:
                 continue
-            VoiceSelectNode.bind_selection_to_role(role, item)
+            RoleVoiceSelectNode.bind_selection_to_role(role, item)
 
     @staticmethod
     def voice_preferred_name(state: ProjectState, audio: RoleAudio) -> str:
@@ -1519,7 +1511,7 @@ class RoleVoiceGenerationNode(VoiceNodeBase):
             getattr(provider, "model", "-"),
         )
         self.workflow._hydrate_roles_from_design_files(project_dir, state)
-        self.apply_voice_select_output(project_dir, state)
+        self.apply_role_voice_select_output(project_dir, state)
         self.workflow._ensure_role_voice_audio_if_needed(state)
         active_episode_keys = self.active_episode_keys(state)
         active_role_names = self.active_role_names()
@@ -1569,7 +1561,7 @@ def build_voice_node_runners(workflow: Any) -> dict[str, VoiceNodeBase]:
         "logger": getattr(workflow, "logger", None) or get_logger(),
     }
     return {
-        VoiceSelectNode.name: VoiceSelectNode(**deps),
+        RoleVoiceSelectNode.name: RoleVoiceSelectNode(**deps),
         RoleVoiceGenerationNode.name: RoleVoiceGenerationNode(**deps),
     }
 
@@ -1585,7 +1577,7 @@ def build_voice_nodes(workflow: Any) -> list[WorkflowNode]:
 __all__ = [
     "VOICE_NODE_NAMES",
     "RoleVoiceGenerationNode",
-    "VoiceSelectNode",
+    "RoleVoiceSelectNode",
     "VoiceNodeBase",
     "build_voice_node_runners",
     "build_voice_nodes",

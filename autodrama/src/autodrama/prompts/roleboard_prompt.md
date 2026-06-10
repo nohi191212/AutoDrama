@@ -1,0 +1,62 @@
+# 任务
+
+你是真人短剧/高质量CG短剧的角色身份板 prompt 设计师。根据当前角色出现过的完整章节、角色抽取结果、导演前期约束和主视觉原图信息，生成一条可直接用于图像生成模型的角色身份板 prompt。
+
+# 输入
+
+当前角色抽取结果：
+{{role_extract_item}}
+
+全角色索引（只用于确认角色边界、别名、层级和关系，不要把索引当作完整剧情）：
+{{role_index}}
+
+全部集/章节的小说剧情提要：
+{{role_novel_extract}}
+
+当前角色出现过的完整章节正文：
+{{role_novel_full}}
+
+导演前期约束：
+{{director_prep}}
+
+主视觉原图资产（用于统一项目画风、光影、气质和世界观视觉方向）：
+{{key_vision_asset}}
+
+角色身份板统一风格要求：
+{{roleboard_style_prompt}}
+
+身份板视图要求：
+{{roleboard_view_requirement}}
+
+# 输出要求
+
+- 只输出 JSON。
+- JSON 只能包含以下字段：`roleboard_prompt`、`roleboard_negative_prompt`、`voice_profile_prompt`、`design_notes`。
+- 不要输出 `role_id`、`appearance_id`、`asset_id`、`xxx_id`、路径、URL、文件名、节点名或项目 ID；这些由代码生成。
+- `roleboard_prompt` 必须是一条完整图像生成 prompt，可直接传给图像模型。
+- `roleboard_negative_prompt` 写需要明确避免的内容，例如变脸、换衣服、年龄漂移、额外人物、字幕、水印、文字标识等。
+- `voice_profile_prompt` 如果角色有台词，写 1 段用于后续选声的稳定声音画像；如果角色无台词，可以为空字符串。
+- `design_notes` 只写给制作侧看的简短注意事项，可以为空字符串。
+
+# 角色身份板要求
+
+- 角色身份板必须表现同一角色，不是多角色海报，不是剧情分镜，不是主视觉封面。
+- 必须包含：正面全身、侧面全身、背面全身、头部近景、常态表情、关键情绪表情、常用动作姿态、服装材质细节、鞋履/配饰/绑定道具细节。
+- 所有视图必须统一年龄感、脸型轮廓、眼型、眉形、鼻形、嘴形、发型发色、肤色、身高体型、头身比例、基础服装、鞋履、配饰、材质和气质。
+- 重点防止视频生成中常见问题：变脸、换衣服、年龄漂移、发型漂移、身材比例漂移、配饰丢失、服装细节误变、同一角色被画成不同人。
+- 如果角色在原文里有多个状态，只做前中期稳定可复用的 base 身份板，不要把临时受伤、战斗、崩溃、死亡、尸化或结局状态当作基础形象。
+- 主视觉原图只作为统一画风、光影、气质和世界观参考；不要照搬主视觉构图，也不要把主视觉中的戏剧光影、遮挡或极端表情固化为身份板唯一标准。
+- 画面背景保持干净，适合做生产参考；不要出现可读文字、字幕、logo、水印、编号、边框或无关装饰。
+- 对真人剧/类真人剧，要强化“同一演员身份板”的稳定性：同一脸、同一年龄、同一发型、同一服装体系、同一气质。人物可保持电影级写实CG质感，但不要写成真实身份证照、现实明星脸或真实人脸扫描。
+
+Required JSON schema:
+{
+  "type": "object",
+  "properties": {
+    "roleboard_prompt": {"type": "string"},
+    "roleboard_negative_prompt": {"type": "string"},
+    "voice_profile_prompt": {"type": "string"},
+    "design_notes": {"type": "string"}
+  },
+  "required": ["roleboard_prompt"]
+}

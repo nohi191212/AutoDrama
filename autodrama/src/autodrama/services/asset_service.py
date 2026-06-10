@@ -40,11 +40,6 @@ class AssetService:
         *,
         novel_full: dict[str, str],
     ) -> PropExtractOutput:
-        role_bound_props = [
-            prop.model_dump(mode="json")
-            for prop in state.props.values()
-            if prop.source == "role_design" or prop.owner_role_id
-        ]
         prompt = self.prompts.render(
             "prop_extract",
             title=state.title,
@@ -53,7 +48,6 @@ class AssetService:
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             episode_keys=", ".join(novel_full),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
-            role_bound_props=self.format_json(role_bound_props),
         )
         return await provider.generate_json(
             prompt,
@@ -76,11 +70,6 @@ class AssetService:
         all_prop_extracts: list[dict[str, object]],
         existing_prop_designs: list[dict[str, object]],
     ) -> PropDesignOutput:
-        role_bound_props = [
-            prop.model_dump(mode="json")
-            for prop in state.props.values()
-            if prop.source == "role_design" or prop.owner_role_id
-        ]
         prompt = self.prompts.render(
             "prop_design",
             title=state.title,
@@ -91,7 +80,6 @@ class AssetService:
             all_prop_extracts=self.format_json(all_prop_extracts),
             existing_prop_designs=self.format_json(existing_prop_designs),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
-            role_bound_props=self.format_json(role_bound_props),
             prop_design_style_prompt=self.prop_design_style_prompt(state),
         )
         return await provider.generate_json(

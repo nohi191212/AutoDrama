@@ -569,7 +569,7 @@ class VoiceCatalogService:
         text = " ".join(str(value or "") for value in values)
         return "seed-tts-2.0" in text or "豆包语音合成模型2.0" in text
 
-    def voice_select_candidate_pool(
+    def role_voice_select_candidate_pool(
         self,
         role: Role,
         manifest: VoiceCatalogManifest,
@@ -662,7 +662,7 @@ class VoiceCatalogService:
         candidates: list[VoiceCandidateItem] | None = None,
     ) -> list[dict[str, Any]]:
         if candidates is None:
-            candidates, _metadata = self.voice_select_candidate_pool(role, manifest)
+            candidates, _metadata = self.role_voice_select_candidate_pool(role, manifest)
         profiles: list[dict[str, Any]] = []
         for candidate in candidates:
             voice = self.repo.voice_by_type(manifest, candidate.voice_type)
@@ -727,7 +727,7 @@ class VoiceCatalogService:
         ]
 
     @staticmethod
-    def role_design_for_shortlist(role: Role) -> dict[str, Any]:
+    def role_profile_for_shortlist(role: Role) -> dict[str, Any]:
         return {
             "role_id": role.id,
             "role_name": role.name,
@@ -906,7 +906,7 @@ class VoiceCatalogService:
         role: Role,
         candidate: VoiceCandidateItem,
         top_candidates: list[VoiceCandidateItem],
-        role_design_hash: str,
+        role_profile_hash: str,
         manifest: VoiceCatalogManifest,
         catalog_hash: str,
         selection_source: str,
@@ -923,7 +923,7 @@ class VoiceCatalogService:
             selected_reason=selected_reason or candidate.reason,
             selection_source=selection_source,
             top_candidates=top_candidates,
-            role_design_hash=role_design_hash,
+            role_profile_hash=role_profile_hash,
             catalog_version=manifest.catalog_version,
             catalog_hash=catalog_hash,
             provider=manifest.provider,

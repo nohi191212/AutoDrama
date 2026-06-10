@@ -45,28 +45,16 @@ class RoleAppearance(BaseModel):
     name: str = "base"
     desc: str | None = Field(default=None, exclude=True)
     prompt: str | None = Field(default=None, exclude=True)
-    full_body_prompt: str | None = Field(default=None, exclude=True)
-    role_bound_prop_ids: list[str] = Field(default_factory=list)
-    intro_video_prompt: str | None = Field(default=None, exclude=True)
-    full_body_image_generation_status: str = "pending"
+    roleboard_prompt: str | None = Field(default=None, exclude=True)
+    roleboard_negative_prompt: str | None = Field(default=None, exclude=True)
+    voice_profile_prompt: str | None = Field(default=None, exclude=True)
     design_image_generation_status: str = "pending"
-    intro_video_generation_status: str = "pending"
-    full_body_image_asset_id: str | None = None
-    full_body_image_asset_path: str | None = None
-    full_body_image_asset_url: str | None = None
     design_image_asset_id: str | None = None
     design_image_asset_path: str | None = None
     design_image_asset_url: str | None = None
-    intro_video_asset_id: str | None = None
-    intro_video_asset_path: str | None = None
-    intro_video_asset_url: str | None = None
     asset_id: str | None = None
     asset_path: str | None = None
     asset_url: str | None = None
-    full_body_provider: str | None = None
-    full_body_model: str | None = None
-    full_body_request_id: str | None = None
-    full_body_usage: dict[str, Any] = Field(default_factory=dict)
     provider: str | None = None
     model: str | None = None
     request_id: str | None = None
@@ -299,63 +287,6 @@ class AmbientEntityOutput(BaseModel):
     entities: list[AmbientEntityItem]
 
 
-class RoleBoundPropDesignItem(BaseModel):
-    name: str
-    desc: str
-    prompt: str
-    status: str = "normal"
-    scale_relation: str | None = None
-    usage: str | None = None
-
-
-class RoleAppearanceDesignItem(BaseModel):
-    role_name: str
-    name: str = "base"
-    desc: str
-    prompt: str
-    full_body_prompt: str | None = None
-    role_bound_props: list[RoleBoundPropDesignItem] = Field(default_factory=list)
-    intro_video_prompt: str | None = None
-
-
-class RoleRelationshipDesignItem(BaseModel):
-    target_role_name: str
-    relation: str
-    dynamic: str | None = None
-    evidence: str | None = None
-
-
-class RoleVoiceItem(BaseModel):
-    role_name: str
-    emotion: Literal["normal", "angry", "sad", "happy", "tense", "whisper", "other"] | str
-    voice_name: str | None = Field(
-        default=None,
-        description="Legacy display name for a provider voice. New role_design output should usually leave this empty; voice_select binds the final provider voice.",
-    )
-    voice_type: str | None = Field(
-        default=None,
-        description="Legacy provider voice_type. New role_design output should usually leave this empty; voice_select binds the final provider voice_type.",
-    )
-    voice_resource_id: str | None = Field(
-        default=None,
-        description="Legacy resource_id for a selected provider voice. New role_design output should usually leave this empty.",
-    )
-    voice_selection_reason: str | None = Field(
-        default=None,
-        description="Legacy reason for provider voice selection. New role_design output should describe voice needs in desc instead.",
-    )
-    desc: str
-    sample_text: str | None = Field(
-        default=None,
-        description=(
-            "Voice-design reference text in first person. It should be 1-2 short sentences in the format "
-            "'identity self-introduction + early goal/attitude', reflect the role identity/personality/tone, "
-            "fit roughly within 30-45 Chinese characters / 10 seconds of generated audio, and avoid late key plot, "
-            "final twists, key evidence, endings, or outcome spoilers."
-        ),
-    )
-
-
 class RoleExtractOutput(BaseModel):
     roles: list[RoleExtractItem]
 
@@ -414,25 +345,33 @@ class RoleDuplicateAuditOutput(BaseModel):
     remaining_role_names: list[str] = Field(default_factory=list)
 
 
-class RoleDesignItem(BaseModel):
-    name: str
-    intro: str
-    personality: str | None = None
-    aliases: list[str] = Field(default_factory=list)
-    role_tier: Literal["primary", "functional"] | str | None = None
-    has_dialogue: bool = True
-    visual_reuse_required: bool = True
-    importance: Literal["lead", "main", "supporting", "minor", "background"] | str | None = None
-    episode_keys: list[str] = Field(default_factory=list)
-    source_chapters: list[str] = Field(default_factory=list)
-    relationships: list[RoleRelationshipDesignItem] = Field(default_factory=list)
-    appearances: list[RoleAppearanceDesignItem] = Field(default_factory=list)
-    voices: list[RoleVoiceItem] = Field(default_factory=list)
+class RoleboardPromptModelOutput(BaseModel):
+    roleboard_prompt: str
+    roleboard_negative_prompt: str | None = None
+    voice_profile_prompt: str | None = None
     design_notes: str | None = None
 
 
-class RoleDesignOutput(BaseModel):
-    roles: list[RoleDesignItem]
+class RoleboardPromptItem(BaseModel):
+    role_id: str
+    role_name: str
+    appearance_id: str
+    appearance_name: str = "base"
+    role_tier: Literal["primary", "functional"] | str | None = None
+    has_dialogue: bool = True
+    visual_reuse_required: bool = True
+    episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    role_brief: str | None = None
+    appearance_desc: str | None = None
+    roleboard_prompt: str
+    roleboard_negative_prompt: str | None = None
+    voice_profile_prompt: str | None = None
+    design_notes: str | None = None
+
+
+class RoleboardPromptOutput(BaseModel):
+    prompts: list[RoleboardPromptItem]
 
 
 class RoleVoiceGenerationItem(BaseModel):
@@ -537,11 +476,7 @@ class BGMDesignOutput(BaseModel):
 class StaticAssetGenerationItem(BaseModel):
     asset_id: str
     asset_type: Literal[
-        "role_full_body",
-        "role_appearance",
-        "role_multiview",
-        "role_appearance_video",
-        "role_intro_video",
+        "roleboard",
         "key_vision",
         "prop",
         "layout",
@@ -566,23 +501,6 @@ class StaticAssetGenerationOutput(BaseModel):
 class SafeImagePromptRewriteOutput(BaseModel):
     prompt: str
     notes: str = ""
-
-
-class RoleIntroVideoPromptItem(BaseModel):
-    asset_id: str
-    role_id: str
-    role_name: str
-    appearance_id: str
-    appearance_name: str
-    prompt: str
-    reference_asset_id: str
-    reference_asset_path: str
-    reference_asset_url: str | None = None
-    episode_keys: list[str] = Field(default_factory=list)
-
-
-class RoleIntroVideoPromptOutput(BaseModel):
-    prompts: list[RoleIntroVideoPromptItem]
 
 
 class ShotDialogueAudioAsset(BaseModel):

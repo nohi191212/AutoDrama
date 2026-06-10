@@ -27,19 +27,13 @@ def main() -> int:
         api_key_env="sk-smoke-test",
         models={
             "image": "gpt-image-2",
-            "role_design": "gpt-image-2",
-            "role_full_body": "gpt-image-full-body",
-            "role_multiview": "gpt-image-multiview",
+            "roleboard": "gpt-image-roleboard",
         },
         options={
             "resolution": "4K",
             "size": "16:9",
-            "role_design_size": "16:9",
-            "role_design_resolution": "4K",
-            "role_full_body_size": "1:2",
-            "role_full_body_resolution": "2K",
-            "role_multiview_size": "16:9",
-            "role_multiview_resolution": "4K",
+            "roleboard_size": "16:9",
+            "roleboard_resolution": "4K",
             "prop_size": "1:1",
             "prop_resolution": "2K",
             "layout_size": "16:9",
@@ -51,25 +45,17 @@ def main() -> int:
     )
     provider = ToAPIImageProvider(settings, RuntimeSettings())
 
-    full_body_payload = provider.build_payload(
-        "full body prompt",
-        metadata={"node_name": "role_full_body_generation"},
+    roleboard_payload = provider.build_payload(
+        "roleboard prompt",
+        refs=[AssetRef(id="key_vision_original", type="image", url="https://example.invalid/key-vision.png")],
+        metadata={"node_name": "roleboard_generation"},
     )
-    require(full_body_payload["model"] == "gpt-image-full-body", f"Unexpected full-body model: {full_body_payload['model']}")
-    require(full_body_payload["size"] == "1:2", f"Unexpected full-body size: {full_body_payload['size']}")
-    require(full_body_payload["resolution"] == "2K", f"Unexpected full-body resolution: {full_body_payload['resolution']}")
-
-    multiview_payload = provider.build_payload(
-        "multiview prompt",
-        refs=[AssetRef(id="full_body", type="image", url="https://example.invalid/full-body.png")],
-        metadata={"node_name": "role_multiview_generation"},
-    )
-    require(multiview_payload["model"] == "gpt-image-multiview", f"Unexpected multiview model: {multiview_payload['model']}")
-    require(multiview_payload["size"] == "16:9", f"Unexpected multiview size: {multiview_payload['size']}")
-    require(multiview_payload["resolution"] == "4K", f"Unexpected multiview resolution: {multiview_payload['resolution']}")
+    require(roleboard_payload["model"] == "gpt-image-roleboard", f"Unexpected roleboard model: {roleboard_payload['model']}")
+    require(roleboard_payload["size"] == "16:9", f"Unexpected roleboard size: {roleboard_payload['size']}")
+    require(roleboard_payload["resolution"] == "4K", f"Unexpected roleboard resolution: {roleboard_payload['resolution']}")
     require(
-        multiview_payload.get("reference_images") == ["https://example.invalid/full-body.png"],
-        f"Unexpected multiview refs: {multiview_payload.get('reference_images')}",
+        roleboard_payload.get("reference_images") == ["https://example.invalid/key-vision.png"],
+        f"Unexpected roleboard refs: {roleboard_payload.get('reference_images')}",
     )
 
     prop_payload = provider.build_payload(
@@ -108,8 +94,7 @@ def main() -> int:
     output_path.write_text(
         json.dumps(
             {
-                "full_body": full_body_payload,
-                "multiview": multiview_payload,
+                "roleboard": roleboard_payload,
                 "prop": prop_payload,
                 "layout": layout_payload,
                 "ref_frame": ref_frame_payload,
@@ -121,8 +106,7 @@ def main() -> int:
     )
 
     print("toapi_image_payload_smoke=ok")
-    print(f"full_body={full_body_payload['model']} {full_body_payload['size']} {full_body_payload['resolution']}")
-    print(f"multiview={multiview_payload['model']} {multiview_payload['size']} {multiview_payload['resolution']}")
+    print(f"roleboard={roleboard_payload['model']} {roleboard_payload['size']} {roleboard_payload['resolution']}")
     print(f"prop={prop_payload['size']} {prop_payload['resolution']}")
     print(f"layout={layout_payload['size']} {layout_payload['resolution']}")
     print(f"ref_frame={ref_frame_payload['size']} {ref_frame_payload['resolution']}")

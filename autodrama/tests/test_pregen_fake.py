@@ -59,12 +59,13 @@ def test_pregen_runs_integrated_role_pipeline(tmp_path: Path) -> None:
     assert state.roles["role_林舟"].audio["normal"].asset_id.startswith("fake_ad_")
     assert state.roles["role_林舟"].audio["tense"].asset_id.startswith("fake_clone_ad_")
     assert state.roles["role_林舟"].appearances["base"].design_image_asset_path
-    assert state.roles["role_林舟"].appearances["base"].intro_video_asset_path
+    assert state.roles["role_林舟"].appearances["base"].asset_path
     assert state.props
     assert state.layouts
     assert state.bgms
     assert (project_dir / "assets" / "json" / "nodes" / "role_extract.json").exists()
-    assert (project_dir / "assets" / "json" / "nodes" / "role_design.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "roleboard_prompt.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "roleboard_generation.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "role_voice_generation.json").exists()
     assert not hasattr(state, "storyboards")
     assert (settings.output.root_dir / "current_project.json").exists()

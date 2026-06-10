@@ -119,8 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--episode",
         dest="episodes",
         help=(
-            "Supported with pregen --only role_design, voice_select, role_voice_generation, role_full_body_generation, "
-            "role_multiview_generation, role_intro_video_prompt, role_intro_video_generation, "
+            "Supported with pregen --only roleboard_prompt, roleboard_generation, role_voice_select, role_voice_generation, "
             "prop_design, prop_generation, or layout_image_generation (legacy alias: prop_image_generation)."
         ),
     )
@@ -129,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--role",
         dest="roles",
         help=(
-            "Comma-separated role names or role ids to regenerate with pregen --only voice_select "
+            "Comma-separated role names or role ids to regenerate with pregen --only role_voice_select "
             "or role_voice_generation, for example 九韶 or role_jiushao."
         ),
     )

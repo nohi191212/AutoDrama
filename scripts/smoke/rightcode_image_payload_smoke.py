@@ -21,18 +21,12 @@ def main() -> int:
         api_key_env="RIGHTCODE_API_KEY",
         models={
             "image": "gpt-image-2",
-            "role_design": "gpt-image-2-vip",
-            "rightcode_role_multiview": "gpt-image-2-multiview",
-            "rightcode_role_full_body": "gpt-image-2-full-body",
+            "rightcode_roleboard": "gpt-image-2-roleboard",
         },
         options={
             "size": "1024×1024",
-            "role_design_size": "3840×2160",
-            "role_design_quality": "high",
-            "rightcode_role_multiview_size": "4096×2304",
-            "rightcode_role_multiview_quality": "high",
-            "rightcode_role_full_body_size": "1024×1536",
-            "rightcode_role_full_body_quality": "medium",
+            "rightcode_roleboard_size": "4096×2304",
+            "rightcode_roleboard_quality": "high",
             "n": 1,
         },
     )
@@ -70,27 +64,16 @@ def main() -> int:
     if not str(images[0]).startswith("data:image/png;base64,"):
         raise AssertionError("Reference image was not encoded as a png data URL")
 
-    role_multiview_payload = provider.build_payload(
-        "A clean role multiview sheet.",
-        metadata={"node_name": "role_multiview_generation", "asset_type": "role_multiview"},
+    roleboard_payload = provider.build_payload(
+        "A clean role identity board.",
+        metadata={"node_name": "roleboard_generation", "asset_type": "roleboard"},
     )
-    if role_multiview_payload["model"] != "gpt-image-2-multiview":
-        raise AssertionError(f"Unexpected role multiview model: {role_multiview_payload['model']}")
-    if role_multiview_payload["size"] != "4096x2304":
-        raise AssertionError(f"Unexpected role multiview size: {role_multiview_payload['size']}")
-    if role_multiview_payload["quality"] != "high":
-        raise AssertionError(f"Unexpected role multiview quality: {role_multiview_payload['quality']}")
-
-    full_body_payload = provider.build_payload(
-        "A clean role full-body reference.",
-        metadata={"node_name": "role_full_body_generation", "asset_type": "role_full_body"},
-    )
-    if full_body_payload["model"] != "gpt-image-2-full-body":
-        raise AssertionError(f"Unexpected full-body model: {full_body_payload['model']}")
-    if full_body_payload["size"] != "1024x1536":
-        raise AssertionError(f"Unexpected full-body size: {full_body_payload['size']}")
-    if full_body_payload["quality"] != "medium":
-        raise AssertionError(f"Unexpected full-body quality: {full_body_payload['quality']}")
+    if roleboard_payload["model"] != "gpt-image-2-roleboard":
+        raise AssertionError(f"Unexpected roleboard model: {roleboard_payload['model']}")
+    if roleboard_payload["size"] != "4096x2304":
+        raise AssertionError(f"Unexpected roleboard size: {roleboard_payload['size']}")
+    if roleboard_payload["quality"] != "high":
+        raise AssertionError(f"Unexpected roleboard quality: {roleboard_payload['quality']}")
 
     image_urls, image_data = provider._extract_images(
         {
@@ -119,14 +102,9 @@ def main() -> int:
     print(f"endpoint={provider.endpoint}")
     print(f"model={payload['model']}")
     print(
-        "role_multiview="
-        f"{role_multiview_payload['model']} size={role_multiview_payload['size']} "
-        f"quality={role_multiview_payload['quality']}"
-    )
-    print(
-        "full_body="
-        f"{full_body_payload['model']} size={full_body_payload['size']} "
-        f"quality={full_body_payload['quality']}"
+        "roleboard="
+        f"{roleboard_payload['model']} size={roleboard_payload['size']} "
+        f"quality={roleboard_payload['quality']}"
     )
     print(f"reference_path={reference_path}")
     return 0

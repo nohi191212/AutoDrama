@@ -14,22 +14,21 @@ Implemented scope:
 6. `role_extract_functional`
 7. `role_extract`
 8. `role_episode_key_audit`
-9. `ambient_entity_extract`
-10. `role_design`
-11. `voice_select`
-12. `role_voice_generation`
-13. `role_full_body_generation`
-14. `role_multiview_generation`
-15. `role_intro_video_generation`
-16. `prop_extract`
-17. `prop_design`
-18. `prop_generation`
-19. `layout_extract`
-20. `layout_design`
-21. `layout_dedupe_review`
-22. `layout_image_generation`
-23. `bgm_design`
-24. `bgm_generation`
+9. `role_duplicate_audit`
+10. `ambient_entity_extract`
+11. `roleboard_prompt`
+12. `roleboard_generation`
+13. `role_voice_select`
+14. `role_voice_generation`
+15. `prop_extract`
+16. `prop_design`
+17. `prop_generation`
+18. `layout_extract`
+19. `layout_design`
+20. `layout_dedupe_review`
+21. `layout_image_generation`
+22. `bgm_design`
+23. `bgm_generation`
 
 `run pregen` covers script, reusable static assets, BGM design, and BGM audio generation. It stops at `bgm_generation` by default.
 
@@ -43,13 +42,13 @@ Script episode content is stored as per-episode JSON files:
 
 Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at most one direct source path such as `source_novel_full_path`. The state stores the JSON path when an episode is generated, or `false` when it is not generated yet.
 
-`role_extract_primary` reads the complete `novel_full` set and recursively extracts only primary roles. `role_extract_functional` then receives separated `primary_roles` and `functional_roles` lists and recursively extracts short-lived functional roles outside the primary set. `role_extract` merges those outputs in stable order, with primary roles first and background/ambient entities excluded from `roles`. `role_episode_key_audit` then checks every role JSON with up to 30 concurrent role audits and only appends missing `episode_keys/source_chapters` to role extract/design/state records. `ambient_entity_extract` writes background entities to `assets/json/assets/ambient_entities.json` for scene/storyboard use without entering the role asset chain. `role_design` then runs one role at a time, loading only that role's `novel_full` episodes, and writes identity, relationships, voice needs/sample text, full-body prompt, multiview prompt, intro video prompt, and role-bound prop design into the active role state. `voice_select` reads the reusable `.assets/voice_catalog` manifest, filters candidate voices before a `deepseek-v4-flash` top-3 text shortlist, and uses the Qwen3.5-Omni-Plus audio judge when candidate samples are complete before binding the final provider `voice_type`; `role_voice_generation` then uses that `voice_type` for synthesis. `role_full_body_generation` renders a natural front-facing full-body reference, `role_multiview_generation` renders the three-view role sheet plus bound props using the full-body image as reference, and `role_intro_video_generation` renders the role intro video from the multiview sheet. Functional roles use a lighter asset policy: no voice when `has_dialogue=false`, and no intro video by default.
+`role_extract_primary` reads the complete `novel_full` set and recursively extracts only primary roles. `role_extract_functional` then receives separated `primary_roles` and `functional_roles` lists and recursively extracts short-lived functional roles outside the primary set. `role_extract` merges those outputs in stable order, with primary roles first and background/ambient entities excluded from `roles`. `role_episode_key_audit` checks role JSON records and appends missing `episode_keys/source_chapters`; `role_duplicate_audit` merges duplicated role extracts before visual/audio generation. `ambient_entity_extract` writes background entities to `assets/json/assets/ambient_entities.json` for scene/storyboard use without entering the role asset chain. `roleboard_prompt` then runs one role at a time, loading only that role's `novel_full` episodes plus the key-vision context, and writes prompt-only role identity-board prompts. Code generates `role_id` and `appearance_id`; model output must not include IDs, paths, URLs, filenames, node names, or project IDs. `roleboard_generation` uses the roleboard prompt and the `design_key_vision_image` result as reference to render a reusable role identity board with front, side, back, expression, action, and costume-detail views. `role_voice_select` reads the reusable `.assets/voice_catalog` manifest, filters candidate voices before a `deepseek-v4-flash` top-3 text shortlist, and uses the Qwen3.5-Omni-Plus audio judge when candidate samples are complete before binding the final provider `voice_type`; `role_voice_generation` then uses that `voice_type` for synthesis. Functional roles with `has_dialogue=false` do not generate voice.
 
 `prop_extract` reads the complete `novel_full` set and records global prop candidates/statuses without image prompts. Each extracted prop/status is written to its own `assets/json/props/{prop_id}.json` file. `prop_design` then runs one prop/status at a time, loading only the relevant `novel_full` episodes and updating that per-prop JSON with design content while preserving `extract_content`. `prop_generation` renders the final prop images from those saved prompts.
 
 `layout_extract` reads the complete `novel_full` set and records reusable scene/location candidates without image prompts. `layout_design` then designs empty-scene image prompts from those extracted layouts plus the episode story context, `layout_dedupe_review` merges near-duplicate spaces, and `layout_image_generation` renders the final layout images.
 
-`run pregen --only role_design --episodes ...` is supported for role-scoped reruns. It only regenerates roles whose `role_extract.episode_keys` include the selected episode(s), while preserving existing role designs outside that episode when `assets/json/nodes/role_design.json` exists. `voice_select`, `role_voice_generation`, `role_full_body_generation`, `role_multiview_generation`, `role_intro_video_generation`, `prop_design`, `prop_generation`, and `layout_image_generation` also support `--episodes`; they rerun only roles/props/layouts whose `episode_keys` intersect the selected episode(s). The legacy `--only prop_image_generation` name is accepted as an alias for `prop_generation`.
+`run pregen --only roleboard_prompt --episodes ...` and `run pregen --only roleboard_generation --episodes ...` rerun only roles whose `role_extract.episode_keys` include the selected episode(s), preserving existing roleboard prompts/assets outside that episode unless `--force` targets them. `role_voice_select`, `role_voice_generation`, `prop_design`, `prop_generation`, and `layout_image_generation` also support `--episodes`; they rerun only roles/props/layouts whose `episode_keys` intersect the selected episode(s). The legacy `--only prop_image_generation` name is accepted as an alias for `prop_generation`.
 
 Dynamic shot-level assets now live in a separate workflow:
 
@@ -70,7 +69,7 @@ The default production routing in `config.yaml` is:
 - `text.ref_frame_spatial: deepseek` for reference-frame spatial continuity planning.
 - `music.bgm: minimax` for `bgm_generation` with MiniMax `music-2.6`.
 - `audio.speech: volcengine` for role TTS.
-- `image.role`, `image.prop`, `image.layout`, and `image.ref_frame`: `toapi` for GPT-Image-2 image generation. Role full-body images, role multiview sheets, props, layouts, and shot reference frames are saved both as local image files and as the provider returned image URL.
+- `image.role`, `image.prop`, `image.layout`, and `image.ref_frame`: `toapi` for GPT-Image-2 image generation. Role identity boards, props, layouts, and shot reference frames are saved both as local image files and as the provider returned image URL.
 - `video.shot: volcengine` for shot videos. The default `providers.volcengine.options.video_reference_mode: ref_frame` uses each shot's generated reference frame as the main visual anchor and, from the second shot onward when available, also passes the previous shot's ref frame as `previous_shot_last_ref_frame` to hint the last visual state before the hard cut. Previous-shot generated videos remain disabled to avoid generation-to-generation quality drift across long shot chains. Role/dialogue audio anchors are still passed when available. When generated images are reused as references elsewhere, the workflow passes the saved network URL first and falls back to the local file only when no URL is available. The generated video prompt describes each passed reference by modality-local numbering so the current ref frame constrains the current shot's visual state, the previous-shot last ref frame only preserves continuity cues, and audio references constrain voice, lip-sync rhythm, and dialogue emotion.
 
 Volcengine TTS should keep `instruction_mode: none` unless a provider-level instruction carrier is verified. This prevents instruction-prefix text from being synthesized as speech.
@@ -219,7 +218,7 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --confi
 D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --config config.yaml --provider volcengine
 ```
 
-`--force-samples` now builds only the `normal` sample by default. Add `--sample-emotion all` when you need the full `normal/angry/sad/happy/low` set, or repeat `--sample-emotion <name>` for a custom subset. `--force-profiles` asks the configured Omni/audio judge to regenerate a natural-language listening sketch for each selected voice under `.assets/voice_catalog/<provider>/<model>/profiles/<voice_type>.json` and also updates the manifest; `--miss-profiles` builds only missing or stale manifest profiles and skips the judge for existing matching profiles. Both profile modes call the judge with concurrency 5. Use `--judge-provider <name>` only when you need to override that configured judge. Use `--voice-type <voice_type>` or `--limit N` when you want to build a small catalog slice before processing the full provider list. Project-level `voice_select` filters candidates to Chinese, same-gender, Doubao TTS 2.0 voices for Volcengine catalogs, assigns short internal `candidate_id` values, and uses one `deepseek-v4-flash` text call with thinking disabled to shortlist top 3 for each role. Roles run concurrently and each completed role is saved immediately; complete candidate sample sets are then passed to `routing.judge.voice_select` for Qwen3.5-Omni-Plus audio final selection by default.
+`--force-samples` now builds only the `normal` sample by default. Add `--sample-emotion all` when you need the full `normal/angry/sad/happy/low` set, or repeat `--sample-emotion <name>` for a custom subset. `--force-profiles` asks the configured Omni/audio judge to regenerate a natural-language listening sketch for each selected voice under `.assets/voice_catalog/<provider>/<model>/profiles/<voice_type>.json` and also updates the manifest; `--miss-profiles` builds only missing or stale manifest profiles and skips the judge for existing matching profiles. Both profile modes call the judge with concurrency 5. Use `--judge-provider <name>` only when you need to override that configured judge. Use `--voice-type <voice_type>` or `--limit N` when you want to build a small catalog slice before processing the full provider list. Project-level `role_voice_select` filters candidates to Chinese, same-gender, Doubao TTS 2.0 voices for Volcengine catalogs, assigns short internal `candidate_id` values, and uses one `deepseek-v4-flash` text call with thinking disabled to shortlist top 3 for each role. Roles run concurrently and each completed role is saved immediately; complete candidate sample sets are then passed to `routing.judge.role_voice_select` for Qwen3.5-Omni-Plus audio final selection by default.
 
 Stop a workflow at a node:
 
@@ -231,7 +230,7 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config
 Run exactly one node:
 
 ```powershell
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only voice_select
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only role_voice_select
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only role_voice_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only prop_design --episodes 1 --force
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only prop_generation --episodes 1 --force
@@ -253,7 +252,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --episode
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
 
-For pregen, `--episodes` is supported only with `--only role_design`, `--only voice_select`, `--only role_voice_generation`, `--only role_full_body_generation`, `--only role_multiview_generation`, `--only role_intro_video_generation`, `--only prop_design`, `--only prop_generation`, and `--only layout_image_generation` (or legacy alias `--only prop_image_generation`). Other static asset nodes are still project-level. For generation, `--episodes` selects the dynamic episodes to process.
+For pregen, `--episodes` is supported only with `--only roleboard_prompt`, `--only roleboard_generation`, `--only role_voice_select`, `--only role_voice_generation`, `--only prop_design`, `--only prop_generation`, and `--only layout_image_generation` (or legacy alias `--only prop_image_generation`). Other static asset nodes are still project-level. For generation, `--episodes` selects the dynamic episodes to process.
 
 `--shots` accepts shot indexes, ranges, and shot ids inside selected episodes:
 
@@ -350,9 +349,8 @@ D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/refactor_boundaries_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_iterative_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_partial_persistence_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_design_scoping_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_episode_key_audit_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/functional_role_asset_policy_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/roleboard_pregen_contract_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/config_roleboard_load_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/prop_episode_scoping_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/only_node_episode_smoke.py

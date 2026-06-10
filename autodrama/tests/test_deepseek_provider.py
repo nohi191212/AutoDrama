@@ -1,7 +1,7 @@
 import asyncio
 
 from autodrama.config import ProviderSettings, RuntimeSettings
-from autodrama.core.schemas import RoleDesignOutput, ScriptNovelExtractBatchOutput
+from autodrama.core.schemas import RoleboardPromptModelOutput, ScriptNovelExtractBatchOutput
 from autodrama.logging import setup_logging
 from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
 
@@ -42,7 +42,7 @@ def test_deepseek_writes_prompt_and_output_detail_log(tmp_path, monkeypatch) -> 
             captured_request.update(kwargs)
 
             class Message:
-                content = '{"roles":[{"name":"林舟","intro":"被陷害的青年","personality":"冷静","aliases":["男主"]}]}'
+                content = '{"roleboard_prompt":"林舟角色身份板，正面侧面背面统一。"}'
 
             class Choice:
                 message = Message()
@@ -73,14 +73,14 @@ def test_deepseek_writes_prompt_and_output_detail_log(tmp_path, monkeypatch) -> 
 
     output = asyncio.run(
         provider.generate_json(
-            "请设计人物。",
-            RoleDesignOutput,
+            "请生成角色身份板 prompt。",
+            RoleboardPromptModelOutput,
             temperature=0.4,
-            metadata={"node_name": "role_design", "project_id": "test_project"},
+            metadata={"node_name": "roleboard_prompt", "project_id": "test_project"},
         )
     )
 
-    assert output.roles[0].name == "林舟"
+    assert "林舟" in output.roleboard_prompt
     assert captured_request["response_format"] == {"type": "json_object"}
     assert "Required JSON schema" in captured_request["messages"][1]["content"]
 
@@ -90,8 +90,8 @@ def test_deepseek_writes_prompt_and_output_detail_log(tmp_path, monkeypatch) -> 
     assert "DEEPSEEK RESPONSE" in content
     assert "USER MESSAGE SENT TO DEEPSEEK" in content
     assert "JSON SCHEMA INJECTED INTO USER MESSAGE" in content
-    assert "RoleDesignOutput" in content
-    assert "role_design" in content
+    assert "RoleboardPromptModelOutput" in content
+    assert "roleboard_prompt" in content
     assert "RAW DEEPSEEK MESSAGE CONTENT" in content
     assert "林舟" in content
 

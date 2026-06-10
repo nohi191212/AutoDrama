@@ -94,7 +94,7 @@ class RoleVoiceSelectionItem(BaseModel):
         "provider_fallback",
     ] | str = "omni_judge"
     top_candidates: list[VoiceCandidateItem] = Field(default_factory=list)
-    role_design_hash: str
+    role_profile_hash: str
     catalog_version: str
     catalog_hash: str
     provider: str

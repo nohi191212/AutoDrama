@@ -14,11 +14,10 @@ from autodrama.core.schemas import (
     Role,
     RoleAppearance,
     RoleAudio,
-    RoleDesignItem,
-    RoleDesignOutput,
     RoleExtractItem,
     RoleExtractOutput,
-    RoleVoiceItem,
+    RoleboardPromptItem,
+    RoleboardPromptOutput,
     ShotDialogueAudioAsset,
     StoryboardEpisodeOutput,
     StoryboardShot,
@@ -29,7 +28,7 @@ from autodrama.repositories.prop_design_repo import PropDesignRepository
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.storyboard_repo import StoryboardRepository
 from autodrama.repositories.project_repo import ProjectRepository
-from autodrama.repositories.role_design_repo import RoleDesignRepository
+from autodrama.repositories.roleboard_prompt_repo import RoleboardPromptRepository
 from autodrama.repositories.script_content_repo import ScriptContentRepository
 from autodrama.services.asset_service import AssetService
 from autodrama.services.audio_duration import (
@@ -66,19 +65,16 @@ from autodrama.workflows.selection import select_episode_keys
 
 PREGEN_NODES = PREGEN_NODE_NAMES
 EPISODE_SCOPED_PREGEN_ONLY_NODES = {
-    "role_design",
-    "voice_select",
+    "roleboard_prompt",
+    "roleboard_generation",
+    "role_voice_select",
     "role_voice_generation",
-    "role_full_body_generation",
-    "role_multiview_generation",
-    "role_intro_video_prompt",
-    "role_intro_video_generation",
     "prop_design",
     "prop_generation",
     "layout_image_generation",
 }
 ROLE_SCOPED_PREGEN_ONLY_NODES = {
-    "voice_select",
+    "role_voice_select",
     "role_voice_generation",
 }
 PREGEN_ONLY_ALIASES = {"prop_image_generation": "prop_generation"}
@@ -106,7 +102,7 @@ class PregenWorkflow:
         self.asset_service = AssetService(self.prompts)
         self.storyboard_service = StoryboardService(self.prompts)
         self.script_contents = ScriptContentRepository(self.repo, self.layout)
-        self.role_designs = RoleDesignRepository(self.repo, self.layout)
+        self.roleboard_prompts = RoleboardPromptRepository(self.repo, self.layout)
         self.prop_designs = PropDesignRepository(self.repo, self.layout)
         self.media_store = MediaStore(
             self.layout,
@@ -236,62 +232,6 @@ class PregenWorkflow:
         self._copy_role_voice_to_audio(role, role.audio["normal"])
         role.voice_summary = desc
 
-    def _apply_role_voice_items(
-        self,
-        state: ProjectState,
-        role_voices: list[RoleVoiceItem],
-        *,
-        preserve_assets: bool = False,
-        validate_sample_text: bool = True,
-    ) -> None:
-        roles_by_key = self._role_lookup(state)
-        unmatched_role_names: list[str] = []
-
-        for item in role_voices:
-            role = self._resolve_role(roles_by_key, item.role_name)
-            if role is None:
-                unmatched_role_names.append(item.role_name)
-                continue
-            if not self._role_needs_voice(role):
-                continue
-            audio_id = normalize_id(f"{role.id}_audio", str(item.emotion))
-            existing_audio = role.audio.get(str(item.emotion))
-            audio = RoleAudio(
-                id=audio_id,
-                role_id=role.id,
-                emotion=str(item.emotion),
-                desc=item.desc,
-                sample_text=item.sample_text,
-            )
-            if validate_sample_text:
-                self._validate_voice_sample_text(
-                    f"role_design voices for {role.name} voices[{item.emotion or 'normal'}].sample_text",
-                    audio.sample_text,
-                )
-            if preserve_assets and existing_audio is not None:
-                audio.generation_status = existing_audio.generation_status
-                audio.asset_id = existing_audio.asset_id
-                audio.asset_path = existing_audio.asset_path
-            role.audio[str(item.emotion)] = audio
-        if unmatched_role_names:
-            get_logger().warning(
-                "role_design voices ignored unmatched role_name values: %s",
-                ", ".join(unmatched_role_names),
-            )
-        for role in state.roles.values():
-            if not self._role_needs_voice(role):
-                role.voice_summary = None
-                role.voice_name = None
-                role.voice_type = None
-                role.voice_resource_id = None
-                role.voice_model_family = None
-                role.voice_selection_reason = None
-                role.audio = {}
-                continue
-            self._ensure_normal_role_audio(role)
-            for audio in role.audio.values():
-                self._copy_role_voice_to_audio(role, audio)
-
     def _ensure_role_voice_audio_if_needed(self, state: ProjectState) -> None:
         if all(
             not self._role_needs_voice(role) or ("normal" in role.audio and role.voice_type)
@@ -320,7 +260,7 @@ class PregenWorkflow:
         state.metadata["episode_duration_seconds"] = self.repo.settings.project.episode_duration_seconds
         state.metadata["bgm_count"] = self.repo.settings.project.bgm_count
         state.metadata["visual_style_prompt"] = self.repo.settings.generation.visual_style_prompt
-        state.metadata["role_design_style_prompt"] = self.repo.settings.generation.role_design_style_prompt
+        state.metadata["roleboard_style_prompt"] = self.repo.settings.generation.roleboard_style_prompt
         state.metadata["prop_design_style_prompt"] = self.repo.settings.generation.prop_design_style_prompt
         state.metadata["layout_design_style_prompt"] = self.repo.settings.generation.layout_design_style_prompt
 
@@ -413,55 +353,23 @@ class PregenWorkflow:
         return result
 
     def _load_role_extract_output(self, project_dir: Path) -> RoleExtractOutput:
-        return self.role_designs.load_extract_output(project_dir)
+        return self.roleboard_prompts.load_extract_output(project_dir)
 
-    def _load_existing_role_design_output(self, project_dir: Path) -> RoleDesignOutput | None:
-        return self.role_designs.load_existing_output(project_dir)
+    def _load_existing_roleboard_prompt_output(self, project_dir: Path) -> RoleboardPromptOutput | None:
+        return self.roleboard_prompts.load_existing_output(project_dir)
 
-    def _role_design_json_path(self, project_dir: Path, role_id: str) -> Path:
-        return self.role_designs.item_path(project_dir, role_id)
+    def _roleboard_prompt_json_path(self, project_dir: Path, role_id: str) -> Path:
+        return self.roleboard_prompts.item_path(project_dir, role_id)
 
-    def _role_design_relative_path(self, project_dir: Path, role_id: str) -> str:
-        return self.role_designs.item_relative_path(project_dir, role_id)
-
-    def _save_role_design_item(
-        self,
-        project_dir: Path,
-        *,
-        extract_item: RoleExtractItem,
-        design_item: RoleDesignItem,
-        role: Role,
-        bound_props: list[Prop],
-    ) -> str:
-        return self.role_designs.save_design_item(
-            project_dir,
-            extract_item=extract_item,
-            design_item=design_item,
-            role=role,
-            bound_props=bound_props,
-        )
+    def _roleboard_prompt_relative_path(self, project_dir: Path, role_id: str) -> str:
+        return self.roleboard_prompts.item_relative_path(project_dir, role_id)
 
     @staticmethod
-    def _load_role_design_item(path: Path) -> RoleDesignItem:
-        return RoleDesignRepository.load_item(path)
+    def _load_roleboard_prompt_item(path: Path) -> RoleboardPromptItem:
+        return RoleboardPromptRepository.load_item(path)
 
-    def _load_role_design_item_for_role(self, project_dir: Path, role: Role) -> RoleDesignItem | None:
-        return self.role_designs.load_item_for_role(project_dir, role)
-
-    @staticmethod
-    def _role_design_item_complete(item: RoleDesignItem) -> bool:
-        return bool(
-            str(item.intro or "").strip()
-            and item.appearances
-            and (not PregenWorkflow._role_design_item_needs_voice(item) or item.voices)
-        )
-
-    @staticmethod
-    def _role_design_item_needs_voice(item: RoleDesignItem) -> bool:
-        role_tier = str(item.role_tier or "primary").strip().lower()
-        if role_tier == "functional" and not item.has_dialogue:
-            return False
-        return True
+    def _load_roleboard_prompt_item_for_role(self, project_dir: Path, role: Role) -> RoleboardPromptItem | None:
+        return self.roleboard_prompts.load_item_for_role(project_dir, role)
 
     @staticmethod
     def _role_needs_voice(role: Role) -> bool:
@@ -469,10 +377,6 @@ class PregenWorkflow:
         if role_tier == "functional" and not role.has_dialogue:
             return False
         return True
-
-    @staticmethod
-    def _role_needs_intro_video(role: Role) -> bool:
-        return str(role.role_tier or "primary").strip().lower() == "primary"
 
     def _role_episode_keys(self, item: RoleExtractItem, state: ProjectState) -> list[str]:
         expected = set(self._expected_episode_keys(state))
@@ -482,7 +386,7 @@ class PregenWorkflow:
         if not raw_keys:
             raise ValueError(
                 f"role_extract missing episode_keys for {item.name}; "
-                "role_design requires role-scoped episode_keys and will not load all novel_full episodes"
+                "roleboard_prompt requires role-scoped episode_keys and will not load all novel_full episodes"
             )
         for key in raw_keys:
             text = str(key or "").strip()
@@ -506,7 +410,7 @@ class PregenWorkflow:
             f"got {', '.join(raw_keys) or '-'}"
         )
 
-    def _role_design_target_extract_roles(
+    def _roleboard_prompt_target_extract_roles(
         self,
         extract_roles: list[RoleExtractItem],
         state: ProjectState,
@@ -522,6 +426,92 @@ class PregenWorkflow:
             if role_episode_keys.intersection(active_set):
                 target_roles.append(item)
         return target_roles
+
+    def _ordered_roleboard_prompt_items(
+        self,
+        extract_roles: list[RoleExtractItem],
+        prompt_by_key: dict[str, RoleboardPromptItem],
+    ) -> list[RoleboardPromptItem]:
+        ordered: list[RoleboardPromptItem] = []
+        emitted: set[str] = set()
+        for extract_item in extract_roles:
+            key = self._role_name_key(extract_item.name)
+            item = prompt_by_key.get(key)
+            if item is None:
+                continue
+            ordered.append(item)
+            emitted.add(key)
+        for key, item in prompt_by_key.items():
+            if key not in emitted:
+                ordered.append(item)
+        return ordered
+
+    def _clear_roleboard_prompt_state(self, state: ProjectState) -> None:
+        state.roles = {}
+        state.props = {
+            prop_id: prop
+            for prop_id, prop in state.props.items()
+            if not prop.owner_role_id
+        }
+
+    def _apply_roleboard_prompt_item(
+        self,
+        state: ProjectState,
+        item: RoleboardPromptItem,
+        *,
+        prompt_path: str | None = None,
+        preserve_assets: bool = False,
+    ) -> None:
+        existing_role = state.roles.get(item.role_id)
+        existing_appearance = None
+        if existing_role is not None:
+            existing_appearance = existing_role.appearances.get(item.appearance_name)
+        role = existing_role or Role(
+            id=item.role_id,
+            name=item.role_name,
+            intro=item.role_brief or item.role_name,
+        )
+        role.name = item.role_name
+        role.intro = item.role_brief or role.intro
+        role.design_path = prompt_path or role.design_path
+        role.role_tier = item.role_tier or role.role_tier
+        role.has_dialogue = item.has_dialogue
+        role.visual_reuse_required = item.visual_reuse_required
+        role.episode_keys = self._dedupe_texts(item.episode_keys)
+        role.source_chapters = self._dedupe_texts(item.source_chapters)
+        role.voice_summary = item.voice_profile_prompt or role.voice_summary
+        appearance = RoleAppearance(
+            id=item.appearance_id,
+            role_id=item.role_id,
+            name=item.appearance_name,
+            desc=item.appearance_desc,
+            prompt=item.roleboard_prompt,
+            roleboard_prompt=item.roleboard_prompt,
+            roleboard_negative_prompt=item.roleboard_negative_prompt,
+            voice_profile_prompt=item.voice_profile_prompt,
+        )
+        if preserve_assets and existing_appearance is not None:
+            appearance.design_image_generation_status = existing_appearance.design_image_generation_status
+            appearance.design_image_asset_id = existing_appearance.design_image_asset_id
+            appearance.design_image_asset_path = existing_appearance.design_image_asset_path
+            appearance.design_image_asset_url = existing_appearance.design_image_asset_url
+            appearance.asset_id = existing_appearance.asset_id
+            appearance.asset_path = existing_appearance.asset_path
+            appearance.asset_url = existing_appearance.asset_url
+            appearance.provider = existing_appearance.provider
+            appearance.model = existing_appearance.model
+            appearance.request_id = existing_appearance.request_id
+            appearance.usage = existing_appearance.usage
+        role.appearances = {item.appearance_name: appearance}
+        state.roles[item.role_id] = role
+        if self._role_needs_voice(role):
+            self._ensure_normal_role_audio(role)
+            if item.voice_profile_prompt and "normal" in role.audio:
+                role.audio["normal"].desc = item.voice_profile_prompt
+                role.voice_summary = item.voice_profile_prompt
+        else:
+            role.audio = {}
+            role.voice_summary = None
 
     @staticmethod
     def _format_previous_novel_chapters(novel_full: dict[str, str], episode_keys: list[str]) -> str:
@@ -556,13 +546,12 @@ class PregenWorkflow:
         selected_role_names = self._select_role_names(role_names) if role_names else None
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
-                "--episodes is only supported for pregen --only role_design, voice_select, role_voice_generation, "
-                "role_full_body_generation, role_multiview_generation, role_intro_video_prompt, "
-                "role_intro_video_generation, prop_design, prop_generation, or layout_image_generation. "
+                "--episodes is only supported for pregen --only roleboard_prompt, roleboard_generation, "
+                "role_voice_select, role_voice_generation, prop_design, prop_generation, or layout_image_generation. "
                 "Use run generation --only storyboard_generation --episodes ... for storyboard shots."
             )
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
-            raise ValueError("--roles is only supported for pregen --only voice_select or role_voice_generation.")
+            raise ValueError("--roles is only supported for pregen --only role_voice_select or role_voice_generation.")
         logger.info(
             "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s completed=%s",
             state.project_id,
@@ -666,275 +655,20 @@ class PregenWorkflow:
     def _role_name_key(name: object) -> str:
         return str(name or "").strip().casefold()
 
-    def _select_role_design_item(self, output: RoleDesignOutput, extract_item: RoleExtractItem) -> RoleDesignItem:
-        if not output.roles:
-            raise ValueError(f"role_design returned no roles for {extract_item.name}")
-
-        expected_keys = {self._role_name_key(extract_item.name)}
-        expected_keys.update(self._role_name_key(alias) for alias in extract_item.aliases)
-        for item in output.roles:
-            if self._role_name_key(item.name) in expected_keys:
-                return item
-            if any(self._role_name_key(alias) in expected_keys for alias in item.aliases):
-                return item
-
-        if len(output.roles) == 1:
-            item = output.roles[0]
-            raise ValueError(
-                f"role_design returned a single mismatched role for {extract_item.name}: "
-                f"{item.name or '-'}; refusing to relabel it as {extract_item.name}"
-            )
-        raise ValueError(
-            f"role_design must return only {extract_item.name}; got "
-            f"{', '.join(item.name for item in output.roles)}"
-        )
-
-    def _validate_role_design_item_identity(
-        self,
-        item: RoleDesignItem,
-        extract_item: RoleExtractItem,
-        _extract_roles: list[RoleExtractItem],
-    ) -> None:
-        expected_key = self._role_name_key(extract_item.name)
-
-        if self._role_name_key(item.name) != expected_key:
-            raise ValueError(
-                f"role_design for {extract_item.name} returned name={item.name or '-'}; "
-                "the design identity must match the target role before merging"
-            )
-
-        bad_role_fields: list[str] = []
-        for appearance in item.appearances:
-            role_key = self._role_name_key(appearance.role_name)
-            if role_key != expected_key:
-                bad_role_fields.append(f"appearances[{appearance.name or 'base'}].role_name={appearance.role_name}")
-        for voice in item.voices:
-            role_key = self._role_name_key(voice.role_name)
-            if role_key != expected_key:
-                bad_role_fields.append(f"voices[{voice.emotion or 'normal'}].role_name={voice.role_name}")
-        if bad_role_fields:
-            raise ValueError(
-                f"role_design for {extract_item.name} contains mismatched role_name fields: "
-                f"{'; '.join(bad_role_fields)}"
-            )
-
-    def _merge_role_extract_into_design(self, item: RoleDesignItem, extract_item: RoleExtractItem) -> RoleDesignItem:
-        item.name = extract_item.name
-        item.aliases = self._dedupe_texts([*extract_item.aliases, *item.aliases])
-        item.role_tier = extract_item.role_tier
-        item.has_dialogue = extract_item.has_dialogue
-        item.visual_reuse_required = extract_item.visual_reuse_required
-        item.importance = item.importance or getattr(extract_item, "importance", None)
-        item.episode_keys = self._dedupe_texts([*extract_item.episode_keys, *item.episode_keys])
-        item.source_chapters = self._dedupe_texts([*extract_item.source_chapters, *item.source_chapters])
-        if not self._role_design_item_needs_voice(item):
-            item.voices = []
-        for voice in item.voices:
-            voice.role_name = extract_item.name
-        for appearance in item.appearances:
-            appearance.role_name = extract_item.name
-        return item
-
-    def _ordered_role_design_items(
-        self,
-        extract_roles: list[RoleExtractItem],
-        designed_by_key: dict[str, RoleDesignItem],
-    ) -> list[RoleDesignItem]:
-        ordered: list[RoleDesignItem] = []
-        emitted: set[str] = set()
-        for extract_item in extract_roles:
-            key = self._role_name_key(extract_item.name)
-            item = designed_by_key.get(key)
-            if item is None:
-                continue
-            ordered.append(item)
-            emitted.add(key)
-        for key, item in designed_by_key.items():
-            if key not in emitted:
-                ordered.append(item)
-        return ordered
-
-    def _clear_role_design_state(self, state: ProjectState) -> None:
-        state.roles = {}
-        state.props = {
-            prop_id: prop
-            for prop_id, prop in state.props.items()
-            if not prop.owner_role_id and prop.source != "role_design"
-        }
-
-    def _apply_role_design_item(
-        self,
-        project_dir: Path,
-        state: ProjectState,
-        item: RoleDesignItem,
-        *,
-        design_path: str | None = None,
-        preserve_assets: bool = False,
-        validate_voice_sample_text: bool = True,
-    ) -> None:
-        if not self._role_design_item_complete(item):
-            missing: list[str] = []
-            if not str(item.intro or "").strip():
-                missing.append("intro")
-            if not item.appearances:
-                missing.append("appearances")
-            if self._role_design_item_needs_voice(item) and not item.voices:
-                missing.append("voices")
-            raise ValueError(f"role_design for {item.name} is missing required fields: {', '.join(missing)}")
-
-        role_id = normalize_id("role", item.name)
-        existing_role = state.roles.get(role_id)
-        existing_appearances = dict(existing_role.appearances) if existing_role is not None else {}
-        existing_props = {
-            prop_id: prop
-            for prop_id, prop in state.props.items()
-            if prop.owner_role_id == role_id
-        }
-        role = existing_role or Role(
-            id=role_id,
-            name=item.name,
-            intro=item.intro,
-        )
-        role.name = item.name
-        role.intro = item.intro
-        role.design_path = design_path or role.design_path
-        role.personality = item.personality
-        role.role_tier = item.role_tier or role.role_tier
-        role.has_dialogue = item.has_dialogue
-        role.visual_reuse_required = item.visual_reuse_required
-        role.importance = item.importance
-        role.aliases = self._dedupe_texts(item.aliases)
-        role.episode_keys = self._dedupe_texts(item.episode_keys)
-        role.source_chapters = self._dedupe_texts(item.source_chapters)
-        role.relationships = [relationship.model_dump(mode="json") for relationship in item.relationships]
-        role.appearances = {}
-        state.roles[role_id] = role
-
-        state.props = {
-            prop_id: prop
-            for prop_id, prop in state.props.items()
-            if prop.owner_role_id != role_id
-        }
-
-        if self._role_design_item_needs_voice(item):
-            self._apply_role_voice_items(
-                state,
-                item.voices,
-                preserve_assets=preserve_assets,
-                validate_sample_text=validate_voice_sample_text,
-            )
-        else:
-            role.voice_summary = None
-            role.voice_name = None
-            role.voice_type = None
-            role.voice_resource_id = None
-            role.voice_model_family = None
-            role.voice_selection_reason = None
-            role.audio = {}
-        role = state.roles[role_id]
-
-        for appearance_item in item.appearances:
-            appearance_name = str(appearance_item.name or "base").strip() or "base"
-            appearance_id = normalize_id(f"{role.id}_appearance", appearance_name)
-            existing_appearance = existing_appearances.get(appearance_name)
-            role_bound_prop_ids: list[str] = []
-            for prop_item in appearance_item.role_bound_props:
-                prop_id = normalize_id(f"{role.id}_prop", prop_item.name)
-                status_key = self._prop_status_key(prop_item.status)
-                if status_key != "normal" and not prop_id.endswith(f"_{status_key}"):
-                    prop_id = f"{prop_id}_{status_key}"
-                desc_parts = [prop_item.desc]
-                if prop_item.scale_relation:
-                    desc_parts.append(f"比例关系：{prop_item.scale_relation}")
-                if prop_item.usage:
-                    desc_parts.append(f"使用方式：{prop_item.usage}")
-                prop = Prop(
-                    id=prop_id,
-                    name=prop_item.name,
-                    desc="；".join(part.strip("；") for part in desc_parts if part),
-                    prompt=prop_item.prompt,
-                    status=prop_item.status,
-                    episode_keys=role.episode_keys,
-                    owner_role_id=role.id,
-                    owner_role_name=role.name,
-                    source="role_design",
-                )
-                existing_prop = existing_props.get(prop_id)
-                if preserve_assets and existing_prop is not None:
-                    prop.asset_id = existing_prop.asset_id
-                    prop.asset_path = existing_prop.asset_path
-                    prop.asset_url = existing_prop.asset_url
-                    prop.provider = existing_prop.provider
-                    prop.model = existing_prop.model
-                    prop.request_id = existing_prop.request_id
-                    prop.usage = existing_prop.usage
-                prop.design_path = self._save_prop_design_record(
-                    project_dir,
-                    prop,
-                    prompt=prop_item.prompt,
-                    node_name="role_design",
-                    extra_content={
-                        "scale_relation": prop_item.scale_relation,
-                        "usage": prop_item.usage,
-                    },
-                    extra_payload={
-                        "source_role_design_path": design_path or self._role_design_relative_path(project_dir, role.id)
-                    },
-                )
-                state.props[prop_id] = prop
-                role_bound_prop_ids.append(prop_id)
-            appearance = RoleAppearance(
-                id=appearance_id,
-                role_id=role.id,
-                name=appearance_name,
-                desc=appearance_item.desc,
-                prompt=appearance_item.prompt,
-                full_body_prompt=appearance_item.full_body_prompt,
-                role_bound_prop_ids=role_bound_prop_ids,
-                intro_video_prompt=appearance_item.intro_video_prompt,
-            )
-            if preserve_assets and existing_appearance is not None:
-                appearance.full_body_image_generation_status = existing_appearance.full_body_image_generation_status
-                appearance.design_image_generation_status = existing_appearance.design_image_generation_status
-                appearance.intro_video_generation_status = existing_appearance.intro_video_generation_status
-                appearance.full_body_image_asset_id = existing_appearance.full_body_image_asset_id
-                appearance.full_body_image_asset_path = existing_appearance.full_body_image_asset_path
-                appearance.full_body_image_asset_url = existing_appearance.full_body_image_asset_url
-                appearance.design_image_asset_id = existing_appearance.design_image_asset_id
-                appearance.design_image_asset_path = existing_appearance.design_image_asset_path
-                appearance.design_image_asset_url = existing_appearance.design_image_asset_url
-                appearance.intro_video_asset_id = existing_appearance.intro_video_asset_id
-                appearance.intro_video_asset_path = existing_appearance.intro_video_asset_path
-                appearance.intro_video_asset_url = existing_appearance.intro_video_asset_url
-                appearance.asset_id = existing_appearance.asset_id
-                appearance.asset_path = existing_appearance.asset_path
-                appearance.asset_url = existing_appearance.asset_url
-                appearance.full_body_provider = existing_appearance.full_body_provider
-                appearance.full_body_model = existing_appearance.full_body_model
-                appearance.full_body_request_id = existing_appearance.full_body_request_id
-                appearance.full_body_usage = existing_appearance.full_body_usage
-                appearance.provider = existing_appearance.provider
-                appearance.model = existing_appearance.model
-                appearance.request_id = existing_appearance.request_id
-                appearance.usage = existing_appearance.usage
-            role.appearances[appearance_name] = appearance
-
     def _hydrate_roles_from_design_files(
         self,
         project_dir: Path,
         state: ProjectState,
     ) -> None:
         for role in list(state.roles.values()):
-            item = self._load_role_design_item_for_role(project_dir, role)
+            item = self._load_roleboard_prompt_item_for_role(project_dir, role)
             if item is None:
                 continue
-            self._apply_role_design_item(
-                project_dir,
+            self._apply_roleboard_prompt_item(
                 state,
                 item,
-                design_path=role.design_path or self._role_design_relative_path(project_dir, role.id),
+                prompt_path=role.design_path or self._roleboard_prompt_relative_path(project_dir, role.id),
                 preserve_assets=True,
-                validate_voice_sample_text=False,
             )
 
     def _role_node_runner(self, node_name: str) -> RoleNodeBase:
@@ -958,14 +692,14 @@ class PregenWorkflow:
     async def _run_ambient_entity_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._role_node_runner("ambient_entity_extract").run(project_dir, state)
 
-    async def _run_role_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._role_node_runner("role_design").run(project_dir, state)
+    async def _run_roleboard_prompt(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._role_node_runner("roleboard_prompt").run(project_dir, state)
 
     def _voice_node_runner(self, node_name: str) -> VoiceNodeBase:
         return build_voice_node_runners(self)[node_name]
 
-    async def _run_voice_select(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._voice_node_runner("voice_select").run(project_dir, state)
+    async def _run_role_voice_select(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._voice_node_runner("role_voice_select").run(project_dir, state)
 
     def _absolute_project_path(self, project_dir: Path, relative_path: str) -> str:
         return self.layout.absolute_project_path(project_dir, relative_path)
@@ -1191,15 +925,18 @@ class PregenWorkflow:
                         ),
                         None,
                     )
-                    if appearance and appearance.asset_path:
+                    if appearance is None:
+                        continue
+                    asset_path = appearance.asset_path or appearance.design_image_asset_path
+                    if asset_path:
                         refs.append(
                             AssetRef(
-                                id=appearance.id,
+                                id=appearance.asset_id or appearance.design_image_asset_id or appearance.id,
                                 type="image",
-                                path=str(project_dir / appearance.asset_path),
+                                path=str(project_dir / asset_path),
                                 url=appearance.asset_url or appearance.design_image_asset_url,
                                 metadata={
-                                    "asset_type": "role_appearance",
+                                    "asset_type": "roleboard",
                                     "role_id": role.id,
                                     "role_name": role.name,
                                     "name": appearance.name,
@@ -1342,7 +1079,7 @@ class PregenWorkflow:
             return [speaking_role_ids[0]]
         return []
 
-    def _shot_role_full_body_refs(
+    def _shot_roleboard_refs(
         self,
         project_dir: Path,
         state: ProjectState,
@@ -1373,77 +1110,24 @@ class PregenWorkflow:
                 base_appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
                 appearances = [base_appearance] if base_appearance is not None else []
             for appearance in appearances:
-                if not (appearance.full_body_image_asset_path or appearance.full_body_image_asset_url):
+                asset_path = appearance.asset_path or appearance.design_image_asset_path
+                asset_url = appearance.asset_url or appearance.design_image_asset_url
+                asset_id = appearance.asset_id or appearance.design_image_asset_id or appearance.id
+                if not (asset_path or asset_url):
                     continue
                 refs.append(
                     AssetRef(
-                        id=appearance.full_body_image_asset_id or f"{appearance.id}_full_body",
+                        id=asset_id,
                         type="image",
-                        path=str(project_dir / appearance.full_body_image_asset_path)
-                        if appearance.full_body_image_asset_path
-                        else None,
-                        url=appearance.full_body_image_asset_url,
+                        path=str(project_dir / asset_path) if asset_path else None,
+                        url=asset_url,
                         metadata={
-                            "asset_type": "role_full_body",
-                            "reference_source": "storyboard_visual_subject_full_body",
+                            "asset_type": "roleboard",
+                            "reference_source": "storyboard_visual_subject_roleboard",
                             "role_id": role.id,
                             "role_name": role.name,
                             "appearance_id": appearance.id,
                             "name": appearance.name,
-                        },
-                    )
-                )
-                if len(refs) >= limit:
-                    return refs
-        return refs
-
-    def _shot_anchor_video_refs(
-        self,
-        project_dir: Path,
-        state: ProjectState,
-        shot: StoryboardShot,
-        *,
-        role_ids: set[str] | None = None,
-        limit: int = 1,
-    ) -> list:
-        from autodrama.providers.base import AssetRef
-
-        refs: list[AssetRef] = []
-        selected_role_ids = [role_id for role_id in shot.role_ids if role_ids is None or role_id in role_ids]
-        if role_ids is not None:
-            for role_id in role_ids:
-                if role_id not in selected_role_ids:
-                    selected_role_ids.append(role_id)
-        explicit_appearance_ids = {str(value).strip() for value in shot.role_appearance_ids if str(value).strip()}
-        for role_id in selected_role_ids:
-            role = state.roles.get(role_id)
-            if role is None:
-                continue
-            appearances = [
-                appearance
-                for appearance in role.appearances.values()
-                if appearance.id in explicit_appearance_ids or appearance.name in explicit_appearance_ids
-            ]
-            if not appearances:
-                base_appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
-                appearances = [base_appearance] if base_appearance is not None else []
-            for appearance in appearances:
-                if not appearance.intro_video_asset_path:
-                    continue
-                intro_asset_id = appearance.intro_video_asset_id or appearance.id
-                duration_seconds = self._role_intro_video_duration_seconds(project_dir, intro_asset_id)
-                refs.append(
-                    AssetRef(
-                        id=intro_asset_id,
-                        type="video",
-                        path=str(project_dir / appearance.intro_video_asset_path),
-                        url=appearance.intro_video_asset_url,
-                        metadata={
-                            "asset_type": "role_intro_video",
-                            "role_id": role.id,
-                            "role_name": role.name,
-                            "name": appearance.name,
-                            "duration_seconds": duration_seconds,
                         },
                     )
                 )
@@ -1481,26 +1165,6 @@ class PregenWorkflow:
                     return duration
         return None
 
-    @classmethod
-    def _role_intro_video_duration_seconds(cls, project_dir: Path, asset_id: str | None) -> float | None:
-        if not asset_id:
-            return None
-        output_path = project_dir / "assets" / "json" / "nodes" / "role_intro_video_generation.json"
-        if not output_path.exists():
-            return None
-        try:
-            payload = json.loads(output_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        for item in payload.get("generated_assets") or []:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("asset_id") or "").strip() != str(asset_id).strip():
-                continue
-            duration = cls._raw_response_duration_seconds(item)
-            if duration is not None:
-                return duration
-        return None
 
     @classmethod
     def _shot_generated_video_duration_seconds(cls, shot: StoryboardShot) -> float | None:
@@ -1607,23 +1271,21 @@ class PregenWorkflow:
         def image_priority(ref) -> tuple[int, str]:
             asset_type = cls._shot_video_ref_asset_type(ref)
             priority = {
-                "role_full_body": 0,
+                "roleboard": 0,
                 "layout": 1,
                 "ref_frame": 2,
                 "previous_shot_last_ref_frame": 3,
                 "previous_shot_last_frame": 4,
-                "role_appearance": 5,
-                "prop": 6,
+                "prop": 5,
             }.get(asset_type, 9)
             return priority, str(getattr(ref, "id", "") or "")
 
         def video_priority(ref) -> tuple[int, str]:
             asset_type = cls._shot_video_ref_asset_type(ref)
             priority = {
-                "role_intro_video": 0,
-                "previous_shot_video": 1,
-                "reference_and_previous_shot_video": 1,
-                "reference_video": 2,
+                "previous_shot_video": 0,
+                "reference_and_previous_shot_video": 0,
+                "reference_video": 1,
             }.get(asset_type, 9)
             return priority, str(getattr(ref, "id", "") or "")
 
@@ -1705,36 +1367,36 @@ class PregenWorkflow:
         }
 
     @staticmethod
-    def _video_reference_mode_uses_layout_intro_refs(mode: str) -> bool:
+    def _video_reference_mode_uses_layout_roleboard_refs(mode: str) -> bool:
         return mode in {
-            "layout_role_intro_previous_video",
-            "layout_role_intro_prev_video",
-            "layout_role_intro_context_video",
-            "scene_role_intro_previous_video",
-            "scene_role_intro_prev_video",
-            "scene_role_intro_context_video",
+            "layout_roleboard_previous_video",
+            "layout_roleboard_prev_video",
+            "layout_roleboard_context_video",
+            "scene_roleboard_previous_video",
+            "scene_roleboard_prev_video",
+            "scene_roleboard_context_video",
         }
 
     @staticmethod
     def _video_reference_mode_uses_frame_images(mode: str) -> bool:
         return mode not in {
-            "layout_role_intro_previous_video",
-            "layout_role_intro_prev_video",
-            "layout_role_intro_context_video",
-            "scene_role_intro_previous_video",
-            "scene_role_intro_prev_video",
-            "scene_role_intro_context_video",
+            "layout_roleboard_previous_video",
+            "layout_roleboard_prev_video",
+            "layout_roleboard_context_video",
+            "scene_roleboard_previous_video",
+            "scene_roleboard_prev_video",
+            "scene_roleboard_context_video",
         }
 
     @staticmethod
     def _video_reference_mode_uses_previous_scene_video(mode: str) -> bool:
         return mode in {
-            "layout_role_intro_previous_video",
-            "layout_role_intro_prev_video",
-            "layout_role_intro_context_video",
-            "scene_role_intro_previous_video",
-            "scene_role_intro_prev_video",
-            "scene_role_intro_context_video",
+            "layout_roleboard_previous_video",
+            "layout_roleboard_prev_video",
+            "layout_roleboard_context_video",
+            "scene_roleboard_previous_video",
+            "scene_roleboard_prev_video",
+            "scene_roleboard_context_video",
             "ref_frame_role_prop_previous_video",
             "ref_frame_role_prop_prev_video",
             "ref_frame_previous_video",
@@ -2132,8 +1794,8 @@ class PregenWorkflow:
             previous_ref_frame_ref = self._previous_shot_last_ref_frame_ref(project_dir, previous_shot)
             if previous_ref_frame_ref is not None:
                 refs.append(previous_ref_frame_ref)
-        if self._video_reference_mode_uses_layout_intro_refs(reference_mode):
-            refs.extend(self._shot_role_full_body_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
+        if self._video_reference_mode_uses_layout_roleboard_refs(reference_mode):
+            refs.extend(self._shot_roleboard_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
             refs.extend(
                 self._shot_ref_asset_refs(
                     project_dir,
@@ -2144,7 +1806,6 @@ class PregenWorkflow:
                     include_props=False,
                 )
             )
-            refs.extend(self._shot_anchor_video_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
         elif self._video_reference_mode_uses_role_prop_refs(reference_mode):
             refs.extend(
                 self._shot_ref_asset_refs(
@@ -2157,9 +1818,8 @@ class PregenWorkflow:
                 )
             )
         elif reference_mode not in {"ref_frame_only", "ref_frame"}:
-            refs.extend(self._shot_role_full_body_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
+            refs.extend(self._shot_roleboard_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
             refs.extend(self._shot_ref_asset_refs(project_dir, state, shot, include_roles=False))
-            refs.extend(self._shot_anchor_video_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
         context_video_refs = (
             self._shot_context_video_refs(project_dir, shot, episode, provider=provider)
             if self._video_reference_mode_uses_previous_scene_video(reference_mode)
@@ -2360,17 +2020,8 @@ class PregenWorkflow:
     def _static_asset_node_runner(self, node_name: str) -> StaticAssetNodeBase:
         return build_static_asset_node_runners(self)[node_name]
 
-    async def _run_role_full_body_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("role_full_body_generation").run(project_dir, state)
-
-    async def _run_role_multiview_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("role_multiview_generation").run(project_dir, state)
-
-    async def _run_role_intro_video_prompt(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("role_intro_video_prompt").run(project_dir, state)
-
-    async def _run_role_intro_video_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("role_intro_video_generation").run(project_dir, state)
+    async def _run_roleboard_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("roleboard_generation").run(project_dir, state)
 
     def _prop_design_json_path(self, project_dir: Path, prop_id: str) -> Path:
         return self.prop_designs.item_path(project_dir, prop_id)
@@ -2525,46 +2176,6 @@ class PregenWorkflow:
                     "asset_type": "prop",
                     "name": normal_prop.name,
                     "status": normal_prop.status,
-                    "reference_for": prop.id,
-                },
-            )
-        ]
-
-    @staticmethod
-    def _role_bound_prop_reference_refs(project_dir: Path, state: ProjectState, prop: Prop) -> list | None:
-        if not prop.owner_role_id:
-            return None
-        role = state.roles.get(prop.owner_role_id)
-        if role is None:
-            return None
-        appearance = next(
-            (
-                item
-                for item in role.appearances.values()
-                if prop.id in item.role_bound_prop_ids and item.design_image_asset_path
-            ),
-            None,
-        )
-        if appearance is None or not appearance.design_image_asset_path:
-            return None
-        reference_path = project_dir / appearance.design_image_asset_path
-        if not reference_path.exists() or not reference_path.is_file():
-            raise ValueError(
-                f"Cannot use role appearance reference for {prop.id}: missing file {appearance.design_image_asset_path}"
-            )
-
-        from autodrama.providers.base import AssetRef
-
-        return [
-            AssetRef(
-                id=appearance.design_image_asset_id or appearance.id,
-                type="image",
-                path=str(reference_path),
-                url=appearance.design_image_asset_url or appearance.asset_url,
-                metadata={
-                    "asset_type": "role_appearance",
-                    "role_id": role.id,
-                    "role_name": role.name,
                     "reference_for": prop.id,
                 },
             )

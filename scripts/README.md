@@ -124,16 +124,4 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/video_prompt_preview_smoke
 
 If `--project` is omitted, the script creates a temporary fake project under `.tmp/smoke/` and previews that fake storyboard prompt.
 
-Probe which GPT-Image-2 character image styles can be accepted by Seedance 2.0:
-
-```bash
-D:/miniforge3/envs/autodrama/python.exe scripts/provider_test/seedance_role_style_probe.py --config config.yaml
-```
-
-The script uses `outputs/xcj-2/assets/json/roles/role_韩默.json` by default, saves images as `<style>.png` or `<style>.jpg`, and saves Seedance videos as `<style>.mp4`.
-
-Generate one Han Mo full-body image using `.assets/sample` as style references, then create an 8s 720p Seedance animation:
-
-```bash
-D:/miniforge3/envs/autodrama/python.exe scripts/provider_test/seedance_hanmo_sample_style.py --config config.yaml
-```
+Role visual provider probes should target `roleboard_generation`; the old role-style Seedance probes were removed with the retired role intro-video chain.

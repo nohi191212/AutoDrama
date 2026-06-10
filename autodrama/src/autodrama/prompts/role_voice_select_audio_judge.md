@@ -5,7 +5,7 @@
 # 输入
 
 角色设定：
-{{role_design}}
+{{role_profile}}
 
 top 3 候选音色画像：
 {{candidate_profiles}}

@@ -61,9 +61,9 @@ class BudgetSettings(BaseModel):
 
 class GenerationSettings(BaseModel):
     max_shots: int = Field(default=10, ge=1)
-    role_design_style_reference_dir: Path | None = None
+    roleboard_style_reference_dir: Path | None = None
     visual_style_prompt: str = ""
-    role_design_style_prompt: str = ""
+    roleboard_style_prompt: str = ""
     prop_design_style_prompt: str = ""
     layout_design_style_prompt: str = ""
 
@@ -215,11 +215,11 @@ def load_settings(config_path: str | Path) -> Settings:
     if settings.project.script_outline_file and not settings.project.script_outline_file.is_absolute():
         settings.project.script_outline_file = (path.parent / settings.project.script_outline_file).resolve()
     if (
-        settings.generation.role_design_style_reference_dir
-        and not settings.generation.role_design_style_reference_dir.is_absolute()
+        settings.generation.roleboard_style_reference_dir
+        and not settings.generation.roleboard_style_reference_dir.is_absolute()
     ):
-        settings.generation.role_design_style_reference_dir = (
-            path.parent / settings.generation.role_design_style_reference_dir
+        settings.generation.roleboard_style_reference_dir = (
+            path.parent / settings.generation.roleboard_style_reference_dir
         ).resolve()
     settings.apikeys_file = _resolve_optional_path(settings.apikeys_file, path)
 

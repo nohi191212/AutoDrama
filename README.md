@@ -90,17 +90,16 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - `project.episode_count`: 剧集数量。
 - `project.episode_duration_seconds`: 单集目标时长。
 - `project.bgm_count`: 全局 BGM 数量。
-- `generation.role_design_style_prompt`: 人物设计统一风格 prompt。
+- `generation.roleboard_style_prompt`: 角色身份板统一风格 prompt。
 - `generation.prop_design_style_prompt`: 道具设计统一画风 prompt。
 - `generation.layout_design_style_prompt`: 场景设计统一画风 prompt。
 - `output.root_dir`: 输出目录，默认 `./outputs`。
 - `providers`: 各 Provider 的 base URL、模型名和选项。
 - `routing`: 不同能力和用途的 Provider 路由。
 
-角色静态图像现在只使用 `role_full_body` 和 `role_multiview` 两类配置：
+角色静态图像现在使用 `roleboard` 配置：
 
-- `role_full_body`: 正面全身参考图，默认走 ToAPI GPT-Image-2，建议竖幅比例，例如 `role_full_body_size: "1:2"`。
-- `role_multiview`: 三视图 + 绑定道具设计图，使用 full body 作为参考图，默认走 ToAPI GPT-Image-2，建议 16:9 横幅比例，例如 `role_design_size: "16:9"`。
+- `roleboard`: 角色身份板图，包含正面、侧面、背面、表情、动作和服装细节，默认走支持参考图的图像 provider，建议 16:9 横幅比例，例如 `roleboard_size: "16:9"`。
 
 旧的 `role_portrait` / `portrait_prompt` 已移除，不再作为角色资产配置项或 prompt 字段。
 
@@ -130,7 +129,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - 全局 BGM: `minimax`
 - 镜头视频: `volcengine`
 
-所有图片生成默认通过 ToAPI GPT-Image-2：角色全身图、角色三视图、道具图、场景图和镜头参考帧都会本地保存图片文件，并同时保存 provider 返回的图片 URL。后续把这些图片作为参考图传给图片或视频模型时，会优先传保存的网络 URL，只有没有 URL 时才回退到本地文件。`providers.volcengine.options.video_reference_mode: layout_role_intro_previous_video` 是 Seedance 的默认视频参考模式。该模式暂时不把镜头参考帧、人物设定图或道具设定图传给 Seedance；图片参考只保留无人物空场景 layout 图，视频参考保留角色基础介绍视频、同一物理空间中最近已生成的镜头视频和上一 shot 视频，角色/对白音频锚点仍会传入。视频 prompt 会按实际传入素材编号说明职责：场景图只锁定空间，角色介绍视频锁定人物形象和动态规律，同场镜头锁定空间连续性，上一镜头锁定硬切后的逻辑连贯性。
+所有图片生成默认通过 ToAPI GPT-Image-2：角色身份板、道具图、场景图和镜头参考帧都会本地保存图片文件，并同时保存 provider 返回的图片 URL。后续把这些图片作为参考图传给图片或视频模型时，会优先传保存的网络 URL，只有没有 URL 时才回退到本地文件。`providers.volcengine.options.video_reference_mode: layout_roleboard_previous_video` 可用于 Seedance 的场景 + 角色身份板 + 历史视频参考模式。该模式暂时不把镜头参考帧或道具设定图传给 Seedance；图片参考保留角色身份板和无人物空场景 layout 图，视频参考保留同一物理空间中最近已生成的镜头视频和上一 shot 视频，角色/对白音频锚点仍会传入。视频 prompt 会按实际传入素材编号说明职责：角色身份板锁定人物外观，场景图锁定空间，同场镜头锁定空间连续性，上一镜头锁定硬切后的逻辑连贯性。
 
 本地验证或演示可以使用 `--fake`，不会调用真实外部服务。
 
@@ -234,18 +233,19 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config con
 script_outline
 script_novel
 director_prep
+design_key_vision_prompt
+design_key_vision_image
 script_novel_extract
 role_extract_primary
 role_extract_functional
 role_extract
 role_episode_key_audit
+role_duplicate_audit
 ambient_entity_extract
-role_design
-voice_select
+roleboard_prompt
+roleboard_generation
+role_voice_select
 role_voice_generation
-role_full_body_generation
-role_multiview_generation
-role_intro_video_generation
 prop_extract
 prop_design
 prop_generation
@@ -262,17 +262,16 @@ bgm_generation
 ```text
 role_extract
 role_episode_key_audit
-role_design
-voice_select
+role_duplicate_audit
+roleboard_prompt
+roleboard_generation
+role_voice_select
 role_voice_generation
-role_full_body_generation
-role_multiview_generation
-role_intro_video_generation
 ```
 
-`role_design` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并输出声音需求、`sample_text`、`full_body_prompt`、三视图 + 道具 prompt、介绍视频 prompt 和角色绑定道具。`voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；`role_voice_generation` 再使用该 `voice_type` 合成人物样例音频。`role_full_body_generation` 先生成自然正面全身参考图；`role_multiview_generation` 必须使用 full body 图作为参考，生成三视图 + 道具设计图；`role_intro_video_generation` 再使用 multiview 图作为参考生成角色介绍视频。功能角色如果 `has_dialogue=false` 不生成声音；功能角色默认跳过介绍视频。
+`roleboard_prompt` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并结合主视觉原图信息输出 prompt-only 的角色身份板提示词；代码负责生成 `role_id`、`appearance_id` 等内部 ID。`roleboard_generation` 使用身份板提示词和 `design_key_vision_image` 产出的主视觉原图作为参考图，生成正面、侧面、背面、表情、动作、服装细节等角色身份板。`role_voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；`role_voice_generation` 再使用该 `voice_type` 合成人物样例音频。功能角色如果 `has_dialogue=false` 不生成声音。
 
-`role_episode_key_audit` 在 `role_extract` 之后运行，会以 30 并发逐个检查角色 JSON 的 `episode_keys` 覆盖情况；如果发现遗漏，只向 `role_extract*`、已有 `role_design`、角色 JSON 和 state 角色记录追加缺失的 `episode_keys/source_chapters`，不会删除或重排原有条目。
+`role_episode_key_audit` 在 `role_extract` 之后运行，会以 30 并发逐个检查角色 JSON 的 `episode_keys` 覆盖情况；如果发现遗漏，只向 `role_extract*`、已有 `roleboard_prompt`、角色 JSON 和 state 角色记录追加缺失的 `episode_keys/source_chapters`，不会删除或重排原有条目。
 
 ### 4. 运行动态资产生成流程
 
@@ -336,30 +335,27 @@ run\start.cmd --generation --config config.yaml --project <project_id> --until r
 只运行一个节点：
 
 ```powershell
-run\start.cmd --config config.yaml --project <project_id> --only voice_select
+run\start.cmd --config config.yaml --project <project_id> --only roleboard_prompt
+run\start.cmd --config config.yaml --project <project_id> --only roleboard_generation
+run\start.cmd --config config.yaml --project <project_id> --only role_voice_select
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation
-run\start.cmd --config config.yaml --project <project_id> --only role_full_body_generation
-run\start.cmd --config config.yaml --project <project_id> --only role_multiview_generation
-run\start.cmd --config config.yaml --project <project_id> --only role_intro_video_generation
 run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1
 ```
 
 按剧集选择：
 
 ```powershell
-run\start.cmd --config config.yaml --project <project_id> --only role_design --episodes 1 --force
-run\start.cmd --config config.yaml --project <project_id> --only voice_select --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only roleboard_prompt --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only roleboard_generation --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only role_voice_select --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation --episodes 1 --force
-run\start.cmd --config config.yaml --project <project_id> --only role_full_body_generation --episodes 1 --force
-run\start.cmd --config config.yaml --project <project_id> --only role_multiview_generation --episodes 1 --force
-run\start.cmd --config config.yaml --project <project_id> --only role_intro_video_generation --episodes 1 --force
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1,3
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1-3
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
 
-`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `role_design`、`voice_select`、`role_voice_generation`、`role_full_body_generation`、`role_multiview_generation`、`role_intro_video_generation`、`prop_design`、`prop_generation` 和 `layout_image_generation`。角色、道具和场景图相关节点会按各自的 `episode_keys` 过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。
+`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `roleboard_prompt`、`roleboard_generation`、`role_voice_select`、`role_voice_generation`、`prop_design`、`prop_generation` 和 `layout_image_generation`。角色、道具和场景图相关节点会按各自的 `episode_keys` 过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。
 
 全局音色 catalog 命令：
 
@@ -372,7 +368,7 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --confi
 D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --config config.yaml --provider volcengine
 ```
 
-`voice-catalog build` 会刷新 provider speaker manifest；`--force-samples` 默认只为目标音色生成 `normal` 样例，避免全量 catalog 触发过多 TTS 请求；如果确实需要五情绪样例，可以加 `--sample-emotion all` 生成 `normal/angry/sad/happy/low`。`--force-profiles` 会调用 `routing.judge.voice_catalog_profile` 配置的 audio judge 重新生成自然语言听感画像，每个音色会单独落盘到 `.assets/voice_catalog/<provider>/<model>/profiles/<voice_type>.json`，同时回写 manifest；`--miss-profiles` 只补 manifest 中缺失或 `profile_hash` 过期的 profile，已有匹配画像会复用并跳过 judge；两种 profile 模式都会以 5 并发调用 judge；如需临时覆盖 judge，可加 `--judge-provider fake` 或其他已注册 judge。调试时可以加 `--voice-type <voice_type>` 或 `--limit 5` 控制范围。项目内 `voice_select` 会先把候选过滤到中文、角色同性别、豆包语音合成模型 2.0（Volcengine catalog）后，为每个候选生成内部 `candidate_id`，并用 `deepseek-v4-flash`、关闭 thinking 的单次文本调用直接筛 top 3；多个角色会并行执行，每个角色确定后立即落盘并输出 `<role> generated` 日志。样例齐全时再调用 `routing.judge.voice_select`，默认 Qwen3.5-Omni-Plus，听 top 3 音频终选。`voice_label` 只作为人类可读展示字段，落盘和合成 API 始终使用官方 `voice_type`。
+`voice-catalog build` 会刷新 provider speaker manifest；`--force-samples` 默认只为目标音色生成 `normal` 样例，避免全量 catalog 触发过多 TTS 请求；如果确实需要五情绪样例，可以加 `--sample-emotion all` 生成 `normal/angry/sad/happy/low`。`--force-profiles` 会调用 `routing.judge.voice_catalog_profile` 配置的 audio judge 重新生成自然语言听感画像，每个音色会单独落盘到 `.assets/voice_catalog/<provider>/<model>/profiles/<voice_type>.json`，同时回写 manifest；`--miss-profiles` 只补 manifest 中缺失或 `profile_hash` 过期的 profile，已有匹配画像会复用并跳过 judge；两种 profile 模式都会以 5 并发调用 judge；如需临时覆盖 judge，可加 `--judge-provider fake` 或其他已注册 judge。调试时可以加 `--voice-type <voice_type>` 或 `--limit 5` 控制范围。项目内 `role_voice_select` 会先把候选过滤到中文、角色同性别、豆包语音合成模型 2.0（Volcengine catalog）后，为每个候选生成内部 `candidate_id`，并用 `deepseek-v4-flash`、关闭 thinking 的单次文本调用直接筛 top 3；多个角色会并行执行，每个角色确定后立即落盘并输出 `<role> generated` 日志。样例齐全时再调用 `routing.judge.role_voice_select`，默认 Qwen3.5-Omni-Plus，听 top 3 音频终选。`voice_label` 只作为人类可读展示字段，落盘和合成 API 始终使用官方 `voice_type`。
 
 按镜头选择：
 
@@ -457,32 +453,9 @@ D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src scripts/smok
 常用 smoke：
 
 ```powershell
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/refactor_boundaries_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/config_apikeys_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/toapi_image_payload_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_router_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/shot_selector_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/prop_episode_scoping_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/metadata_convergence_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_iterative_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_partial_persistence_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_extract_design_scoping_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_episode_key_audit_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_design_missing_episode_keys_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_catalog_manifest_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_catalog_label_lookup_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_catalog_build_samples_profiles_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_cache_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_episode_scoping_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_manual_override_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_audio_judge_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_parallel_top3_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/voice_select_deepseek_flash_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_voice_generation_uses_voice_select_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_generation_episode_scoping_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/functional_role_asset_policy_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/role_full_body_multiview_sequence_smoke.py
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/dynamic_assets_fake_smoke.py
+D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/roleboard_pregen_contract_smoke.py
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/config_roleboard_load_smoke.py
 ```
 
 Smoke 脚本应把临时输出写到仓库 `.tmp/` 目录下。全局 voice catalog 的本地缓存写到 `.assets/voice_catalog/`，该目录默认不纳入版本控制。

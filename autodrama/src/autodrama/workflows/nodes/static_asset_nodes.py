@@ -17,8 +17,6 @@ from autodrama.core.schemas import (
     PropExtractItem,
     Role,
     RoleAppearance,
-    RoleIntroVideoPromptItem,
-    RoleIntroVideoPromptOutput,
     SafeImagePromptRewriteOutput,
     StaticAssetGenerationItem,
     StaticAssetGenerationOutput,
@@ -35,10 +33,7 @@ from autodrama.services.script_service import ScriptService
 from autodrama.workflows.runner import WorkflowNode
 
 STATIC_ASSET_NODE_NAMES = [
-    "role_full_body_generation",
-    "role_multiview_generation",
-    "role_intro_video_prompt",
-    "role_intro_video_generation",
+    "roleboard_generation",
     "prop_extract",
     "prop_design",
     "prop_generation",
@@ -514,14 +509,6 @@ class StaticAssetNodeBase:
                 ordered.append(item)
         return ordered
 
-    @staticmethod
-    def role_bound_props(state: ProjectState) -> dict[str, Prop]:
-        return {
-            prop_id: prop
-            for prop_id, prop in state.props.items()
-            if prop.source == "role_design" or prop.owner_role_id
-        }
-
     def apply_prop_design_item(
         self,
         project_dir: Path,
@@ -681,58 +668,16 @@ class StaticAssetNodeBase:
             )
         ]
 
-    @staticmethod
-    def role_bound_prop_reference_refs(project_dir: Path, state: ProjectState, prop: Prop) -> list | None:
-        if not prop.owner_role_id:
-            return None
-        role = state.roles.get(prop.owner_role_id)
-        if role is None:
-            return None
-        appearance = next(
-            (
-                item
-                for item in role.appearances.values()
-                if prop.id in item.role_bound_prop_ids and item.design_image_asset_path
-            ),
-            None,
-        )
-        if appearance is None or not appearance.design_image_asset_path:
-            return None
-        reference_path = project_dir / appearance.design_image_asset_path
-        if not reference_path.exists() or not reference_path.is_file():
-            raise ValueError(
-                f"Cannot use role appearance reference for {prop.id}: missing file {appearance.design_image_asset_path}"
-            )
-
-        from autodrama.providers.base import AssetRef
-
-        return [
-            AssetRef(
-                id=appearance.design_image_asset_id or appearance.id,
-                type="image",
-                path=str(reference_path),
-                url=appearance.design_image_asset_url or appearance.asset_url,
-                metadata={
-                    "asset_type": "role_appearance",
-                    "role_id": role.id,
-                    "role_name": role.name,
-                    "reference_for": prop.id,
-                },
-            )
-        ]
-
-
 class RoleAppearanceGenerationBase(StaticAssetNodeBase):
-    ROLE_DESIGN_STYLE_PROMPT_HEADER = "统一人物设计风格要求（优先级高于角色设计 JSON 中的旧画面风格模板）"
-    ROLE_INTRO_VIDEO_DURATION_SECONDS = 4
+    ROLEBOARD_STYLE_PROMPT_HEADER = "统一角色身份板风格要求（优先级高于角色身份板 prompt 中的画面风格）"
     STYLE_REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
-    def role_design_style_reference_refs(self) -> list[AssetRef]:
-        ref_dir = self.repo.settings.generation.role_design_style_reference_dir
+    def roleboard_style_reference_refs(self) -> list[AssetRef]:
+        ref_dir = self.repo.settings.generation.roleboard_style_reference_dir
         if ref_dir is None:
             return []
         if not ref_dir.exists() or not ref_dir.is_dir():
-            raise FileNotFoundError(f"role_design_style_reference_dir does not exist or is not a directory: {ref_dir}")
+            raise FileNotFoundError(f"roleboard_style_reference_dir does not exist or is not a directory: {ref_dir}")
 
         paths = [
             path
@@ -740,15 +685,15 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             if path.is_file() and path.suffix.lower() in self.STYLE_REFERENCE_EXTENSIONS
         ]
         if not paths:
-            raise ValueError(f"role_design_style_reference_dir contains no supported image files: {ref_dir}")
+            raise ValueError(f"roleboard_style_reference_dir contains no supported image files: {ref_dir}")
 
         return [
             AssetRef(
-                id=f"role_design_style_ref_{index}",
+                id=f"roleboard_style_ref_{index}",
                 type="image",
                 path=str(path),
                 metadata={
-                    "asset_type": "role_design_style_reference",
+                    "asset_type": "roleboard_style_reference",
                     "role": "style_reference",
                     "source_dir": str(ref_dir),
                 },
@@ -756,10 +701,10 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             for index, path in enumerate(paths, start=1)
         ]
 
-    def role_design_style_prompt(self) -> str:
-        return str(self.repo.settings.generation.role_design_style_prompt or "").strip()
+    def roleboard_style_prompt(self) -> str:
+        return str(self.repo.settings.generation.roleboard_style_prompt or "").strip()
 
-    def role_design_style_prefix(
+    def roleboard_style_prefix(
         self,
         *,
         style_reference_count: int,
@@ -767,9 +712,9 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         output_kind: str,
     ) -> str:
         parts: list[str] = []
-        style_prompt = self.role_design_style_prompt()
+        style_prompt = self.roleboard_style_prompt()
         if style_prompt:
-            parts.append(f"{self.ROLE_DESIGN_STYLE_PROMPT_HEADER}：{style_prompt}")
+            parts.append(f"{self.ROLEBOARD_STYLE_PROMPT_HEADER}：{style_prompt}")
         if style_reference_count > 0:
             if style_reference_count == 1:
                 style_ref_text = "参考图片1"
@@ -788,7 +733,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             parts.append("下方角色提示词中的人物身份、服装、道具和结构要求仍需保留；若画面风格冲突，以上方统一风格要求和参考图片风格为准。")
         return "\n".join(parts)
 
-    def apply_role_design_style_context(
+    def apply_roleboard_style_context(
         self,
         prompt: str,
         *,
@@ -796,139 +741,16 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         identity_reference_index: int | None = None,
         output_kind: str,
     ) -> str:
-        prefix = self.role_design_style_prefix(
+        prefix = self.roleboard_style_prefix(
             style_reference_count=style_reference_count,
             identity_reference_index=identity_reference_index,
             output_kind=output_kind,
         )
         if not prefix:
             return prompt
-        if prompt.lstrip().startswith(self.ROLE_DESIGN_STYLE_PROMPT_HEADER):
+        if prompt.lstrip().startswith(self.ROLEBOARD_STYLE_PROMPT_HEADER):
             return prompt
         return "\n\n".join([prefix, prompt])
-
-    @staticmethod
-    def role_full_body_asset_id(appearance: RoleAppearance) -> str:
-        return f"{appearance.id}_full_body"
-
-    @staticmethod
-    def role_full_body_prompt(role: Role, appearance: RoleAppearance) -> str:
-        prompt = str(appearance.full_body_prompt or "").strip()
-        if prompt:
-            hard_requirement = (
-                "硬性要求：正面全身照，角色从头到脚完整入画；自然展示身份和气质，不要立正站立、"
-                "不要证件照姿势、不要三视图、不要右侧道具设计图、不要其他人物、不要字幕水印或文字标识。"
-            )
-            if hard_requirement in prompt:
-                return prompt
-            return "\n".join([prompt, hard_requirement])
-
-        desc = str(appearance.desc or "").strip()
-        multiview_prompt = str(appearance.prompt or "").strip()
-        return (
-            "生成单人正面全身照，角色从头到脚完整入画，用自然站姿或轻微动作展示身份、年龄感、性别呈现、"
-            "身高体型、头身比例、脸型、五官、眼神、发型、肤色、稳定服装、鞋履和可复用配饰。"
-            "人物不要立正站立，不要证件照姿势，身体重心自然，手臂自然放松或做符合身份的小动作。"
-            "干净背景，无其他人物，无三视图拼版，无右侧道具设计图，无字幕、水印或文字标识，不要夸张畸变。"
-            f"\n角色：{role.name}。"
-            f"\n人物稳定外观：{desc or '-'}"
-            f"\n后续三视图与道具设计提示词依据：{multiview_prompt or '-'}"
-        )
-
-    @staticmethod
-    def role_multiview_asset_id(appearance: RoleAppearance) -> str:
-        return appearance.id
-
-    @staticmethod
-    def role_intro_video_asset_id(appearance: RoleAppearance) -> str:
-        return f"{appearance.id}_intro_video"
-
-    def load_existing_intro_video_prompt_items(
-        self,
-        project_dir: Path,
-        active_episode_keys: list[str],
-    ) -> dict[str, RoleIntroVideoPromptItem]:
-        if not active_episode_keys:
-            return {}
-        path = self.layout.node_output_path(project_dir, RoleIntroVideoPromptNode.name)
-        if not path.exists():
-            return {}
-        try:
-            output = RoleIntroVideoPromptOutput.model_validate_json(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            self.logger.warning("%s ignored invalid existing node output %s: %s", RoleIntroVideoPromptNode.name, path, exc)
-            return {}
-        return {item.asset_id: item for item in output.prompts}
-
-    @staticmethod
-    def ordered_intro_video_prompt_items(
-        prompt_by_asset_id: dict[str, RoleIntroVideoPromptItem],
-        ordered_asset_ids: list[str],
-    ) -> list[RoleIntroVideoPromptItem]:
-        return [
-            prompt_by_asset_id[asset_id]
-            for asset_id in ordered_asset_ids
-            if asset_id in prompt_by_asset_id
-        ]
-
-    def render_intro_video_prompt_item(
-        self,
-        project_dir: Path,
-        state: ProjectState,
-        role: Role,
-        appearance: RoleAppearance,
-    ) -> RoleIntroVideoPromptItem | None:
-        if not self.workflow._role_needs_intro_video(role):
-            appearance.intro_video_generation_status = "skipped"
-            appearance.intro_video_asset_id = None
-            appearance.intro_video_asset_path = None
-            self.logger.info(
-                "%s skipped role intro video prompt for functional role %s/%s",
-                appearance.id,
-                role.name,
-                appearance.name,
-            )
-            return None
-
-        multiview_asset_path = self.layout.existing_project_file(project_dir, appearance.design_image_asset_path)
-        if multiview_asset_path is None:
-            raise ValueError(
-                f"Cannot render role intro video prompt for {role.name}/{appearance.name}: "
-                "missing multiview reference; run role_multiview_generation first"
-            )
-
-        intro_video_asset_id = self.role_intro_video_asset_id(appearance)
-        base_intro_prompt = appearance.intro_video_prompt or (
-            f"{role.name}站在洁净、亮度适中的虚空圆台上；"
-            f"0-1.5 秒：圆台缓慢转动，人物保持{appearance.desc}的稳定外观，镜头以中景平稳观察；"
-            "1.5-3 秒：人物做一个符合身份和性格的常见动作，如有随身物品，展示佩戴、握持或使用方式；"
-            "3-4 秒：镜头轻微推近并停在人物稳定识别角度，背景保持干净抽象，无其他人物、无字幕、水印或文字标识。"
-        )
-        role_style_prompt = self.role_design_style_prompt()
-        intro_prompt = "\n".join(
-            part
-            for part in (
-                "参考图片1中的人物三视图、全身比例和绑定物品设计，保持人物形象一致性但不要求和图片像素级一致以防动作僵硬，人物动作和画面表现需要符合基本逻辑",
-                f"人物设计风格要求：{role_style_prompt}" if role_style_prompt else "",
-                base_intro_prompt,
-                f"人物介绍视频时长硬性约束：全片总时长 {self.ROLE_INTRO_VIDEO_DURATION_SECONDS} 秒，时间段必须只覆盖 0-{self.ROLE_INTRO_VIDEO_DURATION_SECONDS} 秒；如果上方旧提示词出现超过 {self.ROLE_INTRO_VIDEO_DURATION_SECONDS} 秒的时间段，请压缩动作并在 4 秒内完成，结尾停在稳定识别角度。",
-                "人物朝向约束：角色介绍视频中人物不要呈现证件照式、完全正对镜头的僵硬构图；脸部和身体保持轻微侧转，可使用约15-45度三分之二侧脸、侧身、低头抬眼或视线看向镜头旁侧。即使需要表现人物注意到观众方向，也避免双肩水平、脸部完全平贴镜头和长时间直盯镜头。",
-                "全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。",
-            )
-            if part
-        )
-        return RoleIntroVideoPromptItem(
-            asset_id=intro_video_asset_id,
-            role_id=role.id,
-            role_name=role.name,
-            appearance_id=appearance.id,
-            appearance_name=appearance.name,
-            prompt=intro_prompt,
-            reference_asset_id=appearance.design_image_asset_id or appearance.id,
-            reference_asset_path=str(multiview_asset_path),
-            reference_asset_url=appearance.design_image_asset_url or appearance.asset_url,
-            episode_keys=self.dedupe_texts(role.episode_keys),
-        )
 
     def load_existing_generation_items(
         self,
@@ -959,22 +781,111 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             return [
                 generated_by_asset_id[asset_id]
                 for asset_id in ordered_asset_ids
-                if asset_id in generated_by_asset_id
-            ]
+            if asset_id in generated_by_asset_id
+        ]
         return generated
 
-    def existing_full_body_path(self, project_dir: Path, appearance: RoleAppearance) -> str | None:
-        full_body_asset_id = self.role_full_body_asset_id(appearance)
-        if appearance.full_body_image_asset_id == full_body_asset_id:
-            existing = self.layout.existing_project_file(project_dir, appearance.full_body_image_asset_path)
+    @staticmethod
+    def roleboard_asset_id(appearance: RoleAppearance) -> str:
+        return f"{appearance.id}_roleboard"
+
+    def key_vision_reference_ref(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        *,
+        reference_for: str,
+    ) -> AssetRef:
+        asset = state.metadata.get("key_vision_asset")
+        if isinstance(asset, dict):
+            asset_id = asset.get("asset_id") or state.metadata.get("key_vision_asset_id")
+            asset_path = asset.get("asset_path") or state.metadata.get("key_vision_asset_path")
+            asset_url = asset.get("asset_url") or state.metadata.get("key_vision_asset_url")
+            name = asset.get("name") or state.metadata.get("key_vision_name") or "主视觉原图"
+        else:
+            asset_id = state.metadata.get("key_vision_asset_id")
+            asset_path = state.metadata.get("key_vision_asset_path")
+            asset_url = state.metadata.get("key_vision_asset_url")
+            name = state.metadata.get("key_vision_name") or "主视觉原图"
+        if not asset_path and not asset_url:
+            raise FileNotFoundError(
+                "roleboard_generation requires the key vision image; run design_key_vision_image first"
+            )
+
+        path: str | None = None
+        if asset_path:
+            existing = self.layout.existing_project_file(project_dir, str(asset_path))
+            if existing is None:
+                if not asset_url:
+                    raise FileNotFoundError(
+                        f"roleboard_generation key vision image is missing: {asset_path}"
+                    )
+            else:
+                path = str(project_dir / existing)
+        return AssetRef(
+            id=str(asset_id or "key_vision_original"),
+            type="image",
+            path=path,
+            url=str(asset_url) if asset_url else None,
+            metadata={
+                "asset_type": "key_vision",
+                "name": str(name),
+                "reference_for": reference_for,
+            },
+        )
+
+    def roleboard_prompt_for_generation(
+        self,
+        *,
+        role: Role,
+        appearance: RoleAppearance,
+        style_reference_count: int,
+        key_vision_reference_index: int,
+    ) -> str:
+        base_prompt = str(appearance.roleboard_prompt or appearance.prompt or "").strip()
+        if not base_prompt:
+            raise ValueError(
+                f"Cannot generate roleboard for {role.name}/{appearance.name}: missing roleboard_prompt"
+            )
+        style_prefix = self.roleboard_style_prefix(
+            style_reference_count=style_reference_count,
+            output_kind="角色身份板",
+        )
+        key_vision_note = (
+            f"参考图片{key_vision_reference_index}是本剧主视觉原图，只作为世界观、真人剧质感、"
+            "光影色彩、摄影审美和美术气质参考；不要照搬其中人物、服装、脸或构图。"
+        )
+        roleboard_requirement = (
+            "生成一张角色身份板：同一角色必须包含正面全身、侧面全身、背面全身、头部近景、"
+            "表情组、常用动作姿态、服装材质细节和可复用配饰/道具细节。所有视图必须统一年龄感、"
+            "脸型、五官、发型、服装、身高比例、体型和材质，不得变脸、换衣服或年龄漂移。"
+            "画面应是清晰可复用的设计板，无字幕、水印、logo、片段编号或可读文字。"
+        )
+        negative_prompt = str(appearance.roleboard_negative_prompt or "").strip()
+        return "\n\n".join(
+            part
+            for part in (
+                style_prefix,
+                key_vision_note,
+                roleboard_requirement,
+                f"角色：{role.name}",
+                base_prompt,
+                f"负向约束：{negative_prompt}" if negative_prompt else "",
+            )
+            if part
+        )
+
+    def existing_roleboard_path(self, project_dir: Path, appearance: RoleAppearance) -> str | None:
+        for value in (appearance.asset_path, appearance.design_image_asset_path):
+            existing = self.layout.existing_project_file(project_dir, value)
             if existing is not None:
                 return existing
         return self.layout.existing_project_file(
             project_dir,
-            self.layout.image_asset_path(project_dir, "roles", full_body_asset_id),
+            self.layout.image_asset_path(project_dir, "roles", self.roleboard_asset_id(appearance)),
         )
 
-    async def generate_full_body_assets(
+    async def generate_roleboard_assets(
         self,
         *,
         provider,
@@ -986,198 +897,63 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
     ) -> list[StaticAssetGenerationItem]:
         generated: list[StaticAssetGenerationItem] = []
         reuse_existing_assets = not bool(getattr(self.workflow, "_force_pregen", False))
-        style_refs = self.role_design_style_reference_refs()
+        style_refs = self.roleboard_style_reference_refs()
         if style_refs:
-            if not getattr(provider, "supports_reference_images", False):
-                raise ValueError(f"{node_name} requires an image provider that supports reference images")
             self.logger.info(
-                "%s using %d role design style reference image(s)",
+                "%s using %d roleboard style reference image(s)",
                 node_name,
                 len(style_refs),
             )
+        if not getattr(provider, "supports_reference_images", False):
+            raise ValueError(f"{node_name} requires an image provider that supports reference images")
+
         for role, appearance in appearances:
-            full_body_asset_id = self.role_full_body_asset_id(appearance)
-            full_body_prompt = self.apply_role_design_style_context(
-                self.role_full_body_prompt(role, appearance),
+            asset_id = self.roleboard_asset_id(appearance)
+            key_vision_ref = self.key_vision_reference_ref(project_dir, state, reference_for=asset_id)
+            refs = [*style_refs, key_vision_ref]
+            prompt = self.roleboard_prompt_for_generation(
+                role=role,
+                appearance=appearance,
                 style_reference_count=len(style_refs),
-                output_kind="角色全身图",
+                key_vision_reference_index=len(style_refs) + 1,
             )
-            output_path = self.layout.image_asset_path(project_dir, "roles", full_body_asset_id)
-            existing_path = self.existing_full_body_path(project_dir, appearance)
+            output_path = self.layout.image_asset_path(project_dir, "roles", asset_id)
+            existing_path = self.existing_roleboard_path(project_dir, appearance)
             if reuse_existing_assets and existing_path is not None:
                 asset_path = existing_path
-                asset_url = appearance.full_body_image_asset_url
-                provider_name = str(appearance.full_body_provider or getattr(provider, "name", "unknown"))
-                model = str(appearance.full_body_model or getattr(provider, "model", ""))
-                request_id = appearance.full_body_request_id
-                usage = appearance.full_body_usage
-                raw_response = {"resumed_from_existing_file": True}
-                self.logger.info("%s already exists, reused from %s", full_body_asset_id, asset_path)
-            else:
-                self.logger.info(
-                    "%s generating role full body image for %s/%s",
-                    full_body_asset_id,
-                    role.name,
-                    appearance.name,
-                )
-                result, full_body_prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
-                    provider=provider,
-                    state=state,
-                    node_name=node_name,
-                    asset_id=full_body_asset_id,
-                    prompt=full_body_prompt,
-                    refs=style_refs,
-                    metadata={
-                        "node_name": node_name,
-                        "project_id": state.project_id,
-                        "role_id": role.id,
-                        "appearance_id": appearance.id,
-                        "asset_id": full_body_asset_id,
-                        "asset_type": "role_full_body",
-                        "style_reference_count": len(style_refs),
-                    },
-                    context={
-                        "asset_type": "role_full_body",
-                        "role_id": role.id,
-                        "role_name": role.name,
-                        "appearance_id": appearance.id,
-                        "appearance_name": appearance.name,
-                    },
-                )
-                asset_path = await self.media_store.write_first_generated_image(project_dir, output_path, result)
-                asset_url = self.first_image_url(result)
-                provider_name = result.provider
-                model = result.model
-                request_id = result.request_id
-                usage = result.usage
-                raw_response = result.raw_response
-                self.logger.info("%s generated successfully, saved in %s", full_body_asset_id, asset_path)
-
-            appearance.full_body_prompt = full_body_prompt
-            appearance.full_body_image_asset_id = full_body_asset_id
-            appearance.full_body_image_asset_path = asset_path
-            appearance.full_body_image_asset_url = asset_url
-            appearance.full_body_image_generation_status = "generated"
-            appearance.full_body_provider = provider_name
-            appearance.full_body_model = model
-            appearance.full_body_request_id = request_id
-            appearance.full_body_usage = usage
-            item = StaticAssetGenerationItem(
-                asset_id=full_body_asset_id,
-                asset_type="role_full_body",
-                owner_id=role.id,
-                name=f"{role.name}/{appearance.name}/full_body",
-                prompt=full_body_prompt,
-                asset_path=asset_path,
-                asset_url=asset_url,
-                provider=provider_name,
-                model=model,
-                request_id=request_id,
-                usage=usage,
-                raw_response=raw_response,
-            )
-            generated.append(item)
-            generated_by_asset_id[full_body_asset_id] = item
-        return generated
-
-    async def generate_multiview_assets(
-        self,
-        *,
-        provider,
-        project_dir: Path,
-        state: ProjectState,
-        appearances: list[tuple[Role, RoleAppearance]],
-        node_name: str,
-        generated_by_asset_id: dict[str, StaticAssetGenerationItem],
-    ) -> list[StaticAssetGenerationItem]:
-        generated: list[StaticAssetGenerationItem] = []
-        reuse_existing_assets = not bool(getattr(self.workflow, "_force_pregen", False))
-        style_refs = self.role_design_style_reference_refs()
-        if style_refs:
-            self.logger.info(
-                "%s using %d role design style reference image(s)",
-                node_name,
-                len(style_refs),
-            )
-        for role, appearance in appearances:
-            if not appearance.prompt:
-                raise ValueError(
-                    f"Cannot generate role multiview for {role.name}/{appearance.name}: "
-                    "missing prompt in role design JSON"
-                )
-            multiview_prompt = self.apply_role_design_style_context(
-                appearance.prompt,
-                style_reference_count=len(style_refs),
-                identity_reference_index=len(style_refs) + 1,
-                output_kind="角色三视图设计图",
-            )
-            full_body_asset_id = self.role_full_body_asset_id(appearance)
-            full_body_asset_path = self.layout.existing_project_file(project_dir, appearance.full_body_image_asset_path)
-            if full_body_asset_path is None:
-                full_body_asset_path = self.existing_full_body_path(project_dir, appearance)
-            if full_body_asset_path is None:
-                raise ValueError(
-                    f"Cannot generate role multiview for {role.name}/{appearance.name}: "
-                    "missing full body reference; run role_full_body_generation first"
-                )
-
-            multiview_asset_id = self.role_multiview_asset_id(appearance)
-            output_path = self.layout.image_asset_path(project_dir, "roles", multiview_asset_id)
-            existing_path = self.layout.existing_project_file(project_dir, appearance.design_image_asset_path)
-            if existing_path is None:
-                existing_path = self.layout.existing_project_file(project_dir, output_path)
-            if reuse_existing_assets and existing_path is not None:
-                asset_path = existing_path
-                asset_url = appearance.design_image_asset_url or appearance.asset_url
+                asset_url = appearance.asset_url or appearance.design_image_asset_url
                 provider_name = str(appearance.provider or getattr(provider, "name", "unknown"))
                 model = str(appearance.model or getattr(provider, "model", ""))
                 request_id = appearance.request_id
                 usage = appearance.usage
                 raw_response = {"resumed_from_existing_file": True}
-                self.logger.info("%s already exists, reused from %s", multiview_asset_id, asset_path)
+                self.logger.info("%s already exists, reused from %s", asset_id, asset_path)
             else:
-                if not getattr(provider, "supports_reference_images", False):
-                    raise ValueError(f"{node_name} requires an image provider that supports reference images")
-                refs = [
-                    *style_refs,
-                    AssetRef(
-                        id=full_body_asset_id,
-                        type="image",
-                        path=str(project_dir / full_body_asset_path),
-                        url=appearance.full_body_image_asset_url,
-                        metadata={
-                            "asset_type": "role_full_body",
-                            "role_id": role.id,
-                            "role_name": role.name,
-                            "reference_for": multiview_asset_id,
-                        },
-                    )
-                ]
                 self.logger.info(
-                    "%s generating role multiview image for %s/%s",
-                    multiview_asset_id,
+                    "%s generating roleboard image for %s/%s",
+                    asset_id,
                     role.name,
                     appearance.name,
                 )
-                result, multiview_prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
+                result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
                     provider=provider,
                     state=state,
                     node_name=node_name,
-                    asset_id=multiview_asset_id,
-                    prompt=multiview_prompt,
+                    asset_id=asset_id,
+                    prompt=prompt,
                     refs=refs,
                     metadata={
                         "node_name": node_name,
                         "project_id": state.project_id,
                         "role_id": role.id,
                         "appearance_id": appearance.id,
-                        "asset_id": multiview_asset_id,
-                        "asset_type": "role_multiview",
+                        "asset_id": asset_id,
+                        "asset_type": "roleboard",
                         "style_reference_count": len(style_refs),
-                        "identity_reference_index": len(style_refs) + 1,
+                        "key_vision_reference_index": len(style_refs) + 1,
                     },
                     context={
-                        "asset_type": "role_multiview",
+                        "asset_type": "roleboard",
                         "role_id": role.id,
                         "role_name": role.name,
                         "appearance_id": appearance.id,
@@ -1191,12 +967,13 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 request_id = result.request_id
                 usage = result.usage
                 raw_response = result.raw_response
-                self.logger.info("%s generated successfully, saved in %s", multiview_asset_id, asset_path)
+                self.logger.info("%s generated successfully, saved in %s", asset_id, asset_path)
 
-            appearance.asset_id = multiview_asset_id
+            appearance.prompt = appearance.roleboard_prompt or appearance.prompt
+            appearance.asset_id = asset_id
             appearance.asset_path = asset_path
             appearance.asset_url = asset_url
-            appearance.design_image_asset_id = multiview_asset_id
+            appearance.design_image_asset_id = asset_id
             appearance.design_image_asset_path = asset_path
             appearance.design_image_asset_url = asset_url
             appearance.design_image_generation_status = "generated"
@@ -1204,22 +981,12 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             appearance.model = model
             appearance.request_id = request_id
             appearance.usage = usage
-            for prop_id in appearance.role_bound_prop_ids:
-                prop = state.props.get(prop_id)
-                if prop is not None:
-                    prop.asset_id = multiview_asset_id
-                    prop.asset_path = asset_path
-                    prop.asset_url = asset_url
-                    prop.provider = provider_name
-                    prop.model = model
-                    prop.request_id = request_id
-                    prop.usage = usage
             item = StaticAssetGenerationItem(
-                asset_id=multiview_asset_id,
-                asset_type="role_multiview",
+                asset_id=asset_id,
+                asset_type="roleboard",
                 owner_id=role.id,
-                name=f"{role.name}/{appearance.name}/multiview",
-                prompt=multiview_prompt,
+                name=f"{role.name}/{appearance.name}/roleboard",
+                prompt=prompt,
                 asset_path=asset_path,
                 asset_url=asset_url,
                 provider=provider_name,
@@ -1229,140 +996,17 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 raw_response=raw_response,
             )
             generated.append(item)
-            generated_by_asset_id[multiview_asset_id] = item
-        return generated
-
-    async def generate_intro_video_assets(
-        self,
-        *,
-        video_provider,
-        project_dir: Path,
-        state: ProjectState,
-        appearances: list[tuple[Role, RoleAppearance]],
-        node_name: str,
-        generated_by_asset_id: dict[str, StaticAssetGenerationItem],
-        prompt_by_asset_id: dict[str, RoleIntroVideoPromptItem],
-    ) -> list[StaticAssetGenerationItem]:
-        from autodrama.providers.base import AssetRef
-
-        generated: list[StaticAssetGenerationItem] = []
-        reuse_existing_assets = not bool(getattr(self.workflow, "_force_pregen", False))
-        for role, appearance in appearances:
-            if not self.workflow._role_needs_intro_video(role):
-                appearance.intro_video_generation_status = "skipped"
-                appearance.intro_video_asset_id = None
-                appearance.intro_video_asset_path = None
-                appearance.intro_video_asset_url = None
-                self.logger.info(
-                    "%s skipped role intro video for functional role %s/%s",
-                    appearance.id,
-                    role.name,
-                    appearance.name,
-                )
-                continue
-
-            intro_video_asset_id = self.role_intro_video_asset_id(appearance)
-            prompt_item = prompt_by_asset_id.get(intro_video_asset_id)
-            if prompt_item is None:
-                raise ValueError(
-                    f"Cannot generate role intro video for {role.name}/{appearance.name}: "
-                    f"missing prompt; run {RoleIntroVideoPromptNode.name} first"
-                )
-            reference_asset_path = self.layout.existing_project_file(project_dir, prompt_item.reference_asset_path)
-            if reference_asset_path is None:
-                raise ValueError(
-                    f"Cannot generate role intro video for {role.name}/{appearance.name}: "
-                    f"missing prompt reference asset {prompt_item.reference_asset_path}; "
-                    "run role_multiview_generation and role_intro_video_prompt first"
-                )
-
-            output_path = self.layout.video_asset_path(project_dir, "roles", intro_video_asset_id)
-            existing_path = self.layout.existing_project_file(project_dir, appearance.intro_video_asset_path)
-            if existing_path is None:
-                existing_path = self.layout.existing_project_file(project_dir, output_path)
-            if reuse_existing_assets and existing_path is not None:
-                asset_path = existing_path
-                asset_url = appearance.intro_video_asset_url
-                provider_name = str(getattr(video_provider, "name", "unknown"))
-                model = str(getattr(video_provider, "model", ""))
-                request_id = None
-                usage: dict[str, Any] = {}
-                raw_response = {"resumed_from_existing_file": True}
-                self.logger.info("%s already exists, reused from %s", intro_video_asset_id, asset_path)
-            else:
-                refs = [
-                    AssetRef(
-                        id=prompt_item.reference_asset_id,
-                        type="image",
-                        path=str(project_dir / reference_asset_path),
-                        url=prompt_item.reference_asset_url,
-                        metadata={
-                            "asset_type": "role_multiview",
-                            "role_id": role.id,
-                            "role_name": role.name,
-                            "reference_for": intro_video_asset_id,
-                        },
-                    )
-                ]
-                self.logger.info(
-                    "%s generating role intro video for %s/%s",
-                    intro_video_asset_id,
-                    role.name,
-                    appearance.name,
-                )
-                result = await video_provider.generate_video(
-                    prompt_item.prompt,
-                    refs=refs,
-                    duration=self.ROLE_INTRO_VIDEO_DURATION_SECONDS,
-                    wait=True,
-                    metadata={
-                        "node_name": node_name,
-                        "project_id": state.project_id,
-                        "role_id": role.id,
-                        "appearance_id": appearance.id,
-                        "asset_id": intro_video_asset_id,
-                        "asset_type": "role_intro_video",
-                        "duration": self.ROLE_INTRO_VIDEO_DURATION_SECONDS,
-                    },
-                )
-                asset_path = await self.media_store.write_generated_video(project_dir, output_path, result)
-                asset_url = result.video_url
-                provider_name = result.provider
-                model = result.model
-                request_id = result.request_id
-                usage = result.usage
-                raw_response = result.raw_response
-                self.logger.info("%s generated successfully, saved in %s", intro_video_asset_id, asset_path)
-            appearance.intro_video_asset_id = intro_video_asset_id
-            appearance.intro_video_asset_path = asset_path
-            appearance.intro_video_asset_url = asset_url
-            appearance.intro_video_generation_status = "generated"
-            item = StaticAssetGenerationItem(
-                asset_id=intro_video_asset_id,
-                asset_type="role_intro_video",
-                owner_id=role.id,
-                name=f"{role.name}/{appearance.name}/intro_video",
-                prompt=prompt_item.prompt,
-                asset_path=asset_path,
-                asset_url=asset_url,
-                provider=provider_name,
-                model=model,
-                request_id=request_id,
-                usage=usage,
-                raw_response=raw_response,
-            )
-            generated.append(item)
-            generated_by_asset_id[intro_video_asset_id] = item
+            generated_by_asset_id[asset_id] = item
         return generated
 
 
-class RoleFullBodyGenerationNode(RoleAppearanceGenerationBase):
-    name = "role_full_body_generation"
+class RoleboardGenerationNode(RoleAppearanceGenerationBase):
+    name = "roleboard_generation"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("role", node_name=self.name)
         self.logger.info(
-            "node=role_full_body_generation provider=%s model=%s",
+            "node=roleboard_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
@@ -1371,13 +1015,13 @@ class RoleFullBodyGenerationNode(RoleAppearanceGenerationBase):
         appearances = self.target_role_appearances(state, active_episode_keys, label=self.name)
         if active_episode_keys:
             self.logger.info(
-                "node=role_full_body_generation episode-scoped rerun episodes=%s target_images=%d",
+                "node=roleboard_generation episode-scoped rerun episodes=%s target_images=%d",
                 ",".join(active_episode_keys),
                 len(appearances),
             )
-        self.logger.info("node=role_full_body_generation total_images=%d", len(appearances))
+        self.logger.info("node=roleboard_generation total_images=%d", len(appearances))
         generated_by_asset_id = self.load_existing_generation_items(project_dir, self.name, active_episode_keys)
-        generated = await self.generate_full_body_assets(
+        generated = await self.generate_roleboard_assets(
             provider=provider,
             project_dir=project_dir,
             state=state,
@@ -1386,152 +1030,8 @@ class RoleFullBodyGenerationNode(RoleAppearanceGenerationBase):
             generated_by_asset_id=generated_by_asset_id,
         )
         ordered_ids = [
-            self.role_full_body_asset_id(appearance)
+            self.roleboard_asset_id(appearance)
             for _, appearance in self.target_role_appearances(state, [], label=self.name)
-        ]
-        self.repo.save_node_output(
-            project_dir,
-            self.name,
-            StaticAssetGenerationOutput(
-                generated_assets=self.ordered_generation_items(
-                    generated,
-                    generated_by_asset_id,
-                    ordered_ids,
-                    active_episode_keys,
-                )
-            ),
-        )
-        return state
-
-
-class RoleMultiviewGenerationNode(RoleAppearanceGenerationBase):
-    name = "role_multiview_generation"
-
-    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("role", node_name=self.name)
-        self.logger.info(
-            "node=role_multiview_generation provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        self.workflow._hydrate_roles_from_design_files(project_dir, state)
-        active_episode_keys = self.active_episode_keys(state)
-        appearances = self.target_role_appearances(state, active_episode_keys, label=self.name)
-        if active_episode_keys:
-            self.logger.info(
-                "node=role_multiview_generation episode-scoped rerun episodes=%s target_images=%d",
-                ",".join(active_episode_keys),
-                len(appearances),
-            )
-        self.logger.info("node=role_multiview_generation total_images=%d", len(appearances))
-        generated_by_asset_id = self.load_existing_generation_items(project_dir, self.name, active_episode_keys)
-        generated = await self.generate_multiview_assets(
-            provider=provider,
-            project_dir=project_dir,
-            state=state,
-            appearances=appearances,
-            node_name=self.name,
-            generated_by_asset_id=generated_by_asset_id,
-        )
-        ordered_ids = [
-            self.role_multiview_asset_id(appearance)
-            for _, appearance in self.target_role_appearances(state, [], label=self.name)
-        ]
-        self.repo.save_node_output(
-            project_dir,
-            self.name,
-            StaticAssetGenerationOutput(
-                generated_assets=self.ordered_generation_items(
-                    generated,
-                    generated_by_asset_id,
-                    ordered_ids,
-                    active_episode_keys,
-                )
-            ),
-        )
-        return state
-
-
-class RoleIntroVideoPromptNode(RoleAppearanceGenerationBase):
-    name = "role_intro_video_prompt"
-
-    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        self.logger.info("node=role_intro_video_prompt rendering prompts")
-        self.workflow._hydrate_roles_from_design_files(project_dir, state)
-        active_episode_keys = self.active_episode_keys(state)
-        appearances = self.target_role_appearances(state, active_episode_keys, label=self.name)
-        if active_episode_keys:
-            self.logger.info(
-                "node=role_intro_video_prompt episode-scoped rerun episodes=%s target_prompts=%d",
-                ",".join(active_episode_keys),
-                len(appearances),
-            )
-        self.logger.info("node=role_intro_video_prompt total_prompts=%d", len(appearances))
-        prompt_by_asset_id = self.load_existing_intro_video_prompt_items(project_dir, active_episode_keys)
-        for role, appearance in appearances:
-            item = self.render_intro_video_prompt_item(project_dir, state, role, appearance)
-            if item is not None:
-                prompt_by_asset_id[item.asset_id] = item
-        ordered_ids = [
-            self.role_intro_video_asset_id(appearance)
-            for role, appearance in self.target_role_appearances(state, [], label=self.name)
-            if self.workflow._role_needs_intro_video(role)
-        ]
-        self.repo.save_node_output(
-            project_dir,
-            self.name,
-            RoleIntroVideoPromptOutput(
-                prompts=self.ordered_intro_video_prompt_items(prompt_by_asset_id, ordered_ids)
-            ),
-        )
-        return state
-
-
-class RoleIntroVideoGenerationNode(RoleAppearanceGenerationBase):
-    name = "role_intro_video_generation"
-
-    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        try:
-            video_provider = self.router.video("role", node_name=self.name)
-        except Exception:
-            video_provider = self.router.video("shot", node_name=self.name)
-        self.logger.info(
-            "node=role_intro_video_generation provider=%s model=%s",
-            getattr(video_provider, "name", "unknown"),
-            getattr(video_provider, "model", "-"),
-        )
-        self.workflow._hydrate_roles_from_design_files(project_dir, state)
-        active_episode_keys = self.active_episode_keys(state)
-        appearances = self.target_role_appearances(state, active_episode_keys, label=self.name)
-        if active_episode_keys:
-            self.logger.info(
-                "node=role_intro_video_generation episode-scoped rerun episodes=%s target_videos=%d",
-                ",".join(active_episode_keys),
-                len(appearances),
-            )
-        self.logger.info("node=role_intro_video_generation total_videos=%d", len(appearances))
-        prompt_path = self.layout.node_output_path(project_dir, RoleIntroVideoPromptNode.name)
-        if not prompt_path.exists():
-            raise FileNotFoundError(
-                f"role intro video prompts are missing: {prompt_path}; "
-                f"run pregen --only {RoleIntroVideoPromptNode.name} first"
-            )
-        prompt_output = RoleIntroVideoPromptOutput.model_validate_json(prompt_path.read_text(encoding="utf-8"))
-        prompt_by_asset_id = {item.asset_id: item for item in prompt_output.prompts}
-        generated_by_asset_id = self.load_existing_generation_items(project_dir, self.name, active_episode_keys)
-        generated = await self.generate_intro_video_assets(
-            video_provider=video_provider,
-            project_dir=project_dir,
-            state=state,
-            appearances=appearances,
-            node_name=self.name,
-            generated_by_asset_id=generated_by_asset_id,
-            prompt_by_asset_id=prompt_by_asset_id,
-        )
-        ordered_ids = [
-            self.role_intro_video_asset_id(appearance)
-            for role, appearance in self.target_role_appearances(state, [], label=self.name)
-            if self.workflow._role_needs_intro_video(role)
         ]
         self.repo.save_node_output(
             project_dir,
@@ -1622,8 +1122,12 @@ class PropDesignNode(StaticAssetNodeBase):
                 )
 
         existing_props = dict(state.props)
-        role_bound_props = self.role_bound_props(state)
-        for prop in role_bound_props.values():
+        owner_role_props = {
+            prop_id: prop
+            for prop_id, prop in state.props.items()
+            if prop.owner_role_id
+        }
+        for prop in owner_role_props.values():
             if not prop.design_path and prop.prompt:
                 prop.design_path = self.save_prop_design_record(
                     project_dir,
@@ -1631,7 +1135,7 @@ class PropDesignNode(StaticAssetNodeBase):
                     prompt=prop.prompt,
                     node_name=prop.source or self.name,
                 )
-        state.props = dict(role_bound_props)
+        state.props = dict(owner_role_props)
 
         force_pregen = bool(getattr(self.workflow, "_force_pregen", False))
         designed_by_key: dict[str, PropDesignItem] = {}
@@ -1750,9 +1254,7 @@ class PropGenerationNode(StaticAssetNodeBase):
             prompt = self.prop_prompt_for_generation(project_dir, prop)
             refs = None
             if getattr(provider, "supports_reference_images", False):
-                refs = self.role_bound_prop_reference_refs(project_dir, state, prop)
-                if refs is None:
-                    refs = self.prop_reference_refs(project_dir, prop, normal_props_by_base)
+                refs = self.prop_reference_refs(project_dir, prop, normal_props_by_base)
             result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
                 provider=provider,
                 state=state,
@@ -2034,10 +1536,7 @@ def build_static_asset_node_runners(workflow: Any) -> dict[str, StaticAssetNodeB
         "logger": getattr(workflow, "logger", None) or get_logger(),
     }
     return {
-        RoleFullBodyGenerationNode.name: RoleFullBodyGenerationNode(**deps),
-        RoleMultiviewGenerationNode.name: RoleMultiviewGenerationNode(**deps),
-        RoleIntroVideoPromptNode.name: RoleIntroVideoPromptNode(**deps),
-        RoleIntroVideoGenerationNode.name: RoleIntroVideoGenerationNode(**deps),
+        RoleboardGenerationNode.name: RoleboardGenerationNode(**deps),
         PropExtractNode.name: PropExtractNode(**deps),
         PropDesignNode.name: PropDesignNode(**deps),
         PropGenerationNode.name: PropGenerationNode(**deps),
@@ -2065,10 +1564,7 @@ __all__ = [
     "PropDesignNode",
     "PropExtractNode",
     "PropGenerationNode",
-    "RoleFullBodyGenerationNode",
-    "RoleIntroVideoGenerationNode",
-    "RoleIntroVideoPromptNode",
-    "RoleMultiviewGenerationNode",
+    "RoleboardGenerationNode",
     "StaticAssetNodeBase",
     "build_static_asset_node_runners",
     "build_static_asset_nodes",

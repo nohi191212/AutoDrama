@@ -151,9 +151,9 @@ async def main_async() -> int:
     )
 
     role_refs = {
-        short_item.name: workflow.role_designs.save_extract_item(project_dir, short_item),
-        keeper_item.name: workflow.role_designs.save_extract_item(project_dir, keeper_item),
-        other_item.name: workflow.role_designs.save_extract_item(project_dir, other_item),
+        short_item.name: workflow.roleboard_prompts.save_extract_item(project_dir, short_item),
+        keeper_item.name: workflow.roleboard_prompts.save_extract_item(project_dir, keeper_item),
+        other_item.name: workflow.roleboard_prompts.save_extract_item(project_dir, other_item),
     }
     repo.save_node_output(project_dir, "role_extract_primary", RoleExtractOutput(roles=[short_item, other_item]))
     repo.save_node_output(project_dir, "role_extract_functional", RoleExtractOutput(roles=[keeper_item]))

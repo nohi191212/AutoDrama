@@ -355,16 +355,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 f"{prefix}: 场景图，作为空间锚点。锁定场景结构、材质、光照基调、关键背景物和空间尺度；"
                 "不要从场景图擅自添加当前 shot 未出现的人物或剧情动作。"
             )
-        if asset_type == "role_full_body":
+        if asset_type == "roleboard":
             return (
-                f"{prefix}: 画面中央人物全身图，作为当前视觉主体的静态外观锚点。锁定该人物的完整身体比例、"
-                "脸型、发型、服装层次、配饰、色彩和材质；人物在本段中的站位、动作、表情和口型仍以当前 shot "
-                "的 video_prompt 与对白空间约束为准，不把全身图姿势当作本段动作。"
-            )
-        if asset_type == "role_appearance":
-            return (
-                f"{prefix}: 人物设计图，作为角色静态参考锚点。锁定脸型、发型、服装、配饰、身体比例、"
-                "色彩和材质；不把设计图姿势当作本段动作。"
+                f"{prefix}: 角色身份板，作为当前视觉主体的静态外观锚点。锁定同一人物的脸型、发型、"
+                "身体比例、服装层次、配饰、色彩、材质和表情/动作习惯；人物在本段中的站位、动作、"
+                "表情和口型仍以当前 shot 的 video_prompt 与对白空间约束为准。"
             )
         if asset_type == "prop":
             return (
@@ -400,11 +395,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         asset_type = cls._shot_video_ref_asset_type(ref)
         label = cls._shot_video_ref_label(ref)
         prefix = f"视频{index}（{label}）"
-        if asset_type == "role_intro_video":
-            return (
-                f"{prefix}: 画面中央人物 intro video，作为当前视觉主体的动态参考锚点。锁定该人物整体形象、"
-                "站姿、走姿、手势习惯、动作气质、衣料/发丝/随身特效的动态规律；不复刻其中的场景、剧情或镜头。"
-            )
         if asset_type == "reference_video":
             return (
                 f"{prefix}: 同场景镜头视频，作为空间锚点。锁定同一潜在三维空间中的场景结构、人物/道具相对位置、"
@@ -480,8 +470,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         }
         visual_ref_names = []
         seen_visual_ref_names: set[str] = set()
-        for ref in [*image_refs, *video_refs]:
-            if self._shot_video_ref_asset_type(ref) not in {"role_full_body", "role_intro_video"}:
+        for ref in image_refs:
+            if self._shot_video_ref_asset_type(ref) != "roleboard":
                 continue
             name = self._shot_video_ref_label(ref)
             if name and name not in seen_visual_ref_names:
@@ -500,7 +490,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             parts.append(
                 "画面中央人物绑定: "
                 + "、".join(visual_ref_names)
-                + " 是当前 shot 的视觉主体；对应的人物全身图和 intro video 必须共同锁定同一位画面中央人物，"
+                + " 是当前 shot 的视觉主体；对应的角色身份板必须锁定同一位画面中央人物，"
                 "不要用说话人音频反向改变画面主体身份。"
             )
         if audio_ref_names:
@@ -517,14 +507,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             boundary_clauses.append("本段参考图只锁定当前片段空间参考")
         if "previous_shot_last_ref_frame" in asset_types:
             boundary_clauses.append("上一 shot 最后参考帧只提示硬切前状态，不作为当前片段首帧")
-        if "role_full_body" in asset_types:
-            boundary_clauses.append("人物全身图只锁定画面中央人物的静态全身外观")
-        if "role_appearance" in asset_types:
-            boundary_clauses.append("人物设计图只锁定静态角色外观")
+        if "roleboard" in asset_types:
+            boundary_clauses.append("角色身份板只锁定画面中央人物的静态外观、表情和动作习惯")
         if "prop" in asset_types:
             boundary_clauses.append("道具设计图只锁定道具造型与材质")
-        if "role_intro_video" in asset_types:
-            boundary_clauses.append("角色基础介绍视频只锁定人物形象、动态气质和动作规律")
         if asset_types.intersection({"reference_video", "reference_and_previous_shot_video"}):
             boundary_clauses.append("同场景镜头只锁定空间连续性和环境动态")
         if asset_types.intersection({"previous_shot_video", "reference_and_previous_shot_video"}):
@@ -546,12 +532,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             conflict_parts.append("当前画面冲突优先听本段参考图和当前 video_prompt，上一 shot 最后参考帧只保留连续性提示")
         if asset_types.intersection({"layout", "reference_video", "reference_and_previous_shot_video"}):
             conflict_parts.append("空间冲突优先听场景图或同场景镜头视频")
-        if "role_full_body" in asset_types:
-            conflict_parts.append("画面中央人物外观冲突优先听人物全身图")
-        if "role_appearance" in asset_types:
-            conflict_parts.append("人物外观冲突优先听人物设计图")
-        if "role_intro_video" in asset_types:
-            conflict_parts.append("画面中央人物动态气质冲突优先听 intro video")
+        if "roleboard" in asset_types:
+            conflict_parts.append("画面中央人物外观冲突优先听角色身份板")
         if asset_types.intersection({"role_audio", "shot_dialogue_audio"}):
             conflict_parts.append("声音冲突优先听音频")
         parts.append("冲突处理: " + "；".join(conflict_parts) + "。")

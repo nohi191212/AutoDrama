@@ -16,9 +16,9 @@ Aliyun/DashScope capabilities are configured under providers.aliyun and routed
 per capability; role text still points to DeepSeek by default.
 Project ID and input outline file are read from config.yaml by default. Use
 --project to run a specific existing project or output directory. --episodes is
-supported for role_design, voice_select, role_voice_generation, role_full_body_generation,
-role_multiview_generation, role_intro_video_prompt, role_intro_video_generation,
-prop_design, prop_generation, and layout_image_generation when used with --only.
+supported for roleboard_prompt, roleboard_generation, role_voice_select,
+role_voice_generation, prop_design, prop_generation, and layout_image_generation
+when used with --only.
 USAGE
 }
 

@@ -136,9 +136,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default=str(ROOT_DIR / "config.yaml"))
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
-    parser.add_argument("--role-json", default=None, help="Optional role design JSON; uses content.appearances prompt.")
+    parser.add_argument("--role-json", default=None, help="Optional roleboard JSON; uses content.appearances prompt.")
     parser.add_argument("--appearance", default="base")
-    parser.add_argument("--model", default=None, help="Defaults to providers.rightcode.models.role_design, then image.")
+    parser.add_argument("--model", default=None, help="Defaults to providers.rightcode.models.roleboard, then image.")
     parser.add_argument("--size", default="1024x1024")
     parser.add_argument("--quality", default="low")
     parser.add_argument("--timeout-seconds", type=float, default=None)
@@ -164,7 +164,7 @@ async def main_async() -> int:
             role_path = ROOT_DIR / role_path
         prompt = load_role_prompt(role_path, args.appearance)
 
-    model = args.model or provider_settings.models.get("role_design") or provider_settings.models.get("image") or provider.model
+    model = args.model or provider_settings.models.get("roleboard") or provider_settings.models.get("image") or provider.model
     metadata = {
         "model": model,
         "quality": args.quality,

@@ -115,7 +115,7 @@ class ProjectRepository:
                 "episode_duration_seconds": resolved_episode_duration_seconds,
                 "bgm_count": self.settings.project.bgm_count,
                 "visual_style_prompt": self.settings.generation.visual_style_prompt,
-                "role_design_style_prompt": self.settings.generation.role_design_style_prompt,
+                "roleboard_style_prompt": self.settings.generation.roleboard_style_prompt,
                 "prop_design_style_prompt": self.settings.generation.prop_design_style_prompt,
                 "layout_design_style_prompt": self.settings.generation.layout_design_style_prompt,
             },
@@ -226,7 +226,7 @@ class ProjectRepository:
             if role_ref:
                 role_ref = self._project_relative_role_ref(project_dir, role_ref)
             else:
-                role_ref = self.layout.project_relative(project_dir, self.layout.role_design_path(project_dir, role.id))
+                role_ref = self.layout.project_relative(project_dir, self.layout.role_record_path(project_dir, role.id))
             role.design_path = role_ref
             role_refs[role.name] = role_ref
         return role_refs
@@ -250,11 +250,6 @@ class ProjectRepository:
             payload["role_id"] = role.id
             payload["role_name"] = role.name
             payload["state_role"] = role.model_dump(mode="json")
-            payload["bound_props"] = [
-                prop.model_dump(mode="json")
-                for prop in state.props.values()
-                if prop.owner_role_id == role.id
-            ]
             self.write_json(role_path, payload)
 
     def save_node_output(self, project_dir: Path, node_name: str, data: BaseModel | dict[str, Any]) -> Path:

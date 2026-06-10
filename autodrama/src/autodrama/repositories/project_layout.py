@@ -46,7 +46,7 @@ class ProjectLayout:
     def script_novel_legacy_full_path(self, project_dir: Path, episode_key: str) -> Path:
         return project_dir / "assets" / "json" / "scripts" / "novel" / f"{episode_key}.json"
 
-    def role_design_path(self, project_dir: Path, role_id: str) -> Path:
+    def role_record_path(self, project_dir: Path, role_id: str) -> Path:
         return project_dir / "assets" / "json" / "roles" / f"{role_id}.json"
 
     def prop_design_path(self, project_dir: Path, prop_id: str) -> Path:

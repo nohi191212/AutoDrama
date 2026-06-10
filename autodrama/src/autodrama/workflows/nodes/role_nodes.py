@@ -9,8 +9,8 @@ from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import (
     AmbientEntityOutput,
     ProjectState,
-    RoleDesignItem,
-    RoleDesignOutput,
+    Role,
+    RoleAppearance,
     RoleDuplicateAuditOutput,
     RoleDuplicateAuditReviewOutput,
     RoleDuplicateMergeItem,
@@ -19,10 +19,12 @@ from autodrama.core.schemas import (
     RoleEpisodeKeyAuditReviewOutput,
     RoleExtractItem,
     RoleExtractOutput,
+    RoleboardPromptItem,
+    RoleboardPromptOutput,
 )
 from autodrama.logging import get_logger
 from autodrama.repositories.project_repo import ProjectRepository
-from autodrama.repositories.role_design_repo import RoleDesignRepository
+from autodrama.repositories.roleboard_prompt_repo import RoleboardPromptRepository
 from autodrama.repositories.script_content_repo import ScriptContentRepository
 from autodrama.services.role_service import RoleService
 from autodrama.services.script_service import ScriptService
@@ -38,7 +40,7 @@ ROLE_NODE_NAMES = [
     "role_episode_key_audit",
     "role_duplicate_audit",
     "ambient_entity_extract",
-    "role_design",
+    "roleboard_prompt",
 ]
 
 
@@ -52,7 +54,7 @@ class RoleNodeBase:
         script_service: ScriptService,
         role_service: RoleService,
         script_contents: ScriptContentRepository,
-        role_designs: RoleDesignRepository,
+        roleboard_prompts: RoleboardPromptRepository,
         logger: Any,
     ) -> None:
         self.workflow = workflow
@@ -61,7 +63,7 @@ class RoleNodeBase:
         self.script_service = script_service
         self.role_service = role_service
         self.script_contents = script_contents
-        self.role_designs = role_designs
+        self.roleboard_prompts = roleboard_prompts
         self.logger = logger
 
     def expected_episode_keys(self, state: ProjectState) -> list[str]:
@@ -428,7 +430,7 @@ class RoleExtractNode(RoleNodeBase):
         state.roles = {}
         role_refs: dict[str, str] = {}
         for item in final_output.roles:
-            role_refs[item.name] = self.role_designs.save_extract_item(project_dir, item)
+            role_refs[item.name] = self.roleboard_prompts.save_extract_item(project_dir, item)
         state.metadata["role_refs"] = role_refs
         self.repo.save_node_output(project_dir, self.name, final_output)
         return state
@@ -489,12 +491,12 @@ class RoleEpisodeKeyAuditNode(RoleNodeBase):
 
     def _load_role_json(self, project_dir: Path, item: RoleExtractItem) -> tuple[Path, dict[str, Any]]:
         role_id = normalize_id("role", item.name)
-        path = self.role_designs.item_path(project_dir, role_id)
+        path = self.roleboard_prompts.item_path(project_dir, role_id)
         if path.exists():
             payload = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(payload, dict):
                 return path, payload
-        relative_path = self.role_designs.save_extract_item(project_dir, item)
+        relative_path = self.roleboard_prompts.save_extract_item(project_dir, item)
         path = project_dir / relative_path
         payload = json.loads(path.read_text(encoding="utf-8"))
         return path, payload
@@ -605,7 +607,7 @@ class RoleEpisodeKeyAuditNode(RoleNodeBase):
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             return
-        for key in ("extract", "design", "state_role"):
+        for key in ("extract", "roleboard_prompt", "state_role"):
             section = payload.get(key)
             if not isinstance(section, dict):
                 continue
@@ -666,19 +668,19 @@ class RoleEpisodeKeyAuditNode(RoleNodeBase):
             self._apply_audit_items_to_extract_output(output, audit_by_name, expected_episode_keys),
         )
 
-    def _update_role_design_output_if_exists(
+    def _update_roleboard_prompt_output_if_exists(
         self,
         project_dir: Path,
         audit_by_name: dict[str, RoleEpisodeKeyAuditItem],
         expected_episode_keys: list[str],
     ) -> None:
-        path = self.role_designs.design_output_path(project_dir)
+        path = self.roleboard_prompts.prompt_output_path(project_dir)
         if not path.exists():
             return
-        output = RoleDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
-        updated_items: list[RoleDesignItem] = []
-        for item in output.roles:
-            audit_item = audit_by_name.get(self.role_name_key(item.name))
+        output = RoleboardPromptOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        updated_items: list[RoleboardPromptItem] = []
+        for item in output.prompts:
+            audit_item = audit_by_name.get(self.role_name_key(item.role_name))
             if audit_item is None:
                 updated_items.append(item)
                 continue
@@ -697,7 +699,7 @@ class RoleEpisodeKeyAuditNode(RoleNodeBase):
                     }
                 )
             )
-        self.repo.save_node_output(project_dir, "role_design", RoleDesignOutput(roles=updated_items))
+        self.repo.save_node_output(project_dir, "roleboard_prompt", RoleboardPromptOutput(prompts=updated_items))
 
     def _apply_audit_items(
         self,
@@ -717,7 +719,7 @@ class RoleEpisodeKeyAuditNode(RoleNodeBase):
         self._update_extract_node_output_if_exists(project_dir, "role_extract_primary", audit_by_name, expected_episode_keys)
         self._update_extract_node_output_if_exists(project_dir, "role_extract_functional", audit_by_name, expected_episode_keys)
         self._update_extract_node_output_if_exists(project_dir, "role_extract", audit_by_name, expected_episode_keys)
-        self._update_role_design_output_if_exists(project_dir, audit_by_name, expected_episode_keys)
+        self._update_roleboard_prompt_output_if_exists(project_dir, audit_by_name, expected_episode_keys)
 
         for audit_item in audit_items:
             if not audit_item.added_episode_keys:
@@ -926,19 +928,19 @@ class RoleDuplicateAuditNode(RoleNodeBase):
         self.repo.save_node_output(project_dir, node_name, updated_output)
         return updated_output
 
-    def _update_role_design_output_if_exists(
+    def _update_roleboard_prompt_output_if_exists(
         self,
         project_dir: Path,
         merge_by_key: dict[str, RoleExtractItem],
         removed_keys: set[str],
     ) -> None:
-        path = self.role_designs.design_output_path(project_dir)
+        path = self.roleboard_prompts.prompt_output_path(project_dir)
         if not path.exists():
             return
-        output = RoleDesignOutput.model_validate_json(path.read_text(encoding="utf-8"))
-        updated_items: list[RoleDesignItem] = []
-        for item in output.roles:
-            role_key = self.role_name_key(item.name)
+        output = RoleboardPromptOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        updated_items: list[RoleboardPromptItem] = []
+        for item in output.prompts:
+            role_key = self.role_name_key(item.role_name)
             if role_key in removed_keys:
                 continue
             merged_extract = merge_by_key.get(role_key)
@@ -946,7 +948,7 @@ class RoleDuplicateAuditNode(RoleNodeBase):
                 updated_items.append(item)
                 continue
             updated_items.append(item.model_copy(update={"episode_keys": merged_extract.episode_keys}))
-        self.repo.save_node_output(project_dir, "role_design", RoleDesignOutput(roles=updated_items))
+        self.repo.save_node_output(project_dir, "roleboard_prompt", RoleboardPromptOutput(prompts=updated_items))
 
     def _role_json_path_for_item(
         self,
@@ -964,10 +966,10 @@ class RoleDuplicateAuditNode(RoleNodeBase):
                 if path.exists():
                     return path
         role_id = normalize_id("role", item.name)
-        path = self.role_designs.item_path(project_dir, role_id)
+        path = self.roleboard_prompts.item_path(project_dir, role_id)
         if path.exists():
             return path
-        relative_path = self.role_designs.save_extract_item(project_dir, item)
+        relative_path = self.roleboard_prompts.save_extract_item(project_dir, item)
         return project_dir / relative_path
 
     def _write_merged_role_json(
@@ -984,7 +986,7 @@ class RoleDuplicateAuditNode(RoleNodeBase):
         payload["role_id"] = role_id
         payload["role_name"] = item.name
         payload["extract"] = item.model_dump(mode="json")
-        for section_name in ("design", "state_role"):
+        for section_name in ("roleboard_prompt", "state_role"):
             section = payload.get(section_name)
             if isinstance(section, dict):
                 section["episode_keys"] = list(item.episode_keys)
@@ -1070,7 +1072,7 @@ class RoleDuplicateAuditNode(RoleNodeBase):
             if final_extract is None:
                 final_extract = self._apply_merge_to_extract_output(extract_output, merge_by_key, removed_keys)
                 self.repo.save_node_output(project_dir, "role_extract", final_extract)
-            self._update_role_design_output_if_exists(project_dir, merge_by_key, removed_keys)
+            self._update_roleboard_prompt_output_if_exists(project_dir, merge_by_key, removed_keys)
             self._sync_state_after_merge(
                 project_dir,
                 state,
@@ -1153,129 +1155,190 @@ class AmbientEntityExtractNode(RoleNodeBase):
         return state
 
 
-class RoleDesignNode(RoleNodeBase):
-    name = "role_design"
+class RoleboardPromptNode(RoleNodeBase):
+    name = "roleboard_prompt"
+
+    @staticmethod
+    def _appearance_desc(extract_item: RoleExtractItem) -> str:
+        parts = [extract_item.brief or "", *extract_item.appearance_notes]
+        return "；".join(text for text in (str(part).strip("； ") for part in parts) if text) or extract_item.name
+
+    @staticmethod
+    def _role_intro(extract_item: RoleExtractItem) -> str:
+        return str(extract_item.brief or "").strip() or f"{extract_item.name}，已从剧本中抽取的角色。"
+
+    def _key_vision_asset_for_prompt(self, state: ProjectState) -> dict[str, object]:
+        asset = state.metadata.get("key_vision_asset")
+        if isinstance(asset, dict):
+            return {
+                "asset_id": asset.get("asset_id") or state.metadata.get("key_vision_asset_id"),
+                "asset_path": asset.get("asset_path") or state.metadata.get("key_vision_asset_path"),
+                "asset_url": asset.get("asset_url") or state.metadata.get("key_vision_asset_url"),
+                "name": asset.get("name") or state.metadata.get("key_vision_name"),
+            }
+        return {
+            "asset_id": state.metadata.get("key_vision_asset_id"),
+            "asset_path": state.metadata.get("key_vision_asset_path"),
+            "asset_url": state.metadata.get("key_vision_asset_url"),
+            "name": state.metadata.get("key_vision_name"),
+        }
+
+    def _prompt_item_from_model_output(
+        self,
+        extract_item: RoleExtractItem,
+        output: Any,
+        state: ProjectState,
+    ) -> RoleboardPromptItem:
+        prompt = str(getattr(output, "roleboard_prompt", "") or "").strip()
+        if not prompt:
+            raise ValueError(f"roleboard_prompt returned an empty roleboard_prompt for {extract_item.name}")
+        role_id = normalize_id("role", extract_item.name)
+        appearance_name = "base"
+        appearance_id = normalize_id(f"{role_id}_appearance", appearance_name)
+        return RoleboardPromptItem(
+            role_id=role_id,
+            role_name=extract_item.name,
+            appearance_id=appearance_id,
+            appearance_name=appearance_name,
+            role_tier=extract_item.role_tier,
+            has_dialogue=extract_item.has_dialogue,
+            visual_reuse_required=extract_item.visual_reuse_required,
+            episode_keys=self.workflow._role_episode_keys(extract_item, state),
+            source_chapters=self.dedupe_texts(extract_item.source_chapters),
+            role_brief=self._role_intro(extract_item),
+            appearance_desc=self._appearance_desc(extract_item),
+            roleboard_prompt=prompt,
+            roleboard_negative_prompt=str(getattr(output, "roleboard_negative_prompt", "") or "").strip() or None,
+            voice_profile_prompt=str(getattr(output, "voice_profile_prompt", "") or "").strip() or None,
+            design_notes=str(getattr(output, "design_notes", "") or "").strip() or None,
+        )
+
+    def _apply_roleboard_prompt_item(
+        self,
+        state: ProjectState,
+        item: RoleboardPromptItem,
+        *,
+        prompt_path: str | None = None,
+        preserve_assets: bool = False,
+    ) -> None:
+        existing_role = state.roles.get(item.role_id)
+        existing_appearance = None
+        if existing_role is not None:
+            existing_appearance = existing_role.appearances.get(item.appearance_name)
+        role = existing_role or Role(
+            id=item.role_id,
+            name=item.role_name,
+            intro=item.role_brief or item.role_name,
+        )
+        role.name = item.role_name
+        role.intro = item.role_brief or role.intro
+        role.design_path = prompt_path or role.design_path
+        role.role_tier = item.role_tier or role.role_tier
+        role.has_dialogue = item.has_dialogue
+        role.visual_reuse_required = item.visual_reuse_required
+        role.episode_keys = self.dedupe_texts(item.episode_keys)
+        role.source_chapters = self.dedupe_texts(item.source_chapters)
+        role.voice_summary = item.voice_profile_prompt or role.voice_summary
+        appearance = RoleAppearance(
+            id=item.appearance_id,
+            role_id=item.role_id,
+            name=item.appearance_name,
+            desc=item.appearance_desc,
+            prompt=item.roleboard_prompt,
+            roleboard_prompt=item.roleboard_prompt,
+            roleboard_negative_prompt=item.roleboard_negative_prompt,
+            voice_profile_prompt=item.voice_profile_prompt,
+        )
+        if preserve_assets and existing_appearance is not None:
+            appearance.design_image_generation_status = existing_appearance.design_image_generation_status
+            appearance.design_image_asset_id = existing_appearance.design_image_asset_id
+            appearance.design_image_asset_path = existing_appearance.design_image_asset_path
+            appearance.design_image_asset_url = existing_appearance.design_image_asset_url
+            appearance.asset_id = existing_appearance.asset_id
+            appearance.asset_path = existing_appearance.asset_path
+            appearance.asset_url = existing_appearance.asset_url
+            appearance.provider = existing_appearance.provider
+            appearance.model = existing_appearance.model
+            appearance.request_id = existing_appearance.request_id
+            appearance.usage = existing_appearance.usage
+        role.appearances = {item.appearance_name: appearance}
+        state.roles[item.role_id] = role
+        if self.workflow._role_needs_voice(role):
+            self.workflow._ensure_normal_role_audio(role)
+            if item.voice_profile_prompt and "normal" in role.audio:
+                role.audio["normal"].desc = item.voice_profile_prompt
+                role.voice_summary = item.voice_profile_prompt
+        else:
+            role.audio = {}
+            role.voice_summary = None
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("role", node_name=self.name)
-        available_voices: list[dict[str, Any]] = []
-        try:
-            speech_provider = self.router.audio("speech", node_name="role_design_speech")
-            available_voices = self.workflow._available_speakers_for_prompt(speech_provider)
-        except Exception as exc:
-            self.logger.warning("node=role_design could not load speech voice catalog: %s", exc)
         self.logger.info(
-            "node=role_design provider=%s model=%s available_voices=%d voice_selection=deferred",
+            "node=roleboard_prompt provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
-            len(available_voices),
         )
-        extract_output = self.role_designs.load_extract_output(project_dir)
+        extract_output = self.roleboard_prompts.load_extract_output(project_dir)
         if not extract_output.roles:
-            raise ValueError("role_design requires at least one role from role_extract")
+            raise ValueError("roleboard_prompt requires at least one role from role_extract")
 
         active_episode_keys = (
             self.workflow._active_episode_keys_in_order(state)
             if getattr(self.workflow, "_active_episode_keys", None)
             else []
         )
-        target_extract_roles = self.workflow._role_design_target_extract_roles(extract_output.roles, state)
+        target_extract_roles = self.workflow._roleboard_prompt_target_extract_roles(extract_output.roles, state)
         if active_episode_keys:
             self.logger.info(
-                "role_design episode-scoped rerun episodes=%s target_roles=%s",
+                "roleboard_prompt episode-scoped rerun episodes=%s target_roles=%s",
                 ",".join(active_episode_keys),
                 ",".join(item.name for item in target_extract_roles) or "-",
             )
-            if not target_extract_roles:
-                self.logger.warning(
-                    "role_design found no roles appearing in selected episodes: %s",
-                    ",".join(active_episode_keys),
-                )
 
         force_pregen = bool(getattr(self.workflow, "_force_pregen", False))
-        target_role_keys = {
-            self.workflow._role_name_key(item.name)
-            for item in target_extract_roles
-        }
+        target_role_keys = {self.workflow._role_name_key(item.name) for item in target_extract_roles}
         previous_roles = dict(state.roles)
-        previous_role_props = {
-            prop_id: prop
-            for prop_id, prop in state.props.items()
-            if prop.owner_role_id
-        }
-        self.workflow._clear_role_design_state(state)
+        self.workflow._clear_roleboard_prompt_state(state)
 
-        designed_by_key: dict[str, RoleDesignItem] = {}
-        existing_output = self.role_designs.load_existing_output(project_dir)
-        if existing_output is not None:
-            should_keep_existing = not force_pregen or bool(active_episode_keys)
-            if should_keep_existing:
-                extract_by_key = {
-                    self.workflow._role_name_key(item.name): item
-                    for item in extract_output.roles
-                }
-                for existing_item in existing_output.roles:
-                    if not self.workflow._role_design_item_complete(existing_item):
-                        continue
-                    existing_key = self.workflow._role_name_key(existing_item.name)
-                    if force_pregen and existing_key in target_role_keys:
-                        self.logger.info(
-                            "role_design %s will be regenerated due to --force",
-                            existing_item.name,
-                        )
-                        continue
-                    extract_item = extract_by_key.get(existing_key)
-                    if extract_item is not None:
-                        try:
-                            self.workflow._validate_role_design_item_identity(
-                                existing_item,
-                                extract_item,
-                                extract_output.roles,
-                            )
-                        except ValueError as exc:
-                            self.logger.warning(
-                                "role_design ignored existing design for %s: %s",
-                                existing_item.name,
-                                exc,
-                            )
-                            continue
-                    else:
-                        continue
-                    existing_design_path = self.role_designs.item_relative_path_for_name(
-                        project_dir,
-                        existing_item.name,
-                    )
-                    role_id = normalize_id("role", existing_item.name)
-                    previous_role = previous_roles.get(role_id)
-                    if previous_role is not None:
-                        state.roles[role_id] = previous_role
-                    for prop_id, prop in previous_role_props.items():
-                        if prop.owner_role_id == role_id:
-                            state.props[prop_id] = prop
-                    self.workflow._apply_role_design_item(
-                        project_dir,
-                        state,
-                        existing_item,
-                        design_path=existing_design_path,
-                        preserve_assets=True,
-                        validate_voice_sample_text=False,
-                    )
-                    role = state.roles[role_id]
-                    self.role_designs.save_design_item(
-                        project_dir,
-                        extract_item=extract_item,
-                        design_item=existing_item,
-                        role=role,
-                        bound_props=self._role_bound_props(state, role.id),
-                    )
-                    designed_by_key[existing_key] = existing_item
+        prompt_by_key: dict[str, RoleboardPromptItem] = {}
+        existing_output = self.roleboard_prompts.load_existing_output(project_dir)
+        if existing_output is not None and (not force_pregen or bool(active_episode_keys)):
+            extract_by_key = {self.workflow._role_name_key(item.name): item for item in extract_output.roles}
+            for existing_item in existing_output.prompts:
+                existing_key = self.workflow._role_name_key(existing_item.role_name)
+                if force_pregen and existing_key in target_role_keys:
+                    self.logger.info("roleboard_prompt %s will be regenerated due to --force", existing_item.role_name)
+                    continue
+                extract_item = extract_by_key.get(existing_key)
+                if extract_item is None:
+                    continue
+                previous_role = previous_roles.get(existing_item.role_id)
+                if previous_role is not None:
+                    state.roles[existing_item.role_id] = previous_role
+                prompt_path = self.roleboard_prompts.item_relative_path_for_name(project_dir, existing_item.role_name)
+                self._apply_roleboard_prompt_item(
+                    state,
+                    existing_item,
+                    prompt_path=prompt_path,
+                    preserve_assets=True,
+                )
+                role = state.roles[existing_item.role_id]
+                self.roleboard_prompts.save_prompt_item(
+                    project_dir,
+                    extract_item=extract_item,
+                    prompt_item=existing_item,
+                    role=role,
+                )
+                prompt_by_key[existing_key] = existing_item
 
         role_index = self._role_index_items(extract_output.roles)
         role_novel_extract: dict[str, str] | None = None
+        key_vision_asset = self._key_vision_asset_for_prompt(state)
         for extract_item in target_extract_roles:
             role_key = self.workflow._role_name_key(extract_item.name)
-            if role_key in designed_by_key and not force_pregen:
-                self.logger.info("role_design %s already exists, skipped", extract_item.name)
+            if role_key in prompt_by_key and not force_pregen:
+                self.logger.info("roleboard_prompt %s already exists, skipped", extract_item.name)
                 continue
 
             episode_keys = self.workflow._role_episode_keys(extract_item, state)
@@ -1283,79 +1346,47 @@ class RoleDesignNode(RoleNodeBase):
                 role_novel_extract = self.novel_extract_contents(project_dir, state)
             role_novel_full = self.novel_full_contents(project_dir, state, episode_keys)
             self.logger.info(
-                "role_design generating %s from episodes=%s chapters=%s",
+                "roleboard_prompt generating %s from episodes=%s chapters=%s",
                 extract_item.name,
                 ",".join(episode_keys),
                 ",".join(extract_item.source_chapters) or "-",
             )
-            output = await self.role_service.role_design(
+            output = await self.role_service.roleboard_prompt(
                 state,
                 provider,
                 role_item=extract_item,
                 role_novel_extract=role_novel_extract,
                 role_novel_full=role_novel_full,
                 role_index=role_index,
-                designed_role_voices=self._designed_role_voice_refs(
-                    extract_output.roles,
-                    designed_by_key,
-                    exclude_role_name=extract_item.name,
-                ),
-                available_voices=available_voices,
+                key_vision_asset=key_vision_asset,
             )
-            selected_item = self.workflow._select_role_design_item(output, extract_item)
-            self.workflow._validate_role_design_item_identity(selected_item, extract_item, extract_output.roles)
-            item = self.workflow._merge_role_extract_into_design(selected_item, extract_item)
-            design_path = self.role_designs.item_relative_path_for_name(project_dir, item.name)
-            self.workflow._apply_role_design_item(
-                project_dir,
-                state,
-                item,
-                design_path=design_path,
-            )
-            role = state.roles[normalize_id("role", item.name)]
-            design_path = self.role_designs.save_design_item(
+            item = self._prompt_item_from_model_output(extract_item, output, state)
+            prompt_path = self.roleboard_prompts.item_relative_path_for_name(project_dir, item.role_name)
+            self._apply_roleboard_prompt_item(state, item, prompt_path=prompt_path)
+            role = state.roles[item.role_id]
+            self.roleboard_prompts.save_prompt_item(
                 project_dir,
                 extract_item=extract_item,
-                design_item=item,
+                prompt_item=item,
                 role=role,
-                bound_props=self._role_bound_props(state, role.id),
             )
-            designed_by_key[role_key] = item
+            prompt_by_key[role_key] = item
             state.budget.used_text_calls += 1
-            state.metadata["role_design_generation_mode"] = "per_role_recursive"
-            state.metadata["role_design_active_episode_keys"] = active_episode_keys
-            state.metadata["role_design_target_role_names"] = [
-                item.name for item in target_extract_roles
-            ]
-            state.metadata["role_design_designed_role_names"] = [
-                item.name for item in self.workflow._ordered_role_design_items(extract_output.roles, designed_by_key)
-            ]
-            self.repo.save_node_output(
-                project_dir,
-                self.name,
-                RoleDesignOutput(roles=self.workflow._ordered_role_design_items(extract_output.roles, designed_by_key)),
-            )
+            final_items = self.workflow._ordered_roleboard_prompt_items(extract_output.roles, prompt_by_key)
+            state.metadata["roleboard_prompt_generation_mode"] = "per_role_recursive"
+            state.metadata["roleboard_prompt_active_episode_keys"] = active_episode_keys
+            state.metadata["roleboard_prompt_target_role_names"] = [item.name for item in target_extract_roles]
+            state.metadata["roleboard_prompt_designed_role_names"] = [item.role_name for item in final_items]
+            self.repo.save_node_output(project_dir, self.name, RoleboardPromptOutput(prompts=final_items))
             self.repo.save_state(project_dir, state)
 
-        final_items = self.workflow._ordered_role_design_items(extract_output.roles, designed_by_key)
-        state.metadata["role_design_generation_mode"] = "per_role_recursive"
-        state.metadata["role_design_active_episode_keys"] = active_episode_keys
-        state.metadata["role_design_target_role_names"] = [item.name for item in target_extract_roles]
-        state.metadata["role_design_designed_role_names"] = [item.name for item in final_items]
-        self.repo.save_node_output(
-            project_dir,
-            self.name,
-            RoleDesignOutput(roles=final_items),
-        )
+        final_items = self.workflow._ordered_roleboard_prompt_items(extract_output.roles, prompt_by_key)
+        state.metadata["roleboard_prompt_generation_mode"] = "per_role_recursive"
+        state.metadata["roleboard_prompt_active_episode_keys"] = active_episode_keys
+        state.metadata["roleboard_prompt_target_role_names"] = [item.name for item in target_extract_roles]
+        state.metadata["roleboard_prompt_designed_role_names"] = [item.role_name for item in final_items]
+        self.repo.save_node_output(project_dir, self.name, RoleboardPromptOutput(prompts=final_items))
         return state
-
-    @staticmethod
-    def _role_bound_props(state: ProjectState, role_id: str) -> list[Any]:
-        return [
-            prop
-            for prop in state.props.values()
-            if prop.owner_role_id == role_id
-        ]
 
     @staticmethod
     def _role_index_items(extract_roles: list[RoleExtractItem]) -> list[dict[str, Any]]:
@@ -1371,46 +1402,12 @@ class RoleDesignNode(RoleNodeBase):
             for item in extract_roles
         ]
 
-    def _designed_role_voice_refs(
-        self,
-        extract_roles: list[RoleExtractItem],
-        designed_by_key: dict[str, RoleDesignItem],
-        *,
-        exclude_role_name: str,
-    ) -> list[dict[str, Any]]:
-        excluded_key = self.workflow._role_name_key(exclude_role_name)
-        refs: list[dict[str, Any]] = []
-        for item in self.workflow._ordered_role_design_items(extract_roles, designed_by_key):
-            if self.workflow._role_name_key(item.name) == excluded_key:
-                continue
-            voices = [
-                {
-                    "emotion": voice.emotion,
-                    "voice_name": voice.voice_name,
-                    "voice_type": voice.voice_type,
-                    "voice_resource_id": voice.voice_resource_id,
-                    "desc": voice.desc,
-                    "voice_selection_reason": voice.voice_selection_reason,
-                }
-                for voice in item.voices
-            ]
-            if not voices:
-                continue
-            refs.append(
-                {
-                    "role_name": item.name,
-                    "role_tier": item.role_tier,
-                    "has_dialogue": item.has_dialogue,
-                    "voices": voices,
-                }
-            )
-        return refs
 
 
 def build_role_node_runners(workflow: Any) -> dict[str, RoleNodeBase]:
-    role_designs = getattr(workflow, "role_designs", None)
-    if role_designs is None:
-        role_designs = RoleDesignRepository(workflow.repo, workflow.layout)
+    roleboard_prompts = getattr(workflow, "roleboard_prompts", None)
+    if roleboard_prompts is None:
+        roleboard_prompts = RoleboardPromptRepository(workflow.repo, workflow.layout)
     script_contents = getattr(workflow, "script_contents", None)
     if script_contents is None:
         script_contents = ScriptContentRepository(workflow.repo, workflow.layout)
@@ -1421,7 +1418,7 @@ def build_role_node_runners(workflow: Any) -> dict[str, RoleNodeBase]:
         "script_service": workflow.script_service,
         "role_service": workflow.role_service,
         "script_contents": script_contents,
-        "role_designs": role_designs,
+        "roleboard_prompts": roleboard_prompts,
         "logger": getattr(workflow, "logger", None) or get_logger(),
     }
     return {
@@ -1431,7 +1428,7 @@ def build_role_node_runners(workflow: Any) -> dict[str, RoleNodeBase]:
         RoleEpisodeKeyAuditNode.name: RoleEpisodeKeyAuditNode(**deps),
         RoleDuplicateAuditNode.name: RoleDuplicateAuditNode(**deps),
         AmbientEntityExtractNode.name: AmbientEntityExtractNode(**deps),
-        RoleDesignNode.name: RoleDesignNode(**deps),
+        RoleboardPromptNode.name: RoleboardPromptNode(**deps),
     }
 
 
@@ -1446,7 +1443,7 @@ def build_role_nodes(workflow: Any) -> list[WorkflowNode]:
 __all__ = [
     "AmbientEntityExtractNode",
     "ROLE_NODE_NAMES",
-    "RoleDesignNode",
+    "RoleboardPromptNode",
     "RoleDuplicateAuditNode",
     "RoleEpisodeKeyAuditNode",
     "RoleExtractNode",

@@ -5,7 +5,7 @@ import json
 from autodrama.core.schemas import (
     AmbientEntityOutput,
     ProjectState,
-    RoleDesignOutput,
+    RoleboardPromptModelOutput,
     RoleDuplicateAuditReviewOutput,
     RoleEpisodeKeyAuditReviewOutput,
     RoleExtractItem,
@@ -25,14 +25,15 @@ class RoleService:
         return json.dumps(value, ensure_ascii=False, indent=2)
 
     @staticmethod
-    def role_design_style_prompt(state: ProjectState) -> str:
-        return str(state.metadata.get("role_design_style_prompt") or "").strip()
+    def roleboard_style_prompt(state: ProjectState) -> str:
+        return str(state.metadata.get("roleboard_style_prompt") or "").strip()
 
     @staticmethod
-    def role_appearance_view_requirement() -> str:
+    def roleboard_view_requirement() -> str:
         return (
-            "角色形象分两步生成：先生成单人正面全身图，再以该全身图为身份参考生成同一角色正面、侧面、背面三视图"
-            "和绑定物品设计图。三视图必须统一身高比例、脸型、发型、服装和道具细节。"
+            "角色身份板一次生成：必须包含同一角色的正面全身、侧面全身、背面全身、头部近景、表情组、"
+            "常用动作姿态、服装材质细节和可复用配饰/道具细节。所有视图必须统一年龄感、脸型、五官、"
+            "发型、服装、身高比例、体型和材质，不得变脸、换衣服或年龄漂移。"
         )
 
     async def role_extract(
@@ -215,7 +216,7 @@ class RoleService:
             },
         )
 
-    async def role_design(
+    async def roleboard_prompt(
         self,
         state: ProjectState,
         provider: TextLLM,
@@ -224,30 +225,28 @@ class RoleService:
         role_novel_extract: dict[str, str],
         role_novel_full: dict[str, str],
         role_index: list[dict[str, object]],
-        designed_role_voices: list[dict[str, object]],
-        available_voices: list[dict[str, object]] | None = None,
-    ) -> RoleDesignOutput:
-        available_voices = available_voices or []
+        key_vision_asset: dict[str, object] | None = None,
+    ) -> RoleboardPromptModelOutput:
         prompt = self.prompts.render(
-            "role_design",
+            "roleboard_prompt",
             role_extract_item=self.format_json(role_item.model_dump(mode="json")),
             role_novel_extract=self.format_json(role_novel_extract),
             role_novel_full=self.format_json(role_novel_full),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(role_novel_full)),
             role_index=self.format_json(role_index),
-            designed_role_voices=self.format_json(designed_role_voices),
-            available_voices=self.format_json(available_voices),
-            role_design_style_prompt=self.role_design_style_prompt(state),
-            role_appearance_view_requirement=self.role_appearance_view_requirement(),
+            key_vision_asset=self.format_json(key_vision_asset or {}),
+            roleboard_style_prompt=self.roleboard_style_prompt(state),
+            roleboard_view_requirement=self.roleboard_view_requirement(),
         )
         return await provider.generate_json(
             prompt,
-            RoleDesignOutput,
-            temperature=0.6,
+            RoleboardPromptModelOutput,
+            temperature=0.45,
             metadata={
-                "node_name": "role_design",
+                "node_name": "roleboard_prompt",
                 "project_id": state.project_id,
                 "role_name": role_item.name,
                 "episode_keys": list(role_novel_full),
+                "key_vision_asset": key_vision_asset or {},
             },
         )

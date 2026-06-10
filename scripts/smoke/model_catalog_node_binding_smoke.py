@@ -77,10 +77,10 @@ def write_config(path: Path, *, bad_param: bool = False) -> None:
                     "response_format": "json_object",
                 },
             },
-            "role_full_body_generation": {
+            "roleboard_generation": {
                 "model": "toapi:gpt-image-2",
                 "params": {
-                    "size": "1:2",
+                    "size": "16:9",
                     "resolution": "4K",
                     "n": 1,
                     **({"bad_param": True} if bad_param else {}),
@@ -144,14 +144,14 @@ def main() -> int:
     if getattr(text_provider, "use_response_format", None) is not True:
         raise AssertionError("Node params did not enable RightCode JSON response format")
 
-    image_provider = router.image("role", node_name="role_full_body_generation")
+    image_provider = router.image("role", node_name="roleboard_generation")
     payload = image_provider._provider.build_payload(
         "test image",
         metadata=image_provider._metadata({"asset_id": "role_001"}),
     )
     if payload["model"] != "gpt-image-2":
         raise AssertionError(f"Unexpected image model: {payload['model']}")
-    if payload["size"] != "1:2":
+    if payload["size"] != "16:9":
         raise AssertionError(f"Unexpected image size: {payload['size']}")
     if payload["resolution"] != "4K":
         raise AssertionError(f"Unexpected image resolution: {payload['resolution']}")

@@ -19,13 +19,24 @@ from autodrama.workflows.nodes.static_asset_nodes import STATIC_ASSET_NODE_NAMES
 from autodrama.workflows.nodes.voice_nodes import VOICE_NODE_NAMES, build_voice_nodes
 from autodrama.workflows.runner import EpisodeWorkflowNode, WorkflowNode
 
+ROLEBOARD_STATIC_NODE_NAMES = ["roleboard_generation"]
+
+
+def _split_static_asset_nodes(nodes: list[WorkflowNode]) -> tuple[list[WorkflowNode], list[WorkflowNode]]:
+    roleboard_names = set(ROLEBOARD_STATIC_NODE_NAMES)
+    roleboard_nodes = [node for node in nodes if node.name in roleboard_names]
+    remaining_nodes = [node for node in nodes if node.name not in roleboard_names]
+    return roleboard_nodes, remaining_nodes
+
 
 def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
+    roleboard_nodes, remaining_static_nodes = _split_static_asset_nodes(build_static_asset_nodes(workflow))
     return [
         *build_script_nodes(workflow, after_novel_nodes=build_director_nodes(workflow)),
         *build_role_nodes(workflow),
+        *roleboard_nodes,
         *build_voice_nodes(workflow),
-        *build_static_asset_nodes(workflow),
+        *remaining_static_nodes,
         *build_bgm_nodes(workflow),
     ]
 
@@ -35,8 +46,9 @@ PREGEN_NODE_NAMES = [
     *DIRECTOR_NODE_NAMES,
     *SCRIPT_NODE_NAMES[2:],
     *ROLE_NODE_NAMES,
+    *ROLEBOARD_STATIC_NODE_NAMES,
     *VOICE_NODE_NAMES,
-    *STATIC_ASSET_NODE_NAMES,
+    *[node_name for node_name in STATIC_ASSET_NODE_NAMES if node_name not in ROLEBOARD_STATIC_NODE_NAMES],
     *BGM_NODE_NAMES,
 ]
 

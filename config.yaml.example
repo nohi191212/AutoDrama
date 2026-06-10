@@ -76,20 +76,13 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
-  role_design:
+  roleboard_prompt:
     model: rightcode:gpt-5.5
     params:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
-  role_full_body_generation:
-    model: toapi:gpt-image-2
-    params:
-      size: "1:2"
-      resolution: 4K
-      n: 1
-      response_format: url
-  role_multiview_generation:
+  roleboard_generation:
     model: toapi:gpt-image-2
     params:
       size: "16:9"
@@ -179,12 +172,6 @@ nodes:
       resolution: 720p
       generate_audio: false
       return_last_frame: true
-  role_intro_video_generation:
-    model: volcengine:doubao-seedance-2-0-260128
-    params:
-      ratio: "9:16"
-      resolution: 720p
-      generate_audio: false
   shot_dialogue_audio_generation:
     model: volcengine:seed-tts-2.0
     params:
@@ -197,13 +184,13 @@ nodes:
       sample_rate: 24000
       response_format: mp3
       max_generated_audio_duration_seconds: 10
-  voice_select:
+  role_voice_select:
     model: rightcode:gpt-5.5
     params:
       reasoning_effort: low
       temperature: 0.2
       response_format: json_object
-  voice_select_audio_judge:
+  role_voice_select_audio_judge:
     model: aliyun_omni:qwen3.5-omni-plus
     params:
       temperature: 0.2
@@ -264,15 +251,15 @@ generation:
   # Maximum storyboard shots generated per episode by storyboard_generation.
   # Passing --shots to generation derives the storyboard run limit from the selected shot range.
   max_shots: 10
-  # Used by role_full_body_generation and role_multiview_generation as Image 2 style references.
-  role_design_style_reference_dir: ./.assets/sample
+  # Used by roleboard_generation as Image 2 style references.
+  roleboard_style_reference_dir: ./.assets/sample
   # Global visual style prompt used by design_key_vision_prompt.
   visual_style_prompt: >
     保持国漫CG/动画电影短剧主视觉质感，人物、场景、道具和光影属于同一美术体系；
     画面有明确戏剧冲突、纵深层次和电影镜头感，色彩克制但记忆点清晰。
     避免真人照片质感、可读文字、字幕、水印、logo和无关装饰。
-  # Unified role image style prompt used by role design, role_full_body_generation, and role_multiview_generation.
-  role_design_style_prompt: >
+  # Unified role image style prompt used by roleboard_prompt and roleboard_generation.
+  roleboard_style_prompt: >
     使用参考图片作为统一人物美术风格、材质质感、光影、色彩和画面气质参考。
     人物保持国漫CG/动画电影角色质感，明显非真人摄影，脸部为风格化CG美术表现，
     避免真实人脸毛孔、汗渍、微血管等照片级细节。保留东方修仙题材的服饰层次、
@@ -337,21 +324,16 @@ providers:
       image: gpt-image-2
       # Used by design_key_vision_image for the global key visual original.
       key_vision: gpt-image-2
-      # Used by role_multiview_generation for role multiview design images.
-      role_multiview: gpt-image-2-vip
-      # Used by role_full_body_generation for the 1:2 full-body reference image.
-      role_full_body: gpt-image-2
+      # Used by roleboard_generation for role identity boards.
+      roleboard: gpt-image-2-vip
     options:
       text_response_format: true
       reasoning_effort: xhigh
       storyboard_reasoning_effort: xhigh
       size: 1024x1024
-      # Used by role_multiview_generation for role multiview design images.
-      role_multiview_size: 3840x2160
-      role_multiview_quality: high
-      # Used by role_full_body_generation for the 1:2 full-body reference image.
-      role_full_body_size: 1024x1536
-      role_full_body_quality: high
+      # Used by roleboard_generation for role identity boards.
+      roleboard_size: 3840x2160
+      roleboard_quality: high
       # Used by design_key_vision_image for the global key visual original.
       key_vision_size: 1024x1536
       key_vision_quality: high
@@ -366,17 +348,13 @@ providers:
       image: gpt-image-2
       # Used by design_key_vision_image for the global key visual original.
       key_vision: gpt-image-2
-      # Used by role_multiview_generation for the final 16:9 role design sheet.
-      role_multiview: gpt-image-2
-      # Used by role_full_body_generation for the 1:2 full-body reference image.
-      role_full_body: gpt-image-2
+      # Used by roleboard_generation for the final 16:9 role identity board.
+      roleboard: gpt-image-2
     options:
       resolution: 4K
       size: "16:9"
-      role_multiview_size: "16:9"
-      role_multiview_resolution: 4K
-      role_full_body_size: "1:2"
-      role_full_body_resolution: 4K
+      roleboard_size: "16:9"
+      roleboard_resolution: 4K
       key_vision_size: "9:16"
       key_vision_resolution: 4K
       prop_size: "1:1"
@@ -470,8 +448,7 @@ providers:
       seedream_api_key_env: VOLCENGINE_API_KEY
       seedream_image_size: 1600x2848
       seedream_key_vision_size: 1600x2848
-      seedream_role_full_body_size: 1600x2848
-      seedream_role_design_size: 2848x1600
+      seedream_roleboard_size: 2848x1600
       seedream_prop_size: 2048x2048
       seedream_layout_size: 1600x2848
       seedream_ref_frame_size: 1600x2848
@@ -574,7 +551,7 @@ routing:
     script: rightcode
     director: rightcode
     role: rightcode
-    voice_select: rightcode
+    role_voice_select: rightcode
     prop: rightcode
     layout: rightcode
     storyboard: rightcode
@@ -600,6 +577,6 @@ routing:
     bgm: minimax
   judge:
     voice_catalog_profile: aliyun_omni
-    voice_select: aliyun_omni
+    role_voice_select: aliyun_omni
   vision:
     media_review: aliyun

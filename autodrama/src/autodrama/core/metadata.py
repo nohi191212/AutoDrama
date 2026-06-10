@@ -10,7 +10,7 @@ class ProjectMetadata(BaseModel):
     episode_duration_seconds: int = 30
     bgm_count: int = 3
     visual_style_prompt: str | None = None
-    role_design_style_prompt: str | None = None
+    roleboard_style_prompt: str | None = None
     prop_design_style_prompt: str | None = None
     layout_design_style_prompt: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
@@ -22,7 +22,7 @@ class ProjectMetadata(BaseModel):
             "episode_duration_seconds",
             "bgm_count",
             "visual_style_prompt",
-            "role_design_style_prompt",
+            "roleboard_style_prompt",
             "prop_design_style_prompt",
             "layout_design_style_prompt",
         }
