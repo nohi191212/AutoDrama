@@ -8,7 +8,7 @@ set "CONFIG=config.yaml"
 set "PROJECT="
 set "WORKFLOW=pregen"
 set "PROVIDER_ARGS="
-set "UNTIL=bgm_generation"
+set "UNTIL=role_voice_generation"
 set "ONLY="
 set "EPISODES="
 set "SHOTS="
@@ -37,7 +37,7 @@ if "%~1"=="--workflow" (
 )
 if "%~1"=="--generation" (
   set "WORKFLOW=generation"
-  if "%UNTIL%"=="bgm_generation" set "UNTIL=dynamic_asset_solidification"
+  if "%UNTIL%"=="role_voice_generation" set "UNTIL=dynamic_asset_solidification"
   shift
   goto parse
 )
@@ -124,10 +124,11 @@ echo from config.yaml when available, otherwise D:\miniforge3\envs\autodrama\pyt
 echo.
 echo Defaults:
 echo   workflow: pregen
-echo   bgm_generation
+echo   role_voice_generation
 echo.
 echo Notes:
-echo   pregen writes reusable/static assets through bgm_generation.
+echo   pregen currently writes role assets through role_voice_generation.
+echo   prop/layout/BGM nodes are deferred from the default pregen chain and can be run with --only.
 echo   pregen role audio chain is roleboard_prompt, roleboard_generation, role_voice_select, then role_voice_generation.
 echo   pregen --roles is supported with --only role_voice_select or --only role_voice_generation.
 echo   generation starts with storyboard_generation, then processes selected episodes.
@@ -151,7 +152,7 @@ exit /b 2
 
 :workflow_ok
 if /I "%WORKFLOW%"=="generation" (
-  if "%UNTIL%"=="bgm_generation" set "UNTIL=dynamic_asset_solidification"
+  if "%UNTIL%"=="role_voice_generation" set "UNTIL=dynamic_asset_solidification"
 )
 
 for /f "tokens=1,* delims=:" %%A in ('findstr /R /C:"^[ ][ ]*windows:" "%CONFIG%" 2^>nul') do (

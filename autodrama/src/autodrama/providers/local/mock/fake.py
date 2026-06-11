@@ -356,9 +356,10 @@ class FakeTextProvider:
                 "roleboard_prompt": (
                     f"真人剧角色身份板，{role_name}，同一角色的正面全身、侧面全身、背面全身、头部近景、"
                     "表情组、常用动作姿态、服装材质细节和随身配饰细节；统一年龄感、脸型、五官、发型、"
-                    "服装、体型比例和材质，干净设计板背景，无字幕、水印、logo 或可读文字。"
+                    "服装、体型比例和材质，干净设计板背景，边缘保留小号角色名和视图标签，"
+                    "无字幕、水印、logo 或其他无关文字。"
                 ),
-                "roleboard_negative_prompt": "变脸，换衣服，年龄漂移，多角色混入，字幕，水印，logo，可读文字",
+                "roleboard_negative_prompt": "变脸，换衣服，年龄漂移，多角色混入，字幕，水印，logo，除指定角色名和视图标签外的文字",
                 "voice_profile_prompt": f"{role_name}的常规音色，真人短剧对白质感，语速自然，咬字清晰，情绪克制。",
                 "design_notes": "fake provider roleboard prompt fixture",
             }

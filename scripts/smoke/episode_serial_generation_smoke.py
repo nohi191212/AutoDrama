@@ -100,7 +100,7 @@ async def main_async() -> int:
 
     router = RecordingRouter()
     pregen_workflow = PregenWorkflow(repo=repo, router=router)
-    await pregen_workflow.run(project_dir, until="bgm_generation", force=True)
+    await pregen_workflow.run(project_dir, until="role_voice_generation", force=True)
 
     generation_workflow = GenerationWorkflow(repo=repo, router=router)
     state = await generation_workflow.run(

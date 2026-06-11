@@ -9,7 +9,7 @@ Usage:
   scripts/run_pregen_fake.sh [--config FILE] [--project ID_OR_DIR] [--until NODE] [--force]
 
 Default NODE:
-  bgm_generation
+  role_voice_generation
 
 This runs the pre-generation workflow only with fake providers.
 Project ID and input outline file are read from config.yaml by default. Use
@@ -17,7 +17,7 @@ Project ID and input outline file are read from config.yaml by default. Use
 USAGE
 }
 
-until="bgm_generation"
+until="role_voice_generation"
 force=""
 project=""
 

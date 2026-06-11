@@ -9,28 +9,30 @@ Implemented scope:
 1. `script_outline`
 2. `script_novel`
 3. `director_prep`
-4. `script_novel_extract`
-5. `role_extract_primary`
-6. `role_extract_functional`
-7. `role_extract`
-8. `role_episode_key_audit`
-9. `role_duplicate_audit`
-10. `ambient_entity_extract`
-11. `roleboard_prompt`
-12. `roleboard_generation`
-13. `role_voice_select`
-14. `role_voice_generation`
-15. `prop_extract`
-16. `prop_design`
-17. `prop_generation`
-18. `layout_extract`
-19. `layout_design`
-20. `layout_dedupe_review`
-21. `layout_image_generation`
-22. `bgm_design`
-23. `bgm_generation`
+4. `design_key_vision_prompt`
+5. `design_key_vision_image`
+6. `script_novel_extract`
+7. `role_extract_primary`
+8. `role_extract_functional`
+9. `role_extract`
+10. `role_episode_key_audit`
+11. `role_duplicate_audit`
+12. `ambient_entity_extract`
+13. `roleboard_prompt`
+14. `roleboard_generation`
+15. `role_voice_select`
+16. `role_voice_generation`
+17. `prop_extract`
+18. `prop_design`
+19. `prop_generation`
+20. `layout_extract`
+21. `layout_design`
+22. `layout_dedupe_review`
+23. `layout_image_generation`
+24. `bgm_design`
+25. `bgm_generation`
 
-`run pregen` covers script, reusable static assets, BGM design, and BGM audio generation. It stops at `bgm_generation` by default.
+`run pregen` currently covers script, role identity boards, and role voices. It stops at `role_voice_generation` by default; `prop_*`, `layout_*`, and `bgm_*` nodes remain implemented but are deferred from the default chain and can be run manually with `--only`.
 
 Script episode content is stored as per-episode JSON files:
 
@@ -38,11 +40,13 @@ Script episode content is stored as per-episode JSON files:
 - `script_novel`: `assets/json/scripts/novel_full/episode_XXX.json`
 - `script_novel_extract`: `assets/json/scripts/novel_extract/episode_XXX.json`
 
-`director_prep` runs after `script_novel` and before `script_novel_extract`. It reads the full `novel_full` set and writes `assets/json/nodes/director_prep.json`, with story core, worldview, role/scene locks, emotional curves, and per-episode shot-beat maps. Downstream text nodes use it as a director constraint reference, while `novel_full` remains the source of truth for script facts.
+`director_prep` runs after `script_novel` and before the visual/script extraction nodes. It reads the full `novel_full` set and writes `assets/json/nodes/director_prep.json`, with story core, worldview, role/scene locks, emotional curves, and per-episode shot-beat maps. Downstream text nodes use it as a director constraint reference, while `novel_full` remains the source of truth for script facts.
+
+`design_key_vision_prompt` writes the global key-vision prompt from the director prep, full script context, and configured `generation.key_vision_style_prompt`. `design_key_vision_image` renders the key visual original to `assets/images/key_visions/key_vision_original.png` and records the provider image URL when one is returned. Role identity-board generation uses this key visual as a style and character-world reference image.
 
 Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at most one direct source path such as `source_novel_full_path`. The state stores the JSON path when an episode is generated, or `false` when it is not generated yet.
 
-`role_extract_primary` reads the complete `novel_full` set and recursively extracts only primary roles. `role_extract_functional` then receives separated `primary_roles` and `functional_roles` lists and recursively extracts short-lived functional roles outside the primary set. `role_extract` merges those outputs in stable order, with primary roles first and background/ambient entities excluded from `roles`. `role_episode_key_audit` checks role JSON records and appends missing `episode_keys/source_chapters`; `role_duplicate_audit` merges duplicated role extracts before visual/audio generation. `ambient_entity_extract` writes background entities to `assets/json/assets/ambient_entities.json` for scene/storyboard use without entering the role asset chain. `roleboard_prompt` then runs one role at a time, loading only that role's `novel_full` episodes plus the key-vision context, and writes prompt-only role identity-board prompts. Code generates `role_id` and `appearance_id`; model output must not include IDs, paths, URLs, filenames, node names, or project IDs. `roleboard_generation` uses the roleboard prompt and the `design_key_vision_image` result as reference to render a reusable role identity board with front, side, back, expression, action, and costume-detail views. `role_voice_select` reads the reusable `.assets/voice_catalog` manifest, filters candidate voices before a `deepseek-v4-flash` top-3 text shortlist, and uses the Qwen3.5-Omni-Plus audio judge when candidate samples are complete before binding the final provider `voice_type`; `role_voice_generation` then uses that `voice_type` for synthesis. Functional roles with `has_dialogue=false` do not generate voice.
+`role_extract_primary` reads the complete `novel_full` set and recursively extracts only primary roles. `role_extract_functional` then receives separated `primary_roles` and `functional_roles` lists and recursively extracts short-lived functional roles outside the primary set. `role_extract` merges those outputs in stable order, with primary roles first and background/ambient entities excluded from `roles`. `role_episode_key_audit` checks role JSON records and appends missing `episode_keys/source_chapters`; `role_duplicate_audit` merges duplicated role extracts before visual/audio generation. `ambient_entity_extract` writes background entities to `assets/json/assets/ambient_entities.json` for scene/storyboard use without entering the role asset chain. `roleboard_prompt` then runs one role at a time, loading only that role's `novel_full` episodes plus the key-vision context, and writes prompt-only role identity-board prompts. Code generates `role_id` and `appearance_id`; model output must not include IDs, paths, URLs, filenames, node names, or project IDs. `roleboard_generation` uses the roleboard prompt and the `design_key_vision_image` result as reference to render a reusable role identity board with front, side, back, expression, action, and costume-detail views. The generated board keeps a small edge label such as `角色：<role name> | <appearance name>` plus optional view labels, while still forbidding unrelated text, subtitles, watermarks, logos, ids, filenames, project names, dialogue, wrong names, and garbled text. No separate legacy role-visual stage remains before or after roleboard generation. `role_voice_select` reads the reusable `.assets/voice_catalog` manifest, filters candidate voices before a `deepseek-v4-flash` top-3 text shortlist, and uses the Qwen3.5-Omni-Plus audio judge when candidate samples are complete before binding the final provider `voice_type`; `role_voice_generation` then uses that `voice_type` for synthesis. Functional roles with `has_dialogue=false` do not generate voice.
 
 `prop_extract` reads the complete `novel_full` set and records global prop candidates/statuses without image prompts. Each extracted prop/status is written to its own `assets/json/props/{prop_id}.json` file. `prop_design` then runs one prop/status at a time, loading only the relevant `novel_full` episodes and updating that per-prop JSON with design content while preserving `extract_content`. `prop_generation` renders the final prop images from those saved prompts.
 
@@ -69,7 +73,9 @@ The default production routing in `config.yaml` is:
 - `text.ref_frame_spatial: deepseek` for reference-frame spatial continuity planning.
 - `music.bgm: minimax` for `bgm_generation` with MiniMax `music-2.6`.
 - `audio.speech: volcengine` for role TTS.
-- `image.role`, `image.prop`, `image.layout`, and `image.ref_frame`: `toapi` for GPT-Image-2 image generation. Role identity boards, props, layouts, and shot reference frames are saved both as local image files and as the provider returned image URL.
+- `image.key_vision`: `toapi` for the global key visual original.
+- `image.role`: `toapi` for `roleboard_generation`. The routing capability name is still `role` for compatibility, but provider model/size options are keyed by `roleboard`.
+- `image.prop`, `image.layout`, and `image.ref_frame`: `toapi` for GPT-Image-2 image generation. Key visuals, role identity boards, props, layouts, and shot reference frames are saved both as local image files and as the provider returned image URL.
 - `video.shot: volcengine` for shot videos. The default `providers.volcengine.options.video_reference_mode: ref_frame` uses each shot's generated reference frame as the main visual anchor and, from the second shot onward when available, also passes the previous shot's ref frame as `previous_shot_last_ref_frame` to hint the last visual state before the hard cut. Previous-shot generated videos remain disabled to avoid generation-to-generation quality drift across long shot chains. Role/dialogue audio anchors are still passed when available. When generated images are reused as references elsewhere, the workflow passes the saved network URL first and falls back to the local file only when no URL is available. The generated video prompt describes each passed reference by modality-local numbering so the current ref frame constrains the current shot's visual state, the previous-shot last ref frame only preserves continuity cues, and audio references constrain voice, lip-sync rhythm, and dialogue emotion.
 
 Volcengine TTS should keep `instruction_mode: none` unless a provider-level instruction carrier is verified. This prevents instruction-prefix text from being synthesized as speech.
@@ -128,7 +134,7 @@ If `--project` is omitted, the CLI uses `project.id` from `config.yaml` or `outp
 
 ### 2. Recommended Windows shortcuts
 
-Run pre-generation only. This creates/resumes the project and runs through `bgm_generation`:
+Run pre-generation only. This creates/resumes the project and runs through `role_voice_generation`:
 
 ```powershell
 run\start.cmd --config config.yaml
@@ -163,7 +169,7 @@ run\dynamic_assets.cmd --config config.yaml --project <project_id> --skip-pregen
 Stop the combined `dynamic_assets.cmd` flow at custom nodes:
 
 ```powershell
-run\dynamic_assets.cmd --config config.yaml --project <project_id> --pregen-until layout_image_generation --generation-until ref_frame_generation --episodes 1
+run\dynamic_assets.cmd --config config.yaml --project <project_id> --pregen-until role_voice_generation --generation-until ref_frame_generation --episodes 1
 ```
 
 Run one dynamic generation node through `dynamic_assets.cmd`:
@@ -223,13 +229,15 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --con
 Stop a workflow at a node:
 
 ```powershell
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --until layout_image_generation
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --until roleboard_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --until ref_frame_generation --episodes 1
 ```
 
 Run exactly one node:
 
 ```powershell
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only roleboard_prompt
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only roleboard_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only role_voice_select
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only role_voice_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only prop_design --episodes 1 --force
@@ -319,7 +327,7 @@ These scripts are useful on macOS/Linux or Git Bash. They source `scripts/env.sh
 ```bash
 scripts/init_project.sh --config config.yaml
 scripts/run_pregen.sh --config config.yaml --project <project_id>
-scripts/run_pregen.sh --config config.yaml --project <project_id> --until layout_image_generation
+scripts/run_pregen.sh --config config.yaml --project <project_id> --until roleboard_generation
 scripts/run_pregen.sh --config config.yaml --project <project_id> --only bgm_generation --force
 scripts/run_pregen_fake.sh --config config.yaml --project <project_id> --force
 scripts/inspect_state.sh --config config.yaml

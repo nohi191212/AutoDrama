@@ -90,18 +90,19 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - `project.episode_count`: 剧集数量。
 - `project.episode_duration_seconds`: 单集目标时长。
 - `project.bgm_count`: 全局 BGM 数量。
-- `generation.roleboard_style_prompt`: 角色身份板统一风格 prompt。
+- `generation.roleboard_style_prompt`: 角色身份板统一风格 prompt；身份板允许指定的小号角色名和视图标签，不允许其他文字、水印或 logo。
 - `generation.prop_design_style_prompt`: 道具设计统一画风 prompt。
 - `generation.layout_design_style_prompt`: 场景设计统一画风 prompt。
 - `output.root_dir`: 输出目录，默认 `./outputs`。
 - `providers`: 各 Provider 的 base URL、模型名和选项。
 - `routing`: 不同能力和用途的 Provider 路由。
 
-角色静态图像现在使用 `roleboard` 配置：
+主视觉和角色静态图像现在分成两步配置：
 
-- `roleboard`: 角色身份板图，包含正面、侧面、背面、表情、动作和服装细节，默认走支持参考图的图像 provider，建议 16:9 横幅比例，例如 `roleboard_size: "16:9"`。
+- `key_vision`: 项目主视觉原图，由 `design_key_vision_image` 生成，默认建议竖版比例，例如 `key_vision_size: "9:16"`。
+- `roleboard`: 角色身份板图，由 `roleboard_generation` 基于主视觉原图和角色身份板 prompt 生成，包含正面、侧面、背面、表情、动作和服装细节，并在边缘保留小号“角色：<角色名> | <形象名>”及可选视图标签，默认走支持参考图的图像 provider，建议 16:9 横幅比例，例如 `roleboard_size: "16:9"`。
 
-旧的 `role_portrait` / `portrait_prompt` 已移除，不再作为角色资产配置项或 prompt 字段。
+旧的分散式角色视觉链路已移除；当前角色视觉资产以 roleboard 身份板为准。
 
 编辑 `apikeys.yaml` 填入真实密钥。该文件应只保存在本地，不要提交到代码仓库。
 
@@ -123,13 +124,13 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 
 - 文本脚本: `aliyun`
 - 角色/道具/场景/分镜文本: `deepseek`
-- 静态角色/道具/场景图像: `toapi` / GPT-Image-2
+- 主视觉、角色身份板、道具、场景图像: `toapi` / GPT-Image-2
 - 镜头参考帧: `toapi` / GPT-Image-2
 - 角色语音: `volcengine`
 - 全局 BGM: `minimax`
 - 镜头视频: `volcengine`
 
-所有图片生成默认通过 ToAPI GPT-Image-2：角色身份板、道具图、场景图和镜头参考帧都会本地保存图片文件，并同时保存 provider 返回的图片 URL。后续把这些图片作为参考图传给图片或视频模型时，会优先传保存的网络 URL，只有没有 URL 时才回退到本地文件。`providers.volcengine.options.video_reference_mode: layout_roleboard_previous_video` 可用于 Seedance 的场景 + 角色身份板 + 历史视频参考模式。该模式暂时不把镜头参考帧或道具设定图传给 Seedance；图片参考保留角色身份板和无人物空场景 layout 图，视频参考保留同一物理空间中最近已生成的镜头视频和上一 shot 视频，角色/对白音频锚点仍会传入。视频 prompt 会按实际传入素材编号说明职责：角色身份板锁定人物外观，场景图锁定空间，同场镜头锁定空间连续性，上一镜头锁定硬切后的逻辑连贯性。
+所有图片生成默认通过 ToAPI GPT-Image-2：主视觉原图、角色身份板、道具图、场景图和镜头参考帧都会本地保存图片文件，并同时保存 provider 返回的图片 URL。后续把这些图片作为参考图传给图片或视频模型时，会优先传保存的网络 URL，只有没有 URL 时才回退到本地文件。`providers.volcengine.options.video_reference_mode: layout_roleboard_previous_video` 可用于 Seedance 的场景 + 角色身份板 + 历史视频参考模式。该模式暂时不把镜头参考帧或道具设定图传给 Seedance；图片参考保留角色身份板和无人物空场景 layout 图，视频参考保留同一物理空间中最近已生成的镜头视频和上一 shot 视频，角色/对白音频锚点仍会传入。视频 prompt 会按实际传入素材编号说明职责：角色身份板锁定人物外观，场景图锁定空间，同场镜头锁定空间连续性，上一镜头锁定硬切后的逻辑连贯性。
 
 本地验证或演示可以使用 `--fake`，不会调用真实外部服务。
 
@@ -167,7 +168,7 @@ $env:PYTHONPATH="autodrama/src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli import-script --config config.yaml --project huyao --script inputs/狐妖.md --detail-expand --expanded-script-out inputs/狐妖_细化.md --force
 ```
 
-如果项目已经生成了角色图、音频、角色视频等资产，只想替换剧本文本并保留已有资产，不要使用 `--force`，改用 `--preserve-assets`：
+如果项目已经生成了角色身份板、语音样例、道具、场景、参考帧或镜头视频等资产，只想替换剧本文本并保留已有资产，不要使用 `--force`，改用 `--preserve-assets`：
 
 ```powershell
 $env:PYTHONPATH="autodrama/src"
@@ -186,7 +187,7 @@ run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐�
 run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐妖.md --expanded-script-out inputs/狐妖_细化.md --storyboard --episodes 1
 ```
 
-`--preserve-assets` 会保留角色、道具、场景、图片、音频、视频状态，只把 `director_prep`、`script_novel_extract` 和动态分镜生成节点标记为需要重跑。导入后先刷新导演前期和剧情摘要：
+`--preserve-assets` 会保留角色、道具、场景、图片、音频、视频状态，包括已生成的 roleboard 身份板，只把 `director_prep`、`script_novel_extract` 和动态分镜生成节点标记为需要重跑。导入后先刷新导演前期和剧情摘要：
 
 ```powershell
 run\start.cmd --config config.yaml --project huyao --until script_novel_extract
@@ -227,7 +228,7 @@ $env:PYTHONPATH="autodrama/src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id>
 ```
 
-`pregen` 默认运行到 `bgm_generation`，包含以下节点：
+`pregen` 默认运行到 `role_voice_generation`。`prop_*`、`layout_*` 和 `bgm_*` 节点暂时从默认 pregen 流程中屏蔽，代码仍保留，需要时可用 `--only` 手动运行。
 
 ```text
 script_outline
@@ -246,15 +247,12 @@ roleboard_prompt
 roleboard_generation
 role_voice_select
 role_voice_generation
-prop_extract
-prop_design
-prop_generation
-layout_extract
-layout_design
-layout_dedupe_review
-layout_image_generation
-bgm_design
-bgm_generation
+```
+
+如果只需要跑到主视觉原图生成，可把流程停在 `design_key_vision_image`：
+
+```powershell
+run\start.cmd --config config.yaml --project <project_id> --until design_key_vision_image
 ```
 
 角色链的关键依赖顺序：
@@ -269,7 +267,7 @@ role_voice_select
 role_voice_generation
 ```
 
-`roleboard_prompt` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并结合主视觉原图信息输出 prompt-only 的角色身份板提示词；代码负责生成 `role_id`、`appearance_id` 等内部 ID。`roleboard_generation` 使用身份板提示词和 `design_key_vision_image` 产出的主视觉原图作为参考图，生成正面、侧面、背面、表情、动作、服装细节等角色身份板。`role_voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；`role_voice_generation` 再使用该 `voice_type` 合成人物样例音频。功能角色如果 `has_dialogue=false` 不生成声音。
+`roleboard_prompt` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并结合主视觉原图信息输出 prompt-only 的角色身份板提示词；代码负责生成 `role_id`、`appearance_id` 等内部 ID。`roleboard_generation` 使用身份板提示词和 `design_key_vision_image` 产出的主视觉原图作为参考图，生成正面、侧面、背面、表情、动作、服装细节等角色身份板，并要求图片边缘带小号“角色：<角色名> | <形象名>”以及可选的“正面/侧面/背面/头部/表情/动作/服装细节/配饰细节”视图标签，方便后续把图片单独作为参考图时直接识别角色；除这些指定标签外仍禁止字幕、水印、logo、编号、ID、文件名、项目名、剧情台词或乱码文字。`role_voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；`role_voice_generation` 再使用该 `voice_type` 合成人物样例音频。功能角色如果 `has_dialogue=false` 不生成声音。
 
 `role_episode_key_audit` 在 `role_extract` 之后运行，会以 30 并发逐个检查角色 JSON 的 `episode_keys` 覆盖情况；如果发现遗漏，只向 `role_extract*`、已有 `roleboard_prompt`、角色 JSON 和 state 角色记录追加缺失的 `episode_keys/source_chapters`，不会删除或重排原有条目。
 
@@ -328,7 +326,7 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli inspect nodes --config 
 运行到指定节点：
 
 ```powershell
-run\start.cmd --config config.yaml --project <project_id> --until layout_image_generation
+run\start.cmd --config config.yaml --project <project_id> --until roleboard_generation
 run\start.cmd --generation --config config.yaml --project <project_id> --until ref_frame_generation
 ```
 

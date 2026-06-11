@@ -153,7 +153,7 @@ async def main_async() -> int:
     )
 
     fake_router = ProviderRouter(settings, provider_override="fake")
-    await PregenWorkflow(repo=repo, router=fake_router).run(project_dir, until="bgm_generation", force=True)
+    await PregenWorkflow(repo=repo, router=fake_router).run(project_dir, until="role_voice_generation", force=True)
 
     events: list[str] = []
     await GenerationWorkflow(repo=repo, router=RecordingRouter(events)).run(

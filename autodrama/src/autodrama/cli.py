@@ -16,7 +16,7 @@ from autodrama.services.script_service import ScriptService
 from autodrama.services.voice_catalog_service import VoiceCatalogService
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.generation import DEFAULT_GENERATION_NODES, GENERATION_NODES, GenerationWorkflow
-from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow
+from autodrama.workflows.pregen import PREGEN_NODES, PREGEN_ONLY_NODES, PregenWorkflow
 from autodrama.workflows.selection import (
     parse_episode_keys as parse_episode_keys_value,
     parse_shot_selectors as parse_shot_selectors_value,
@@ -49,7 +49,7 @@ def parse_role_names(value: str | None) -> list[str] | None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    pregen_only_choices = [*PREGEN_NODES]
+    pregen_only_choices = [*PREGEN_ONLY_NODES]
     if "prop_image_generation" not in pregen_only_choices:
         pregen_only_choices.append("prop_image_generation")
 
@@ -112,7 +112,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--node",
         dest="only",
         choices=pregen_only_choices,
-        help="Run exactly one pre-generation node, even if it is already completed.",
+        help=(
+            "Run exactly one pre-generation node, even if it is already completed. "
+            "Deferred prop/layout/BGM nodes are available only through --only."
+        ),
     )
     pregen_parser.add_argument(
         "--episodes",
@@ -120,7 +123,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest="episodes",
         help=(
             "Supported with pregen --only roleboard_prompt, roleboard_generation, role_voice_select, role_voice_generation, "
-            "prop_design, prop_generation, or layout_image_generation (legacy alias: prop_image_generation)."
+            "prop_design, prop_generation, or layout_image_generation (legacy alias: prop_image_generation). "
+            "Prop/layout episode-scoped nodes are deferred from the default pregen chain."
         ),
     )
     pregen_parser.add_argument(

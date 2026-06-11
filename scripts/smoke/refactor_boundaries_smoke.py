@@ -16,11 +16,14 @@ from autodrama.utils.prompts import PromptStore  # noqa: E402
 from autodrama.workflows.editing import EditingWorkflow  # noqa: E402
 from autodrama.workflows.generation import GENERATION_NODES, GenerationWorkflow  # noqa: E402
 from autodrama.workflows.nodes import (  # noqa: E402
+    AVAILABLE_PREGEN_NODE_NAMES,
+    DEFERRED_PREGEN_NODE_NAMES,
     PREGEN_NODE_NAMES,
     build_generation_episode_nodes,
+    build_manual_pregen_nodes,
     build_pregen_nodes,
 )
-from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow  # noqa: E402
+from autodrama.workflows.pregen import PREGEN_NODES, PREGEN_ONLY_NODES, PregenWorkflow  # noqa: E402
 
 
 def require(condition: bool, message: str) -> None:
@@ -41,7 +44,12 @@ def main() -> int:
     require(not isinstance(generation, PregenWorkflow), "GenerationWorkflow must not inherit PregenWorkflow")
     require(not isinstance(editing, PregenWorkflow), "EditingWorkflow must not inherit PregenWorkflow")
     require([node.name for node in build_pregen_nodes(pregen)] == PREGEN_NODE_NAMES, "Pregen node registry mismatch")
+    require(
+        [node.name for node in build_manual_pregen_nodes(pregen)] == DEFERRED_PREGEN_NODE_NAMES,
+        "Manual pregen node registry mismatch",
+    )
     require(PREGEN_NODE_NAMES == PREGEN_NODES, "Pregen node constants drifted")
+    require(AVAILABLE_PREGEN_NODE_NAMES == PREGEN_ONLY_NODES, "Pregen only-node constants drifted")
     require(
         [node.name for node in build_generation_episode_nodes(generation)] == GENERATION_NODES,
         "Generation episode node registry mismatch",

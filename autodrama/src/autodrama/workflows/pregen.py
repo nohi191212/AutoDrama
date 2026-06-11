@@ -45,7 +45,12 @@ from autodrama.services.script_service import ScriptService
 from autodrama.services.storyboard_service import StoryboardService
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.context import WorkflowRunContext
-from autodrama.workflows.nodes import PREGEN_NODE_NAMES, build_pregen_nodes
+from autodrama.workflows.nodes import (
+    AVAILABLE_PREGEN_NODE_NAMES,
+    PREGEN_NODE_NAMES,
+    build_manual_pregen_nodes,
+    build_pregen_nodes,
+)
 from autodrama.workflows.nodes.bgm_nodes import BGMNodeBase, build_bgm_node_runners
 from autodrama.workflows.nodes.script_nodes import (
     ScriptNodeBase,
@@ -64,6 +69,7 @@ from autodrama.workflows.selection import select_episode_keys
 
 
 PREGEN_NODES = PREGEN_NODE_NAMES
+PREGEN_ONLY_NODES = AVAILABLE_PREGEN_NODE_NAMES
 EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "roleboard_prompt",
     "roleboard_generation",
@@ -525,7 +531,7 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         *,
-        until: str = "bgm_generation",
+        until: str = "role_voice_generation",
         force: bool = False,
         only: str | None = None,
         episode_keys: list[str] | None = None,
@@ -533,10 +539,15 @@ class PregenWorkflow:
     ) -> ProjectState:
         if only is not None:
             only = PREGEN_ONLY_ALIASES.get(only, only)
-        if until not in PREGEN_NODES:
-            raise ValueError(f"Unsupported pregen stop node: {until}")
-        if only is not None and only not in PREGEN_NODES:
+        if only is not None and only not in PREGEN_ONLY_NODES:
             raise ValueError(f"Unsupported pregen only node: {only}")
+        if only is None and until not in PREGEN_NODES:
+            if until in PREGEN_ONLY_NODES:
+                raise ValueError(
+                    f"pregen stop node {until} is deferred from the default pregen chain; "
+                    f"use pregen --only {until} to run it manually."
+                )
+            raise ValueError(f"Unsupported pregen stop node: {until}")
 
         logger = setup_logging(project_dir)
         state = self.repo.load_state(project_dir)
@@ -582,7 +593,13 @@ class PregenWorkflow:
         if selected_role_names is not None:
             self._active_role_names = list(selected_role_names)
         try:
-            node_by_name = {node.name: node for node in build_pregen_nodes(self)}
+            node_by_name = {
+                node.name: node
+                for node in [
+                    *build_pregen_nodes(self),
+                    *build_manual_pregen_nodes(self),
+                ]
+            }
             state = await self.runner.run_nodes(
                 project_dir,
                 state,

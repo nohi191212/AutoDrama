@@ -859,18 +859,30 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             "生成一张角色身份板：同一角色必须包含正面全身、侧面全身、背面全身、头部近景、"
             "表情组、常用动作姿态、服装材质细节和可复用配饰/道具细节。所有视图必须统一年龄感、"
             "脸型、五官、发型、服装、身高比例、体型和材质，不得变脸、换衣服或年龄漂移。"
-            "画面应是清晰可复用的设计板，无字幕、水印、logo、片段编号或可读文字。"
+            f"画面应是清晰可复用的设计板，必须在左上角或底部边缘以小号清晰文字标注"
+            f"“角色：{role.name} | {appearance.name}”。"
+            "各视图区边缘可添加小号功能性标签：正面、侧面、背面、头部、表情、动作、"
+            "服装细节、配饰细节。所有文字必须远离人物脸部、身体轮廓、服装和道具，"
+            "不得遮挡任何可复用视觉细节。除指定角色名和视图标签外，不得出现字幕、水印、"
+            "logo、片段编号、项目编号、文件名、ID、剧情台词、乱码文字或错误角色名。"
         )
         negative_prompt = str(appearance.roleboard_negative_prompt or "").strip()
+        label_negative_prompt = (
+            "除指定角色名和视图标签外的可读文字，字幕，水印，logo，片段编号，项目编号，"
+            "文件名，ID，剧情台词，乱码文字，错误角色名，文字遮挡人物脸部或服装细节"
+        )
+        combined_negative_prompt = "；".join(
+            part for part in (negative_prompt, label_negative_prompt) if part
+        )
         return "\n\n".join(
             part
             for part in (
                 style_prefix,
                 key_vision_note,
-                roleboard_requirement,
                 f"角色：{role.name}",
                 base_prompt,
-                f"负向约束：{negative_prompt}" if negative_prompt else "",
+                roleboard_requirement,
+                f"负向约束：{combined_negative_prompt}",
             )
             if part
         )
