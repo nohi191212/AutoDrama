@@ -350,6 +350,17 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 f"{prefix}: 本段视频参考图，作为本段空间参考锚点。锁定当前片段的主体站位、构图方向、"
                 "关键道具位置、光影和环境状态；它不是视频首帧或尾帧，不要求逐像素复刻。"
             )
+        if asset_type == "storyboard_panel":
+            return (
+                f"{prefix}: 当前 shot 故事板单格，只用于锁定本镜头的构图、景别、机位、人物站位、"
+                "动作方向、镜头运动和镜头顺序；不要复刻黑白线稿风格，不要生成编号、边框、标题或文字标签，"
+                "最终画质、颜色、材质和角色细节仍以当前 shot 描述、角色身份板和主视觉为准。"
+            )
+        if asset_type == "key_vision":
+            return (
+                f"{prefix}: 主视觉原图，只用于世界观、美术风格、色调、光影、质感和整体制作水准参考；"
+                "不要用主视觉覆盖当前 shot 的构图、动作、机位、出场角色或剧情节奏。"
+            )
         if asset_type == "layout":
             return (
                 f"{prefix}: 场景图，作为空间锚点。锁定场景结构、材质、光照基调、关键背景物和空间尺度；"
@@ -358,8 +369,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         if asset_type == "roleboard":
             return (
                 f"{prefix}: 角色身份板，作为当前视觉主体的静态外观锚点。锁定同一人物的脸型、发型、"
-                "身体比例、服装层次、配饰、色彩、材质和表情/动作习惯；人物在本段中的站位、动作、"
-                "表情和口型仍以当前 shot 的 video_prompt 与对白空间约束为准。"
+                "身体比例、服装层次、配饰、色彩、材质、年龄感和表情/动作习惯；不要把它当成当前 shot 的构图图，"
+                "人物在本段中的站位、动作、表情和口型仍以当前 shot 的 video_prompt、故事板单格和对白空间约束为准。"
             )
         if asset_type == "prop":
             return (
@@ -503,6 +514,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         boundary_clauses: list[str] = []
         if "layout" in asset_types:
             boundary_clauses.append("场景图只锁定无人物空场景的空间结构、材质、光照和尺度")
+        if "storyboard_panel" in asset_types:
+            boundary_clauses.append("故事板单格只锁定当前 shot 的构图、景别、机位、动作方向、镜头运动和镜头顺序，不锁定线稿画风")
+        if "key_vision" in asset_types:
+            boundary_clauses.append("主视觉原图只锁定世界观、美术风格、色调、光影和质感")
         if "ref_frame" in asset_types:
             boundary_clauses.append("本段参考图只锁定当前片段空间参考")
         if "previous_shot_last_ref_frame" in asset_types:
@@ -530,6 +545,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         ]
         if "previous_shot_last_ref_frame" in asset_types:
             conflict_parts.append("当前画面冲突优先听本段参考图和当前 video_prompt，上一 shot 最后参考帧只保留连续性提示")
+        if "storyboard_panel" in asset_types:
+            conflict_parts.append("当前 shot 构图、景别、机位、动作方向和镜头顺序冲突优先听故事板单格")
+        if "key_vision" in asset_types:
+            conflict_parts.append("主视觉只解决风格和世界观，不改变当前 shot 的构图和动作")
         if asset_types.intersection({"layout", "reference_video", "reference_and_previous_shot_video"}):
             conflict_parts.append("空间冲突优先听场景图或同场景镜头视频")
         if "roleboard" in asset_types:

@@ -17,6 +17,7 @@ class TextLLM(Protocol):
         *,
         temperature: float = 0.7,
         metadata: dict[str, Any] | None = None,
+        refs: list["AssetRef"] | None = None,
     ) -> T:
         """Generate JSON validated by the requested Pydantic schema."""
 

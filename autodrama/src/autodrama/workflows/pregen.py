@@ -20,6 +20,7 @@ from autodrama.core.schemas import (
     RoleboardPromptOutput,
     ShotDialogueAudioAsset,
     StoryboardEpisodeOutput,
+    StoryboardPanelCropOutput,
     StoryboardShot,
 )
 from autodrama.logging import get_logger, setup_logging
@@ -73,6 +74,10 @@ PREGEN_ONLY_NODES = AVAILABLE_PREGEN_NODE_NAMES
 EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "roleboard_prompt",
     "roleboard_generation",
+    "storyboard_prompt",
+    "storyboard_generation",
+    "storyboard_bbox_detection",
+    "storyboard_panel_crop",
     "role_voice_select",
     "role_voice_generation",
     "prop_design",
@@ -558,8 +563,8 @@ class PregenWorkflow:
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
                 "--episodes is only supported for pregen --only roleboard_prompt, roleboard_generation, "
-                "role_voice_select, role_voice_generation, prop_design, prop_generation, or layout_image_generation. "
-                "Use run generation --only storyboard_generation --episodes ... for storyboard shots."
+                "storyboard_prompt, storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop, "
+                "role_voice_select, role_voice_generation, prop_design, prop_generation, or layout_image_generation."
             )
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError("--roles is only supported for pregen --only role_voice_select or role_voice_generation.")
@@ -1288,12 +1293,14 @@ class PregenWorkflow:
         def image_priority(ref) -> tuple[int, str]:
             asset_type = cls._shot_video_ref_asset_type(ref)
             priority = {
-                "roleboard": 0,
-                "layout": 1,
-                "ref_frame": 2,
-                "previous_shot_last_ref_frame": 3,
-                "previous_shot_last_frame": 4,
-                "prop": 5,
+                "storyboard_panel": 0,
+                "roleboard": 1,
+                "key_vision": 2,
+                "ref_frame": 3,
+                "previous_shot_last_ref_frame": 4,
+                "layout": 5,
+                "previous_shot_last_frame": 6,
+                "prop": 7,
             }.get(asset_type, 9)
             return priority, str(getattr(ref, "id", "") or "")
 
@@ -1320,9 +1327,9 @@ class PregenWorkflow:
                 return default
             return max(0, int(value))
 
-        max_images = min(provider_limit("max_reference_images", 2), 2)
-        max_videos = min(provider_limit("max_reference_videos", 2), 2)
-        max_audio = min(provider_limit("max_reference_audio", 1), 1)
+        max_images = provider_limit("max_reference_images", 2)
+        max_videos = provider_limit("max_reference_videos", 2)
+        max_audio = provider_limit("max_reference_audio", 1)
         max_video_duration = getattr(provider, "max_reference_video_total_duration_seconds", None)
         if max_video_duration is None:
             max_video_duration = 15.2
@@ -1343,8 +1350,24 @@ class PregenWorkflow:
                 selected_video_duration += duration
             selected_videos.append(ref)
 
+        selected_images = []
+        seen_images: set[tuple[str, str, str, str]] = set()
+        for ref in sorted(images, key=image_priority):
+            key = (
+                cls._shot_video_ref_asset_type(ref),
+                str(getattr(ref, "id", "") or ""),
+                str(getattr(ref, "path", "") or ""),
+                str(getattr(ref, "url", "") or ""),
+            )
+            if key in seen_images:
+                continue
+            seen_images.add(key)
+            selected_images.append(ref)
+            if len(selected_images) >= max_images:
+                break
+
         return [
-            *sorted(images, key=image_priority)[:max_images],
+            *selected_images,
             *selected_videos,
             *audios[:max_audio],
             *others,
@@ -1607,6 +1630,91 @@ class PregenWorkflow:
         right_url = str(right.url or "").strip()
         return bool(left_url and right_url and left_url == right_url)
 
+    def _key_vision_ref(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        shot: StoryboardShot,
+    ):
+        from autodrama.providers.base import AssetRef
+
+        key_vision = state.metadata.get("key_vision_asset")
+        if isinstance(key_vision, dict):
+            asset_id = str(key_vision.get("asset_id") or state.metadata.get("key_vision_asset_id") or "key_vision_original")
+            asset_path = key_vision.get("asset_path") or state.metadata.get("key_vision_asset_path")
+            asset_url = key_vision.get("asset_url") or state.metadata.get("key_vision_asset_url")
+            name = str(key_vision.get("name") or state.metadata.get("key_vision_name") or "主视觉原图")
+        else:
+            asset_id = str(state.metadata.get("key_vision_asset_id") or "key_vision_original")
+            asset_path = state.metadata.get("key_vision_asset_path")
+            asset_url = state.metadata.get("key_vision_asset_url")
+            name = str(state.metadata.get("key_vision_name") or "主视觉原图")
+        existing = self.layout.existing_project_file(project_dir, str(asset_path)) if asset_path else None
+        if not existing and not asset_url:
+            return None
+        return AssetRef(
+            id=asset_id,
+            type="image",
+            path=str(project_dir / existing) if existing else None,
+            url=str(asset_url) if asset_url else None,
+            metadata={
+                "asset_type": "key_vision",
+                "reference_source": "design_key_vision_image",
+                "reference_role": "style_world_reference",
+                "shot_id": shot.shot_id,
+                "shot_index": shot.index,
+                "name": name,
+            },
+        )
+
+    def _storyboard_panel_ref(
+        self,
+        project_dir: Path,
+        shot: StoryboardShot,
+    ):
+        from autodrama.providers.base import AssetRef
+
+        path = self.layout.node_output_path(project_dir, "storyboard_panel_crop")
+        if not path.exists():
+            return None
+        try:
+            output = StoryboardPanelCropOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            get_logger().warning("skip storyboard panel ref for %s: invalid %s: %s", shot.shot_id, path, exc)
+            return None
+        episode_key = str(shot.shot_id or "").rsplit("_shot_", 1)[0]
+        matched = None
+        for item in output.cropped_panels:
+            if item.shot_id == shot.shot_id:
+                matched = item
+                break
+            if item.episode_key == episode_key and int(item.shot_index) == int(shot.index):
+                matched = item
+                break
+        if matched is None:
+            return None
+        existing = self.layout.existing_project_file(project_dir, matched.asset_path)
+        if not existing:
+            return None
+        return AssetRef(
+            id=matched.asset_id,
+            type="image",
+            path=str(project_dir / existing),
+            url=None,
+            metadata={
+                "asset_type": "storyboard_panel",
+                "reference_source": "storyboard_panel_crop",
+                "reference_role": "composition_action_camera",
+                "episode_key": matched.episode_key,
+                "shot_index": matched.shot_index,
+                "shot_id": shot.shot_id,
+                "source_shot_id": matched.shot_id,
+                "bbox_1000": matched.bbox_1000.model_dump(mode="json"),
+                "bbox_source": matched.bbox_source,
+                "name": f"{shot.shot_id} 故事板单格",
+            },
+        )
+
     def _shot_video_asset_ref(
         self,
         project_dir: Path,
@@ -1791,6 +1899,13 @@ class PregenWorkflow:
                 )
             )
             return refs
+        storyboard_panel_ref = self._storyboard_panel_ref(project_dir, shot)
+        if storyboard_panel_ref is not None:
+            refs.append(storyboard_panel_ref)
+        refs.extend(self._shot_roleboard_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
+        key_vision_ref = self._key_vision_ref(project_dir, state, shot)
+        if key_vision_ref is not None:
+            refs.append(key_vision_ref)
         if self._video_reference_mode_uses_ref_frame(reference_mode) and (
             shot.ref_frame_asset_path or shot.ref_frame_asset_url
         ):
@@ -1812,7 +1927,6 @@ class PregenWorkflow:
             if previous_ref_frame_ref is not None:
                 refs.append(previous_ref_frame_ref)
         if self._video_reference_mode_uses_layout_roleboard_refs(reference_mode):
-            refs.extend(self._shot_roleboard_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
             refs.extend(
                 self._shot_ref_asset_refs(
                     project_dir,
@@ -1835,7 +1949,6 @@ class PregenWorkflow:
                 )
             )
         elif reference_mode not in {"ref_frame_only", "ref_frame"}:
-            refs.extend(self._shot_roleboard_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
             refs.extend(self._shot_ref_asset_refs(project_dir, state, shot, include_roles=False))
         context_video_refs = (
             self._shot_context_video_refs(project_dir, shot, episode, provider=provider)

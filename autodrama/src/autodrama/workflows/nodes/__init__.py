@@ -14,6 +14,7 @@ from autodrama.workflows.nodes.ref_frame_node import REF_FRAME_NODE_NAME, build_
 from autodrama.workflows.nodes.role_nodes import ROLE_NODE_NAMES, build_role_nodes
 from autodrama.workflows.nodes.script_nodes import SCRIPT_NODE_NAMES, build_script_nodes
 from autodrama.workflows.nodes.shot_video_node import SHOT_VIDEO_NODE_NAME, build_shot_video_episode_node
+from autodrama.workflows.nodes.storyboard_asset_nodes import STORYBOARD_ASSET_NODE_NAMES, build_storyboard_asset_nodes
 from autodrama.workflows.nodes.storyboard_node import STORYBOARD_NODE_NAME, build_storyboard_episode_node
 from autodrama.workflows.nodes.static_asset_nodes import STATIC_ASSET_NODE_NAMES, build_static_asset_nodes
 from autodrama.workflows.nodes.voice_nodes import VOICE_NODE_NAMES, build_voice_nodes
@@ -42,6 +43,7 @@ def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
         *build_script_nodes(workflow, after_novel_nodes=build_director_nodes(workflow)),
         *build_role_nodes(workflow),
         *roleboard_nodes,
+        *build_storyboard_asset_nodes(workflow),
         *build_voice_nodes(workflow),
     ]
 
@@ -60,6 +62,7 @@ PREGEN_NODE_NAMES = [
     *SCRIPT_NODE_NAMES[2:],
     *ROLE_NODE_NAMES,
     *ROLEBOARD_STATIC_NODE_NAMES,
+    *STORYBOARD_ASSET_NODE_NAMES,
     *VOICE_NODE_NAMES,
 ]
 AVAILABLE_PREGEN_NODE_NAMES = [
@@ -96,6 +99,7 @@ __all__ = [
     "ROLE_NODE_NAMES",
     "SCRIPT_NODE_NAMES",
     "SHOT_VIDEO_NODE_NAME",
+    "STORYBOARD_ASSET_NODE_NAMES",
     "STORYBOARD_NODE_NAME",
     "STATIC_ASSET_NODE_NAMES",
     "VOICE_NODE_NAMES",
@@ -109,6 +113,7 @@ __all__ = [
     "build_role_nodes",
     "build_script_nodes",
     "build_shot_video_episode_node",
+    "build_storyboard_asset_nodes",
     "build_storyboard_episode_node",
     "build_static_asset_nodes",
     "build_voice_nodes",

@@ -118,6 +118,7 @@ class ProjectLayout:
             project_dir / "assets" / "json" / "props",
             project_dir / "assets" / "images" / "roles",
             project_dir / "assets" / "images" / "key_visions",
+            project_dir / "assets" / "images" / "storyboards",
             project_dir / "assets" / "images" / "props",
             project_dir / "assets" / "images" / "layouts",
             project_dir / "assets" / "images" / "ref_frames",

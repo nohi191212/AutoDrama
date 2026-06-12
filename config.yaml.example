@@ -89,6 +89,26 @@ nodes:
       resolution: 4K
       n: 1
       response_format: url
+  storyboard_prompt:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  # Image binding used internally by pregen node storyboard_generation for the 12-panel storyboard sheet.
+  # Keep nodes.storyboard_generation below as the text binding for the dynamic shot JSON workflow.
+  storyboard_sheet_generation:
+    model: toapi:gpt-image-2
+    params:
+      resolution: 2K
+      n: 1
+      response_format: url
+  storyboard_bbox_detection:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: high
+      temperature: 0.1
+      response_format: json_object
   prop_extract:
     model: rightcode:gpt-5.5
     params:
@@ -472,7 +492,8 @@ providers:
       # Ref-frame mode sends the current shot ref frame, the previous shot last-state ref frame when available,
       # plus one speaking-role audio reference.
       # max_reference_* values are still kept for other video_reference_mode experiments.
-      max_reference_images: 2
+      # This leaves room for storyboard panel + roleboard + key vision + current ref_frame.
+      max_reference_images: 4
       max_reference_audio: 1
       max_reference_audio_duration_seconds: 15.2
       max_reference_videos: 2

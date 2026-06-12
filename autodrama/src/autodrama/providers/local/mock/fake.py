@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from io import BytesIO
 import re
 from typing import Any, TypeVar
 
@@ -26,8 +27,10 @@ from autodrama.core.schemas import (
     ScriptNovelExtractBatchOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
+    StoryboardBBoxDetectionOutput,
     StoryboardEpisodeOutput,
     StoryboardNextShotOutput,
+    StoryboardPromptOutput,
     StoryboardShotGenerationOutput,
 )
 from autodrama.core.voice_catalog import (
@@ -123,8 +126,9 @@ class FakeTextProvider:
         *,
         temperature: float = 0.7,
         metadata: dict[str, Any] | None = None,
+        refs: list[AssetRef] | None = None,
     ) -> T:
-        del temperature
+        del temperature, refs
         metadata = metadata or {}
         node_name = metadata.get("node_name")
 
@@ -362,6 +366,94 @@ class FakeTextProvider:
                 "roleboard_negative_prompt": "变脸，换衣服，年龄漂移，多角色混入，字幕，水印，logo，除指定角色名和视图标签外的文字",
                 "voice_profile_prompt": f"{role_name}的常规音色，真人短剧对白质感，语速自然，咬字清晰，情绪克制。",
                 "design_notes": "fake provider roleboard prompt fixture",
+            }
+        elif schema is StoryboardPromptOutput or node_name == "storyboard_prompt":
+            expected_keys = metadata.get("expected_keys") or episode_keys
+            storyboard_episode_keys = [str(key) for key in expected_keys]
+            panel_count = int(metadata.get("panel_count") or 12)
+            aspect_ratio = str(metadata.get("aspect_ratio") or "9:16")
+            grid = str(metadata.get("grid") or "3x4")
+            data = {
+                "storyboards": [
+                    {
+                        "episode_key": key,
+                        "aspect_ratio": aspect_ratio,
+                        "grid": grid,
+                        "story_summary": f"{key} fake 12-panel storyboard script.",
+                        "panels": [
+                            {
+                                "index": index,
+                                "title": f"镜头{index:02d}",
+                                "shot_size": "中景" if index % 3 else "特写",
+                                "camera_position": "平视略低机位",
+                                "composition": "主角位于画面三分线，关键道具在前景，背景保留空间方向。",
+                                "action": "角色推进调查动作，视线落到证据或对手反应上。",
+                                "emotion": "克制紧张",
+                                "camera_movement": "固定镜头" if index % 2 else "缓慢推近",
+                                "sound_effects": "雨声、纸张摩擦声和低频环境声。",
+                                "transition": "硬切",
+                            }
+                            for index in range(1, panel_count + 1)
+                        ],
+                        "image_prompt": (
+                            f"黑白线稿十二宫格故事板，{key}，{grid} 网格，每格 {aspect_ratio}，"
+                            "镜头顺序清楚，动作和构图准确。"
+                        ),
+                    }
+                    for key in storyboard_episode_keys
+                ]
+            }
+        elif schema is StoryboardBBoxDetectionOutput or node_name == "storyboard_bbox_detection":
+            episode_key = str(metadata.get("episode_key") or (metadata.get("expected_keys") or episode_keys)[0])
+            columns = 3
+            rows = 4
+            margin = 20
+            gutter = 14
+            panel_width = (1000 - margin * 2 - gutter * (columns - 1)) // columns
+            panel_height = (1000 - margin * 2 - gutter * (rows - 1)) // rows
+            panels = []
+            for index in range(1, 13):
+                row = (index - 1) // columns
+                column = (index - 1) % columns
+                x_min = margin + column * (panel_width + gutter)
+                y_min = margin + row * (panel_height + gutter)
+                x_max = x_min + panel_width
+                y_max = y_min + panel_height
+                panels.append(
+                    {
+                        "shot_index": index,
+                        "shot_id": f"{episode_key}_shot_{index:03d}",
+                        "bbox_1000": {
+                            "x_min": x_min,
+                            "y_min": y_min,
+                            "x_max": x_max,
+                            "y_max": y_max,
+                        },
+                        "content_bbox_1000": {
+                            "x_min": x_min + 10,
+                            "y_min": y_min + 18,
+                            "x_max": x_max - 10,
+                            "y_max": y_max - 10,
+                        },
+                        "visible_label": str(index),
+                        "label_confidence": 1.0,
+                        "bbox_confidence": 1.0,
+                        "shot_match_confidence": 1.0,
+                        "match_reason": "fake provider fixture uses labeled panels.",
+                        "crop_notes": None,
+                    }
+                )
+            data = {
+                "episodes": [
+                    {
+                        "episode_key": episode_key,
+                        "source_width_basis": 1000,
+                        "source_height_basis": 1000,
+                        "panel_count": 12,
+                        "panels": panels,
+                        "warnings": [],
+                    }
+                ]
             }
         elif schema is VoiceSelectShortlistOutput or node_name == "role_voice_select_shortlist":
             candidates = metadata.get("heuristic_candidates")
@@ -761,6 +853,46 @@ class FakeImageProvider:
     model = "fake-image"
     supports_reference_images = True
 
+    @staticmethod
+    def _png_bytes(*, asset_id: str, prompt: str, metadata: dict[str, Any]) -> bytes:
+        from PIL import Image, ImageDraw
+
+        asset_type = str(metadata.get("asset_type") or "")
+        if asset_type == "storyboard":
+            width, height = 1200, 1600
+            image = Image.new("RGB", (width, height), "white")
+            draw = ImageDraw.Draw(image)
+            columns = 3
+            rows = 4
+            margin = 24
+            gutter = 17
+            panel_width = (width - margin * 2 - gutter * (columns - 1)) // columns
+            panel_height = (height - margin * 2 - gutter * (rows - 1)) // rows
+            for index in range(1, 13):
+                row = (index - 1) // columns
+                column = (index - 1) % columns
+                x_min = margin + column * (panel_width + gutter)
+                y_min = margin + row * (panel_height + gutter)
+                x_max = x_min + panel_width
+                y_max = y_min + panel_height
+                draw.rectangle((x_min, y_min, x_max, y_max), outline="black", width=3)
+                draw.text((x_min + 10, y_min + 8), str(index), fill="black")
+                draw.line((x_min + 20, y_max - 35, x_max - 20, y_min + 55), fill="black", width=2)
+                draw.ellipse((x_min + 70, y_min + 80, x_min + 150, y_min + 160), outline="black", width=2)
+                draw.rectangle((x_max - 150, y_max - 130, x_max - 50, y_max - 60), outline="black", width=2)
+        else:
+            width, height = 768, 1024
+            image = Image.new("RGB", (width, height), "white")
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((24, 24, width - 24, height - 24), outline="black", width=3)
+            draw.text((44, 44), f"fake image {asset_id}", fill="black")
+            draw.line((80, height - 160, width - 80, 180), fill="black", width=3)
+            draw.ellipse((width // 2 - 90, height // 2 - 130, width // 2 + 90, height // 2 + 50), outline="black", width=3)
+
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
     async def generate_image(
         self,
         prompt: str,
@@ -771,16 +903,17 @@ class FakeImageProvider:
     ) -> ImageGenerationResult:
         del refs, size
         metadata = metadata or {}
-        image_bytes = f"fake image: {metadata.get('asset_id', 'asset')}: {prompt}".encode("utf-8")
+        asset_id = str(metadata.get("asset_id", "asset"))
+        image_bytes = self._png_bytes(asset_id=asset_id, prompt=prompt, metadata=metadata)
         return ImageGenerationResult(
             provider=self.name,
             model=self.model,
             image_data=[base64.b64encode(image_bytes).decode("ascii")],
-            request_id=f"fake-image-request-{metadata.get('asset_id', 'asset')}",
+            request_id=f"fake-image-request-{asset_id}",
             usage={"image_count": 1},
             raw_response={
                 "output": {"image": "<base64 image omitted>"},
-                "request_id": f"fake-image-request-{metadata.get('asset_id', 'asset')}",
+                "request_id": f"fake-image-request-{asset_id}",
             },
         )
 
@@ -818,6 +951,13 @@ class FakeMusicProvider:
 class FakeVideoProvider:
     name = "fake"
     model = "fake-video"
+    max_reference_images = 4
+    max_reference_audio = 1
+    max_reference_videos = 2
+    max_reference_video_total_duration_seconds = 15.2
+
+    def __init__(self) -> None:
+        self._submitted_tasks: dict[str, dict[str, Any]] = {}
 
     async def submit_video(
         self,
@@ -829,6 +969,16 @@ class FakeVideoProvider:
     ) -> VideoGenerationResult:
         metadata = metadata or {}
         task_id = f"fake-video-task-{metadata.get('asset_id', 'shot')}"
+        output_metadata = {
+            "ref_count": len(refs or []),
+            "ref_asset_types": [
+                str((ref.metadata or {}).get("asset_type") or ref.type)
+                for ref in refs or []
+            ],
+            "ref_ids": [str(ref.id or ref.path or ref.url or "") for ref in refs or []],
+            "prompt": prompt,
+        }
+        self._submitted_tasks[task_id] = output_metadata
         return VideoGenerationResult(
             provider=self.name,
             model=self.model,
@@ -840,14 +990,14 @@ class FakeVideoProvider:
                 "output": {
                     "task_id": task_id,
                     "task_status": "PENDING",
-                    "ref_count": len(refs or []),
-                    "prompt": prompt,
+                    **output_metadata,
                 }
             },
         )
 
     async def query_video_task(self, task_id: str) -> VideoGenerationResult:
         video_bytes = f"fake video: {task_id}".encode("utf-8")
+        output_metadata = self._submitted_tasks.get(task_id, {})
         return VideoGenerationResult(
             provider=self.name,
             model=self.model,
@@ -860,6 +1010,7 @@ class FakeVideoProvider:
                     "task_id": task_id,
                     "task_status": "SUCCEEDED",
                     "video": "<base64 video omitted>",
+                    **output_metadata,
                 }
             },
         )

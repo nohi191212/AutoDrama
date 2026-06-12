@@ -163,7 +163,7 @@ models:
     limits:
       min_duration_seconds: 4
       max_duration_seconds: 10
-      max_reference_images: 2
+      max_reference_images: 4
       max_reference_audio: 1
       max_reference_videos: 2
     params_schema:
@@ -186,7 +186,7 @@ models:
       max_reference_images:
         type: integer
         min: 0
-        max: 2
+        max: 4
       max_reference_audio:
         type: integer
         min: 0

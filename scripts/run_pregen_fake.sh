@@ -11,7 +11,9 @@ Usage:
 Default NODE:
   role_voice_generation
 
-This runs the pre-generation workflow only with fake providers.
+This runs the pre-generation workflow only with fake providers, including
+roleboards, 12-panel storyboard sheets, GPT bbox panel crops, and role voices
+by default.
 Project ID and input outline file are read from config.yaml by default. Use
 --project to run a specific existing project or output directory.
 USAGE

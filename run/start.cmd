@@ -127,9 +127,11 @@ echo   workflow: pregen
 echo   role_voice_generation
 echo.
 echo Notes:
-echo   pregen currently writes role assets through role_voice_generation.
+echo   pregen writes roleboards, 12-panel storyboard sheets, GPT bbox crops, and role voices through role_voice_generation.
 echo   prop/layout/BGM nodes are deferred from the default pregen chain and can be run with --only.
-echo   pregen role audio chain is roleboard_prompt, roleboard_generation, role_voice_select, then role_voice_generation.
+echo   pregen visual/audio chain is roleboard_prompt, roleboard_generation, storyboard_prompt,
+echo   storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop,
+echo   role_voice_select, then role_voice_generation.
 echo   pregen --roles is supported with --only role_voice_select or --only role_voice_generation.
 echo   generation starts with storyboard_generation, then processes selected episodes.
 goto end

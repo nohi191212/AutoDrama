@@ -38,8 +38,9 @@ class QwenTextProvider:
         *,
         temperature: float = 0.7,
         metadata: dict[str, Any] | None = None,
+        refs: list[Any] | None = None,
     ) -> T:
-        del metadata
+        del metadata, refs
         if not self.api_key:
             raise ProviderAuthError("Missing Qwen/DashScope API key environment variable")
 

@@ -209,7 +209,9 @@ class DeepSeekTextProvider:
         *,
         temperature: float = 0.7,
         metadata: dict[str, Any] | None = None,
+        refs: list[Any] | None = None,
     ) -> T:
+        del refs
         metadata = metadata or {}
         if not self.api_key:
             raise ProviderAuthError("Missing DeepSeek API key environment variable")

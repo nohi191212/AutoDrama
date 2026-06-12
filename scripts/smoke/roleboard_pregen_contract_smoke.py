@@ -21,6 +21,13 @@ from autodrama.workflows.nodes.static_asset_nodes import (  # noqa: E402
     RoleAppearanceGenerationBase,
     RoleboardGenerationNode,
 )
+from autodrama.workflows.nodes.storyboard_asset_nodes import (  # noqa: E402
+    STORYBOARD_ASSET_NODE_NAMES,
+    StoryboardBBoxDetectionNode,
+    StoryboardGenerationNode as PregenStoryboardGenerationNode,
+    StoryboardPanelCropNode,
+    StoryboardPromptNode,
+)
 from autodrama.workflows.nodes.voice_nodes import VOICE_NODE_NAMES, RoleVoiceSelectNode  # noqa: E402
 from autodrama.workflows.pregen import EPISODE_SCOPED_PREGEN_ONLY_NODES, ROLE_SCOPED_PREGEN_ONLY_NODES  # noqa: E402
 
@@ -39,23 +46,43 @@ def require(condition: bool, message: str) -> None:
 def main() -> None:
     require(RoleboardPromptNode.name == "roleboard_prompt", "roleboard prompt node name mismatch")
     require(RoleboardGenerationNode.name == "roleboard_generation", "roleboard generation node name mismatch")
+    require(StoryboardPromptNode.name == "storyboard_prompt", "storyboard prompt node name mismatch")
+    require(PregenStoryboardGenerationNode.name == "storyboard_generation", "storyboard generation node name mismatch")
+    require(StoryboardBBoxDetectionNode.name == "storyboard_bbox_detection", "storyboard bbox node name mismatch")
+    require(StoryboardPanelCropNode.name == "storyboard_panel_crop", "storyboard panel crop node name mismatch")
     require(RoleVoiceSelectNode.name == "role_voice_select", "role voice select node name mismatch")
     require("roleboard_prompt" in ROLE_NODE_NAMES, "roleboard_prompt missing from role node names")
     require("roleboard_generation" in STATIC_ASSET_NODE_NAMES, "roleboard_generation missing from static names")
+    require(
+        STORYBOARD_ASSET_NODE_NAMES
+        == [
+            "storyboard_prompt",
+            "storyboard_generation",
+            "storyboard_bbox_detection",
+            "storyboard_panel_crop",
+        ],
+        "storyboard asset node names mismatch",
+    )
     require("role_voice_select" in VOICE_NODE_NAMES, "role_voice_select missing from voice names")
 
-    expected_role_voice_chain = [
+    expected_visual_voice_chain = [
         "roleboard_prompt",
         "roleboard_generation",
+        "storyboard_prompt",
+        "storyboard_generation",
+        "storyboard_bbox_detection",
+        "storyboard_panel_crop",
         "role_voice_select",
         "role_voice_generation",
     ]
-    actual_role_voice_chain = [
+    actual_visual_voice_chain = [
         node_name
         for node_name in PREGEN_NODE_NAMES
-        if node_name.startswith("roleboard_") or node_name.startswith("role_voice_")
+        if node_name.startswith("roleboard_")
+        or node_name.startswith("storyboard_")
+        or node_name.startswith("role_voice_")
     ]
-    require(actual_role_voice_chain == expected_role_voice_chain, "roleboard/voice node chain mismatch")
+    require(actual_visual_voice_chain == expected_visual_voice_chain, "roleboard/storyboard/voice node chain mismatch")
     require(PREGEN_NODE_NAMES[-1] == "role_voice_generation", "default pregen should stop at role_voice_generation")
     require(
         not any(node_name in PREGEN_NODE_NAMES for node_name in DEFERRED_PREGEN_NODE_NAMES),
@@ -68,15 +95,26 @@ def main() -> None:
     require(
         PREGEN_NODE_NAMES.index("roleboard_prompt")
         < PREGEN_NODE_NAMES.index("roleboard_generation")
+        < PREGEN_NODE_NAMES.index("storyboard_prompt")
+        < PREGEN_NODE_NAMES.index("storyboard_generation")
+        < PREGEN_NODE_NAMES.index("storyboard_bbox_detection")
+        < PREGEN_NODE_NAMES.index("storyboard_panel_crop")
         < PREGEN_NODE_NAMES.index("role_voice_select")
         < PREGEN_NODE_NAMES.index("role_voice_generation"),
-        "roleboard/voice pregen order mismatch",
+        "roleboard/storyboard/voice pregen order mismatch",
     )
     require(
-        {"roleboard_prompt", "roleboard_generation", "role_voice_select", "role_voice_generation"}.issubset(
-            EPISODE_SCOPED_PREGEN_ONLY_NODES
-        ),
-        "episode-scoped pregen set missing roleboard/voice nodes",
+        {
+            "roleboard_prompt",
+            "roleboard_generation",
+            "storyboard_prompt",
+            "storyboard_generation",
+            "storyboard_bbox_detection",
+            "storyboard_panel_crop",
+            "role_voice_select",
+            "role_voice_generation",
+        }.issubset(EPISODE_SCOPED_PREGEN_ONLY_NODES),
+        "episode-scoped pregen set missing roleboard/storyboard/voice nodes",
     )
     require(
         ROLE_SCOPED_PREGEN_ONLY_NODES == {"role_voice_select", "role_voice_generation"},

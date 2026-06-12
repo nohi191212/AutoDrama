@@ -104,13 +104,17 @@ class BoundProviderProxy:
             effective_duration = metadata.get("duration", metadata.get("duration_seconds"))
         self.model_binding.spec.validate_duration(effective_duration, context=context)
 
-    async def generate_json(self, prompt, schema, *, temperature: float = 0.7, metadata=None):
+    async def generate_json(self, prompt, schema, *, temperature: float = 0.7, metadata=None, refs=None):
         temperature = self.model_binding.params.get("temperature", temperature)
+        merged_metadata = self._metadata(metadata)
+        if refs:
+            self._validate_media_request(refs=refs, metadata=merged_metadata)
         return await self._provider.generate_json(
             prompt,
             schema,
             temperature=temperature,
-            metadata=self._metadata(metadata),
+            metadata=merged_metadata,
+            refs=refs,
         )
 
     async def judge_audio_json(self, prompt, schema, *, refs, temperature: float = 0.2, metadata=None):

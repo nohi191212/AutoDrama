@@ -106,7 +106,7 @@ echo   run\dynamic_assets.cmd [--episodes episode_001,episode_003] [--skip-prege
 echo   run\dynamic_assets.cmd --only ref_frame_generation --episodes 1,3 [--shots 1-3]
 echo.
 echo This advances a project through:
-echo   1. pregen until role_voice_generation
+echo   1. pregen until role_voice_generation, including roleboards, 12-panel storyboard sheets, and GPT bbox panel crops
 echo   2. generation from storyboard_generation to dynamic_asset_solidification
 echo.
 echo Options:

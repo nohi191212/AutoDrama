@@ -77,6 +77,29 @@ def write_config(path: Path, *, bad_param: bool = False) -> None:
                     "response_format": "json_object",
                 },
             },
+            "storyboard_prompt": {
+                "model": "rightcode:gpt-5.5",
+                "params": {
+                    "reasoning_effort": "xhigh",
+                    "temperature": 0.2,
+                    "response_format": "json_object",
+                },
+            },
+            "storyboard_sheet_generation": {
+                "model": "toapi:gpt-image-2",
+                "params": {
+                    "resolution": "2K",
+                    "n": 1,
+                },
+            },
+            "storyboard_bbox_detection": {
+                "model": "rightcode:gpt-5.5",
+                "params": {
+                    "reasoning_effort": "high",
+                    "temperature": 0.1,
+                    "response_format": "json_object",
+                },
+            },
             "roleboard_generation": {
                 "model": "toapi:gpt-image-2",
                 "params": {
@@ -92,6 +115,7 @@ def write_config(path: Path, *, bad_param: bool = False) -> None:
                     "ratio": "9:16",
                     "resolution": "720p",
                     "generate_audio": False,
+                    "max_reference_images": 4,
                 },
             },
         },
@@ -103,7 +127,7 @@ async def assert_runtime_ref_limit(router: ProviderRouter) -> None:
     provider = router.video("shot", node_name="shot_video_generation")
     refs = [
         AssetRef(id=f"ref_{index}", type="image", url=f"https://example.invalid/{index}.png")
-        for index in range(3)
+        for index in range(5)
     ]
     try:
         await provider.submit_video(
@@ -144,6 +168,24 @@ def main() -> int:
     if getattr(text_provider, "use_response_format", None) is not True:
         raise AssertionError("Node params did not enable RightCode JSON response format")
 
+    bbox_provider = router.text("storyboard", node_name="storyboard_bbox_detection")
+    if getattr(bbox_provider, "model", None) != "gpt-5.5":
+        raise AssertionError(f"Unexpected bbox detection model: {getattr(bbox_provider, 'model', None)}")
+    if getattr(bbox_provider, "reasoning_effort", None) != "high":
+        raise AssertionError("BBox detection params did not update RightCode reasoning_effort")
+    if getattr(bbox_provider, "use_response_format", None) is not True:
+        raise AssertionError("BBox detection params did not enable RightCode JSON response format")
+
+    storyboard_sheet_provider = router.image("ref_frame", node_name="storyboard_sheet_generation")
+    storyboard_sheet_payload = storyboard_sheet_provider._provider.build_payload(
+        "test 12-panel storyboard",
+        metadata=storyboard_sheet_provider._metadata({"asset_id": "storyboard_001"}),
+    )
+    if storyboard_sheet_payload["model"] != "gpt-image-2":
+        raise AssertionError(f"Unexpected storyboard sheet image model: {storyboard_sheet_payload['model']}")
+    if storyboard_sheet_payload["resolution"] != "2K":
+        raise AssertionError(f"Unexpected storyboard sheet resolution: {storyboard_sheet_payload['resolution']}")
+
     image_provider = router.image("role", node_name="roleboard_generation")
     payload = image_provider._provider.build_payload(
         "test image",
@@ -181,10 +223,17 @@ def main() -> int:
         raise AssertionError("config.yaml.example did not load node model settings")
     if "design_key_vision_image" not in example_settings.nodes:
         raise AssertionError("config.yaml.example did not load key vision node model settings")
+    if "storyboard_prompt" not in example_settings.nodes:
+        raise AssertionError("config.yaml.example did not load storyboard prompt node model settings")
+    if "storyboard_sheet_generation" not in example_settings.nodes:
+        raise AssertionError("config.yaml.example did not load storyboard sheet image node model settings")
+    if "storyboard_bbox_detection" not in example_settings.nodes:
+        raise AssertionError("config.yaml.example did not load storyboard bbox detection node model settings")
 
     print("model_catalog_node_binding_smoke=ok")
     print(f"config_path={config_path}")
     print(f"text_model={text_provider.model}")
+    print(f"storyboard_sheet_resolution={storyboard_sheet_payload['resolution']}")
     print(f"image_payload_size={payload['size']}")
     print(f"key_vision_payload_size={key_vision_payload['size']}")
     return 0

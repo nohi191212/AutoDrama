@@ -374,6 +374,98 @@ class RoleboardPromptOutput(BaseModel):
     prompts: list[RoleboardPromptItem]
 
 
+class StoryboardPromptPanel(BaseModel):
+    index: int
+    title: str
+    shot_size: str
+    camera_position: str
+    composition: str
+    action: str
+    emotion: str
+    camera_movement: str
+    sound_effects: str
+    transition: str | None = None
+
+
+class StoryboardPromptEpisode(BaseModel):
+    episode_key: str
+    aspect_ratio: str
+    grid: str = "3x4"
+    story_summary: str | None = None
+    panels: list[StoryboardPromptPanel]
+    image_prompt: str
+
+
+class StoryboardPromptOutput(BaseModel):
+    storyboards: list[StoryboardPromptEpisode]
+
+
+class StoryboardSheetGenerationItem(BaseModel):
+    episode_key: str
+    asset_id: str
+    prompt: str
+    asset_path: str | None = None
+    asset_url: str | None = None
+    provider: str
+    model: str
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class StoryboardSheetGenerationOutput(BaseModel):
+    generated_storyboards: list[StoryboardSheetGenerationItem]
+
+
+class StoryboardBBox(BaseModel):
+    x_min: int = Field(ge=0, le=1000)
+    y_min: int = Field(ge=0, le=1000)
+    x_max: int = Field(ge=0, le=1000)
+    y_max: int = Field(ge=0, le=1000)
+
+
+class StoryboardPanelBBoxItem(BaseModel):
+    shot_index: int
+    shot_id: str | None = None
+    bbox_1000: StoryboardBBox
+    content_bbox_1000: StoryboardBBox | None = None
+    visible_label: str | None = None
+    label_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    bbox_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    shot_match_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    match_reason: str = ""
+    crop_notes: str | None = None
+
+
+class StoryboardBBoxEpisode(BaseModel):
+    episode_key: str
+    source_width_basis: int = 1000
+    source_height_basis: int = 1000
+    panel_count: int = 12
+    panels: list[StoryboardPanelBBoxItem]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class StoryboardBBoxDetectionOutput(BaseModel):
+    episodes: list[StoryboardBBoxEpisode]
+
+
+class StoryboardPanelCropItem(BaseModel):
+    episode_key: str
+    shot_index: int
+    shot_id: str
+    source_storyboard_asset_path: str
+    bbox_source: Literal["content_bbox_1000", "bbox_1000"]
+    bbox_1000: StoryboardBBox
+    asset_id: str
+    asset_path: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class StoryboardPanelCropOutput(BaseModel):
+    cropped_panels: list[StoryboardPanelCropItem]
+
+
 class RoleVoiceGenerationItem(BaseModel):
     role_id: str
     role_name: str

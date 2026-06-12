@@ -22,6 +22,15 @@ def main() -> None:
         settings = load_settings(config_path)
         require("roleboard_prompt" in settings.nodes, f"{config_path} missing nodes.roleboard_prompt")
         require("roleboard_generation" in settings.nodes, f"{config_path} missing nodes.roleboard_generation")
+        require("storyboard_prompt" in settings.nodes, f"{config_path} missing nodes.storyboard_prompt")
+        require(
+            "storyboard_sheet_generation" in settings.nodes,
+            f"{config_path} missing nodes.storyboard_sheet_generation",
+        )
+        require(
+            "storyboard_bbox_detection" in settings.nodes,
+            f"{config_path} missing nodes.storyboard_bbox_detection",
+        )
         require("role_voice_select" in settings.nodes, f"{config_path} missing nodes.role_voice_select")
         require("role_voice_select_audio_judge" in settings.nodes, f"{config_path} missing audio judge node")
         require("role" in settings.routing.get("image", {}), f"{config_path} missing image.role route")
