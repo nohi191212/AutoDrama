@@ -41,6 +41,16 @@ class RightCodeTextProvider:
         self.reasoning_effort = str(
             settings.options.get(f"{model_key}_reasoning_effort", settings.options.get("reasoning_effort", "xhigh"))
         )
+        self.stream = self._bool_option(
+            settings.options.get(
+                f"{model_key}_stream",
+                settings.options.get(
+                    "text_stream",
+                    settings.options.get("rightcode_stream", settings.options.get("stream", True)),
+                ),
+            ),
+            default=True,
+        )
         self.use_response_format = self._bool_option(
             settings.options.get(
                 f"{model_key}_response_format",
@@ -246,7 +256,7 @@ class RightCodeTextProvider:
                 },
             ],
             "temperature": temperature,
-            "stream": False,
+            "stream": self.stream,
         }
         if self.use_response_format:
             payload["text"] = {"format": {"type": "json_object"}}
@@ -334,6 +344,9 @@ class RightCodeTextProvider:
         if not self.api_key:
             raise ProviderAuthError("Missing RightCode API key environment variable")
 
+        if payload.get("stream"):
+            return await self._stream_responses(payload)
+
         async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
             response = await client.post(
                 self.endpoint,
@@ -363,43 +376,135 @@ class RightCodeTextProvider:
             raise ProviderBadResponseError(f"RightCode text response must be a JSON object: {body!r}")
         return body
 
-    @classmethod
-    def _parse_sse_response(cls, text: str) -> dict[str, Any] | None:
-        events: list[dict[str, Any]] = []
-        chunks: list[str] = []
-        completed_response: dict[str, Any] | None = None
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if not data or data == "[DONE]":
-                continue
+    async def _stream_responses(self, payload: dict[str, Any]) -> dict[str, Any]:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
             try:
-                event = json.loads(data)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(event, dict):
+                async with client.stream("POST", self.endpoint, headers=headers, json=payload) as response:
+                    if response.status_code >= 400:
+                        body = await response.aread()
+                        raise ProviderBadResponseError(
+                            "RightCode text streaming request failed with HTTP "
+                            f"{response.status_code}: {body.decode('utf-8', errors='replace')[:500]}"
+                        )
+                    parsed = await self._read_stream_response(response)
+                    if parsed is None:
+                        raise ProviderBadResponseError("RightCode text streaming response did not contain output")
+                    return parsed
+            except httpx.ConnectError as exc:
+                raise ProviderBadResponseError(
+                    f"RightCode text streaming connection failed before receiving an HTTP response. "
+                    f"Check network/proxy/TLS settings for {self.endpoint}: {exc}"
+                ) from exc
+
+    @classmethod
+    async def _read_stream_response(cls, response: httpx.Response) -> dict[str, Any] | None:
+        events: list[dict[str, Any]] = []
+        async for raw_line in response.aiter_lines():
+            if cls._stream_line_is_done(raw_line):
+                break
+            event = cls._stream_event_from_line(raw_line)
+            if event is None:
                 continue
             events.append(event)
             event_type = str(event.get("type") or "")
+            if event_type in {"response.failed", "response.incomplete"}:
+                error = event.get("error")
+                response_payload = event.get("response")
+                if isinstance(response_payload, dict) and response_payload.get("error") is not None:
+                    error = response_payload.get("error")
+                raise ProviderBadResponseError(f"RightCode text stream ended with {event_type}: {error!r}")
+            if event_type == "response.completed":
+                return cls._payload_from_stream_events(events)
+            if event_type in {"response.output_text.done", "response.output_text.completed"} and event.get("text"):
+                return cls._payload_from_stream_events(events)
+        return cls._payload_from_stream_events(events)
+
+    @staticmethod
+    def _stream_line_is_done(raw_line: str) -> bool:
+        line = raw_line.strip()
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        return line == "[DONE]"
+
+    @staticmethod
+    def _stream_event_from_line(raw_line: str) -> dict[str, Any] | None:
+        line = raw_line.strip()
+        if not line:
+            return None
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        elif line.startswith("event:"):
+            return None
+        elif not line.startswith("{"):
+            return None
+        if not line or line == "[DONE]":
+            return None
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(event, dict):
+            return None
+        return event
+
+    @classmethod
+    def _parse_sse_response(cls, text: str) -> dict[str, Any] | None:
+        events = [
+            event
+            for raw_line in text.splitlines()
+            if (event := cls._stream_event_from_line(raw_line)) is not None
+        ]
+        return cls._payload_from_stream_events(events)
+
+    @classmethod
+    def _payload_from_stream_events(cls, events: list[dict[str, Any]]) -> dict[str, Any] | None:
+        delta_chunks: list[str] = []
+        done_texts: list[str] = []
+        completed_response: dict[str, Any] | None = None
+        direct_payload: dict[str, Any] | None = None
+        for event in events:
+            event_type = str(event.get("type") or "")
             delta = event.get("delta")
-            if event_type.endswith(".delta") and isinstance(delta, str):
-                chunks.append(delta)
+            if event_type == "response.output_text.delta" and isinstance(delta, str):
+                delta_chunks.append(delta)
             if event_type in {"response.output_text.done", "response.output_text.completed"}:
                 text_value = event.get("text")
                 if isinstance(text_value, str):
-                    chunks.append(text_value)
+                    done_texts.append(text_value)
             response = event.get("response")
             if event_type == "response.completed" and isinstance(response, dict):
                 completed_response = response
+            if not event_type and any(key in event for key in ("output", "output_text", "choices")):
+                direct_payload = event
+            cls._append_chat_completion_delta(event, delta_chunks)
 
         if completed_response is not None:
             return completed_response
-        output_text = "".join(chunks).strip()
+        if direct_payload is not None:
+            return direct_payload
+        output_text = "\n".join(done_texts).strip() if done_texts else "".join(delta_chunks).strip()
         if output_text:
             return {"output_text": output_text, "raw_events": events[-5:]}
         return None
+
+    @staticmethod
+    def _append_chat_completion_delta(event: dict[str, Any], chunks: list[str]) -> None:
+        choices = event.get("choices")
+        if not isinstance(choices, list):
+            return
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            for key in ("delta", "message"):
+                value = choice.get(key)
+                if isinstance(value, dict):
+                    content = value.get("content")
+                    if isinstance(content, str):
+                        chunks.append(content)
 
     @classmethod
     def _message_content(cls, payload: dict[str, Any]) -> str:
@@ -478,6 +583,7 @@ class RightCodeTextProvider:
                     "temperature": temperature,
                     "response_format": payload.get("text"),
                     "reasoning_effort": self.reasoning_effort,
+                    "stream": payload.get("stream"),
                 },
                 sections=[
                     ("INSTRUCTIONS", str(payload.get("instructions"))),
