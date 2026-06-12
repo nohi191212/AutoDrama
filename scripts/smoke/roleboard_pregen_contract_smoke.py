@@ -73,7 +73,6 @@ def main() -> None:
         "storyboard_bbox_detection",
         "storyboard_panel_crop",
         "role_voice_select",
-        "role_voice_generation",
     ]
     actual_visual_voice_chain = [
         node_name
@@ -83,7 +82,7 @@ def main() -> None:
         or node_name.startswith("role_voice_")
     ]
     require(actual_visual_voice_chain == expected_visual_voice_chain, "roleboard/storyboard/voice node chain mismatch")
-    require(PREGEN_NODE_NAMES[-1] == "role_voice_generation", "default pregen should stop at role_voice_generation")
+    require(PREGEN_NODE_NAMES[-1] == "role_voice_select", "default pregen should stop at role_voice_select")
     require(
         not any(node_name in PREGEN_NODE_NAMES for node_name in DEFERRED_PREGEN_NODE_NAMES),
         "deferred prop/layout/BGM nodes should be hidden from default pregen",
@@ -99,8 +98,7 @@ def main() -> None:
         < PREGEN_NODE_NAMES.index("storyboard_generation")
         < PREGEN_NODE_NAMES.index("storyboard_bbox_detection")
         < PREGEN_NODE_NAMES.index("storyboard_panel_crop")
-        < PREGEN_NODE_NAMES.index("role_voice_select")
-        < PREGEN_NODE_NAMES.index("role_voice_generation"),
+        < PREGEN_NODE_NAMES.index("role_voice_select"),
         "roleboard/storyboard/voice pregen order mismatch",
     )
     require(
@@ -112,12 +110,11 @@ def main() -> None:
             "storyboard_bbox_detection",
             "storyboard_panel_crop",
             "role_voice_select",
-            "role_voice_generation",
         }.issubset(EPISODE_SCOPED_PREGEN_ONLY_NODES),
         "episode-scoped pregen set missing roleboard/storyboard/voice nodes",
     )
     require(
-        ROLE_SCOPED_PREGEN_ONLY_NODES == {"role_voice_select", "role_voice_generation"},
+        ROLE_SCOPED_PREGEN_ONLY_NODES == {"role_voice_select"},
         "role-scoped pregen set mismatch",
     )
     require(

@@ -124,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Supported with pregen --only roleboard_prompt, roleboard_generation, storyboard_prompt, "
             "storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop, role_voice_select, "
-            "role_voice_generation, prop_design, prop_generation, or layout_image_generation "
+            "prop_design, prop_generation, or layout_image_generation "
             "(legacy alias: prop_image_generation). "
             "Prop/layout episode-scoped nodes are deferred from the default pregen chain."
         ),
@@ -134,8 +134,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--role",
         dest="roles",
         help=(
-            "Comma-separated role names or role ids to regenerate with pregen --only role_voice_select "
-            "or role_voice_generation, for example 九韶 or role_jiushao."
+            "Comma-separated role names or role ids to regenerate with pregen --only role_voice_select, "
+            "for example 九韶 or role_jiushao."
         ),
     )
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")

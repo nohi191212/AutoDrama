@@ -9,7 +9,7 @@ Usage:
   scripts/run_pregen.sh [--config FILE] [--project ID_OR_DIR] [--until NODE] [--only NODE] [--episodes 1,3] [--force]
 
 Default NODE:
-  role_voice_generation
+  role_voice_select
 
 This uses provider routing from config.yaml. For current config.yaml.example,
 Aliyun/DashScope capabilities are configured under providers.aliyun and routed
@@ -18,14 +18,14 @@ Project ID and input outline file are read from config.yaml by default. Use
 --project to run a specific existing project or output directory. --episodes is
 supported for roleboard_prompt, roleboard_generation, storyboard_prompt,
 storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop,
-role_voice_select, role_voice_generation, prop_design, prop_generation, and
+role_voice_select, prop_design, prop_generation, and
 layout_image_generation
 when used with --only. Prop, layout, and BGM nodes are currently deferred from
 the default pregen chain and can be run manually with --only.
 USAGE
 }
 
-until="role_voice_generation"
+until="role_voice_select"
 force=""
 project=""
 only=""

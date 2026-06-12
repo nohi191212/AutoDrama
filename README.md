@@ -228,7 +228,7 @@ $env:PYTHONPATH="autodrama/src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id>
 ```
 
-`pregen` 默认运行到 `role_voice_generation`。`prop_*`、`layout_*` 和 `bgm_*` 节点暂时从默认 pregen 流程中屏蔽，代码仍保留，需要时可用 `--only` 手动运行。
+`pregen` 默认运行到 `role_voice_select`。`prop_*`、`layout_*` 和 `bgm_*` 节点暂时从默认 pregen 流程中屏蔽，代码仍保留，需要时可用 `--only` 手动运行。
 
 ```text
 script_outline
@@ -250,7 +250,6 @@ storyboard_generation
 storyboard_bbox_detection
 storyboard_panel_crop
 role_voice_select
-role_voice_generation
 ```
 
 如果只需要跑到主视觉原图生成，可把流程停在 `design_key_vision_image`：
@@ -272,10 +271,9 @@ storyboard_generation
 storyboard_bbox_detection
 storyboard_panel_crop
 role_voice_select
-role_voice_generation
 ```
 
-`roleboard_prompt` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并结合主视觉原图信息输出 prompt-only 的角色身份板提示词；代码负责生成 `role_id`、`appearance_id` 等内部 ID。`roleboard_generation` 使用身份板提示词和 `design_key_vision_image` 产出的主视觉原图作为参考图，生成正面、侧面、背面、表情、动作、服装细节等角色身份板，并要求图片边缘带小号“角色：<角色名> | <形象名>”以及可选的“正面/侧面/背面/头部/表情/动作/服装细节/配饰细节”视图标签，方便后续把图片单独作为参考图时直接识别角色；除这些指定标签外仍禁止字幕、水印、logo、编号、ID、文件名、项目名、剧情台词或乱码文字。`role_voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；`role_voice_generation` 再使用该 `voice_type` 合成人物样例音频。功能角色如果 `has_dialogue=false` 不生成声音。
+`roleboard_prompt` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并结合主视觉原图信息输出 prompt-only 的角色身份板提示词；代码负责生成 `role_id`、`appearance_id` 等内部 ID。`roleboard_generation` 使用身份板提示词和 `design_key_vision_image` 产出的主视觉原图作为参考图，生成正面、侧面、背面、表情、动作、服装细节等角色身份板，并要求图片边缘带小号“角色：<角色名> | <形象名>”以及可选的“正面/侧面/背面/头部/表情/动作/服装细节/配饰细节”视图标签，方便后续把图片单独作为参考图时直接识别角色；除这些指定标签外仍禁止字幕、水印、logo、编号、ID、文件名、项目名、剧情台词或乱码文字。`role_voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，参考角色身份板并按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；后续 `shot_dialogue_audio_generation` 会直接使用该 `voice_type` 生成逐镜头对白音频。功能角色如果 `has_dialogue=false` 不选择声音。
 
 `storyboard_prompt` 在 `roleboard_generation` 之后运行，按集把导演前期的镜头节拍、完整正文、剧情摘要和角色身份板摘要拆成 12 个故事板镜头；每格都会写清景别、机位、构图、动作、情绪、摄像机运动和音效。pregen 的 `storyboard_generation` 会把这些脚本生成黑白线稿 12 宫格故事板，保存到 `assets/images/storyboards/`，每个宫格的画幅比例继承最终画面比例。`storyboard_bbox_detection` 把整张故事板作为图片参考交给视觉文本模型，要求只根据真实宫格边界输出 `bbox_1000/content_bbox_1000` JSON，不允许按规则网格猜裁切；`storyboard_panel_crop` 再把 12 个镜头单格裁到 `assets/images/storyboards/panels/`。这里的 `storyboard_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
 
@@ -352,7 +350,6 @@ run\start.cmd --config config.yaml --project <project_id> --only storyboard_gene
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_bbox_detection
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_panel_crop
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_select
-run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1
 ```
 
@@ -366,14 +363,13 @@ run\start.cmd --config config.yaml --project <project_id> --only storyboard_gene
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_bbox_detection --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_panel_crop --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_select --episodes 1 --force
-run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation --episodes 1 --force
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1,3
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1-3
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
 
-`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `roleboard_prompt`、`roleboard_generation`、`storyboard_prompt`、`storyboard_generation`、`storyboard_bbox_detection`、`storyboard_panel_crop`、`role_voice_select`、`role_voice_generation`、`prop_design`、`prop_generation` 和 `layout_image_generation`。角色、故事板、道具和场景图相关节点会按各自的 `episode_keys` 或目标集过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。
+`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `roleboard_prompt`、`roleboard_generation`、`storyboard_prompt`、`storyboard_generation`、`storyboard_bbox_detection`、`storyboard_panel_crop`、`role_voice_select`、`prop_design`、`prop_generation` 和 `layout_image_generation`。角色、故事板、道具和场景图相关节点会按各自的 `episode_keys` 或目标集过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。
 
 全局音色 catalog 命令：
 

@@ -53,11 +53,10 @@ def test_pregen_runs_integrated_role_pipeline(tmp_path: Path) -> None:
     assert all(str(value).startswith("assets/json/scripts/novel_full/") for value in state.script.novel_full.values())
     assert all(str(value).startswith("assets/json/scripts/novel_extract/") for value in state.script.novel_extract.values())
     assert "role_林舟".lower() in {key.lower() for key in state.roles}
-    assert any(role.audio for role in state.roles.values())
-    assert all(audio.asset_id for role in state.roles.values() for audio in role.audio.values())
-    assert all(audio.asset_path for role in state.roles.values() for audio in role.audio.values())
-    assert state.roles["role_林舟"].audio["normal"].asset_id.startswith("fake_ad_")
-    assert state.roles["role_林舟"].audio["tense"].asset_id.startswith("fake_clone_ad_")
+    dialogue_roles = [role for role in state.roles.values() if role.has_dialogue]
+    assert any(role.audio for role in dialogue_roles)
+    assert all(role.voice_type for role in dialogue_roles)
+    assert all(audio.voice_type == role.voice_type for role in dialogue_roles for audio in role.audio.values())
     assert state.roles["role_林舟"].appearances["base"].design_image_asset_path
     assert state.roles["role_林舟"].appearances["base"].asset_path
     assert state.props
@@ -66,6 +65,6 @@ def test_pregen_runs_integrated_role_pipeline(tmp_path: Path) -> None:
     assert (project_dir / "assets" / "json" / "nodes" / "role_extract.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "roleboard_prompt.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "roleboard_generation.json").exists()
-    assert (project_dir / "assets" / "json" / "nodes" / "role_voice_generation.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "role_voice_select.json").exists()
     assert not hasattr(state, "storyboards")
     assert (settings.output.root_dir / "current_project.json").exists()

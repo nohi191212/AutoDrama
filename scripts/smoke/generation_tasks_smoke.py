@@ -113,7 +113,7 @@ async def main_async() -> int:
     )
 
     fake_router = ProviderRouter(settings, provider_override="fake")
-    await PregenWorkflow(repo=repo, router=fake_router).run(project_dir, until="role_voice_generation", force=True)
+    await PregenWorkflow(repo=repo, router=fake_router).run(project_dir, until="role_voice_select", force=True)
     fixture_workflow = GenerationWorkflow(repo=repo, router=fake_router)
     write_fake_storyboard_episode(fixture_workflow, project_dir, "episode_001", shot_count=2)
 

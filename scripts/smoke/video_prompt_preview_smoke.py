@@ -98,7 +98,7 @@ async def create_fake_project(settings, repo: ProjectRepository, key: str) -> Pa
         episode_duration_seconds=30,
     )
     router = ProviderRouter(settings, provider_override="fake")
-    await PregenWorkflow(repo=repo, router=router).run(project_dir, until="role_voice_generation", force=True)
+    await PregenWorkflow(repo=repo, router=router).run(project_dir, until="role_voice_select", force=True)
     write_fake_storyboard_episode(GenerationWorkflow(repo=repo, router=router), project_dir, key, shot_count=2)
     return project_dir
 

@@ -78,14 +78,12 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "storyboard_bbox_detection",
     "storyboard_panel_crop",
     "role_voice_select",
-    "role_voice_generation",
     "prop_design",
     "prop_generation",
     "layout_image_generation",
 }
 ROLE_SCOPED_PREGEN_ONLY_NODES = {
     "role_voice_select",
-    "role_voice_generation",
 }
 PREGEN_ONLY_ALIASES = {"prop_image_generation": "prop_generation"}
 
@@ -534,7 +532,7 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         *,
-        until: str = "role_voice_generation",
+        until: str = "role_voice_select",
         force: bool = False,
         only: str | None = None,
         episode_keys: list[str] | None = None,
@@ -562,10 +560,10 @@ class PregenWorkflow:
             raise ValueError(
                 "--episodes is only supported for pregen --only roleboard_prompt, roleboard_generation, "
                 "storyboard_prompt, storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop, "
-                "role_voice_select, role_voice_generation, prop_design, prop_generation, or layout_image_generation."
+                "role_voice_select, prop_design, prop_generation, or layout_image_generation."
             )
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
-            raise ValueError("--roles is only supported for pregen --only role_voice_select or role_voice_generation.")
+            raise ValueError("--roles is only supported for pregen --only role_voice_select.")
         logger.info(
             "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s completed=%s",
             state.project_id,
@@ -2069,9 +2067,6 @@ class PregenWorkflow:
             ),
             None,
         )
-
-    async def _run_role_voice_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._voice_node_runner("role_voice_generation").run(project_dir, state)
 
     def _static_asset_node_runner(self, node_name: str) -> StaticAssetNodeBase:
         return build_static_asset_node_runners(self)[node_name]

@@ -23,14 +23,6 @@ class MediaStore:
             return data.split(";base64,", 1)[1]
         return data
 
-    @staticmethod
-    def _audio_extension(audio_format: str | None) -> str:
-        extension = (audio_format or "mp3").lower().lstrip(".")
-        extension = {"ogg_opus": "opus"}.get(extension, extension)
-        if extension not in {"wav", "mp3", "pcm", "opus", "ogg", "m4a", "aac"}:
-            extension = "bin"
-        return extension
-
     async def _download(self, url: str, *, label: str) -> bytes:
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.get(url)
@@ -91,21 +83,4 @@ class MediaStore:
             return None
 
         output_path.write_bytes(await self._download(result.video_url, label="video"))
-        return self.project_relative(project_dir, output_path)
-
-    def write_preview_audio(
-        self,
-        project_dir: Path,
-        *,
-        audio_id: str,
-        data: str | None,
-        response_format: str | None,
-    ) -> str | None:
-        if not data:
-            return None
-
-        output_dir = project_dir / "assets" / "audios" / "role_voices"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{audio_id}.{self._audio_extension(response_format)}"
-        output_path.write_bytes(base64.b64decode(self._base64_payload(data)))
         return self.project_relative(project_dir, output_path)

@@ -9,17 +9,17 @@ Usage:
   scripts/run_pregen_fake.sh [--config FILE] [--project ID_OR_DIR] [--until NODE] [--force]
 
 Default NODE:
-  role_voice_generation
+  role_voice_select
 
 This runs the pre-generation workflow only with fake providers, including
-roleboards, 12-panel storyboard sheets, GPT bbox panel crops, and role voices
+roleboards, 12-panel storyboard sheets, GPT bbox panel crops, and role voice_type bindings
 by default.
 Project ID and input outline file are read from config.yaml by default. Use
 --project to run a specific existing project or output directory.
 USAGE
 }
 
-until="role_voice_generation"
+until="role_voice_select"
 force=""
 project=""
 

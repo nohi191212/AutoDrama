@@ -466,41 +466,6 @@ class StoryboardPanelCropOutput(BaseModel):
     cropped_panels: list[StoryboardPanelCropItem]
 
 
-class RoleVoiceGenerationItem(BaseModel):
-    role_id: str
-    role_name: str
-    emotion: str
-    audio_id: str
-    generation_method: Literal["design", "clone", "reuse", "synthesis"]
-    voice: str
-    voice_name: str | None = None
-    voice_resource_id: str | None = None
-    voice_model_family: str | None = None
-    voice_selection_reason: str | None = None
-    source_audio_id: str | None = None
-    source_audio_path: str | None = None
-    voice_prompt: str
-    preview_text: str
-    emotion_instruction: str | None = None
-    emotion_params: dict[str, Any] = Field(default_factory=dict)
-    preview_audio_path: str | None = None
-    duration_seconds: float | None = None
-    original_duration_seconds: float | None = None
-    duration_limited: bool = False
-    provider: str
-    model: str
-    target_model: str | None = None
-    sample_rate: int | None = None
-    response_format: str | None = None
-    request_id: str | None = None
-    usage: dict[str, Any] = Field(default_factory=dict)
-    raw_response: dict[str, Any] = Field(default_factory=dict)
-
-
-class RoleVoiceGenerationOutput(BaseModel):
-    generated_voices: list[RoleVoiceGenerationItem]
-
-
 class PropExtractItem(BaseModel):
     name: str
     status: str = "normal"

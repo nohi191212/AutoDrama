@@ -1,6 +1,5 @@
 from autodrama.core.schemas import (
     DynamicAssetSolidificationItem,
-    RoleVoiceGenerationItem,
     ShotBGMAsset,
     ShotDialogueAudioAsset,
     ShotDialogueAudioGenerationItem,
@@ -10,7 +9,6 @@ from autodrama.core.schemas import (
 
 __all__ = [
     "DynamicAssetSolidificationItem",
-    "RoleVoiceGenerationItem",
     "ShotBGMAsset",
     "ShotDialogueAudioAsset",
     "ShotDialogueAudioGenerationItem",

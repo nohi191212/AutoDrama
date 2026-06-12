@@ -11,8 +11,8 @@ SRC_DIR = ROOT_DIR / "autodrama" / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from autodrama.config import load_settings  # noqa: E402
-from autodrama.core.schemas import ProjectState, Role, RoleAudio, ScriptBundle  # noqa: E402
+from autodrama.config import Settings  # noqa: E402
+from autodrama.core.schemas import ProjectState, Role, RoleAudio, ScriptBundle, StoryboardShot  # noqa: E402
 from autodrama.providers.base import VoiceSynthesisResult  # noqa: E402
 from autodrama.repositories.project_repo import ProjectRepository  # noqa: E402
 from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
@@ -21,7 +21,6 @@ from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
 class DummySpeechProvider:
     name = "dummy"
     model = "dummy-seed-tts"
-    supports_direct_emotion_synthesis = True
 
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -69,19 +68,21 @@ class DummyRouter:
     def __init__(self) -> None:
         self.provider = DummySpeechProvider()
 
-    def audio(self, purpose: str) -> DummySpeechProvider:
+    def audio(self, purpose: str, *, node_name: str | None = None) -> DummySpeechProvider:
+        del node_name
         if purpose != "speech":
             raise ValueError(f"Unexpected audio purpose: {purpose}")
         return self.provider
 
 
 async def main_async() -> int:
-    settings = load_settings(ROOT_DIR / "config.yaml")
+    settings = Settings()
     repo = ProjectRepository(settings)
     workflow = PregenWorkflow(repo=repo, router=DummyRouter())
+    provider = DummySpeechProvider()
     tmp_root = ROOT_DIR / ".tmp" / "smoke"
     tmp_root.mkdir(parents=True, exist_ok=True)
-    project_dir = tmp_root / "workflow_synthesis"
+    project_dir = tmp_root / "workflow_synthesis_direct_dialogue"
     repo._create_project_dirs(project_dir)
     state = ProjectState(
         project_id="voice_synthesis_smoke",
@@ -117,26 +118,43 @@ async def main_async() -> int:
             )
         },
     )
+    shot = StoryboardShot(
+        shot_id="shot_001_001",
+        index=1,
+        layout_id="layout_room",
+        title="林舟爆发质问",
+        duration_seconds=3.0,
+        dialogue=["林舟：你为什么骗我？"],
+        role_ids=["role_a"],
+        video_prompt="林舟压低声音愤怒质问。",
+    )
 
-    await workflow._run_role_voice_generation(project_dir, state)
-    normal = state.roles["role_a"].audio["normal"]
-    angry = state.roles["role_a"].audio["angry"]
-    output_path = project_dir / "assets" / "json" / "nodes" / "role_voice_generation.json"
+    asset, warning = await workflow._generate_shot_dialogue_audio(
+        provider=provider,
+        project_dir=project_dir,
+        state=state,
+        episode_key="episode_001",
+        shot=shot,
+        line_index=0,
+        line=shot.dialogue[0],
+    )
 
-    assert normal.asset_id == "role_selected_speaker"
-    assert normal.voice_type == "role_selected_speaker"
-    assert normal.voice_resource_id == "role-selected-resource"
-    assert angry.asset_id == "role_selected_speaker"
-    assert angry.voice_type == "role_selected_speaker"
-    assert angry.voice_resource_id == "role-selected-resource"
-    assert normal.asset_path and (project_dir / normal.asset_path).exists()
-    assert angry.asset_path and (project_dir / angry.asset_path).exists()
-    assert angry.emotion_instruction == "angry instruction"
-    assert workflow.router.provider.calls[0]["voice"] == "role_selected_speaker"
-    assert workflow.router.provider.calls[0]["metadata"]["resource_id"] == "role-selected-resource"
-    assert output_path.exists()
-    assert '"generation_method": "synthesis"' in output_path.read_text(encoding="utf-8")
-    assert '"voice_resource_id": "role-selected-resource"' in output_path.read_text(encoding="utf-8")
+    assert warning is None
+    assert asset is not None
+    assert asset.voice == "role_selected_speaker"
+    assert asset.voice_name == "Role Selected Voice"
+    assert asset.voice_resource_id == "role-selected-resource"
+    assert asset.voice_model_family == "Dummy Seed"
+    assert asset.emotion == "angry"
+    assert asset.emotion_instruction == "angry instruction"
+    assert asset.asset_path and (project_dir / asset.asset_path).exists()
+    assert provider.calls[0]["voice"] == "role_selected_speaker"
+    assert provider.calls[0]["text"] == "你为什么骗我？"
+    assert provider.calls[0]["metadata"]["node_name"] == "shot_dialogue_audio_generation"
+    assert provider.calls[0]["metadata"]["resource_id"] == "role-selected-resource"
+
+    removed_output_path = project_dir / "assets" / "json" / "nodes" / "role_voice_generation.json"
+    assert not removed_output_path.exists()
 
     print("workflow_synthesis_smoke=ok")
     print(f"project_dir={project_dir}")

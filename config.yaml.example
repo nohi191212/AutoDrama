@@ -178,12 +178,6 @@ nodes:
       sample_rate: 24000
       response_format: mp3
       max_generated_audio_duration_seconds: 10
-  role_voice_generation:
-    model: volcengine:seed-tts-2.0
-    params:
-      sample_rate: 24000
-      response_format: mp3
-      max_generated_audio_duration_seconds: 10
   role_voice_select:
     model: rightcode:gpt-5.5
     params:

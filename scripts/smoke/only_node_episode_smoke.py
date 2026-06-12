@@ -60,7 +60,7 @@ async def main_async() -> int:
 
     router = ProviderRouter(settings, provider_override="fake")
     pregen_workflow = PregenWorkflow(repo=repo, router=router)
-    await pregen_workflow.run(project_dir, until="role_voice_generation", force=True)
+    await pregen_workflow.run(project_dir, until="role_voice_select", force=True)
 
     storyboard_sheet_output_before = json.loads(
         (project_dir / "assets" / "json" / "nodes" / "storyboard_generation.json").read_text(encoding="utf-8")

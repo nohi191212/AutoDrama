@@ -8,7 +8,7 @@ set "CONFIG=config.yaml"
 set "PROJECT="
 set "WORKFLOW=pregen"
 set "PROVIDER_ARGS="
-set "UNTIL=role_voice_generation"
+set "UNTIL=role_voice_select"
 set "ONLY="
 set "EPISODES="
 set "SHOTS="
@@ -37,7 +37,7 @@ if "%~1"=="--workflow" (
 )
 if "%~1"=="--generation" (
   set "WORKFLOW=generation"
-  if "%UNTIL%"=="role_voice_generation" set "UNTIL=dynamic_asset_solidification"
+  if "%UNTIL%"=="role_voice_select" set "UNTIL=dynamic_asset_solidification"
   shift
   goto parse
 )
@@ -124,15 +124,15 @@ echo from config.yaml when available, otherwise D:\miniforge3\envs\autodrama\pyt
 echo.
 echo Defaults:
 echo   workflow: pregen
-echo   role_voice_generation
+echo   role_voice_select
 echo.
 echo Notes:
-echo   pregen writes roleboards, 12-panel storyboard sheets, GPT bbox crops, and role voices through role_voice_generation.
+echo   pregen writes roleboards, 12-panel storyboard sheets, GPT bbox crops, and selected role voice_type bindings through role_voice_select.
 echo   prop/layout/BGM nodes are deferred from the default pregen chain and can be run with --only.
 echo   pregen visual/audio chain is roleboard_prompt, roleboard_generation, storyboard_prompt,
 echo   storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop,
-echo   role_voice_select, then role_voice_generation.
-echo   pregen --roles is supported with --only role_voice_select or --only role_voice_generation.
+echo   then role_voice_select.
+echo   pregen --roles is supported with --only role_voice_select.
 echo   generation starts with shot_video_generation, then processes selected episodes.
 goto end
 
@@ -154,7 +154,7 @@ exit /b 2
 
 :workflow_ok
 if /I "%WORKFLOW%"=="generation" (
-  if "%UNTIL%"=="role_voice_generation" set "UNTIL=dynamic_asset_solidification"
+  if "%UNTIL%"=="role_voice_select" set "UNTIL=dynamic_asset_solidification"
 )
 
 for /f "tokens=1,* delims=:" %%A in ('findstr /R /C:"^[ ][ ]*windows:" "%CONFIG%" 2^>nul') do (

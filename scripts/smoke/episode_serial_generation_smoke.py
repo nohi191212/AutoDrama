@@ -40,7 +40,7 @@ async def main_async() -> int:
     )
 
     router = ProviderRouter(settings, provider_override="fake")
-    await PregenWorkflow(repo=repo, router=router).run(project_dir, until="role_voice_generation", force=True)
+    await PregenWorkflow(repo=repo, router=router).run(project_dir, until="role_voice_select", force=True)
 
     generation_workflow = GenerationWorkflow(repo=repo, router=router)
     for episode_key in ("episode_001", "episode_002", "episode_003"):
