@@ -24,7 +24,7 @@ EDITING_NODES = [
 
 
 class EditMissingAsset(BaseModel):
-    asset_type: Literal["shot_video", "ref_frame", "dialogue_audio", "bgm"]
+    asset_type: Literal["shot_video", "dialogue_audio", "bgm"]
     episode_key: str
     shot_id: str | None = None
     asset_id: str | None = None
@@ -379,47 +379,17 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         source_path = shot.video_asset_path
 
         if not self._project_path_exists(project_dir, source_path):
-            if source_path:
-                missing.append(
-                    EditMissingAsset(
-                        asset_type="shot_video",
-                        episode_key=episode_key,
-                        shot_id=shot.shot_id,
-                        asset_id=shot.video_asset_id,
-                        path=source_path,
-                        required=False,
-                        reason="Shot video path is recorded but the file is missing; fallback frame will be used if available.",
-                    )
+            missing.append(
+                EditMissingAsset(
+                    asset_type="shot_video",
+                    episode_key=episode_key,
+                    shot_id=shot.shot_id,
+                    asset_id=shot.video_asset_id,
+                    path=source_path,
+                    required=True,
+                    reason="No usable shot video exists for this clip.",
                 )
-            elif shot.video_asset_id:
-                missing.append(
-                    EditMissingAsset(
-                        asset_type="shot_video",
-                        episode_key=episode_key,
-                        shot_id=shot.shot_id,
-                        asset_id=shot.video_asset_id,
-                        required=False,
-                        reason="Shot video asset has no path; fallback frame will be used if available.",
-                    )
-                )
-
-            if self._project_path_exists(project_dir, shot.ref_frame_asset_path):
-                source_type = "image"
-                source_path = shot.ref_frame_asset_path
-                notes.append("Using ref frame as a still-image fallback because shot video is unavailable.")
-            else:
-                source_path = shot.video_asset_path or shot.ref_frame_asset_path
-                missing.append(
-                    EditMissingAsset(
-                        asset_type="ref_frame",
-                        episode_key=episode_key,
-                        shot_id=shot.shot_id,
-                        asset_id=shot.ref_frame_asset_id,
-                        path=shot.ref_frame_asset_path,
-                        required=True,
-                        reason="No usable shot video or fallback ref frame exists for this clip.",
-                    )
-                )
+            )
 
         return (
             EditClip(
@@ -431,7 +401,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
                 source_type=source_type,
                 source_path=source_path,
                 preferred_video_path=shot.video_asset_path,
-                fallback_frame_path=shot.ref_frame_asset_path,
+                fallback_frame_path=None,
                 start_time=start_time,
                 target_duration_seconds=duration,
                 layout_id=shot.layout_id,

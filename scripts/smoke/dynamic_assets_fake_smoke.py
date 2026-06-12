@@ -16,7 +16,9 @@ from autodrama.config import load_settings  # noqa: E402
 from autodrama.repositories.project_repo import ProjectRepository  # noqa: E402
 from autodrama.providers.router import ProviderRouter  # noqa: E402
 from autodrama.workflows.generation import GenerationWorkflow  # noqa: E402
+from autodrama.workflows.generation_checklist import update_checklist_from_state  # noqa: E402
 from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
+from smoke_storyboard_fixture import write_fake_storyboard_episode  # noqa: E402
 
 
 async def main_async() -> int:
@@ -40,10 +42,12 @@ async def main_async() -> int:
     state = await pregen_workflow.run(project_dir, until="role_voice_generation", force=True)
 
     generation_workflow = GenerationWorkflow(repo=repo, router=router)
-    state = await generation_workflow.run(project_dir, until="storyboard_generation", only="storyboard_generation")
+    write_fake_storyboard_episode(generation_workflow, project_dir, "episode_001", shot_count=2)
+    write_fake_storyboard_episode(generation_workflow, project_dir, "episode_002", shot_count=2)
+    update_checklist_from_state(repo, project_dir, state)
     checklist_path = project_dir / "generation_checklist.json"
     if not checklist_path.exists():
-        raise AssertionError("generation_checklist.json was not created after storyboard generation")
+        raise AssertionError("generation_checklist.json was not created after writing shot fixtures")
 
     checklist = json.loads(checklist_path.read_text(encoding="utf-8"))
     for episode in checklist["episodes"]:
@@ -57,27 +61,20 @@ async def main_async() -> int:
     episode_002_shot_text = episode_002_shot_path.read_text(encoding="utf-8")
 
     expected_nodes = {
-        "storyboard_generation",
-        "ref_frame_generation",
         "shot_video_generation",
         "dynamic_asset_solidification",
     }
     missing_nodes = expected_nodes.difference(state.completed_nodes)
     if missing_nodes:
         raise AssertionError(f"Missing completed nodes: {sorted(missing_nodes)}")
-    if '"ref_frame_asset_path"' not in episode_001_shot_text:
-        raise AssertionError("episode_001 shot missing ref_frame_asset_path")
     if '"video_asset_path"' not in episode_001_shot_text:
         raise AssertionError("episode_001 shot missing video_asset_path")
     if '"assets/audios/shot_dialogues/' in episode_001_shot_text:
         raise AssertionError("episode_001 generated dialogue audio in the default generation flow")
-    if '"assets/images/ref_frames/' in episode_002_shot_text:
-        raise AssertionError("episode_002 was generated despite generate=false")
     if '"assets/videos/shots/' in episode_002_shot_text:
         raise AssertionError("episode_002 video was generated despite generate=false")
 
     required_paths = [
-        project_dir / "assets" / "json" / "nodes" / "ref_frame_generation.json",
         project_dir / "assets" / "json" / "nodes" / "shot_video_generation.json",
         project_dir / "assets" / "json" / "nodes" / "dynamic_asset_solidification.json",
         project_dir / "assets" / "json" / "assets" / "dynamic_assets.json",
@@ -124,14 +121,11 @@ async def main_async() -> int:
     if items["episode_002"]["generate"]:
         raise AssertionError("episode_002 generate should remain false")
 
-    ref_frames = list((project_dir / "assets" / "images" / "ref_frames").glob("*.png"))
     role_images = list((project_dir / "assets" / "images" / "roles").glob("*.png"))
     storyboard_images = list((project_dir / "assets" / "images" / "storyboards").glob("*.png"))
     storyboard_panel_images = list((project_dir / "assets" / "images" / "storyboards" / "panels").glob("*.png"))
     shot_videos = list((project_dir / "assets" / "videos" / "shots").glob("*.mp4"))
     shot_audios = list((project_dir / "assets" / "audios" / "shot_dialogues").glob("*.*"))
-    if not ref_frames:
-        raise AssertionError("No ref frame generated")
     if not role_images:
         raise AssertionError("No roleboard image generated")
     if not storyboard_images:
@@ -146,7 +140,7 @@ async def main_async() -> int:
     episode_001 = json.loads(episode_001_shot_text)
     first_shot_raw = episode_001["shots"][0].get("video_raw_response", {})
     ref_asset_types = first_shot_raw.get("output", {}).get("ref_asset_types", [])
-    expected_ref_types = {"storyboard_panel", "roleboard", "key_vision", "ref_frame"}
+    expected_ref_types = {"storyboard_panel", "roleboard", "key_vision"}
     missing_ref_types = expected_ref_types.difference(ref_asset_types)
     if missing_ref_types:
         raise AssertionError(f"Shot video refs missing expected asset types: {sorted(missing_ref_types)}")
@@ -156,7 +150,7 @@ async def main_async() -> int:
     print(
         f"role_images={len(role_images)} storyboard_images={len(storyboard_images)} "
         f"storyboard_panel_images={len(storyboard_panel_images)} "
-        f"ref_frames={len(ref_frames)} shot_videos={len(shot_videos)} shot_audios={len(shot_audios)}"
+        f"shot_videos={len(shot_videos)} shot_audios={len(shot_audios)}"
     )
     return 0
 

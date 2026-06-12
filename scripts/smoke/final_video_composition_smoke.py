@@ -144,7 +144,6 @@ async def main_async() -> int:
                 camera_movement="locked",
                 duration_seconds=2,
                 dialogue=["Lead: The proof is on the screen."],
-                ref_frame_prompt="A proof reveal frame.",
                 video_prompt="A proof reveal shot.",
                 dialogue_audio_assets=[
                     ShotDialogueAudioAsset(

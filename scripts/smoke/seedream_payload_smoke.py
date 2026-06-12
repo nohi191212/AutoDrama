@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     payload = provider.build_payload(
-        "生成 9:16 竖屏短剧分镜参考帧，保持角色与参考图一致。",
+        "生成 9:16 竖屏短剧故事板图像，保持角色与参考图一致。",
         refs=[AssetRef(id="reference", type="image", path=str(image_path))],
     )
     url_ref_payload = provider.build_payload(

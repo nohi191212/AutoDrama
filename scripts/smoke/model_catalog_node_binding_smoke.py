@@ -49,7 +49,7 @@ def write_config(path: Path, *, bad_param: bool = False) -> None:
         },
         "routing": {
             "text": {"director": "rightcode", "storyboard": "rightcode"},
-            "image": {"key_vision": "toapi", "role": "toapi"},
+            "image": {"key_vision": "toapi", "role": "toapi", "storyboard": "toapi"},
             "video": {"shot": "volcengine"},
         },
         "nodes": {
@@ -67,14 +67,6 @@ def write_config(path: Path, *, bad_param: bool = False) -> None:
                     "size": "9:16",
                     "resolution": "4K",
                     "n": 1,
-                },
-            },
-            "storyboard_generation": {
-                "model": "rightcode:gpt-5.5",
-                "params": {
-                    "reasoning_effort": "xhigh",
-                    "temperature": 0.2,
-                    "response_format": "json_object",
                 },
             },
             "storyboard_prompt": {
@@ -160,7 +152,7 @@ def main() -> int:
     if getattr(key_vision_text_provider, "use_response_format", None) is not True:
         raise AssertionError("Key vision prompt params did not enable RightCode JSON response format")
 
-    text_provider = router.text("storyboard", node_name="storyboard_generation")
+    text_provider = router.text("storyboard", node_name="storyboard_prompt")
     if getattr(text_provider, "model", None) != "gpt-5.5":
         raise AssertionError(f"Unexpected text model: {getattr(text_provider, 'model', None)}")
     if getattr(text_provider, "reasoning_effort", None) != "xhigh":
@@ -176,7 +168,7 @@ def main() -> int:
     if getattr(bbox_provider, "use_response_format", None) is not True:
         raise AssertionError("BBox detection params did not enable RightCode JSON response format")
 
-    storyboard_sheet_provider = router.image("ref_frame", node_name="storyboard_sheet_generation")
+    storyboard_sheet_provider = router.image("storyboard", node_name="storyboard_sheet_generation")
     storyboard_sheet_payload = storyboard_sheet_provider._provider.build_payload(
         "test 12-panel storyboard",
         metadata=storyboard_sheet_provider._metadata({"asset_id": "storyboard_001"}),

@@ -47,10 +47,8 @@ def main() -> int:
     )
     state = repo.load_state(project_dir)
 
-    ref_frame_path = project_dir / "assets" / "images" / "ref_frames" / "episode_001_shot_001_ref_frame.png"
     layout_image_path = project_dir / "assets" / "images" / "layouts" / "layout_room.png"
     role_audio_path = project_dir / "assets" / "audios" / "role_voices" / "role_linz_normal.mp3"
-    write_png(ref_frame_path)
     write_png(layout_image_path)
     role_audio_path.parent.mkdir(parents=True, exist_ok=True)
     role_audio_path.write_bytes(b"fake role voice audio")
@@ -87,11 +85,7 @@ def main() -> int:
         duration_seconds=6,
         role_ids=["role_linz"],
         role_audio_ids=["role_linz_audio_normal"],
-        ref_frame_prompt="林舟站在会议室桌边。",
         video_prompt="林舟平静发言，镜头缓慢推进。",
-        ref_frame_asset_id="episode_001_shot_001_ref_frame",
-        ref_frame_asset_path="assets/images/ref_frames/episode_001_shot_001_ref_frame.png",
-        ref_frame_asset_url="https://example.invalid/generated-ref-frame.png",
     )
 
     router = ProviderRouter(settings)
@@ -106,7 +100,6 @@ def main() -> int:
         image_refs[0].url == "https://example.invalid/layout-room.png",
         f"Shot video layout ref did not prefer saved image URL: {image_refs[0].model_dump()}",
     )
-    require(all(ref.metadata.get("asset_type") != "ref_frame" for ref in image_refs), "Ref frame image should be skipped")
     require(len(audio_refs) == 1, f"Expected one role audio ref, got {len(audio_refs)}")
     require(audio_refs[0].metadata.get("role_id") == "role_linz", "Role audio ref missing role metadata")
 

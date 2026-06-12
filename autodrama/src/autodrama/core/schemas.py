@@ -641,21 +641,6 @@ class StoryboardSourceCoverage(BaseModel):
     note: str
 
 
-class StoryboardShotDraft(BaseModel):
-    layout_id: str
-    title: str
-    source_coverage: StoryboardSourceCoverage
-    duration_seconds: float
-    transition: str | None = None
-    dialogue: list[str] = Field(default_factory=list)
-    role_ids: list[str] = Field(default_factory=list)
-    role_appearance_ids: list[str] = Field(default_factory=list)
-    role_audio_ids: list[str] = Field(default_factory=list)
-    prop_ids: list[str] = Field(default_factory=list)
-    anchor_frame_prompt: str
-    video_prompt: str
-
-
 class StoryboardShot(BaseModel):
     shot_id: str
     index: int
@@ -679,27 +664,9 @@ class StoryboardShot(BaseModel):
     role_appearance_ids: list[str] = Field(default_factory=list)
     role_audio_ids: list[str] = Field(default_factory=list)
     prop_ids: list[str] = Field(default_factory=list)
-    ref_frame_prompt: str
     video_prompt: str
     dialogue_audio_assets: list[ShotDialogueAudioAsset] = Field(default_factory=list)
     shot_bgm_assets: list[ShotBGMAsset] = Field(default_factory=list)
-    ref_frame_asset_id: str | None = None
-    ref_frame_asset_path: str | None = None
-    ref_frame_asset_url: str | None = None
-    ref_frame_provider: str | None = None
-    ref_frame_model: str | None = None
-    ref_frame_request_id: str | None = None
-    ref_frame_usage: dict[str, Any] = Field(default_factory=dict)
-    ref_frame_raw_response: dict[str, Any] = Field(default_factory=dict)
-    physical_space_key: str | None = None
-    physical_space_note: str | None = None
-    spatial_continuity_mode: str | None = None
-    spatial_reference_shot_ids: list[str] = Field(default_factory=list)
-    spatial_structure_summary: str | None = None
-    spatial_constraints: list[str] = Field(default_factory=list)
-    spatial_movement_allowed: bool | None = None
-    spatial_movement_reason: str | None = None
-    spatial_plan_confidence: float | None = None
     video_asset_id: str | None = None
     video_asset_path: str | None = None
     video_provider: str | None = None
@@ -718,24 +685,6 @@ class StoryboardEpisodeOutput(BaseModel):
     shots: list[StoryboardShot]
 
 
-class StoryboardShotGenerationOutput(BaseModel):
-    episode_key: str
-    shot: StoryboardShot
-    is_episode_complete: bool = False
-    completion_reason: str | None = None
-
-
-class StoryboardNextShotOutput(BaseModel):
-    episode_key: str
-    shot: StoryboardShotDraft
-    is_chapter_complete: bool = False
-    completion_reason: str | None = None
-
-
-class StoryboardGenerationOutput(BaseModel):
-    generated_episodes: list[str]
-
-
 class ShotDialogueAudioGenerationItem(BaseModel):
     episode_key: str
     shot_id: str
@@ -745,43 +694,6 @@ class ShotDialogueAudioGenerationItem(BaseModel):
 class ShotDialogueAudioGenerationOutput(BaseModel):
     generated_dialogue_audios: list[ShotDialogueAudioGenerationItem]
     skipped_dialogue_lines: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class RefFrameSpatialPlan(BaseModel):
-    same_physical_space_as_previous: bool = False
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    continuity_mode: Literal["previous_shot", "reuse_prior_space", "new_space"] = "new_space"
-    physical_space_key: str = ""
-    physical_space_note: str = ""
-    reference_shot_ids: list[str] = Field(default_factory=list)
-    spatial_structure_summary: str = ""
-    spatial_constraints: list[str] = Field(default_factory=list)
-    movement_allowed: bool = False
-    movement_reason: str | None = None
-
-
-class RefFrameGenerationItem(BaseModel):
-    episode_key: str
-    shot_id: str
-    asset_id: str
-    prompt: str
-    asset_path: str | None = None
-    asset_url: str | None = None
-    provider: str
-    model: str
-    request_id: str | None = None
-    usage: dict[str, Any] = Field(default_factory=dict)
-    raw_response: dict[str, Any] = Field(default_factory=dict)
-    physical_space_key: str | None = None
-    physical_space_note: str | None = None
-    spatial_continuity_mode: str | None = None
-    spatial_reference_shot_ids: list[str] = Field(default_factory=list)
-    spatial_structure_summary: str | None = None
-    spatial_constraints: list[str] = Field(default_factory=list)
-
-
-class RefFrameGenerationOutput(BaseModel):
-    generated_ref_frames: list[RefFrameGenerationItem]
 
 
 class ShotVideoGenerationItem(BaseModel):
@@ -807,7 +719,7 @@ class ShotVideoGenerationOutput(BaseModel):
 
 class DynamicAssetSolidificationItem(BaseModel):
     asset_id: str
-    asset_type: Literal["shot_dialogue_audio", "shot_bgm", "ref_frame", "shot_video"]
+    asset_type: Literal["shot_dialogue_audio", "shot_bgm", "shot_video"]
     episode_key: str
     shot_id: str
     asset_path: str | None = None

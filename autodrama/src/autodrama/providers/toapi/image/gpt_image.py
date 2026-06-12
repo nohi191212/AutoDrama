@@ -172,8 +172,6 @@ class ToAPIImageProvider:
             return self.settings.models.get("layout")
         if node_name == "design_key_vision_image":
             return self.settings.models.get("key_vision")
-        if node_name == "ref_frame_generation":
-            return self.settings.models.get("ref_frame")
         return None
 
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
@@ -189,8 +187,6 @@ class ToAPIImageProvider:
             return self.settings.options.get("layout_size") or "16:9"
         if node_name == "design_key_vision_image":
             return self.settings.options.get("key_vision_size") or "9:16"
-        if node_name == "ref_frame_generation":
-            return self.settings.options.get("ref_frame_size") or "16:9"
         return None
 
     def _purpose_resolution(self, metadata: dict[str, Any]) -> object | None:
@@ -203,8 +199,6 @@ class ToAPIImageProvider:
             return self.settings.options.get("layout_resolution")
         if node_name == "design_key_vision_image":
             return self.settings.options.get("key_vision_resolution")
-        if node_name == "ref_frame_generation":
-            return self.settings.options.get("ref_frame_resolution")
         return None
 
     @classmethod

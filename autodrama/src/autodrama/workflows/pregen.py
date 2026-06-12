@@ -43,7 +43,6 @@ from autodrama.services.director_service import DirectorService
 from autodrama.services.media_store import MediaStore
 from autodrama.services.role_service import RoleService
 from autodrama.services.script_service import ScriptService
-from autodrama.services.storyboard_service import StoryboardService
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.context import WorkflowRunContext
 from autodrama.workflows.nodes import (
@@ -111,7 +110,6 @@ class PregenWorkflow:
         self.director_service = DirectorService(self.prompts)
         self.role_service = RoleService(self.prompts)
         self.asset_service = AssetService(self.prompts)
-        self.storyboard_service = StoryboardService(self.prompts)
         self.script_contents = ScriptContentRepository(self.repo, self.layout)
         self.roleboard_prompts = RoleboardPromptRepository(self.repo, self.layout)
         self.prop_designs = PropDesignRepository(self.repo, self.layout)
@@ -1296,9 +1294,7 @@ class PregenWorkflow:
                 "storyboard_panel": 0,
                 "roleboard": 1,
                 "key_vision": 2,
-                "ref_frame": 3,
-                "previous_shot_last_ref_frame": 4,
-                "layout": 5,
+                "layout": 3,
                 "previous_shot_last_frame": 6,
                 "prop": 7,
             }.get(asset_type, 9)
@@ -1388,27 +1384,16 @@ class PregenWorkflow:
     @staticmethod
     def _video_reference_mode_uses_role_prop_refs(mode: str) -> bool:
         return mode in {
-            "ref_frame_role_prop",
-            "ref_frame_role_prop_previous_video",
-            "ref_frame_role_prop_prev_video",
-        }
-
-    @staticmethod
-    def _video_reference_mode_uses_ref_frame(mode: str) -> bool:
-        return mode in {
-            "full",
-            "ref_frame",
-            "ref_frame_only",
-            "ref_frame_role_prop",
-            "ref_frame_role_prop_previous_video",
-            "ref_frame_role_prop_prev_video",
-            "ref_frame_previous_video",
-            "ref_frame_prev_video",
+            "role_prop",
+            "role_prop_previous_video",
+            "role_prop_prev_video",
         }
 
     @staticmethod
     def _video_reference_mode_uses_layout_roleboard_refs(mode: str) -> bool:
         return mode in {
+            "layout_roleboard",
+            "scene_roleboard",
             "layout_roleboard_previous_video",
             "layout_roleboard_prev_video",
             "layout_roleboard_context_video",
@@ -1437,10 +1422,10 @@ class PregenWorkflow:
             "scene_roleboard_previous_video",
             "scene_roleboard_prev_video",
             "scene_roleboard_context_video",
-            "ref_frame_role_prop_previous_video",
-            "ref_frame_role_prop_prev_video",
-            "ref_frame_previous_video",
-            "ref_frame_prev_video",
+            "role_prop_previous_video",
+            "role_prop_prev_video",
+            "previous_video",
+            "prev_video",
         }
 
     @staticmethod
@@ -1458,10 +1443,6 @@ class PregenWorkflow:
 
     @staticmethod
     def _shots_share_scene(current_shot: StoryboardShot, previous_shot: StoryboardShot) -> bool:
-        current_space = str(current_shot.physical_space_key or "").strip()
-        previous_space = str(previous_shot.physical_space_key or "").strip()
-        if current_space and previous_space:
-            return current_space == previous_space
         return bool(current_shot.layout_id and current_shot.layout_id == previous_shot.layout_id)
 
     @staticmethod
@@ -1750,9 +1731,8 @@ class PregenWorkflow:
             "source_shot_id": source_shot.shot_id,
             "duration_seconds": self._shot_generated_video_duration_seconds(source_shot),
             "layout_id": current_shot.layout_id,
-            "physical_space_key": current_shot.physical_space_key or source_shot.physical_space_key,
             "camera_direction_required": False,
-            "spatial_match_rule": "same latent 3D space by physical_space_key or layout_id",
+            "scene_match_rule": "same layout_id",
         }
         if extra_metadata:
             metadata.update(extra_metadata)
@@ -1762,40 +1742,6 @@ class PregenWorkflow:
             path=str(video_path) if video_path is not None else None,
             url=video_url,
             metadata=metadata,
-        )
-
-    def _previous_shot_last_ref_frame_ref(
-        self,
-        project_dir: Path,
-        previous_shot: StoryboardShot | None,
-    ):
-        from autodrama.providers.base import AssetRef
-
-        if previous_shot is None:
-            return None
-        if not (previous_shot.ref_frame_asset_path or previous_shot.ref_frame_asset_url):
-            return None
-        return AssetRef(
-            id=f"{previous_shot.ref_frame_asset_id or previous_shot.shot_id}_last_ref_frame",
-            type="image",
-            path=str(project_dir / previous_shot.ref_frame_asset_path)
-            if previous_shot.ref_frame_asset_path
-            else None,
-            url=previous_shot.ref_frame_asset_url,
-            metadata={
-                "asset_type": "previous_shot_last_ref_frame",
-                "reference_source": "previous_shot_ref_frame_url"
-                if previous_shot.ref_frame_asset_url
-                else "previous_shot_ref_frame_file",
-                "reference_role": "previous_shot_last_state",
-                "source_shot_id": previous_shot.shot_id,
-                "previous_shot_id": previous_shot.shot_id,
-                "source_ref_frame_asset_id": previous_shot.ref_frame_asset_id,
-                "layout_id": previous_shot.layout_id,
-                "physical_space_key": previous_shot.physical_space_key,
-                "seedance_role": "reference_image",
-                "name": f"{previous_shot.shot_id} 最后参考帧",
-            },
         )
 
     def _shot_context_video_refs(
@@ -1906,26 +1852,6 @@ class PregenWorkflow:
         key_vision_ref = self._key_vision_ref(project_dir, state, shot)
         if key_vision_ref is not None:
             refs.append(key_vision_ref)
-        if self._video_reference_mode_uses_ref_frame(reference_mode) and (
-            shot.ref_frame_asset_path or shot.ref_frame_asset_url
-        ):
-            ref_frame_path = str(project_dir / shot.ref_frame_asset_path) if shot.ref_frame_asset_path else None
-            refs.append(
-                AssetRef(
-                    id=shot.ref_frame_asset_id,
-                    type="image",
-                    path=ref_frame_path,
-                    url=shot.ref_frame_asset_url,
-                    metadata={
-                        "asset_type": "ref_frame",
-                        "reference_source": "seedream_url" if shot.ref_frame_asset_url else "local_file",
-                    },
-                )
-            )
-        if reference_mode in {"ref_frame", "ref_frame_only"}:
-            previous_ref_frame_ref = self._previous_shot_last_ref_frame_ref(project_dir, previous_shot)
-            if previous_ref_frame_ref is not None:
-                refs.append(previous_ref_frame_ref)
         if self._video_reference_mode_uses_layout_roleboard_refs(reference_mode):
             refs.extend(
                 self._shot_ref_asset_refs(
@@ -1948,7 +1874,7 @@ class PregenWorkflow:
                     include_props=True,
                 )
             )
-        elif reference_mode not in {"ref_frame_only", "ref_frame"}:
+        else:
             refs.extend(self._shot_ref_asset_refs(project_dir, state, shot, include_roles=False))
         context_video_refs = (
             self._shot_context_video_refs(project_dir, shot, episode, provider=provider)

@@ -82,7 +82,6 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
     def final_aspect_ratio(self) -> str:
         for node_name, param_name in (
             ("shot_video_generation", "ratio"),
-            ("ref_frame_generation", "size"),
             ("storyboard_sheet_generation", "size"),
         ):
             node_settings = self.repo.settings.nodes.get(node_name)
@@ -478,7 +477,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
         return {item.episode_key: item for item in output.generated_storyboards}
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("ref_frame", node_name=STORYBOARD_IMAGE_PROVIDER_NODE_NAME)
+        provider = self.router.image("storyboard", node_name=STORYBOARD_IMAGE_PROVIDER_NODE_NAME)
         self.logger.info(
             "node=storyboard_generation provider=%s model=%s image_binding=%s",
             getattr(provider, "name", "unknown"),

@@ -8,8 +8,6 @@ from autodrama.core.schemas import (
     LayoutExtractOutput,
     PropDesignOutput,
     PropExtractOutput,
-    RefFrameGenerationOutput,
-    RefFrameSpatialPlan,
     RoleExtractOutput,
     RoleVoiceGenerationOutput,
     RoleboardPromptOutput,
@@ -21,9 +19,6 @@ from autodrama.core.schemas import (
     ShotDialogueAudioGenerationOutput,
     ShotVideoGenerationOutput,
     StaticAssetGenerationOutput,
-    StoryboardGenerationOutput,
-    StoryboardNextShotOutput,
-    StoryboardShotGenerationOutput,
 )
 
 __all__ = [
@@ -36,8 +31,6 @@ __all__ = [
     "LayoutExtractOutput",
     "PropDesignOutput",
     "PropExtractOutput",
-    "RefFrameGenerationOutput",
-    "RefFrameSpatialPlan",
     "RoleExtractOutput",
     "RoleVoiceGenerationOutput",
     "RoleboardPromptOutput",
@@ -49,7 +42,4 @@ __all__ = [
     "ShotDialogueAudioGenerationOutput",
     "ShotVideoGenerationOutput",
     "StaticAssetGenerationOutput",
-    "StoryboardGenerationOutput",
-    "StoryboardNextShotOutput",
-    "StoryboardShotGenerationOutput",
 ]

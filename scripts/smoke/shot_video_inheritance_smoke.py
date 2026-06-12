@@ -20,6 +20,7 @@ from autodrama.providers.router import ProviderRouter  # noqa: E402
 from autodrama.repositories.project_repo import ProjectRepository  # noqa: E402
 from autodrama.workflows.generation import GenerationWorkflow  # noqa: E402
 from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
+from smoke_storyboard_fixture import write_fake_storyboard_episode  # noqa: E402
 
 
 PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/luz7XwAAAABJRU5ErkJggg=="
@@ -110,12 +111,7 @@ async def main_async() -> int:
     fake_router = ProviderRouter(settings, provider_override="fake")
     await PregenWorkflow(repo=repo, router=fake_router).run(project_dir, until="role_voice_generation", force=True)
     storyboard_workflow = GenerationWorkflow(repo=repo, router=fake_router)
-    await storyboard_workflow.run(
-        project_dir,
-        until="storyboard_generation",
-        only="storyboard_generation",
-        episode_keys=parse_episode_keys("1"),
-    )
+    write_fake_storyboard_episode(storyboard_workflow, project_dir, "episode_001", shot_count=2)
 
     episode = storyboard_workflow._load_storyboard_episode(project_dir, "episode_001")
     require(len(episode.shots) >= 2, "Smoke storyboard must contain at least two shots")

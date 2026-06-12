@@ -21,6 +21,7 @@ from autodrama.providers.router import ProviderRouter  # noqa: E402
 from autodrama.repositories.project_repo import ProjectRepository  # noqa: E402
 from autodrama.workflows.generation import GenerationWorkflow  # noqa: E402
 from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
+from smoke_storyboard_fixture import write_fake_storyboard_episode  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,12 +99,7 @@ async def create_fake_project(settings, repo: ProjectRepository, key: str) -> Pa
     )
     router = ProviderRouter(settings, provider_override="fake")
     await PregenWorkflow(repo=repo, router=router).run(project_dir, until="role_voice_generation", force=True)
-    await GenerationWorkflow(repo=repo, router=router).run(
-        project_dir,
-        until="storyboard_generation",
-        only="storyboard_generation",
-        episode_keys=[key],
-    )
+    write_fake_storyboard_episode(GenerationWorkflow(repo=repo, router=router), project_dir, key, shot_count=2)
     return project_dir
 
 

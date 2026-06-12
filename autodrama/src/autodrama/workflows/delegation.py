@@ -34,7 +34,6 @@ class PregenWorkflowDelegateMixin:
             "script_service",
             "role_service",
             "asset_service",
-            "storyboard_service",
             "media_store",
             "storyboards",
             "runner",

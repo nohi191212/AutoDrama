@@ -60,7 +60,6 @@ class BudgetSettings(BaseModel):
 
 
 class GenerationSettings(BaseModel):
-    max_shots: int = Field(default=10, ge=1)
     roleboard_style_reference_dir: Path | None = None
     visual_style_prompt: str = ""
     roleboard_style_prompt: str = ""

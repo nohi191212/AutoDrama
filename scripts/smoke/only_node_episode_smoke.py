@@ -16,8 +16,9 @@ from autodrama.cli import parse_episode_keys  # noqa: E402
 from autodrama.config import load_settings  # noqa: E402
 from autodrama.providers.router import ProviderRouter  # noqa: E402
 from autodrama.repositories.project_repo import ProjectRepository  # noqa: E402
-from autodrama.workflows.generation import GenerationWorkflow  # noqa: E402
+from autodrama.workflows.generation import GENERATION_NODES, GenerationWorkflow  # noqa: E402
 from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
+from smoke_storyboard_fixture import write_fake_storyboard_episode  # noqa: E402
 
 
 def require(condition: bool, message: str) -> None:
@@ -61,56 +62,65 @@ async def main_async() -> int:
     pregen_workflow = PregenWorkflow(repo=repo, router=router)
     await pregen_workflow.run(project_dir, until="role_voice_generation", force=True)
 
-    generation_workflow = GenerationWorkflow(repo=repo, router=router)
-    await generation_workflow.run(project_dir, until="storyboard_generation", only="storyboard_generation")
-
-    episode_002_before = shot_text(project_dir, "episode_002")
-    await generation_workflow.run(
-        project_dir,
-        until="storyboard_generation",
-        only="storyboard_generation",
-        episode_keys=["episode_001"],
-    )
-    episode_002_after = shot_text(project_dir, "episode_002")
-    require(episode_002_after == episode_002_before, "episode_002 storyboard changed during episode_001-only pregen")
-
-    storyboard_output = json.loads(
+    storyboard_sheet_output_before = json.loads(
         (project_dir / "assets" / "json" / "nodes" / "storyboard_generation.json").read_text(encoding="utf-8")
     )
-    require(
-        storyboard_output["generated_episodes"] == ["episode_001"],
-        f"Expected only episode_001 storyboard output, got {storyboard_output['generated_episodes']}",
+    await pregen_workflow.run(
+        project_dir,
+        only="storyboard_generation",
+        episode_keys=["episode_001"],
+        force=True,
     )
+    storyboard_sheet_output_after = json.loads(
+        (project_dir / "assets" / "json" / "nodes" / "storyboard_generation.json").read_text(encoding="utf-8")
+    )
+    generated_episodes = {
+        item["episode_key"]
+        for item in storyboard_sheet_output_after["generated_storyboards"]
+    }
+    require(generated_episodes == {"episode_001", "episode_002"}, "pregen storyboard output lost an existing episode")
+    before_ep2 = [
+        item for item in storyboard_sheet_output_before["generated_storyboards"] if item["episode_key"] == "episode_002"
+    ][0]
+    after_ep2 = [
+        item for item in storyboard_sheet_output_after["generated_storyboards"] if item["episode_key"] == "episode_002"
+    ][0]
+    require(after_ep2 == before_ep2, "episode_002 pregen storyboard changed during episode_001-only rerun")
+
+    generation_workflow = GenerationWorkflow(repo=repo, router=router)
+    write_fake_storyboard_episode(generation_workflow, project_dir, "episode_001", shot_count=2)
+    write_fake_storyboard_episode(generation_workflow, project_dir, "episode_002", shot_count=2)
 
     try:
         await generation_workflow.run(
             project_dir,
             until="dynamic_asset_solidification",
-            only="shot_bgm_generation",
+            only="storyboard_generation",
             episode_keys=parse_episode_keys("2"),
         )
     except ValueError as exc:
         require("Unsupported generation only node" in str(exc), f"Unexpected error for removed node: {exc}")
     else:
-        raise AssertionError("shot_bgm_generation should no longer be a supported generation node")
+        raise AssertionError("generation storyboard_generation should no longer be supported")
+
+    require(
+        GENERATION_NODES == ["shot_video_generation", "dynamic_asset_solidification"],
+        f"Unexpected generation node list: {GENERATION_NODES}",
+    )
 
     await generation_workflow.run(
         project_dir,
-        until="dynamic_asset_solidification",
-        only="ref_frame_generation",
+        until="shot_video_generation",
+        only="shot_video_generation",
         episode_keys=["episode_002"],
     )
     require(
-        '"assets/images/ref_frames/' not in shot_text(project_dir, "episode_001"),
-        "episode_001 got a ref frame during episode_002-only generation",
+        '"assets/videos/shots/' not in shot_text(project_dir, "episode_001"),
+        "episode_001 got a video during episode_002-only generation",
     )
     require(
-        '"assets/images/ref_frames/' in shot_text(project_dir, "episode_002"),
-        "episode_002 did not get a ref frame",
-    )
-    require(
-        '"assets/videos/shots/' not in shot_text(project_dir, "episode_002"),
-        "shot_video_generation ran during ref_frame_generation-only run",
+        '"assets/videos/shots/' in shot_text(project_dir, "episode_002"),
+        "episode_002 did not get a video",
     )
 
     print("only_node_episode_smoke=ok")

@@ -22,6 +22,7 @@ from autodrama.providers.router import ProviderRouter  # noqa: E402
 from autodrama.repositories.project_repo import ProjectRepository  # noqa: E402
 from autodrama.workflows.generation import GenerationWorkflow  # noqa: E402
 from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
+from smoke_storyboard_fixture import write_fake_storyboard_episode  # noqa: E402
 
 
 def require(condition: bool, message: str) -> None:
@@ -113,12 +114,8 @@ async def main_async() -> int:
 
     fake_router = ProviderRouter(settings, provider_override="fake")
     await PregenWorkflow(repo=repo, router=fake_router).run(project_dir, until="role_voice_generation", force=True)
-    await GenerationWorkflow(repo=repo, router=fake_router).run(
-        project_dir,
-        until="storyboard_generation",
-        only="storyboard_generation",
-        episode_keys=parse_episode_keys("1"),
-    )
+    fixture_workflow = GenerationWorkflow(repo=repo, router=fake_router)
+    write_fake_storyboard_episode(fixture_workflow, project_dir, "episode_001", shot_count=2)
 
     timeout_provider = QueueVideoProvider(complete=False)
     try:

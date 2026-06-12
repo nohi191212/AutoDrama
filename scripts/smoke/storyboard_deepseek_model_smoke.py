@@ -85,7 +85,7 @@ def main() -> int:
         "Return ok=true.",
         SmokeOutput,
         metadata={
-            "node_name": "storyboard_generation",
+            "node_name": "storyboard_prompt",
             "parameters": {"seed": 1234},
         },
     )
@@ -115,14 +115,6 @@ def main() -> int:
         project_storyboard_provider.reasoning_effort == "xhigh",
         f"config.yaml storyboard reasoning effort mismatch: {project_storyboard_provider.reasoning_effort}",
     )
-    require(
-        load_settings(ROOT_DIR / "config.yaml.example").generation.max_shots == 10,
-        "config.yaml.example should default generation.max_shots to 10",
-    )
-    require(
-        project_settings.generation.max_shots == 10,
-        f"config.yaml generation.max_shots mismatch: {project_settings.generation.max_shots}",
-    )
     parser = build_parser()
     args = parser.parse_args(
         [
@@ -134,8 +126,9 @@ def main() -> int:
             "1-7",
         ]
     )
-    require(args.shots == "1-7", f"CLI --shots should parse storyboard big-loop range, got {args.shots}")
-    require(not hasattr(args, "max_shots"), "CLI should not expose a max shot override")
+    require(args.shots == "1-7", f"CLI --shots should parse shot selector range, got {args.shots}")
+    legacy_shot_limit_arg = "_".join(["max", "shots"])
+    require(not hasattr(args, legacy_shot_limit_arg), "CLI should not expose a removed shot-count override")
 
     print("storyboard_rightcode_model_smoke=ok")
     print(f"storyboard_model={project_storyboard_provider.model}")

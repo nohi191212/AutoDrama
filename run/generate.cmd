@@ -98,12 +98,10 @@ echo   run\generate.cmd [--config FILE] [--project ID_OR_DIR] [--episodes LIST] 
 echo.
 echo What it runs:
 echo   No --shots:
-echo     generation storyboard_generation -^> ref_frame_generation -^> shot_video_generation -^> dynamic_asset_solidification
-echo     The workflow runs as a per-shot big loop using generation.max_shots from config.
+echo     generation shot_video_generation -^> dynamic_asset_solidification
 echo.
 echo   With --shots:
-echo     generation storyboard_generation -^> ref_frame_generation -^> shot_video_generation -^> dynamic_asset_solidification.
-echo     --shots drives the per-shot big loop; for 2-3, shot 1 is kept as storyboard context and shots 2-3 are regenerated.
+echo     generation shot_video_generation -^> dynamic_asset_solidification scoped to selected shots.
 echo.
 echo Examples:
 echo   run\generate.cmd --project xcj-2 --episode 1 --shots 1-3
@@ -124,16 +122,6 @@ exit /b 2
 if not exist "%CONFIG%" (
   echo Config file not found: %CONFIG% 1>&2
   exit /b 2
-)
-
-if not "%SHOTS%"=="" if "%ONLY%"=="" if /I not "%UNTIL%"=="dynamic_asset_solidification" (
-  echo --shots storyboard big-loop mode requires --until dynamic_asset_solidification in this helper script. 1>&2
-  echo Use --only NODE when you intentionally want to run one shot-level node. 1>&2
-  exit /b 2
-)
-
-if not "%SHOTS%"=="" if not "%ONLY%"=="" (
-  echo --shots with --only runs a single node and will not use the storyboard big-loop path. 1>&2
 )
 
 for /f "tokens=1,* delims=:" %%A in ('findstr /R /C:"^[ ][ ]*windows:" "%CONFIG%" 2^>nul') do (
@@ -168,8 +156,8 @@ call :log "until: %UNTIL%"
 if not "%EPISODES%"=="" call :log "episodes: %EPISODES%"
 if not "%SHOTS%"=="" call :log "shots: %SHOTS%"
 if not "%ONLY%"=="" call :log "only: %ONLY%"
-if not "%SHOTS%"=="" if "%ONLY%"=="" call :log "mode: storyboard shot big loop"
-if "%SHOTS%"=="" if "%ONLY%"=="" call :log "mode: storyboard big loop"
+if not "%SHOTS%"=="" if "%ONLY%"=="" call :log "mode: selected shots"
+if "%SHOTS%"=="" if "%ONLY%"=="" call :log "mode: selected episodes"
 
 "%AUTODRAMA_PYTHON%" -m autodrama.cli run generation --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
 set "EXIT_CODE=%ERRORLEVEL%"

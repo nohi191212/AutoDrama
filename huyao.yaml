@@ -96,7 +96,6 @@ nodes:
       temperature: 0.4
       response_format: json_object
   # Image binding used internally by pregen node storyboard_generation for the 12-panel storyboard sheet.
-  # Keep nodes.storyboard_generation below as the text binding for the dynamic shot JSON workflow.
   storyboard_sheet_generation:
     model: toapi:gpt-image-2
     params:
@@ -166,25 +165,6 @@ nodes:
       sample_rate: 44100
       output_format: url
       is_instrumental: true
-  storyboard_generation:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-  ref_frame_spatial_planning:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: low
-      temperature: 0.2
-      response_format: json_object
-  ref_frame_generation:
-    model: toapi:gpt-image-2
-    params:
-      size: "9:16"
-      resolution: 4K
-      n: 1
-      response_format: url
   shot_video_generation:
     model: volcengine:doubao-seedance-2-0-260128
     params:
@@ -268,9 +248,6 @@ budget:
   max_text_calls: 200
 
 generation:
-  # Maximum storyboard shots generated per episode by storyboard_generation.
-  # Passing --shots to generation derives the storyboard run limit from the selected shot range.
-  max_shots: 10
   # Used by roleboard_generation as Image 2 style references.
   roleboard_style_reference_dir: ./.assets/sample_urban_fantasy
   # Global visual style prompt used by design_key_vision_prompt.
@@ -360,8 +337,6 @@ providers:
       # Used by design_key_vision_image for the global key visual original.
       key_vision_size: 1024x1536
       key_vision_quality: high
-      # Used when routing.image.ref_frame is rightcode.
-      ref_frame_size: 1024x1536
       n: 1
 
   toapi:
@@ -384,9 +359,6 @@ providers:
       prop_resolution: 2K
       layout_size: "9:16"
       layout_resolution: 4K
-      # Shot-level reference frames for 9:16 shot video generation.
-      ref_frame_size: "9:16"
-      ref_frame_resolution: 4K
       response_format: url
       n: 1
       toapi_max_attempts: 10
@@ -401,14 +373,11 @@ providers:
     models:
       text: deepseek-v4-pro
       storyboard: deepseek-v4-pro
-      ref_frame_spatial: deepseek-v4-flash
     options:
       reasoning_effort: max
       thinking_enabled: true
       storyboard_reasoning_effort: max
       storyboard_thinking_enabled: true
-      ref_frame_spatial_reasoning_effort: low
-      ref_frame_spatial_thinking_enabled: false
 
   minimax:
     base_url: https://api.minimaxi.com
@@ -474,7 +443,6 @@ providers:
       seedream_roleboard_size: 2848x1600
       seedream_prop_size: 2048x2048
       seedream_layout_size: 1600x2848
-      seedream_ref_frame_size: 1600x2848
       seedream_output_format: png
       seedream_response_format: url
       seedream_watermark: false
@@ -484,17 +452,13 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # Seedance video refs: use each shot's generated ref frame as the main visual anchor.
-      # From the second shot onward, pass the previous shot ref frame as previous_shot_last_ref_frame
-      # to hint the last visual state before the hard cut.
+      # Seedance video refs: use storyboard panels, roleboards, key vision, scene/prop refs,
+      # role/dialogue audio, and optional previous generated shot videos.
       # Previous generated shot videos are disabled by default to avoid quality drift across long shot chains.
       # Role/dialogue audio anchors are still allowed for the only speaking role.
-      video_reference_mode: ref_frame
+      video_reference_mode: full
       previous_video_preroll_seconds: 0
-      # Ref-frame mode sends the current shot ref frame, the previous shot last-state ref frame when available,
-      # plus one speaking-role audio reference.
       # max_reference_* values are still kept for other video_reference_mode experiments.
-      # This leaves room for storyboard panel + roleboard + key vision + current ref_frame.
       max_reference_images: 4
       max_reference_audio: 1
       max_reference_audio_duration_seconds: 15.2
@@ -579,19 +543,16 @@ routing:
     prop: rightcode
     layout: rightcode
     storyboard: rightcode
-    ref_frame_prompt_safety: rightcode
-    ref_frame_spatial: rightcode
     shot_bgm: rightcode
     edit_plan: rightcode
     bgm_plan: rightcode
   image:
-    # Reusable global assets: role turnarounds, props, and layouts.
+    # Reusable global assets and pregen storyboard sheets.
     role: toapi
     key_vision: toapi
+    storyboard: toapi
     prop: toapi
     layout: toapi
-    # Shot-level storyboard/reference frames.
-    ref_frame: toapi
   video:
     shot: volcengine
     upscale: volcengine

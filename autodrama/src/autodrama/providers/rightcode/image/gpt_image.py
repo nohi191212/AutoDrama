@@ -331,8 +331,6 @@ class RightCodeImageProvider:
                 self.settings.models.get("rightcode_roleboard")
                 or self.settings.models.get("roleboard")
             )
-        if str(metadata.get("node_name") or "") == "ref_frame_generation":
-            return self.settings.models.get("rightcode_ref_frame") or self.settings.models.get("ref_frame")
         if str(metadata.get("node_name") or "") == "design_key_vision_image":
             return self.settings.models.get("rightcode_key_vision") or self.settings.models.get("key_vision")
         return None
@@ -343,8 +341,6 @@ class RightCodeImageProvider:
                 self.settings.options.get("rightcode_roleboard_size")
                 or self.settings.options.get("roleboard_size")
             )
-        if str(metadata.get("node_name") or "") == "ref_frame_generation":
-            return self.settings.options.get("rightcode_ref_frame_size") or self.settings.options.get("ref_frame_size")
         if str(metadata.get("node_name") or "") == "design_key_vision_image":
             return self.settings.options.get("rightcode_key_vision_size") or self.settings.options.get("key_vision_size")
         return None

@@ -121,7 +121,6 @@ class ProjectLayout:
             project_dir / "assets" / "images" / "storyboards",
             project_dir / "assets" / "images" / "props",
             project_dir / "assets" / "images" / "layouts",
-            project_dir / "assets" / "images" / "ref_frames",
             project_dir / "assets" / "audios" / "bgms",
             project_dir / "assets" / "audios" / "shot_dialogues",
             project_dir / "assets" / "videos" / "roles",

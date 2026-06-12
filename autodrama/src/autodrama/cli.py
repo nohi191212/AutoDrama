@@ -162,7 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--shots",
         help=(
             "Comma-separated shot indexes or ids to generate inside selected episodes. "
-            "When storyboard_generation is in the target chain, this drives the per-shot big loop, "
+            "Supported by shot_video_generation and dynamic_asset_solidification, "
             "for example 1-3 or episode_001_shot_1."
         ),
     )

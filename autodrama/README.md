@@ -60,29 +60,24 @@ Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at m
 
 Dynamic shot-level assets now live in a separate workflow:
 
-1. `storyboard_generation`
-2. `ref_frame_generation`
-3. `shot_video_generation`
-4. `dynamic_asset_solidification`
+1. `shot_video_generation`
+2. `dynamic_asset_solidification`
 
-`run generation` processes selected episodes in episode order. For each episode it writes the storyboard shot to `shots/{episode_key}.json`, generates reference frames, shot videos, and solidified dynamic asset metadata back into that shot before moving to the next episode. Completed storyboard summaries are stored in `assets/json/storyboard_history.json` and injected into later storyboard prompts so following episodes can preserve continuity. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
+`run generation` processes selected episodes in episode order. It reads existing `shots/{episode_key}.json` files, generates shot videos, and writes solidified dynamic asset metadata back into those shot records before moving to the next episode. It reads `generation_checklist.json` when present and supports `--episodes` to target specific episodes.
 
-The dynamic workflow's `storyboard_generation` is the per-shot JSON storyboard generator. The pregen workflow also has a `storyboard_generation` node, but that one renders the 12-panel black-and-white storyboard sheet and uses the internal image binding `nodes.storyboard_sheet_generation`. Shot video generation can use the pregen storyboard panel crop as a current-shot composition/action/camera reference, alongside the role identity board, key visual, and current ref frame.
-
-`ref_frame_generation` performs an internal spatial-continuity planning step before each reference frame. The planner uses `routing.text.ref_frame_spatial`, normally DeepSeek `deepseek-v4-flash` with thinking disabled, to decide whether the current shot is in the same physical space as the previous shot. Same-space shots reuse the previous reference frame, and when available the previous two same-space frames, as topology anchors. If the previous shot is not the same physical space, the planner can reuse older same-space reference frames from `assets/json/spatial_ref_frame_index.json`, capped at 10 images. The shot JSON stores `physical_space_key`, `physical_space_note`, `spatial_reference_shot_ids`, `spatial_structure_summary`, and `spatial_constraints`; these fields guide the image prompt so character/object/crowd left-right and foreground-background relationships do not drift unless the script says they moved.
+The only remaining `storyboard_generation` node belongs to pregen. It renders the 12-panel black-and-white storyboard sheet and uses the internal image binding `nodes.storyboard_sheet_generation`. Generation no longer has same-name storyboard or standalone image-reference nodes. Shot video generation can use the pregen storyboard panel crop as a current-shot composition/action/camera reference, alongside role identity boards, the key visual, layout/prop images, audio, and previous-shot video or last-frame references when configured.
 
 ## Provider routing
 
 The default production routing in `config.yaml` is:
 
 - `text.bgm_plan: aliyun` for `bgm_design`.
-- `text.ref_frame_spatial: deepseek` for reference-frame spatial continuity planning.
 - `music.bgm: minimax` for `bgm_generation` with MiniMax `music-2.6`.
 - `audio.speech: volcengine` for role TTS.
 - `image.key_vision`: `toapi` for the global key visual original.
 - `image.role`: `toapi` for `roleboard_generation`. The routing capability name is still `role` for compatibility, but provider model/size options are keyed by `roleboard`.
-- `image.prop`, `image.layout`, and `image.ref_frame`: `toapi` for GPT-Image-2 image generation. Key visuals, role identity boards, 12-panel storyboard sheets, props, layouts, and shot reference frames are saved both as local image files and as the provider returned image URL. The pregen storyboard sheet image uses the `nodes.storyboard_sheet_generation` binding so the dynamic `nodes.storyboard_generation` text binding remains unchanged.
-- `video.shot: volcengine` for shot videos. The default `providers.volcengine.options.video_reference_mode: ref_frame` uses each shot's generated reference frame as the main visual anchor and, from the second shot onward when available, also passes the previous shot's ref frame as `previous_shot_last_ref_frame` to hint the last visual state before the hard cut. In normal reference modes, the video workflow prioritizes the current storyboard panel crop, one relevant roleboard, the key visual, and the current ref frame before lower-priority continuity/layout/prop references. The storyboard panel controls current-shot composition/action/camera/order; the roleboard controls character identity; the key visual controls world/style; the ref frame controls current visual state. Previous-shot generated videos remain disabled to avoid generation-to-generation quality drift across long shot chains. Role/dialogue audio anchors are still passed when available. When generated images are reused as references elsewhere, the workflow passes the saved network URL first and falls back to the local file only when no URL is available. Storyboard panel crops are local files because they are derived from bbox JSON. The generated video prompt describes each passed reference by modality-local numbering so the current ref frame constrains the current shot's visual state, the previous-shot last ref frame only preserves continuity cues, and audio references constrain voice, lip-sync rhythm, and dialogue emotion.
+- `image.storyboard`, `image.prop`, and `image.layout`: `toapi` for GPT-Image-2 image generation. Key visuals, role identity boards, 12-panel storyboard sheets, props, and layouts are saved both as local image files and as the provider returned image URL when available. The pregen storyboard sheet image uses the `nodes.storyboard_sheet_generation` binding.
+- `video.shot: volcengine` for shot videos. In normal reference modes, the video workflow prioritizes the current storyboard panel crop, one relevant roleboard, the key visual, layout/prop references, and previous-shot video or last-frame references when configured. The storyboard panel controls current-shot composition/action/camera/order; the roleboard controls character identity; the key visual controls world/style; layout/prop references control reusable space and objects; previous-shot references preserve hard-cut continuity. Role/dialogue audio anchors are still passed when available. When generated images are reused as references elsewhere, the workflow passes the saved network URL first and falls back to the local file only when no URL is available. Storyboard panel crops are local files because they are derived from bbox JSON.
 
 Volcengine TTS should keep `instruction_mode: none` unless a provider-level instruction carrier is verified. This prevents instruction-prefix text from being synthesized as speech.
 
@@ -147,7 +142,7 @@ run\start.cmd --config config.yaml
 run\start.cmd --config config.yaml --project <project_id>
 ```
 
-Run dynamic generation only. This starts at `storyboard_generation` and runs through `dynamic_asset_solidification`:
+Run dynamic generation only. This starts at `shot_video_generation` and runs through `dynamic_asset_solidification`:
 
 ```powershell
 run\start.cmd --generation --config config.yaml --project <project_id>
@@ -175,13 +170,13 @@ run\dynamic_assets.cmd --config config.yaml --project <project_id> --skip-pregen
 Stop the combined `dynamic_assets.cmd` flow at custom nodes:
 
 ```powershell
-run\dynamic_assets.cmd --config config.yaml --project <project_id> --pregen-until role_voice_generation --generation-until ref_frame_generation --episodes 1
+run\dynamic_assets.cmd --config config.yaml --project <project_id> --pregen-until role_voice_generation --generation-until shot_video_generation --episodes 1
 ```
 
 Run one dynamic generation node through `dynamic_assets.cmd`:
 
 ```powershell
-run\dynamic_assets.cmd --config config.yaml --project <project_id> --generation-only ref_frame_generation --episodes 1 --skip-pregen
+run\dynamic_assets.cmd --config config.yaml --project <project_id> --generation-only shot_video_generation --episodes 1 --skip-pregen
 run\dynamic_assets.cmd --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
 ```
 
@@ -238,7 +233,7 @@ Stop a workflow at a node:
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --until roleboard_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --until storyboard_generation
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --until storyboard_panel_crop
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --until ref_frame_generation --episodes 1
+D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --until shot_video_generation --episodes 1
 ```
 
 Run exactly one node:
@@ -255,8 +250,6 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config con
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only prop_design --episodes 1 --force
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only prop_generation --episodes 1 --force
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id> --only bgm_generation
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1
-D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1,3
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config config.yaml --project <project_id> --only dynamic_asset_solidification --episodes episode_001
 ```
@@ -277,14 +270,14 @@ For pregen, `--episodes` is supported only with `--only roleboard_prompt`, `--on
 `--shots` accepts shot indexes, ranges, and shot ids inside selected episodes:
 
 ```powershell
-run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1 --shots 1
-run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1 --shots 1-3
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1,3
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes episode_001 --shots shot_003
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes episode_001 --shots episode_001_shot_1
 ```
 
-`--shots` can only be used with generation nodes after `storyboard_generation`, such as `ref_frame_generation`, `shot_video_generation`, and `dynamic_asset_solidification`.
+`--shots` can only be used with generation nodes that support shot selection, such as `shot_video_generation` and `dynamic_asset_solidification`.
 
 ### 5. Common resume and rerun cases
 
@@ -298,19 +291,13 @@ Force rerun a workflow or node:
 
 ```powershell
 run\start.cmd --config config.yaml --project <project_id> --force
-run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1 --force
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --force
 ```
 
-Regenerate only storyboard for one episode:
+Regenerate only the pregen storyboard sheet for one episode:
 
 ```powershell
-run\start.cmd --generation --config config.yaml --project <project_id> --only storyboard_generation --episodes 1 --force
-```
-
-Regenerate reference frames for selected shots:
-
-```powershell
-run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1 --shots 1-3 --force
+run\start.cmd --config config.yaml --project <project_id> --only storyboard_generation --episodes 1 --force
 ```
 
 Resume or rerun shot videos for selected shots:
@@ -320,7 +307,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --only sh
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3 --force
 ```
 
-Solidify dynamic asset metadata after videos/reference frames are ready:
+Solidify dynamic asset metadata after videos are ready:
 
 ```powershell
 run\start.cmd --generation --config config.yaml --project <project_id> --only dynamic_asset_solidification --episodes 1
@@ -379,7 +366,7 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/only_node_episode_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/episode_serial_generation_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/minimax_music_payload_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedream_payload_smoke.py --config config.yaml.example
-D:/miniforge3/envs/autodrama/python.exe scripts/smoke/ref_frame_image_provider_payload_smoke.py --config config.yaml.example
+D:/miniforge3/envs/autodrama/python.exe scripts/smoke/toapi_image_payload_smoke.py --config config.yaml.example
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/shot_selector_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_payload_smoke.py --config config.yaml.example
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_router_smoke.py

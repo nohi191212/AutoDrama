@@ -12,7 +12,6 @@ CHECKLIST_FILENAME = "generation_checklist.json"
 EpisodeGenerationStatus = Literal["pending", "completed", "skipped", "failed", "missing_shot"]
 
 DYNAMIC_STATUS_FIELDS = (
-    "ref_frame",
     "shot_video",
     "solidified",
 )
@@ -55,11 +54,9 @@ def _episode_status(project_dir: Path, episode_key: str) -> dict[str, EpisodeGen
     if not episode.shots:
         return {field: "pending" for field in DYNAMIC_STATUS_FIELDS}
 
-    ref_done = all(bool(shot.ref_frame_asset_path) for shot in episode.shots)
     video_done = all(bool(shot.video_asset_path or shot.video_task_id) for shot in episode.shots)
     solidified_done = all(bool(shot.solidified_asset_ids) for shot in episode.shots)
     return {
-        "ref_frame": "completed" if ref_done else "pending",
         "shot_video": "completed" if video_done else "pending",
         "solidified": "completed" if solidified_done else "pending",
     }
@@ -70,13 +67,11 @@ def _generated_counts(project_dir: Path, episode_key: str) -> dict[str, int]:
     if episode is None:
         return {
             "shots": 0,
-            "ref_frames": 0,
             "shot_videos": 0,
             "solidified_assets": 0,
         }
     return {
         "shots": len(episode.shots),
-        "ref_frames": sum(1 for shot in episode.shots if shot.ref_frame_asset_path),
         "shot_videos": sum(1 for shot in episode.shots if shot.video_asset_path or shot.video_task_id),
         "solidified_assets": sum(len(shot.solidified_asset_ids) for shot in episode.shots),
     }
@@ -124,7 +119,7 @@ def update_checklist_from_state(
             node_status = "failed"
         elif episode_key in processed_episode_keys:
             node_status = "completed"
-        elif status["shot_video"] == "completed" and status["ref_frame"] == "completed":
+        elif status["shot_video"] == "completed":
             node_status = "completed"
         elif previous.get("generation_status") == "skipped":
             node_status = "skipped"
@@ -162,7 +157,7 @@ def update_checklist_from_state(
         "instructions": (
             "把某集的 generate 改为 true 后，run generation 会生成或重新生成该集动态资产；"
             "成功后系统会自动把 generate 改回 false。"
-            "默认流程生成 storyboard、参考帧、镜头视频和动态资产索引；"
+            "默认流程生成镜头视频和动态资产索引；"
             "镜头配音/配乐请在视频剪辑完成后统一处理。"
         ),
         "episodes": episodes,

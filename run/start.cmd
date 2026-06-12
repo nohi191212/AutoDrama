@@ -133,7 +133,7 @@ echo   pregen visual/audio chain is roleboard_prompt, roleboard_generation, stor
 echo   storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop,
 echo   role_voice_select, then role_voice_generation.
 echo   pregen --roles is supported with --only role_voice_select or --only role_voice_generation.
-echo   generation starts with storyboard_generation, then processes selected episodes.
+echo   generation starts with shot_video_generation, then processes selected episodes.
 goto end
 
 :help_error

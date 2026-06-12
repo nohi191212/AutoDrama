@@ -1,11 +1,11 @@
 # 🐙 AutoDrama
 
-AutoDrama 是一个短剧自动生成工作流项目。它把输入故事大纲拆成剧集，生成脚本、角色、道具、场景、BGM 等可复用静态资产，再按剧集生成分镜、参考帧和镜头视频。
+AutoDrama 是一个短剧自动生成工作流项目。它把输入故事大纲拆成剧集，生成脚本、角色、道具、场景、BGM 和 12 宫格故事板等可复用静态资产，再按剧集生成镜头视频和动态资产固化记录。
 
 本仓库当前重点支持两段式流程：
 
-1. `pregen`: 预生成脚本、角色、道具、场景、全局 BGM 等项目级资产。
-2. `generation`: 按剧集生成动态镜头资产，包括 storyboard、reference frame、shot video 和动态资产固化记录。
+1. `pregen`: 预生成脚本、角色、道具、场景、全局 BGM 和 12 宫格故事板等项目级资产。
+2. `generation`: 按剧集生成动态镜头资产，目前包含 shot video 和动态资产固化记录。
 
 Python 包采用嵌套 `src` 布局，源码位于 `autodrama/src/autodrama`。请从仓库根目录运行命令。
 
@@ -101,7 +101,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 
 - `key_vision`: 项目主视觉原图，由 `design_key_vision_image` 生成，默认建议竖版比例，例如 `key_vision_size: "9:16"`。
 - `roleboard`: 角色身份板图，由 `roleboard_generation` 基于主视觉原图和角色身份板 prompt 生成，包含正面、侧面、背面、表情、动作和服装细节，并在边缘保留小号“角色：<角色名> | <形象名>”及可选视图标签，默认走支持参考图的图像 provider，建议 16:9 横幅比例，例如 `roleboard_size: "16:9"`。
-- `storyboard_sheet_generation`: pregen 内部用于 `storyboard_generation` 的 12 宫格故事板图像绑定，输出黑白线稿故事板到 `assets/images/storyboards/`。后续 `storyboard_bbox_detection` 会让视觉文本模型直接从附图识别 12 个宫格 bbox，输出 0-1000 归一化 JSON；`storyboard_panel_crop` 只按该 JSON 裁出逐镜头单格到 `assets/images/storyboards/panels/`，不做 3x4/4x3 等启发式裁切。动态流程里的 `nodes.storyboard_generation` 仍保留为逐镜头分镜 JSON 的文本模型绑定。
+- `storyboard_sheet_generation`: pregen 内部用于 `storyboard_generation` 的 12 宫格故事板图像绑定，输出黑白线稿故事板到 `assets/images/storyboards/`。后续 `storyboard_bbox_detection` 会让视觉文本模型直接从附图识别 12 个宫格 bbox，输出 0-1000 归一化 JSON；`storyboard_panel_crop` 只按该 JSON 裁出逐镜头单格到 `assets/images/storyboards/panels/`，不做 3x4/4x3 等启发式裁切。generation 阶段不再提供同名 `storyboard_generation` 节点；保留的 `storyboard_generation` 仅指 pregen 的 12 宫格故事板图像节点。
 
 旧的分散式角色视觉链路已移除；当前角色视觉资产以 roleboard 身份板为准。
 
@@ -126,12 +126,11 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - 文本脚本: `aliyun`
 - 角色/道具/场景/分镜文本: `deepseek`
 - 主视觉、角色身份板、道具、场景图像: `toapi` / GPT-Image-2
-- 镜头参考帧: `toapi` / GPT-Image-2
 - 角色语音: `volcengine`
 - 全局 BGM: `minimax`
 - 镜头视频: `volcengine`
 
-所有图片生成默认通过 ToAPI GPT-Image-2：主视觉原图、角色身份板、道具图、场景图和镜头参考帧都会本地保存图片文件，并同时保存 provider 返回的图片 URL。后续把这些图片作为参考图传给图片或视频模型时，会优先传保存的网络 URL，只有没有 URL 时才回退到本地文件。`providers.volcengine.options.video_reference_mode: layout_roleboard_previous_video` 可用于 Seedance 的场景 + 角色身份板 + 历史视频参考模式。该模式暂时不把镜头参考帧或道具设定图传给 Seedance；图片参考保留角色身份板和无人物空场景 layout 图，视频参考保留同一物理空间中最近已生成的镜头视频和上一 shot 视频，角色/对白音频锚点仍会传入。视频 prompt 会按实际传入素材编号说明职责：角色身份板锁定人物外观，场景图锁定空间，同场镜头锁定空间连续性，上一镜头锁定硬切后的逻辑连贯性。
+所有图片生成默认通过 ToAPI GPT-Image-2：主视觉原图、角色身份板、12 宫格故事板、道具图和场景图都会本地保存图片文件，并尽量保存 provider 返回的图片 URL。`shot_video_generation` 的普通参考素材优先使用当前镜头故事板单格、角色身份板、主视觉、场景图/道具图、角色/对白音频；需要承接上一镜时可使用上一 shot 尾帧 first-frame 或上一 shot 视频参考。视频 prompt 会按实际传入素材编号说明职责：故事板单格锁定构图/动作/机位，角色身份板锁定人物外观，场景图锁定空间，上一镜头锁定硬切后的逻辑连贯性。
 
 本地验证或演示可以使用 `--fake`，不会调用真实外部服务。
 
@@ -169,7 +168,7 @@ $env:PYTHONPATH="autodrama/src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli import-script --config config.yaml --project huyao --script inputs/狐妖.md --detail-expand --expanded-script-out inputs/狐妖_细化.md --force
 ```
 
-如果项目已经生成了角色身份板、语音样例、道具、场景、参考帧或镜头视频等资产，只想替换剧本文本并保留已有资产，不要使用 `--force`，改用 `--preserve-assets`：
+如果项目已经生成了角色身份板、语音样例、道具、场景、故事板或镜头视频等资产，只想替换剧本文本并保留已有资产，不要使用 `--force`，改用 `--preserve-assets`：
 
 ```powershell
 $env:PYTHONPATH="autodrama/src"
@@ -182,22 +181,22 @@ Windows 下也可以直接用快捷脚本。它默认会保留已有资产、执
 run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐妖.md --expanded-script-out inputs/狐妖_细化.md
 ```
 
-需要同时刷新分镜时加 `--storyboard`；默认不会生成参考帧或镜头视频：
+需要同时刷新 pregen 故事板时加 `--storyboard`；默认不会生成镜头视频：
 
 ```powershell
 run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐妖.md --expanded-script-out inputs/狐妖_细化.md --storyboard --episodes 1
 ```
 
-`--preserve-assets` 会保留角色、道具、场景、图片、音频、视频状态，包括已生成的 roleboard 身份板，只把 `director_prep`、`script_novel_extract` 和动态分镜生成节点标记为需要重跑。导入后先刷新导演前期和剧情摘要：
+`--preserve-assets` 会保留角色、道具、场景、图片、音频、视频状态，包括已生成的 roleboard 身份板，只把 `director_prep`、`script_novel_extract` 和可选的 pregen 故事板节点标记为需要重跑。导入后先刷新导演前期和剧情摘要：
 
 ```powershell
 run\start.cmd --config config.yaml --project huyao --until script_novel_extract
 ```
 
-再按需要重新生成后续分镜：
+再按需要重新生成 pregen 故事板：
 
 ```powershell
-run\start.cmd --generation --config config.yaml --project huyao --only storyboard_generation --episodes 1
+run\start.cmd --config config.yaml --project huyao --only storyboard_generation --episodes 1
 ```
 
 `import-script` 会写入 `assets/json/scripts/novel_full/episode_001.json`，并把 `script_outline`、`script_novel` 标记为已完成。后续普通预生成会跳过重写型脚本节点，先生成 `director_prep`，再从 `script_novel_extract` 继续：
@@ -278,7 +277,7 @@ role_voice_generation
 
 `roleboard_prompt` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并结合主视觉原图信息输出 prompt-only 的角色身份板提示词；代码负责生成 `role_id`、`appearance_id` 等内部 ID。`roleboard_generation` 使用身份板提示词和 `design_key_vision_image` 产出的主视觉原图作为参考图，生成正面、侧面、背面、表情、动作、服装细节等角色身份板，并要求图片边缘带小号“角色：<角色名> | <形象名>”以及可选的“正面/侧面/背面/头部/表情/动作/服装细节/配饰细节”视图标签，方便后续把图片单独作为参考图时直接识别角色；除这些指定标签外仍禁止字幕、水印、logo、编号、ID、文件名、项目名、剧情台词或乱码文字。`role_voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；`role_voice_generation` 再使用该 `voice_type` 合成人物样例音频。功能角色如果 `has_dialogue=false` 不生成声音。
 
-`storyboard_prompt` 在 `roleboard_generation` 之后运行，按集把导演前期的镜头节拍、完整正文、剧情摘要和角色身份板摘要拆成 12 个故事板镜头；每格都会写清景别、机位、构图、动作、情绪、摄像机运动和音效。pregen 的 `storyboard_generation` 会把这些脚本生成黑白线稿 12 宫格故事板，保存到 `assets/images/storyboards/`，每个宫格的画幅比例继承最终画面比例。`storyboard_bbox_detection` 把整张故事板作为图片参考交给视觉文本模型，要求只根据真实宫格边界输出 `bbox_1000/content_bbox_1000` JSON，不允许按规则网格猜裁切；`storyboard_panel_crop` 再把 12 个镜头单格裁到 `assets/images/storyboards/panels/`。这里的 pregen `storyboard_generation` 是故事板图片板；动态流程的 `--generation storyboard_generation` 仍然是后续逐镜头分镜 JSON 生成。
+`storyboard_prompt` 在 `roleboard_generation` 之后运行，按集把导演前期的镜头节拍、完整正文、剧情摘要和角色身份板摘要拆成 12 个故事板镜头；每格都会写清景别、机位、构图、动作、情绪、摄像机运动和音效。pregen 的 `storyboard_generation` 会把这些脚本生成黑白线稿 12 宫格故事板，保存到 `assets/images/storyboards/`，每个宫格的画幅比例继承最终画面比例。`storyboard_bbox_detection` 把整张故事板作为图片参考交给视觉文本模型，要求只根据真实宫格边界输出 `bbox_1000/content_bbox_1000` JSON，不允许按规则网格猜裁切；`storyboard_panel_crop` 再把 12 个镜头单格裁到 `assets/images/storyboards/panels/`。这里的 `storyboard_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
 
 `role_episode_key_audit` 在 `role_extract` 之后运行，会以 30 并发逐个检查角色 JSON 的 `episode_keys` 覆盖情况；如果发现遗漏，只向 `role_extract*`、已有 `roleboard_prompt`、角色 JSON 和 state 角色记录追加缺失的 `episode_keys/source_chapters`，不会删除或重排原有条目。
 
@@ -300,13 +299,11 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config
 动态流程默认包含：
 
 ```text
-storyboard_generation
-ref_frame_generation
 shot_video_generation
 dynamic_asset_solidification
 ```
 
-注意：动态流程里的 `storyboard_generation` 是每集逐镜头 JSON 分镜，和 pregen 流程里的 12 宫格故事板图生成同名但属于不同 workflow。运行 `run\start.cmd --generation ...` 时进入动态流程；不带 `--generation` 时进入 pregen 流程。`shot_video_generation` 会在普通参考图模式下优先把当前镜头故事板单格、角色身份板、主视觉原图和当前 ref_frame 作为图像参考传给视频模型；如果某镜头配置为严格承接上一镜头尾帧，则仍只传上一镜头尾帧作为 first-frame 参考。
+`generation` 阶段不再生成逐镜头 storyboard JSON 或单独参考图资产。运行 `run\start.cmd --generation ...` 时进入动态流程；不带 `--generation` 时进入 pregen 流程。`shot_video_generation` 读取已有 `shots/<episode_key>.json`，并可使用 pregen 故事板单格、角色身份板、主视觉原图、场景图/道具图和上一 shot 视频/尾帧作为参考素材；如果某镜头配置为严格承接上一镜头尾帧，则只传上一镜头尾帧作为 first-frame 参考。
 
 ### 5. 一次性运行预生成和动态资产
 
@@ -342,7 +339,7 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli inspect nodes --config 
 run\start.cmd --config config.yaml --project <project_id> --until roleboard_generation
 run\start.cmd --config config.yaml --project <project_id> --until storyboard_generation
 run\start.cmd --config config.yaml --project <project_id> --until storyboard_panel_crop
-run\start.cmd --generation --config config.yaml --project <project_id> --until ref_frame_generation
+run\start.cmd --generation --config config.yaml --project <project_id> --until shot_video_generation
 ```
 
 只运行一个节点：
@@ -356,7 +353,7 @@ run\start.cmd --config config.yaml --project <project_id> --only storyboard_bbox
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_panel_crop
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_select
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_generation
-run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes 1
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1
 ```
 
 按剧集选择：
@@ -396,14 +393,10 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --con
 ```powershell
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
-run\start.cmd --generation --config config.yaml --project <project_id> --only ref_frame_generation --episodes episode_001 --shots episode_001_shot_001
+run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes episode_001 --shots episode_001_shot_001
 ```
 
-`--shots` 只能用于 `storyboard_generation` 之后的动态节点，例如 `ref_frame_generation`、`shot_video_generation` 和 `dynamic_asset_solidification`。
-
-`ref_frame_generation` 在生成每个参考帧前会先做一次轻量空间连续性规划。默认通过 `routing.text.ref_frame_spatial` 调用 DeepSeek `ref_frame_spatial` 模型配置，用 `deepseek-v4-flash`、低 reasoning effort、关闭 thinking，判断当前 shot 是否与上一 shot 处于同一物理空间；如果不是，则从历史参考帧索引里查找可复用的同一物理空间。规划结果会写回 `shots/<episode_key>.json` 的 `physical_space_key`、`physical_space_note`、`spatial_reference_shot_ids`、`spatial_structure_summary` 和 `spatial_constraints` 等字段。
-
-如果当前 shot 与上一 shot 同空间，参考帧生成会优先传入上一张参考帧，并在可用时传入前两张同空间参考帧；如果复用更早的历史空间，则最多传入 10 张历史参考帧。历史空间索引保存在 `outputs/<project_id>/assets/json/spatial_ref_frame_index.json`。这些参考帧用于锁定人物、关键物体、空间边界和背景人群的左右/前后/远近拓扑关系，不要求逐像素复制背景。
+`--shots` 只能用于支持镜头选择的动态节点，例如 `shot_video_generation` 和 `dynamic_asset_solidification`。
 
 ## 断点续跑
 
@@ -444,7 +437,7 @@ outputs/<project_id>/
 │   │   ├── roles/
 │   │   ├── props/
 │   │   ├── layouts/
-│   │   ├── ref_frames/
+│   │   ├── storyboards/
 │   │   └── video_last_frames/
 │   ├── videos/
 │   │   ├── roles/
@@ -452,7 +445,6 @@ outputs/<project_id>/
 │   └── json/
 │       ├── assets/
 │       │   └── dynamic_assets.json
-│       ├── spatial_ref_frame_index.json
 │       ├── nodes/
 │       ├── roles/
 │       ├── props/

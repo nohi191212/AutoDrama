@@ -139,8 +139,6 @@ class VolcengineSeedreamImageProvider:
             return self.settings.options.get("seedream_layout_size") or self.settings.options.get("layout_size")
         if node_name == "design_key_vision_image":
             return self.settings.options.get("seedream_key_vision_size") or self.settings.options.get("key_vision_size")
-        if node_name == "ref_frame_generation":
-            return self.settings.options.get("seedream_ref_frame_size") or self.settings.options.get("ref_frame_size")
         return None
 
     def _reference_images(self, refs: list[AssetRef]) -> list[str]:

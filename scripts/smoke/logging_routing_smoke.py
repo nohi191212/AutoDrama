@@ -23,7 +23,7 @@ def main() -> int:
     project_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(project_dir)
 
-    with log_context(node_name="ref_frame_generation", episode_key="episode_001", shot_id="episode_001_shot_001"):
+    with log_context(node_name="shot_video_generation", episode_key="episode_001", shot_id="episode_001_shot_001"):
         get_logger().info("shot route smoke")
 
     get_pregen_detail_logger().info(
@@ -36,17 +36,17 @@ def main() -> int:
     )
 
     pipeline_log = project_dir / "logs" / "pipeline.log"
-    ref_node_log = project_dir / "logs" / "nodes" / "ref_frame_generation.log"
+    shot_video_node_log = project_dir / "logs" / "nodes" / "shot_video_generation.log"
     script_node_log = project_dir / "logs" / "nodes" / "script_outline.log"
     shot_log = project_dir / "logs" / "shots" / "episode_001" / "episode_001_shot_001.log"
     legacy_detail_log = project_dir / "logs" / "pregen_detail.log"
 
     require(pipeline_log.exists(), "pipeline.log missing")
-    require(ref_node_log.exists(), "ref_frame_generation node log missing")
+    require(shot_video_node_log.exists(), "shot_video_generation node log missing")
     require(script_node_log.exists(), "script_outline detail node log missing")
     require(shot_log.exists(), "shot log missing")
     require(not legacy_detail_log.exists(), "legacy pregen_detail.log should not be created")
-    require("shot route smoke" in ref_node_log.read_text(encoding="utf-8"), "node log did not capture pipeline message")
+    require("shot route smoke" in shot_video_node_log.read_text(encoding="utf-8"), "node log did not capture pipeline message")
     require("detail route smoke" in script_node_log.read_text(encoding="utf-8"), "node log did not capture detail message")
     require("shot route smoke" in shot_log.read_text(encoding="utf-8"), "shot log did not capture pipeline message")
     require("detail route smoke" in shot_log.read_text(encoding="utf-8"), "shot log did not capture detail message")

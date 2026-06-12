@@ -103,11 +103,11 @@ goto help_error
 echo Usage:
 echo   run\dynamic_assets.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
 echo   run\dynamic_assets.cmd [--episodes episode_001,episode_003] [--skip-pregen]
-echo   run\dynamic_assets.cmd --only ref_frame_generation --episodes 1,3 [--shots 1-3]
+echo   run\dynamic_assets.cmd --only shot_video_generation --episodes 1,3 [--shots 1-3]
 echo.
 echo This advances a project through:
 echo   1. pregen until role_voice_generation, including roleboards, 12-panel storyboard sheets, and GPT bbox panel crops
-echo   2. generation from storyboard_generation to dynamic_asset_solidification
+echo   2. generation from shot_video_generation to dynamic_asset_solidification
 echo.
 echo Options:
 echo   --config FILE           Config file. Default: config.yaml

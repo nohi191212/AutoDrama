@@ -38,8 +38,7 @@ def main() -> int:
             "prop_resolution": "2K",
             "layout_size": "16:9",
             "layout_resolution": "4K",
-            "ref_frame_size": "16:9",
-            "ref_frame_resolution": "4K",
+            "storyboard_sheet_resolution": "2K",
             "n": 1,
         },
     )
@@ -72,16 +71,19 @@ def main() -> int:
     require(layout_payload["size"] == "16:9", f"Unexpected layout size: {layout_payload['size']}")
     require(layout_payload["resolution"] == "4K", f"Unexpected layout resolution: {layout_payload['resolution']}")
 
-    ref_frame_payload = provider.build_payload(
-        "ref frame prompt",
+    storyboard_payload = provider.build_payload(
+        "storyboard sheet prompt",
         refs=[AssetRef(id="reference", type="image", url="https://example.invalid/reference.png")],
-        metadata={"node_name": "ref_frame_generation"},
+        metadata={"node_name": "storyboard_sheet_generation", "resolution": "2K"},
     )
-    require(ref_frame_payload["size"] == "16:9", f"Unexpected ref frame size: {ref_frame_payload['size']}")
-    require(ref_frame_payload["resolution"] == "4K", f"Unexpected ref frame resolution: {ref_frame_payload['resolution']}")
+    require(storyboard_payload["size"] == "16:9", f"Unexpected storyboard size: {storyboard_payload['size']}")
+    require(
+        storyboard_payload["resolution"] == "2K",
+        f"Unexpected storyboard resolution: {storyboard_payload['resolution']}",
+    )
 
     app_settings = load_settings(ROOT_DIR / "config.yaml.example")
-    for purpose in ("role", "prop", "layout", "ref_frame"):
+    for purpose in ("role", "prop", "layout", "storyboard"):
         routed_provider = ProviderRouter(app_settings).image(purpose)
         require(
             isinstance(routed_provider, ToAPIImageProvider),
@@ -97,7 +99,7 @@ def main() -> int:
                 "roleboard": roleboard_payload,
                 "prop": prop_payload,
                 "layout": layout_payload,
-                "ref_frame": ref_frame_payload,
+                "storyboard": storyboard_payload,
             },
             ensure_ascii=False,
             indent=2,
@@ -109,7 +111,7 @@ def main() -> int:
     print(f"roleboard={roleboard_payload['model']} {roleboard_payload['size']} {roleboard_payload['resolution']}")
     print(f"prop={prop_payload['size']} {prop_payload['resolution']}")
     print(f"layout={layout_payload['size']} {layout_payload['resolution']}")
-    print(f"ref_frame={ref_frame_payload['size']} {ref_frame_payload['resolution']}")
+    print(f"storyboard={storyboard_payload['size']} {storyboard_payload['resolution']}")
     print(f"payloads_path={output_path}")
     return 0
 
