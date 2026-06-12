@@ -106,8 +106,8 @@ echo   run\dynamic_assets.cmd [--episodes episode_001,episode_003] [--skip-prege
 echo   run\dynamic_assets.cmd --only shot_video_generation --episodes 1,3 [--shots 1-3]
 echo.
 echo This advances a project through:
-echo   1. pregen until role_voice_select, including roleboards, 12-panel storyboard sheets, GPT bbox panel crops, and role voice_type bindings
-echo   2. generation from shot_video_generation to dynamic_asset_solidification
+echo   1. pregen until role_voice_select, including roleboards, 12-panel storyboard sheets, GPT bbox panel crops, shot manifests, and role voice_type bindings
+echo   2. generation from shot_dialogue_audio_generation to dynamic_asset_solidification
 echo.
 echo Options:
 echo   --config FILE           Config file. Default: config.yaml

@@ -77,6 +77,7 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "storyboard_generation",
     "storyboard_bbox_detection",
     "storyboard_panel_crop",
+    "shot_manifest_generation",
     "role_voice_select",
     "prop_design",
     "prop_generation",
@@ -560,7 +561,7 @@ class PregenWorkflow:
             raise ValueError(
                 "--episodes is only supported for pregen --only roleboard_prompt, roleboard_generation, "
                 "storyboard_prompt, storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop, "
-                "role_voice_select, prop_design, prop_generation, or layout_image_generation."
+                "shot_manifest_generation, role_voice_select, prop_design, prop_generation, or layout_image_generation."
             )
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError("--roles is only supported for pregen --only role_voice_select.")

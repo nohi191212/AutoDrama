@@ -675,6 +675,7 @@ class DynamicAssetNodeMixin:
 
                 try:
                     video_refs = self._shot_video_refs(project_dir, state, shot, provider=provider, episode=episode)
+                    video_refs = self._shot_video_refs_for_provider(video_refs, provider=provider)
                     reference_plan = self._shot_video_reference_plan(video_refs, provider=provider)
                     self._write_generation_prompt_log(
                         project_dir,

@@ -55,10 +55,18 @@ async def main_async() -> int:
     video_output = json.loads(
         (project_dir / "assets" / "json" / "nodes" / "shot_video_generation.json").read_text(encoding="utf-8")
     )
+    audio_output = json.loads(
+        (project_dir / "assets" / "json" / "nodes" / "shot_dialogue_audio_generation.json").read_text(encoding="utf-8")
+    )
     generated_video_episodes = {item["episode_key"] for item in video_output["generated_videos"]}
     require(
         generated_video_episodes == {"episode_001", "episode_002", "episode_003"},
         f"Shot video output was not aggregated: {generated_video_episodes}",
+    )
+    generated_audio_episodes = {item["episode_key"] for item in audio_output["generated_dialogue_audios"]}
+    require(
+        generated_audio_episodes == {"episode_001", "episode_002", "episode_003"},
+        f"Shot dialogue audio output was not aggregated: {generated_audio_episodes}",
     )
 
     solidification_output = json.loads(
@@ -73,7 +81,7 @@ async def main_async() -> int:
     for episode_key in ("episode_001", "episode_002", "episode_003"):
         shot = json.loads((project_dir / "shots" / f"{episode_key}.json").read_text(encoding="utf-8"))
         shot_text = json.dumps(shot, ensure_ascii=False)
-        require('"assets/audios/shot_dialogues/' not in shot_text, f"{episode_key} generated dialogue audio")
+        require('"assets/audios/shot_dialogues/' in shot_text, f"{episode_key} missing dialogue audio")
         require('"assets/videos/shots/' in shot_text, f"{episode_key} missing shot video")
         require('"solidified_asset_ids"' in shot_text, f"{episode_key} missing solidified asset ids")
 
@@ -82,7 +90,11 @@ async def main_async() -> int:
     for episode_key in ("episode_001", "episode_002", "episode_003"):
         require(not items[episode_key]["generate"], f"{episode_key} generate should be false")
         require(items[episode_key]["generation_status"] == "completed", f"{episode_key} should be completed")
-        expected_status = {"shot_video": "completed", "solidified": "completed"}
+        expected_status = {
+            "shot_dialogue_audio": "completed",
+            "shot_video": "completed",
+            "solidified": "completed",
+        }
         require(
             items[episode_key]["node_status"] == expected_status,
             f"{episode_key} checklist tracked unexpected nodes: {items[episode_key]['node_status']}",
@@ -92,6 +104,7 @@ async def main_async() -> int:
 
     print("episode_serial_generation_smoke=ok")
     print(f"project_dir={project_dir}")
+    print(f"audio_items={len(audio_output['generated_dialogue_audios'])}")
     print(f"video_items={len(video_output['generated_videos'])}")
     print(f"solidified_items={len(solidification_output['solidified_assets'])}")
     return 0

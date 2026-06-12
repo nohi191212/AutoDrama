@@ -5,18 +5,24 @@ from math import gcd
 from pathlib import Path
 from typing import Any
 
+from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import (
     ProjectState,
+    ShotManifestGenerationEpisodeItem,
+    ShotManifestGenerationOutput,
     StoryboardBBox,
     StoryboardBBoxDetectionOutput,
     StoryboardBBoxEpisode,
+    StoryboardEpisodeOutput,
     StoryboardPanelBBoxItem,
     StoryboardPanelCropItem,
     StoryboardPanelCropOutput,
     StoryboardPromptEpisode,
     StoryboardPromptOutput,
+    StoryboardShot,
     StoryboardSheetGenerationItem,
     StoryboardSheetGenerationOutput,
+    StoryboardSourceCoverage,
 )
 from autodrama.providers.base import AssetRef
 from autodrama.services.director_service import DirectorService
@@ -28,6 +34,7 @@ STORYBOARD_ASSET_NODE_NAMES = [
     "storyboard_generation",
     "storyboard_bbox_detection",
     "storyboard_panel_crop",
+    "shot_manifest_generation",
 ]
 STORYBOARD_IMAGE_PROVIDER_NODE_NAME = "storyboard_sheet_generation"
 
@@ -159,6 +166,14 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 "storyboard_bbox_detection output is missing; run pregen through storyboard_bbox_detection first"
             )
         return StoryboardBBoxDetectionOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def load_storyboard_panel_crop_output(self, project_dir: Path) -> StoryboardPanelCropOutput:
+        path = self.layout.node_output_path(project_dir, "storyboard_panel_crop")
+        if not path.exists():
+            raise FileNotFoundError(
+                "storyboard_panel_crop output is missing; run pregen through storyboard_panel_crop first"
+            )
+        return StoryboardPanelCropOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
     def validate_storyboard_prompt_output(
         self,
@@ -794,6 +809,400 @@ class StoryboardPanelCropNode(StoryboardAssetNodeBase):
         return state
 
 
+class ShotManifestGenerationNode(StoryboardAssetNodeBase):
+    name = "shot_manifest_generation"
+
+    @staticmethod
+    def _clean_text(value: object) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+    @classmethod
+    def _dedupe_texts(cls, values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        cleaned: list[str] = []
+        for value in values:
+            text = cls._clean_text(value)
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+        return cleaned
+
+    @classmethod
+    def _dialogue_text(cls, line: str) -> tuple[str | None, str]:
+        text = cls._clean_text(line)
+        for separator in ("：", ":"):
+            if separator in text:
+                speaker, body = text.split(separator, 1)
+                speaker = cls._clean_text(speaker)
+                body = cls._clean_text(body)
+                if speaker and body:
+                    return speaker, body
+        return None, text
+
+    @classmethod
+    def _dialogue_body_in_prompt(cls, prompt: str, dialogue_body: str) -> bool:
+        body = cls._clean_text(dialogue_body).strip("“”\"'。！？!?，,；;：: ")
+        prompt_text = cls._clean_text(prompt)
+        return bool(body) and body in prompt_text
+
+    @classmethod
+    def _ensure_dialogue_in_video_prompt(cls, prompt: str, dialogue: list[str]) -> tuple[str, list[str]]:
+        prompt = cls._clean_text(prompt)
+        additions: list[str] = []
+        warnings: list[str] = []
+        for line in dialogue:
+            speaker, body = cls._dialogue_text(line)
+            if not body or cls._dialogue_body_in_prompt(prompt, body):
+                continue
+            if speaker:
+                additions.append(f"{speaker}说：“{body}”。说话时口型清晰匹配这句台词。")
+            else:
+                additions.append(f"画面内说话者说：“{body}”。说话时口型清晰匹配这句台词。")
+            warnings.append(f"dialogue text was appended to video_prompt: {body}")
+        if additions:
+            prompt = (prompt.rstrip("。") + "。" if prompt else "") + " ".join(additions)
+        if dialogue and "字幕" not in prompt:
+            prompt = (prompt.rstrip("。") + "。" if prompt else "") + "画面不出现字幕、对白气泡、可读文字、水印、logo、片段编号或无关商标。"
+        return prompt, warnings
+
+    @classmethod
+    def _lookup_keys(cls, *values: object) -> set[str]:
+        keys: set[str] = set()
+        for value in values:
+            text = cls._clean_text(value)
+            if not text:
+                continue
+            keys.add(text)
+            keys.add(text.casefold())
+        return keys
+
+    def _role_lookup(self, state: ProjectState) -> dict[str, str]:
+        lookup: dict[str, str] = {}
+        for role in state.roles.values():
+            for key in self._lookup_keys(role.id, role.name, normalize_id("role", role.name), *role.aliases):
+                lookup.setdefault(key, role.id)
+        return lookup
+
+    def _prop_lookup(self, state: ProjectState) -> dict[str, str]:
+        lookup: dict[str, str] = {}
+        for prop in state.props.values():
+            for key in self._lookup_keys(prop.id, prop.name, normalize_id("prop", prop.name)):
+                lookup.setdefault(key, prop.id)
+        return lookup
+
+    def _layout_lookup(self, state: ProjectState) -> dict[str, str]:
+        lookup: dict[str, str] = {}
+        for layout in state.layouts.values():
+            for key in self._lookup_keys(layout.id, layout.name, normalize_id("layout", layout.name)):
+                lookup.setdefault(key, layout.id)
+        return lookup
+
+    @classmethod
+    def _resolve_ids(
+        cls,
+        *,
+        explicit_ids: list[str],
+        names: list[str],
+        lookup: dict[str, str],
+        text: str,
+        fallback_prefix: str | None = None,
+    ) -> list[str]:
+        resolved: list[str] = []
+        for value in explicit_ids:
+            cleaned = cls._clean_text(value)
+            if not cleaned:
+                continue
+            resolved.append(lookup.get(cleaned) or lookup.get(cleaned.casefold()) or cleaned)
+        for value in names:
+            cleaned = cls._clean_text(value)
+            if not cleaned:
+                continue
+            fallback = cleaned
+            if fallback_prefix and not cleaned.startswith(f"{fallback_prefix}_"):
+                fallback = normalize_id(fallback_prefix, cleaned)
+            resolved.append(lookup.get(cleaned) or lookup.get(cleaned.casefold()) or fallback)
+        if not resolved:
+            for key, value in lookup.items():
+                if key and key in text and value not in resolved:
+                    resolved.append(value)
+        return cls._dedupe_texts(resolved)
+
+    @staticmethod
+    def _first_appearance_ids(state: ProjectState, role_ids: list[str]) -> list[str]:
+        appearance_ids: list[str] = []
+        for role_id in role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            appearance = next(iter(role.appearances.values()), None)
+            if appearance is not None:
+                appearance_ids.append(appearance.id)
+        return appearance_ids
+
+    def _layout_id_for_panel(
+        self,
+        *,
+        state: ProjectState,
+        panel: Any,
+        lookup: dict[str, str],
+        text: str,
+        episode_key: str,
+    ) -> str:
+        explicit = self._clean_text(getattr(panel, "layout_id", None))
+        if explicit:
+            return lookup.get(explicit) or lookup.get(explicit.casefold()) or explicit
+        name = self._clean_text(getattr(panel, "layout_name", None))
+        if name:
+            return lookup.get(name) or lookup.get(name.casefold()) or normalize_id("layout", name)
+        for key, value in lookup.items():
+            if key and key in text:
+                return value
+        if len(state.layouts) == 1:
+            return next(iter(state.layouts))
+        return normalize_id("layout", episode_key)
+
+    @classmethod
+    def _panel_text(cls, panel: object) -> str:
+        parts = [
+            getattr(panel, "title", None),
+            getattr(panel, "content", None),
+            getattr(panel, "scene_description", None),
+            getattr(panel, "composition", None),
+            getattr(panel, "action", None),
+            getattr(panel, "emotion", None),
+            getattr(panel, "sound_effects", None),
+            getattr(panel, "video_prompt", None),
+            " ".join(getattr(panel, "dialogue", []) or []),
+        ]
+        return " ".join(cls._clean_text(part) for part in parts if cls._clean_text(part))
+
+    def _video_prompt_for_panel(
+        self,
+        *,
+        panel,
+        dialogue: list[str],
+        layout_id: str,
+        role_ids: list[str],
+        prop_ids: list[str],
+    ) -> tuple[str, list[str]]:
+        prompt = self._clean_text(getattr(panel, "video_prompt", None))
+        if not prompt:
+            role_text = "、".join(role_ids) or "画面内角色"
+            prop_text = "、".join(prop_ids)
+            parts = [
+                f"{getattr(panel, 'title', '')}。",
+                f"场景/空间：{layout_id}。",
+                f"景别：{panel.shot_size}；机位：{panel.camera_position}；构图：{panel.composition}。",
+                f"动作：{panel.action}；情绪：{panel.emotion}；镜头运动：{panel.camera_movement}。",
+                f"出场角色：{role_text}。",
+            ]
+            if prop_text:
+                parts.append(f"关键道具：{prop_text}。")
+            if getattr(panel, "scene_description", None):
+                parts.append(f"场景描述：{panel.scene_description}。")
+            if getattr(panel, "lighting", None):
+                parts.append(f"光线：{panel.lighting}。")
+            prompt = " ".join(self._clean_text(part) for part in parts if self._clean_text(part))
+        return self._ensure_dialogue_in_video_prompt(prompt, dialogue)
+
+    @staticmethod
+    def _preserve_dynamic_fields(new_shot: StoryboardShot, existing: StoryboardShot | None) -> None:
+        if existing is None:
+            return
+        new_shot.dialogue_audio_assets = list(existing.dialogue_audio_assets)
+        new_shot.shot_bgm_assets = list(existing.shot_bgm_assets)
+        new_shot.video_asset_id = existing.video_asset_id
+        new_shot.video_asset_path = existing.video_asset_path
+        new_shot.video_provider = existing.video_provider
+        new_shot.video_model = existing.video_model
+        new_shot.video_task_id = existing.video_task_id
+        new_shot.video_task_status = existing.video_task_status
+        new_shot.video_request_id = existing.video_request_id
+        new_shot.video_last_frame_asset_path = existing.video_last_frame_asset_path
+        new_shot.video_usage = dict(existing.video_usage)
+        new_shot.video_raw_response = dict(existing.video_raw_response)
+        new_shot.solidified_asset_ids = list(existing.solidified_asset_ids)
+
+    def _build_episode_manifest(
+        self,
+        *,
+        project_dir: Path,
+        state: ProjectState,
+        storyboard: StoryboardPromptEpisode,
+        crops: dict[tuple[str, int], StoryboardPanelCropItem],
+        existing_episode: StoryboardEpisodeOutput | None,
+    ) -> tuple[StoryboardEpisodeOutput, list[str]]:
+        role_lookup = self._role_lookup(state)
+        prop_lookup = self._prop_lookup(state)
+        layout_lookup = self._layout_lookup(state)
+        existing_by_id = {shot.shot_id: shot for shot in (existing_episode.shots if existing_episode else [])}
+        existing_by_index = {shot.index: shot for shot in (existing_episode.shots if existing_episode else [])}
+        episode_warnings: list[str] = []
+        default_duration = max(1.0, self.script_service.episode_duration_seconds(state) / max(1, len(storyboard.panels)))
+        shots: list[StoryboardShot] = []
+
+        for panel in sorted(storyboard.panels, key=lambda item: int(item.index)):
+            shot_index = int(panel.index)
+            shot_id = f"{storyboard.episode_key}_shot_{shot_index:03d}"
+            panel_text = self._panel_text(panel)
+            role_ids = self._resolve_ids(
+                explicit_ids=list(getattr(panel, "role_ids", []) or []),
+                names=list(getattr(panel, "role_names", []) or []),
+                lookup=role_lookup,
+                text=panel_text,
+                fallback_prefix="role",
+            )
+            prop_ids = self._resolve_ids(
+                explicit_ids=list(getattr(panel, "prop_ids", []) or []),
+                names=list(getattr(panel, "prop_names", []) or []),
+                lookup=prop_lookup,
+                text=panel_text,
+                fallback_prefix="prop",
+            )
+            layout_id = self._layout_id_for_panel(
+                state=state,
+                panel=panel,
+                lookup=layout_lookup,
+                text=panel_text,
+                episode_key=storyboard.episode_key,
+            )
+            role_appearance_ids = self._dedupe_texts(
+                list(getattr(panel, "role_appearance_ids", []) or []) or self._first_appearance_ids(state, role_ids)
+            )
+            role_audio_ids = self._dedupe_texts(list(getattr(panel, "role_audio_ids", []) or []))
+            dialogue = self._dedupe_texts(list(getattr(panel, "dialogue", []) or []))
+            video_prompt, prompt_warnings = self._video_prompt_for_panel(
+                panel=panel,
+                dialogue=dialogue,
+                layout_id=layout_id,
+                role_ids=role_ids,
+                prop_ids=prop_ids,
+            )
+            episode_warnings.extend(f"{shot_id}: {warning}" for warning in prompt_warnings)
+            crop = crops.get((storyboard.episode_key, shot_index))
+            source_coverage = None
+            if getattr(panel, "source_start_text", None) or getattr(panel, "source_end_text", None):
+                source_coverage = StoryboardSourceCoverage(
+                    start_text=self._clean_text(getattr(panel, "source_start_text", None)),
+                    end_text=self._clean_text(getattr(panel, "source_end_text", None)),
+                    note=self._clean_text(getattr(panel, "source_coverage_note", None))
+                    or f"{storyboard.episode_key} shot {shot_index:03d}",
+                )
+            shot = StoryboardShot(
+                shot_id=shot_id,
+                index=shot_index,
+                layout_id=layout_id,
+                title=self._clean_text(panel.title) or f"镜头{shot_index:03d}",
+                source_coverage=source_coverage,
+                content=self._clean_text(getattr(panel, "content", None)) or None,
+                scene_description=self._clean_text(getattr(panel, "scene_description", None)) or None,
+                composition=self._clean_text(panel.composition) or None,
+                lighting=self._clean_text(getattr(panel, "lighting", None)) or None,
+                sound_design=self._clean_text(panel.sound_effects) or None,
+                camera_shooting_angle=self._clean_text(panel.camera_position) or None,
+                camera_movement=self._clean_text(panel.camera_movement) or None,
+                focal_length=self._clean_text(getattr(panel, "focal_length", None)) or None,
+                duration_seconds=float(getattr(panel, "duration_seconds", None) or default_duration),
+                transition=self._clean_text(panel.transition) or "硬切",
+                start_frame_source="new_reference_frame",
+                start_frame_inheritance_reason="本片段按当前镜头清单重新建立画面。",
+                dialogue=dialogue,
+                role_ids=role_ids,
+                role_appearance_ids=role_appearance_ids,
+                role_audio_ids=role_audio_ids,
+                prop_ids=prop_ids,
+                storyboard_panel_asset_id=crop.asset_id if crop else None,
+                storyboard_panel_asset_path=crop.asset_path if crop else None,
+                source_storyboard_asset_path=crop.source_storyboard_asset_path if crop else None,
+                storyboard_panel_bbox_source=crop.bbox_source if crop else None,
+                storyboard_panel_bbox_1000=crop.bbox_1000 if crop else None,
+                video_prompt=video_prompt,
+            )
+            existing = existing_by_id.get(shot.shot_id) or existing_by_index.get(shot.index)
+            self._preserve_dynamic_fields(shot, existing)
+            shots.append(shot)
+
+        return StoryboardEpisodeOutput(episode_key=storyboard.episode_key, shots=shots), episode_warnings
+
+    def _load_existing_episode(self, project_dir: Path, episode_key: str) -> StoryboardEpisodeOutput | None:
+        path = self.layout.shot_path(project_dir, episode_key)
+        if not path.exists():
+            return None
+        try:
+            return StoryboardEpisodeOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self.logger.warning("shot_manifest_generation ignored invalid existing shot file %s: %s", path, exc)
+            return None
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        prompt_output = self.load_storyboard_prompt_output(project_dir)
+        crop_output = self.load_storyboard_panel_crop_output(project_dir)
+        target_episode_keys = self.target_episode_keys(state)
+        storyboard_by_episode = {episode.episode_key: episode for episode in prompt_output.storyboards}
+        crops = {
+            (item.episode_key, int(item.shot_index)): item
+            for item in crop_output.cropped_panels
+        }
+        generated: list[ShotManifestGenerationEpisodeItem] = []
+
+        for episode_key in target_episode_keys:
+            storyboard = storyboard_by_episode.get(episode_key)
+            if storyboard is None:
+                raise ValueError(f"shot_manifest_generation missing storyboard_prompt episode: {episode_key}")
+            if len(storyboard.panels) != self.PANEL_COUNT:
+                raise ValueError(
+                    f"shot_manifest_generation requires {self.PANEL_COUNT} panels for {episode_key}; "
+                    f"got {len(storyboard.panels)}"
+                )
+            existing = self._load_existing_episode(project_dir, episode_key)
+            episode, warnings = self._build_episode_manifest(
+                project_dir=project_dir,
+                state=state,
+                storyboard=storyboard,
+                crops=crops,
+                existing_episode=existing,
+            )
+            self.workflow._save_storyboard_episode(project_dir, episode)
+            shot_path = self.layout.project_relative(project_dir, self.layout.shot_path(project_dir, episode_key))
+            generated.append(
+                ShotManifestGenerationEpisodeItem(
+                    episode_key=episode_key,
+                    shot_count=len(episode.shots),
+                    shot_path=shot_path,
+                    warnings=warnings,
+                )
+            )
+            self.logger.info(
+                "shot_manifest_generation wrote %s shots=%d warnings=%d",
+                shot_path,
+                len(episode.shots),
+                len(warnings),
+            )
+
+        existing_output_path = self.layout.node_output_path(project_dir, self.name)
+        existing_items: dict[str, ShotManifestGenerationEpisodeItem] = {}
+        if existing_output_path.exists():
+            try:
+                existing_output = ShotManifestGenerationOutput.model_validate_json(
+                    existing_output_path.read_text(encoding="utf-8")
+                )
+                existing_items.update({item.episode_key: item for item in existing_output.episodes})
+            except Exception as exc:
+                self.logger.warning("shot_manifest_generation ignored invalid existing output: %s", exc)
+        existing_items.update({item.episode_key: item for item in generated})
+        ordered = [
+            existing_items[episode_key]
+            for episode_key in self.expected_episode_keys(state)
+            if episode_key in existing_items
+        ]
+        self.repo.save_node_output(project_dir, self.name, ShotManifestGenerationOutput(episodes=ordered))
+        return state
+
+
 def build_storyboard_asset_node_runners(workflow: Any) -> dict[str, StoryboardAssetNodeBase]:
     from autodrama.repositories.prop_design_repo import PropDesignRepository
     from autodrama.repositories.script_content_repo import ScriptContentRepository
@@ -825,6 +1234,7 @@ def build_storyboard_asset_node_runners(workflow: Any) -> dict[str, StoryboardAs
         StoryboardPromptNode.name: StoryboardPromptNode(**deps),
         StoryboardGenerationNode.name: StoryboardGenerationNode(**deps),
         StoryboardPanelCropNode.name: StoryboardPanelCropNode(**deps),
+        ShotManifestGenerationNode.name: ShotManifestGenerationNode(**deps),
     }
 
 
@@ -839,6 +1249,7 @@ def build_storyboard_asset_nodes(workflow: Any) -> list[WorkflowNode]:
 __all__ = [
     "STORYBOARD_ASSET_NODE_NAMES",
     "STORYBOARD_IMAGE_PROVIDER_NODE_NAME",
+    "ShotManifestGenerationNode",
     "StoryboardBBoxDetectionNode",
     "StoryboardGenerationNode",
     "StoryboardPanelCropNode",

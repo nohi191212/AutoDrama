@@ -123,7 +123,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest="episodes",
         help=(
             "Supported with pregen --only roleboard_prompt, roleboard_generation, storyboard_prompt, "
-            "storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop, role_voice_select, "
+            "storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop, shot_manifest_generation, "
+            "role_voice_select, "
             "prop_design, prop_generation, or layout_image_generation "
             "(legacy alias: prop_image_generation). "
             "Prop/layout episode-scoped nodes are deferred from the default pregen chain."

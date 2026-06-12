@@ -33,6 +33,13 @@ def write_png(path: Path) -> None:
     )
 
 
+class NoAudioReferenceVideoProvider:
+    max_reference_images = 4
+    max_reference_audio = 1
+    max_reference_videos = 0
+    supports_audio_references = False
+
+
 def main() -> int:
     settings = load_settings(ROOT_DIR / "config.yaml.example")
     settings.output.root_dir = ROOT_DIR / ".tmp" / "smoke"
@@ -109,6 +116,19 @@ def main() -> int:
     require("本段视频参考图，作为本段空间参考锚点" not in final_prompt, final_prompt)
     require("音频1" in final_prompt and "角色说话声音锚点" in final_prompt, final_prompt)
     require("当前 shot 主体视频描述:" in final_prompt, final_prompt)
+
+    no_audio_provider = NoAudioReferenceVideoProvider()
+    no_audio_refs = workflow._shot_video_refs_for_provider(refs, provider=no_audio_provider)
+    require(not any(ref.type == "audio" for ref in no_audio_refs), [ref.model_dump() for ref in no_audio_refs])
+    no_audio_prompt = workflow._shot_video_prompt(
+        state,
+        episode,
+        shot,
+        provider=no_audio_provider,
+        project_dir=project_dir,
+    )
+    require("音频1" not in no_audio_prompt, no_audio_prompt)
+    require("音频参考" not in no_audio_prompt, no_audio_prompt)
 
     payload = provider.build_payload("测试短视频生成。", refs=refs, duration=6)
     output_dir = ROOT_DIR / ".tmp" / "smoke" / "shot_video_ref_url_audio"

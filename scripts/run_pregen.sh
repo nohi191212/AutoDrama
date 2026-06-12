@@ -18,7 +18,7 @@ Project ID and input outline file are read from config.yaml by default. Use
 --project to run a specific existing project or output directory. --episodes is
 supported for roleboard_prompt, roleboard_generation, storyboard_prompt,
 storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop,
-role_voice_select, prop_design, prop_generation, and
+shot_manifest_generation, role_voice_select, prop_design, prop_generation, and
 layout_image_generation
 when used with --only. Prop, layout, and BGM nodes are currently deferred from
 the default pregen chain and can be run manually with --only.

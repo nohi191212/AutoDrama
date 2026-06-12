@@ -385,6 +385,24 @@ class StoryboardPromptPanel(BaseModel):
     camera_movement: str
     sound_effects: str
     transition: str | None = None
+    content: str | None = None
+    scene_description: str | None = None
+    lighting: str | None = None
+    focal_length: str | None = None
+    duration_seconds: float | None = None
+    dialogue: list[str] = Field(default_factory=list)
+    role_names: list[str] = Field(default_factory=list)
+    role_ids: list[str] = Field(default_factory=list)
+    role_appearance_ids: list[str] = Field(default_factory=list)
+    role_audio_ids: list[str] = Field(default_factory=list)
+    prop_names: list[str] = Field(default_factory=list)
+    prop_ids: list[str] = Field(default_factory=list)
+    layout_name: str | None = None
+    layout_id: str | None = None
+    source_start_text: str | None = None
+    source_end_text: str | None = None
+    source_coverage_note: str | None = None
+    video_prompt: str | None = None
 
 
 class StoryboardPromptEpisode(BaseModel):
@@ -629,6 +647,11 @@ class StoryboardShot(BaseModel):
     role_appearance_ids: list[str] = Field(default_factory=list)
     role_audio_ids: list[str] = Field(default_factory=list)
     prop_ids: list[str] = Field(default_factory=list)
+    storyboard_panel_asset_id: str | None = None
+    storyboard_panel_asset_path: str | None = None
+    source_storyboard_asset_path: str | None = None
+    storyboard_panel_bbox_source: Literal["content_bbox_1000", "bbox_1000"] | None = None
+    storyboard_panel_bbox_1000: StoryboardBBox | None = None
     video_prompt: str
     dialogue_audio_assets: list[ShotDialogueAudioAsset] = Field(default_factory=list)
     shot_bgm_assets: list[ShotBGMAsset] = Field(default_factory=list)
@@ -648,6 +671,17 @@ class StoryboardShot(BaseModel):
 class StoryboardEpisodeOutput(BaseModel):
     episode_key: str
     shots: list[StoryboardShot]
+
+
+class ShotManifestGenerationEpisodeItem(BaseModel):
+    episode_key: str
+    shot_count: int
+    shot_path: str
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ShotManifestGenerationOutput(BaseModel):
+    episodes: list[ShotManifestGenerationEpisodeItem]
 
 
 class ShotDialogueAudioGenerationItem(BaseModel):

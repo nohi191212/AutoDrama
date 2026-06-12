@@ -12,6 +12,7 @@ CHECKLIST_FILENAME = "generation_checklist.json"
 EpisodeGenerationStatus = Literal["pending", "completed", "skipped", "failed", "missing_shot"]
 
 DYNAMIC_STATUS_FIELDS = (
+    "shot_dialogue_audio",
     "shot_video",
     "solidified",
 )
@@ -54,9 +55,15 @@ def _episode_status(project_dir: Path, episode_key: str) -> dict[str, EpisodeGen
     if not episode.shots:
         return {field: "pending" for field in DYNAMIC_STATUS_FIELDS}
 
+    dialogue_done = all(
+        len(shot.dialogue_audio_assets) >= len(shot.dialogue)
+        for shot in episode.shots
+        if shot.dialogue
+    )
     video_done = all(bool(shot.video_asset_path or shot.video_task_id) for shot in episode.shots)
     solidified_done = all(bool(shot.solidified_asset_ids) for shot in episode.shots)
     return {
+        "shot_dialogue_audio": "completed" if dialogue_done else "pending",
         "shot_video": "completed" if video_done else "pending",
         "solidified": "completed" if solidified_done else "pending",
     }
@@ -67,11 +74,13 @@ def _generated_counts(project_dir: Path, episode_key: str) -> dict[str, int]:
     if episode is None:
         return {
             "shots": 0,
+            "shot_dialogue_audios": 0,
             "shot_videos": 0,
             "solidified_assets": 0,
         }
     return {
         "shots": len(episode.shots),
+        "shot_dialogue_audios": sum(len(shot.dialogue_audio_assets) for shot in episode.shots),
         "shot_videos": sum(1 for shot in episode.shots if shot.video_asset_path or shot.video_task_id),
         "solidified_assets": sum(len(shot.solidified_asset_ids) for shot in episode.shots),
     }
@@ -119,7 +128,7 @@ def update_checklist_from_state(
             node_status = "failed"
         elif episode_key in processed_episode_keys:
             node_status = "completed"
-        elif status["shot_video"] == "completed":
+        elif status["shot_dialogue_audio"] == "completed" and status["shot_video"] == "completed":
             node_status = "completed"
         elif previous.get("generation_status") == "skipped":
             node_status = "skipped"
@@ -157,8 +166,8 @@ def update_checklist_from_state(
         "instructions": (
             "把某集的 generate 改为 true 后，run generation 会生成或重新生成该集动态资产；"
             "成功后系统会自动把 generate 改回 false。"
-            "默认流程生成镜头视频和动态资产索引；"
-            "镜头配音/配乐请在视频剪辑完成后统一处理。"
+            "默认流程先生成镜头对白音频，再生成镜头视频和动态资产索引；"
+            "最终剪辑配乐请在视频剪辑完成后统一处理。"
         ),
         "episodes": episodes,
     }

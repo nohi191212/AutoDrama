@@ -104,7 +104,11 @@ async def main_async() -> int:
         raise AssertionError("generation storyboard_generation should no longer be supported")
 
     require(
-        GENERATION_NODES == ["shot_video_generation", "dynamic_asset_solidification"],
+        GENERATION_NODES == [
+            "shot_dialogue_audio_generation",
+            "shot_video_generation",
+            "dynamic_asset_solidification",
+        ],
         f"Unexpected generation node list: {GENERATION_NODES}",
     )
 

@@ -23,6 +23,7 @@ from autodrama.workflows.nodes.static_asset_nodes import (  # noqa: E402
 )
 from autodrama.workflows.nodes.storyboard_asset_nodes import (  # noqa: E402
     STORYBOARD_ASSET_NODE_NAMES,
+    ShotManifestGenerationNode,
     StoryboardBBoxDetectionNode,
     StoryboardGenerationNode as PregenStoryboardGenerationNode,
     StoryboardPanelCropNode,
@@ -50,6 +51,7 @@ def main() -> None:
     require(PregenStoryboardGenerationNode.name == "storyboard_generation", "storyboard generation node name mismatch")
     require(StoryboardBBoxDetectionNode.name == "storyboard_bbox_detection", "storyboard bbox node name mismatch")
     require(StoryboardPanelCropNode.name == "storyboard_panel_crop", "storyboard panel crop node name mismatch")
+    require(ShotManifestGenerationNode.name == "shot_manifest_generation", "shot manifest node name mismatch")
     require(RoleVoiceSelectNode.name == "role_voice_select", "role voice select node name mismatch")
     require("roleboard_prompt" in ROLE_NODE_NAMES, "roleboard_prompt missing from role node names")
     require("roleboard_generation" in STATIC_ASSET_NODE_NAMES, "roleboard_generation missing from static names")
@@ -60,6 +62,7 @@ def main() -> None:
             "storyboard_generation",
             "storyboard_bbox_detection",
             "storyboard_panel_crop",
+            "shot_manifest_generation",
         ],
         "storyboard asset node names mismatch",
     )
@@ -72,6 +75,7 @@ def main() -> None:
         "storyboard_generation",
         "storyboard_bbox_detection",
         "storyboard_panel_crop",
+        "shot_manifest_generation",
         "role_voice_select",
     ]
     actual_visual_voice_chain = [
@@ -79,6 +83,7 @@ def main() -> None:
         for node_name in PREGEN_NODE_NAMES
         if node_name.startswith("roleboard_")
         or node_name.startswith("storyboard_")
+        or node_name == "shot_manifest_generation"
         or node_name.startswith("role_voice_")
     ]
     require(actual_visual_voice_chain == expected_visual_voice_chain, "roleboard/storyboard/voice node chain mismatch")
@@ -98,6 +103,7 @@ def main() -> None:
         < PREGEN_NODE_NAMES.index("storyboard_generation")
         < PREGEN_NODE_NAMES.index("storyboard_bbox_detection")
         < PREGEN_NODE_NAMES.index("storyboard_panel_crop")
+        < PREGEN_NODE_NAMES.index("shot_manifest_generation")
         < PREGEN_NODE_NAMES.index("role_voice_select"),
         "roleboard/storyboard/voice pregen order mismatch",
     )
@@ -109,6 +115,7 @@ def main() -> None:
             "storyboard_generation",
             "storyboard_bbox_detection",
             "storyboard_panel_crop",
+            "shot_manifest_generation",
             "role_voice_select",
         }.issubset(EPISODE_SCOPED_PREGEN_ONLY_NODES),
         "episode-scoped pregen set missing roleboard/storyboard/voice nodes",

@@ -346,6 +346,27 @@ class FakeTextProvider:
                                 "camera_movement": "固定镜头" if index % 2 else "缓慢推近",
                                 "sound_effects": "雨声、纸张摩擦声和低频环境声。",
                                 "transition": "硬切",
+                                "content": "角色围绕合同证据推进调查。",
+                                "scene_description": "雨夜办公室或会议室，冷色顶光。",
+                                "lighting": "冷色室内光，背景略暗。",
+                                "focal_length": "35mm",
+                                "duration_seconds": 4.0,
+                                "dialogue": (
+                                    ["林舟：这份合同被换过，时间线就在这里。"]
+                                    if index == 2
+                                    else []
+                                ),
+                                "role_names": ["林舟", "赵启"] if index == 2 else ["林舟"],
+                                "prop_names": ["邮件截图"] if index == 2 else ["被调包的合同"],
+                                "layout_name": "会议室" if index == 2 else "雨夜办公室",
+                                "video_prompt": (
+                                    "会议室内，林舟站在投影屏左侧看向赵启，说：“这份合同被换过，时间线就在这里。”"
+                                    "他说话时口型清晰匹配这句台词，赵启坐在右侧阴影里后撤。"
+                                    "画面不出现字幕、对白气泡、可读文字、水印、logo、片段编号或无关商标。"
+                                    if index == 2
+                                    else "雨夜办公室内，林舟低头检查合同页码和电脑邮件附件时间，镜头缓慢推近关键证据。"
+                                    "画面不出现字幕、对白气泡、可读文字、水印、logo、片段编号或无关商标。"
+                                ),
                             }
                             for index in range(1, panel_count + 1)
                         ],

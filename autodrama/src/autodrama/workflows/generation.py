@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from autodrama.core.schemas import (
     DynamicAssetSolidificationOutput,
     ProjectState,
+    ShotDialogueAudioGenerationOutput,
     ShotVideoGenerationOutput,
     StoryboardEpisodeOutput,
     StoryboardShot,
@@ -90,6 +91,43 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             f"{preroll_text}-{total_text}秒才是当前 shot 正文内容，按当前 shot 的剧情、动作和对白推进。"
         )
 
+    @staticmethod
+    def _clean_prompt_text(value: object) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+    @classmethod
+    def _dialogue_text_from_line(cls, line: str) -> tuple[str | None, str]:
+        text = cls._clean_prompt_text(line)
+        for separator in ("：", ":"):
+            if separator in text:
+                speaker, body = text.split(separator, 1)
+                speaker = cls._clean_prompt_text(speaker)
+                body = cls._clean_prompt_text(body)
+                if speaker and body:
+                    return speaker, body
+        return None, text
+
+    @classmethod
+    def _dialogue_body_in_prompt(cls, prompt: str, body: str) -> bool:
+        normalized = cls._clean_prompt_text(body).strip("“”\"'。！？!?，,；;：: ")
+        return bool(normalized) and normalized in cls._clean_prompt_text(prompt)
+
+    @classmethod
+    def _ensure_dialogue_in_video_prompt_body(cls, body: str, dialogue: list[str]) -> str:
+        body = cls._clean_prompt_text(body)
+        additions: list[str] = []
+        for line in dialogue:
+            speaker, dialogue_body = cls._dialogue_text_from_line(line)
+            if not dialogue_body or cls._dialogue_body_in_prompt(body, dialogue_body):
+                continue
+            if speaker:
+                additions.append(f"{speaker}说：“{dialogue_body}”。说话时口型清晰匹配这句台词。")
+            else:
+                additions.append(f"画面内说话者说：“{dialogue_body}”。说话时口型清晰匹配这句台词。")
+        if additions:
+            body = (body.rstrip("。") + "。" if body else "") + " ".join(additions)
+        return body
+
     def _shot_has_previous_video_reference(
         self,
         project_dir: Path,
@@ -131,6 +169,20 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         path = str(getattr(ref, "path", None) or "").strip()
         return url.startswith(("http://", "https://")) or path.startswith(("http://", "https://"))
 
+    @staticmethod
+    def _shot_video_provider_supports_audio_refs(provider=None) -> bool:
+        if provider is None:
+            return False
+        explicit = getattr(provider, "supports_audio_references", None)
+        if explicit is not None:
+            return bool(explicit)
+        if hasattr(provider, "max_reference_audio"):
+            try:
+                return int(getattr(provider, "max_reference_audio") or 0) > 0
+            except (TypeError, ValueError):
+                return False
+        return False
+
     @classmethod
     def _shot_video_prompt_ref_groups(cls, refs: list, provider=None) -> dict[str, list]:
         image_refs = [ref for ref in refs if getattr(ref, "type", None) == "image"]
@@ -154,7 +206,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             return {"image": selected_frames, "audio": [], "video": []}
 
         max_images = int(getattr(provider, "max_reference_images", 99) or 99)
-        max_audio = int(getattr(provider, "max_reference_audio", 99) or 99)
+        max_audio = (
+            int(getattr(provider, "max_reference_audio", 0) or 0)
+            if cls._shot_video_provider_supports_audio_refs(provider)
+            else 0
+        )
         max_videos = int(getattr(provider, "max_reference_videos", 99) or 99)
         if bool(getattr(provider, "reference_video_requires_web_url", False)):
             video_refs = [ref for ref in video_refs if cls._shot_video_ref_has_web_url(ref)]
@@ -163,6 +219,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             "audio": audio_refs[:max_audio],
             "video": video_refs[:max_videos],
         }
+
+    def _shot_video_refs_for_provider(self, refs: list, provider=None) -> list:
+        groups = self._shot_video_prompt_ref_groups(refs, provider=provider)
+        return [*groups["image"], *groups["audio"], *groups["video"]]
 
     def _shot_video_reference_plan(
         self,
@@ -210,7 +270,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             ],
             "limits": {
                 "max_reference_images": int(getattr(provider, "max_reference_images", 99) or 99),
-                "max_reference_audio": int(getattr(provider, "max_reference_audio", 99) or 99),
+                "max_reference_audio": (
+                    int(getattr(provider, "max_reference_audio", 0) or 0)
+                    if self._shot_video_provider_supports_audio_refs(provider)
+                    else 0
+                ),
                 "max_reference_videos": int(getattr(provider, "max_reference_videos", 99) or 99),
             },
             "modal_refs": modal_plan,
@@ -354,8 +418,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     ) -> str:
         if project_dir is None:
             return (
-                "参考素材使用方式: 按实际传入的视频模型素材，以模态内编号理解为图片1、图片2、视频1、音频1等；"
-                "图片只管静态外观或空间，视频只管动态/空间/连续性，音频只管声音和口型，不互相覆盖职责。"
+                "参考素材使用方式: 按实际传入的视频模型素材，以模态内编号理解为图片1、图片2、视频1等；"
+                "图片只管静态外观或空间，视频只管动态/空间/连续性，不互相覆盖职责。"
             )
         try:
             refs = self._shot_video_refs(project_dir, state, shot, provider=provider, episode=episode)
@@ -366,8 +430,16 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         audio_refs = groups["audio"]
         video_refs = groups["video"]
 
+        slot_parts: list[str] = []
+        if image_refs:
+            slot_parts.append("图片1/图片2")
+        if video_refs:
+            slot_parts.append("视频1/视频2")
+        if audio_refs:
+            slot_parts.append("音频1/音频2")
+        slot_text = "、".join(slot_parts) if slot_parts else "无参考素材"
         parts = [
-            "参考素材编号与职责（按实际传入视频模型的模态内顺序编号：图片1/图片2、视频1/视频2、音频1/音频2；不同模态编号互不共享）:"
+            f"参考素材编号与职责（按实际传入视频模型的模态内顺序编号：{slot_text}；不同模态编号互不共享）:"
         ]
         static_anchor_prompt = self._shot_video_static_anchor_prompt(image_refs)
         if static_anchor_prompt:
@@ -510,7 +582,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         provider=None,
         project_dir: Path | None = None,
     ) -> str:
-        body = shot.video_prompt.strip()
+        body = self._ensure_dialogue_in_video_prompt_body(shot.video_prompt.strip(), shot.dialogue)
         reference_mode = self._video_reference_mode(provider)
         preroll_seconds = self._previous_video_preroll_seconds(provider)
         use_previous_video_preroll = (
@@ -572,7 +644,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     break
             parts.append(
                 "本片段按硬切进入当前画面。不要把任何参考素材当作本片段首帧或尾帧，不要逐帧复刻参考素材；"
-                "参考素材只按上方编号职责提供外观、空间、动态、声音或连续性约束。"
+                "参考素材只按上方编号职责提供外观、空间、动态或连续性约束。"
             )
         if dialogue_spatial_prompt := self._shot_video_dialogue_spatial_prompt(state, shot):
             parts.append(dialogue_spatial_prompt)
@@ -602,6 +674,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     @staticmethod
     def _empty_run_outputs(target_nodes: list[str]) -> dict[str, BaseModel]:
         outputs: dict[str, BaseModel] = {}
+        if "shot_dialogue_audio_generation" in target_nodes:
+            outputs["shot_dialogue_audio_generation"] = ShotDialogueAudioGenerationOutput(
+                generated_dialogue_audios=[],
+                skipped_dialogue_lines=[],
+            )
         if "shot_video_generation" in target_nodes:
             outputs["shot_video_generation"] = ShotVideoGenerationOutput(generated_videos=[])
         if "dynamic_asset_solidification" in target_nodes:
@@ -611,7 +688,15 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     @staticmethod
     def _merge_run_output(run_outputs: dict[str, BaseModel], node_name: str, output: BaseModel) -> None:
         current = run_outputs[node_name]
-        if node_name == "shot_video_generation":
+        if node_name == "shot_dialogue_audio_generation":
+            if not isinstance(current, ShotDialogueAudioGenerationOutput) or not isinstance(
+                output,
+                ShotDialogueAudioGenerationOutput,
+            ):
+                raise TypeError("shot_dialogue_audio_generation output type mismatch")
+            current.generated_dialogue_audios.extend(output.generated_dialogue_audios)
+            current.skipped_dialogue_lines.extend(output.skipped_dialogue_lines)
+        elif node_name == "shot_video_generation":
             if not isinstance(current, ShotVideoGenerationOutput) or not isinstance(output, ShotVideoGenerationOutput):
                 raise TypeError("shot_video_generation output type mismatch")
             current.generated_videos.extend(output.generated_videos)
@@ -637,6 +722,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         episode_key: str,
         shot: StoryboardShot,
     ) -> str:
+        if node_name == "shot_dialogue_audio_generation" and isinstance(output, ShotDialogueAudioGenerationOutput):
+            for item in output.generated_dialogue_audios:
+                if item.episode_key == episode_key and item.shot_id == shot.shot_id and item.asset.asset_path:
+                    return item.asset.asset_path
         if node_name == "shot_video_generation" and isinstance(output, ShotVideoGenerationOutput):
             for item in output.generated_videos:
                 if item.episode_key == episode_key and item.shot_id == shot.shot_id and item.asset_path:
