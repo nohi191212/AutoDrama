@@ -675,13 +675,17 @@ class DynamicAssetNodeMixin:
 
                 try:
                     video_refs = self._shot_video_refs(project_dir, state, shot, provider=provider, episode=episode)
+                    reference_plan = self._shot_video_reference_plan(video_refs, provider=provider)
                     self._write_generation_prompt_log(
                         project_dir,
                         episode_key=episode.episode_key,
                         shot=shot,
                         node_name="shot_video_generation",
                         prompt=prompt,
-                        sections=[("reference_assets", self._asset_refs_for_prompt_log(video_refs))],
+                        sections=[
+                            ("reference_plan", reference_plan),
+                            ("reference_assets", self._asset_refs_for_prompt_log(video_refs)),
+                        ],
                         metadata={
                             "provider": getattr(provider, "name", "unknown"),
                             "model": getattr(provider, "model", "-"),
@@ -700,6 +704,7 @@ class DynamicAssetNodeMixin:
                             "episode_key": episode.episode_key,
                             "shot_id": shot.shot_id,
                             "asset_id": asset_id,
+                            "reference_plan": reference_plan,
                         },
                     )
                 except Exception as exc:

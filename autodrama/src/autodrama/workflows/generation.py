@@ -164,6 +164,106 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             "video": video_refs[:max_videos],
         }
 
+    def _shot_video_reference_plan(
+        self,
+        refs: list,
+        *,
+        provider=None,
+    ) -> dict[str, object]:
+        groups = self._shot_video_prompt_ref_groups(refs, provider=provider)
+        modal_plan: dict[str, list[dict[str, object]]] = {}
+
+        def compact_ref_value(value: object) -> object:
+            if isinstance(value, str) and value.startswith("data:") and len(value) > 240:
+                return f"{value[:240]}...[truncated]"
+            return value
+
+        for group_name, group_refs in groups.items():
+            items: list[dict[str, object]] = []
+            for index, ref in enumerate(group_refs, start=1):
+                items.append(
+                    {
+                        "slot": f"{group_name}_{index}",
+                        "id": getattr(ref, "id", None),
+                        "type": getattr(ref, "type", None),
+                        "asset_type": self._shot_video_ref_asset_type(ref),
+                        "label": self._shot_video_ref_label(ref),
+                        "path": compact_ref_value(getattr(ref, "path", None)),
+                        "url": compact_ref_value(getattr(ref, "url", None)),
+                    }
+                )
+            modal_plan[group_name] = items
+
+        image_asset_types = {
+            str(item.get("asset_type") or "")
+            for item in modal_plan.get("image", [])
+        }
+        expected_static_anchors = ["storyboard_panel", "roleboard", "key_vision"]
+        return {
+            "static_anchor_policy": "storyboard_panel + roleboard + key_vision when available",
+            "expected_static_anchors": expected_static_anchors,
+            "present_static_anchors": [
+                asset_type for asset_type in expected_static_anchors if asset_type in image_asset_types
+            ],
+            "missing_static_anchors": [
+                asset_type for asset_type in expected_static_anchors if asset_type not in image_asset_types
+            ],
+            "limits": {
+                "max_reference_images": int(getattr(provider, "max_reference_images", 99) or 99),
+                "max_reference_audio": int(getattr(provider, "max_reference_audio", 99) or 99),
+                "max_reference_videos": int(getattr(provider, "max_reference_videos", 99) or 99),
+            },
+            "modal_refs": modal_plan,
+        }
+
+    @staticmethod
+    def _shot_video_static_anchor_label(asset_type: str) -> str:
+        labels = {
+            "storyboard_panel": "故事板单格",
+            "roleboard": "角色身份板",
+            "key_vision": "主视觉原图",
+        }
+        return labels.get(asset_type, asset_type)
+
+    def _shot_video_static_anchor_prompt(self, image_refs: list) -> str:
+        expected = ["storyboard_panel", "roleboard", "key_vision"]
+        image_slots: dict[str, int] = {}
+        for index, ref in enumerate(image_refs, start=1):
+            asset_type = self._shot_video_ref_asset_type(ref)
+            if asset_type in expected and asset_type not in image_slots:
+                image_slots[asset_type] = index
+
+        present_parts = [
+            f"{self._shot_video_static_anchor_label(asset_type)}=图片{image_slots[asset_type]}"
+            for asset_type in expected
+            if asset_type in image_slots
+        ]
+        missing_parts = [
+            self._shot_video_static_anchor_label(asset_type)
+            for asset_type in expected
+            if asset_type not in image_slots
+        ]
+        if not present_parts:
+            return ""
+
+        parts = [
+            "静态三锚点策略: 优先把当前 shot 的故事板单格、角色身份板、主视觉原图作为图片参考一起使用；"
+            + "；".join(present_parts)
+            + "。"
+        ]
+        if missing_parts:
+            parts.append(
+                "本次未传入"
+                + "、".join(missing_parts)
+                + "；不要臆造缺失参考图的具体细节，只依据当前 shot 文本和已传入素材补足。"
+            )
+        else:
+            parts.append(
+                "三者职责不可互相覆盖: 故事板单格决定构图/景别/机位/动作方向，"
+                "角色身份板决定画面主体外观，主视觉原图决定世界观/色调/光影/整体制作质感。"
+            )
+        return "".join(parts)
+
     @classmethod
     def _shot_video_image_ref_instruction(cls, ref, index: int) -> str:
         asset_type = cls._shot_video_ref_asset_type(ref)
@@ -269,6 +369,9 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         parts = [
             "参考素材编号与职责（按实际传入视频模型的模态内顺序编号：图片1/图片2、视频1/视频2、音频1/音频2；不同模态编号互不共享）:"
         ]
+        static_anchor_prompt = self._shot_video_static_anchor_prompt(image_refs)
+        if static_anchor_prompt:
+            parts.append(static_anchor_prompt)
         if image_refs:
             parts.append(
                 "图片参考: "

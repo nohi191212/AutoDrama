@@ -450,14 +450,16 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # Seedance video refs: use storyboard panels, roleboards, key vision, scene/prop refs,
-      # role/dialogue audio, and optional previous generated shot videos.
+      # Seedance video refs: prioritize storyboard panels, roleboards, and key vision
+      # as the default three static image anchors. Scene/prop refs are still collected
+      # and can enter the payload when max_reference_images is raised.
+      # Role/dialogue audio and optional previous generated shot videos may also be used.
       # Previous generated shot videos are disabled by default to avoid quality drift across long shot chains.
-      # Role/dialogue audio anchors are still allowed for the only speaking role.
       video_reference_mode: full
       previous_video_preroll_seconds: 0
-      # max_reference_* values are still kept for other video_reference_mode experiments.
-      max_reference_images: 4
+      # Reserve the default image slots for shot storyboard panel + roleboard + key vision.
+      # Raise this to 4+ if the video model should also receive layout/prop images.
+      max_reference_images: 3
       max_reference_audio: 1
       max_reference_audio_duration_seconds: 15.2
       max_reference_videos: 2

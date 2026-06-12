@@ -49,7 +49,7 @@ class VolcengineSeedanceVideoProvider:
         self.max_polls = int(settings.options.get("video_max_polls", settings.options.get("max_polls", 120)))
         self.min_duration_seconds = int(settings.options.get("video_min_duration_seconds", 4))
         self.max_duration_seconds = int(settings.options.get("video_max_duration_seconds", 10))
-        self.max_reference_images = int(settings.options.get("max_reference_images", 2))
+        self.max_reference_images = int(settings.options.get("max_reference_images", 3))
         self.max_reference_audio = int(settings.options.get("max_reference_audio", 1))
         self.max_reference_videos = int(settings.options.get("max_reference_videos", 2))
         self.max_reference_audio_duration_seconds = float(

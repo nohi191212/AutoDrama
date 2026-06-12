@@ -1323,7 +1323,7 @@ class PregenWorkflow:
                 return default
             return max(0, int(value))
 
-        max_images = provider_limit("max_reference_images", 2)
+        max_images = provider_limit("max_reference_images", 3)
         max_videos = provider_limit("max_reference_videos", 2)
         max_audio = provider_limit("max_reference_audio", 1)
         max_video_duration = getattr(provider, "max_reference_video_total_duration_seconds", None)
