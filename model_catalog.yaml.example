@@ -202,6 +202,47 @@ models:
         type: number
         min: 0
 
+  kling:kling-v3-omni:
+    provider: kling
+    family: kling-omni
+    capability: video
+    input_modalities: [text, image, element]
+    output_modalities: [video]
+    limits:
+      min_duration_seconds: 3
+      max_duration_seconds: 15
+      max_reference_images: 2
+      max_reference_elements: 3
+      max_reference_audio: 0
+      max_reference_videos: 0
+    params_schema:
+      aspect_ratio:
+        type: string
+        enum: ["16:9", "9:16", "1:1"]
+      ratio:
+        type: string
+        enum: ["16:9", "9:16", "1:1"]
+      mode:
+        type: string
+        enum: [std, pro, 4k]
+      duration:
+        type: integer
+        min: 3
+        max: 15
+      sound:
+        type: string
+        enum: ["on", "off"]
+      watermark:
+        type: boolean
+      max_reference_images:
+        type: integer
+        min: 0
+        max: 7
+      max_reference_elements:
+        type: integer
+        min: 0
+        max: 3
+
   volcengine:seed-tts-2.0:
     provider: volcengine
     family: seed-tts

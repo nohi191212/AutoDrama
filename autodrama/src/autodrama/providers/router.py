@@ -21,6 +21,7 @@ from autodrama.providers.base import (
 )
 from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
 from autodrama.providers.elevenlabs.music.compose import ElevenLabsMusicProvider
+from autodrama.providers.kling.video.omni import KlingOmniVideoProvider
 from autodrama.providers.local.mock.fake import (
     FakeAudioJudgeProvider,
     FakeImageProvider,
@@ -49,6 +50,7 @@ ALIYUN_MUSIC_PROVIDER_NAMES = {"aliyun", "bailian"}
 MINIMAX_MUSIC_PROVIDER_NAMES = {"minimax", "minimax_music"}
 ELEVENLABS_MUSIC_PROVIDER_NAMES = {"elevenlabs", "elevenlabs_music"}
 VOLCENGINE_IMAGE_PROVIDER_NAMES = {"volcengine", "seedream", "volcengine_seedream"}
+KLING_VIDEO_PROVIDER_NAMES = {"kling", "kling_omni", "kling_video"}
 
 
 class BoundProviderProxy:
@@ -268,6 +270,14 @@ class ProviderRouter:
             {"volcengine", "seedance", "volcengine_seedance"},
             lambda **_: VolcengineSeedanceVideoProvider(
                 self._settings_for("volcengine"),
+                self.settings.runtime,
+            ),
+        )
+        self.registry.register(
+            "video",
+            KLING_VIDEO_PROVIDER_NAMES,
+            lambda **_: KlingOmniVideoProvider(
+                self._settings_for("kling"),
                 self.settings.runtime,
             ),
         )

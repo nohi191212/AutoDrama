@@ -172,6 +172,34 @@ nodes:
       resolution: 720p
       generate_audio: false
       return_last_frame: true
+  # Optional Kling subject branch. Switch these bindings plus routing.video.shot to kling
+  # to generate role subject videos, create Kling subject elements, and use
+  # storyboard panel + key vision + element_list for shot video generation.
+  # role_subject_video_generation:
+  #   model: kling:kling-v3-omni
+  #   params:
+  #     aspect_ratio: "9:16"
+  #     mode: pro
+  #     sound: "off"
+  #     watermark: false
+  #     max_reference_images: 2
+  #     max_reference_elements: 3
+  # role_subject_element_generation:
+  #   model: kling:kling-v3-omni
+  #   params:
+  #     aspect_ratio: "9:16"
+  #     mode: pro
+  #     sound: "off"
+  #     watermark: false
+  # shot_video_generation:
+  #   model: kling:kling-v3-omni
+  #   params:
+  #     aspect_ratio: "9:16"
+  #     mode: pro
+  #     sound: "off"
+  #     watermark: false
+  #     max_reference_images: 2
+  #     max_reference_elements: 3
   shot_dialogue_audio_generation:
     model: volcengine:seed-tts-2.0
     params:
@@ -527,6 +555,27 @@ providers:
       voice_clone_extra_params:
         voice_clone_denoise_model_id: ""
         enable_audio_denoise: false
+
+  kling:
+    base_url: https://api-beijing.klingai.com
+    access_key_env: KLING_ACCESS_KEY
+    secret_key_env: KLING_SECRET_KEY
+    models:
+      video: kling-v3-omni
+      subject_element: advanced-custom-elements
+    options:
+      mode: pro
+      aspect_ratio: "9:16"
+      duration: 5
+      sound: "off"
+      watermark: false
+      video_reference_mode: subject_storyboard_key_vision
+      subject_reference_type: video_refer
+      subject_video_duration_seconds: 5
+      max_reference_images: 2
+      max_reference_elements: 3
+      poll_interval_seconds: 10
+      max_polls: 120
 
 routing:
   text:

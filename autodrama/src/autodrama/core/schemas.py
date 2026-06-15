@@ -59,6 +59,25 @@ class RoleAppearance(BaseModel):
     model: str | None = None
     request_id: str | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
+    subject_video_asset_id: str | None = None
+    subject_video_asset_path: str | None = None
+    subject_video_asset_url: str | None = None
+    subject_video_provider: str | None = None
+    subject_video_model: str | None = None
+    subject_video_task_id: str | None = None
+    subject_video_task_status: str | None = None
+    subject_video_request_id: str | None = None
+    subject_video_usage: dict[str, Any] = Field(default_factory=dict)
+    subject_video_raw_response: dict[str, Any] = Field(default_factory=dict)
+    subject_element_provider: str | None = None
+    subject_element_model: str | None = None
+    subject_element_reference_type: str | None = None
+    subject_element_id: str | None = None
+    subject_element_task_id: str | None = None
+    subject_element_task_status: str | None = None
+    subject_element_request_id: str | None = None
+    subject_element_usage: dict[str, Any] = Field(default_factory=dict)
+    subject_element_raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
 class Role(BaseModel):
@@ -714,6 +733,51 @@ class ShotVideoGenerationItem(BaseModel):
 
 class ShotVideoGenerationOutput(BaseModel):
     generated_videos: list[ShotVideoGenerationItem]
+
+
+class RoleSubjectVideoGenerationItem(BaseModel):
+    role_id: str
+    role_name: str
+    appearance_id: str
+    appearance_name: str
+    asset_id: str
+    prompt: str
+    duration_seconds: float | None = None
+    asset_path: str | None = None
+    asset_url: str | None = None
+    provider: str
+    model: str
+    task_id: str | None = None
+    task_status: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class RoleSubjectVideoGenerationOutput(BaseModel):
+    generated_subject_videos: list[RoleSubjectVideoGenerationItem]
+    skipped_subject_videos: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RoleSubjectElementGenerationItem(BaseModel):
+    role_id: str
+    role_name: str
+    appearance_id: str
+    appearance_name: str
+    reference_type: str
+    element_id: str | None = None
+    provider: str
+    model: str
+    task_id: str | None = None
+    task_status: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class RoleSubjectElementGenerationOutput(BaseModel):
+    generated_subject_elements: list[RoleSubjectElementGenerationItem]
+    skipped_subject_elements: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DynamicAssetSolidificationItem(BaseModel):

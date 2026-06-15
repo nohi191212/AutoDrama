@@ -73,6 +73,8 @@ PREGEN_ONLY_NODES = AVAILABLE_PREGEN_NODE_NAMES
 EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "roleboard_prompt",
     "roleboard_generation",
+    "role_subject_video_generation",
+    "role_subject_element_generation",
     "storyboard_prompt",
     "storyboard_generation",
     "storyboard_bbox_detection",
@@ -510,6 +512,25 @@ class PregenWorkflow:
             appearance.model = existing_appearance.model
             appearance.request_id = existing_appearance.request_id
             appearance.usage = existing_appearance.usage
+            appearance.subject_video_asset_id = existing_appearance.subject_video_asset_id
+            appearance.subject_video_asset_path = existing_appearance.subject_video_asset_path
+            appearance.subject_video_asset_url = existing_appearance.subject_video_asset_url
+            appearance.subject_video_provider = existing_appearance.subject_video_provider
+            appearance.subject_video_model = existing_appearance.subject_video_model
+            appearance.subject_video_task_id = existing_appearance.subject_video_task_id
+            appearance.subject_video_task_status = existing_appearance.subject_video_task_status
+            appearance.subject_video_request_id = existing_appearance.subject_video_request_id
+            appearance.subject_video_usage = existing_appearance.subject_video_usage
+            appearance.subject_video_raw_response = existing_appearance.subject_video_raw_response
+            appearance.subject_element_provider = existing_appearance.subject_element_provider
+            appearance.subject_element_model = existing_appearance.subject_element_model
+            appearance.subject_element_reference_type = existing_appearance.subject_element_reference_type
+            appearance.subject_element_id = existing_appearance.subject_element_id
+            appearance.subject_element_task_id = existing_appearance.subject_element_task_id
+            appearance.subject_element_task_status = existing_appearance.subject_element_task_status
+            appearance.subject_element_request_id = existing_appearance.subject_element_request_id
+            appearance.subject_element_usage = existing_appearance.subject_element_usage
+            appearance.subject_element_raw_response = existing_appearance.subject_element_raw_response
         role.appearances = {item.appearance_name: appearance}
         state.roles[item.role_id] = role
         if self._role_needs_voice(role):
@@ -560,8 +581,9 @@ class PregenWorkflow:
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
                 "--episodes is only supported for pregen --only roleboard_prompt, roleboard_generation, "
-                "storyboard_prompt, storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop, "
-                "shot_manifest_generation, role_voice_select, prop_design, prop_generation, or layout_image_generation."
+                "role_subject_video_generation, role_subject_element_generation, storyboard_prompt, "
+                "storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop, shot_manifest_generation, "
+                "role_voice_select, prop_design, prop_generation, or layout_image_generation."
             )
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError("--roles is only supported for pregen --only role_voice_select.")
@@ -1154,6 +1176,66 @@ class PregenWorkflow:
                     return refs
         return refs
 
+    def _shot_subject_element_refs(
+        self,
+        state: ProjectState,
+        shot: StoryboardShot,
+        *,
+        limit: int = 3,
+    ) -> list:
+        from autodrama.providers.base import AssetRef
+
+        selected_role_ids: list[str] = []
+        for source_role_ids in (
+            self._shot_intro_role_ids(state, shot),
+            self._shot_speaking_role_ids(state, shot),
+            self._role_ids_for_appearance_ids(state, list(shot.role_appearance_ids)),
+            list(shot.role_ids),
+        ):
+            for role_id in source_role_ids:
+                role_key = str(role_id or "").strip()
+                if role_key and role_key not in selected_role_ids:
+                    selected_role_ids.append(role_key)
+
+        explicit_appearance_ids = {str(value).strip() for value in shot.role_appearance_ids if str(value).strip()}
+        refs: list[AssetRef] = []
+        for role_id in selected_role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            appearances = [
+                appearance
+                for appearance in role.appearances.values()
+                if appearance.id in explicit_appearance_ids or appearance.name in explicit_appearance_ids
+            ]
+            if not appearances:
+                base_appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
+                appearances = [base_appearance] if base_appearance is not None else []
+            for appearance in appearances:
+                if not appearance.subject_element_id:
+                    continue
+                refs.append(
+                    AssetRef(
+                        id=f"{appearance.id}_subject_element",
+                        type="element",
+                        metadata={
+                            "asset_type": "role_subject_element",
+                            "reference_source": "role_subject_element_generation",
+                            "reference_role": "visual_subject_identity",
+                            "role_id": role.id,
+                            "role_name": role.name,
+                            "appearance_id": appearance.id,
+                            "appearance_name": appearance.name,
+                            "element_id": appearance.subject_element_id,
+                            "reference_type": appearance.subject_element_reference_type,
+                            "name": appearance.name,
+                        },
+                    )
+                )
+                if len(refs) >= limit:
+                    return refs
+        return refs
+
     @staticmethod
     def _raw_response_duration_seconds(raw: Any) -> float | None:
         if raw is None:
@@ -1314,8 +1396,9 @@ class PregenWorkflow:
         others = [
             ref
             for ref in refs
-            if getattr(ref, "type", None) not in {"image", "video", "audio"}
+            if getattr(ref, "type", None) not in {"image", "video", "audio", "element"}
         ]
+        elements = [ref for ref in refs if getattr(ref, "type", None) == "element"]
         def provider_limit(name: str, default: int) -> int:
             value = getattr(provider, name, default)
             if value is None:
@@ -1325,6 +1408,7 @@ class PregenWorkflow:
         max_images = provider_limit("max_reference_images", 3)
         max_videos = provider_limit("max_reference_videos", 2)
         max_audio = provider_limit("max_reference_audio", 1)
+        max_elements = provider_limit("max_reference_elements", 3)
         max_video_duration = getattr(provider, "max_reference_video_total_duration_seconds", None)
         if max_video_duration is None:
             max_video_duration = 15.2
@@ -1363,6 +1447,7 @@ class PregenWorkflow:
 
         return [
             *selected_images,
+            *elements[:max_elements],
             *selected_videos,
             *audios[:max_audio],
             *others,
@@ -1426,6 +1511,15 @@ class PregenWorkflow:
             "previous_video",
             "prev_video",
         }
+
+    @staticmethod
+    def _video_reference_mode_uses_subject_elements(mode: str, provider=None) -> bool:
+        return mode in {
+            "subject_storyboard_key_vision",
+            "subject_storyboard_keyvision",
+            "kling_subject",
+            "kling_subject_storyboard_key_vision",
+        } or bool(getattr(provider, "supports_subject_elements", False))
 
     @staticmethod
     def _previous_shot(episode: StoryboardEpisodeOutput | None, shot: StoryboardShot) -> StoryboardShot | None:
@@ -1841,6 +1935,21 @@ class PregenWorkflow:
                         "previous_shot_id": previous_shot.shot_id,
                         "seedance_role": "first_frame",
                     },
+                )
+            )
+            return refs
+        if self._video_reference_mode_uses_subject_elements(reference_mode, provider=provider):
+            storyboard_panel_ref = self._storyboard_panel_ref(project_dir, shot)
+            if storyboard_panel_ref is not None:
+                refs.append(storyboard_panel_ref)
+            key_vision_ref = self._key_vision_ref(project_dir, state, shot)
+            if key_vision_ref is not None:
+                refs.append(key_vision_ref)
+            refs.extend(
+                self._shot_subject_element_refs(
+                    state,
+                    shot,
+                    limit=int(getattr(provider, "max_reference_elements", 3) or 3),
                 )
             )
             return refs

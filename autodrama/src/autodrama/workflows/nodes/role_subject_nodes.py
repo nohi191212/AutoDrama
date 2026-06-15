@@ -1,0 +1,414 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from autodrama.core.ids import normalize_id
+from autodrama.core.schemas import (
+    ProjectState,
+    Role,
+    RoleAppearance,
+    RoleSubjectElementGenerationItem,
+    RoleSubjectElementGenerationOutput,
+    RoleSubjectVideoGenerationItem,
+    RoleSubjectVideoGenerationOutput,
+)
+from autodrama.providers.base import AssetRef
+from autodrama.workflows.runner import WorkflowNode
+
+
+ROLE_SUBJECT_NODE_NAMES = [
+    "role_subject_video_generation",
+    "role_subject_element_generation",
+]
+
+
+class RoleSubjectNodeBase:
+    def __init__(self, *, workflow: Any) -> None:
+        self.workflow = workflow
+        self.repo = workflow.repo
+        self.layout = workflow.layout
+        self.router = workflow.router
+        self.media_store = workflow.media_store
+
+    @staticmethod
+    def _provider_supports_subject_elements(provider: object) -> bool:
+        return bool(getattr(provider, "supports_subject_elements", False))
+
+    def _video_provider(self, *, node_name: str):
+        provider = None
+        try:
+            provider = self.router.video("shot", node_name=node_name)
+            if self._provider_supports_subject_elements(provider):
+                return provider
+        except Exception:
+            provider = None
+        shot_provider = self.router.video("shot", node_name="shot_video_generation")
+        if self._provider_supports_subject_elements(shot_provider):
+            return shot_provider
+        return provider
+
+    def _target_role_appearances(self, state: ProjectState) -> list[tuple[Role, RoleAppearance]]:
+        active_episode_keys = getattr(self.workflow, "_active_episode_keys", None)
+        active = {str(key) for key in active_episode_keys or []}
+        targets: list[tuple[Role, RoleAppearance]] = []
+        for role in state.roles.values():
+            if not role.visual_reuse_required:
+                continue
+            if active:
+                role_episode_keys = {str(key) for key in role.episode_keys}
+                if role_episode_keys and not role_episode_keys.intersection(active):
+                    continue
+            for appearance in role.appearances.values():
+                targets.append((role, appearance))
+        return targets
+
+    def _roleboard_ref(self, project_dir: Path, role: Role, appearance: RoleAppearance) -> AssetRef | None:
+        asset_path = appearance.asset_path or appearance.design_image_asset_path
+        asset_url = appearance.asset_url or appearance.design_image_asset_url
+        existing = self.layout.existing_project_file(project_dir, asset_path)
+        if not existing and not asset_url:
+            return None
+        return AssetRef(
+            id=appearance.asset_id or appearance.design_image_asset_id or appearance.id,
+            type="image",
+            path=str(project_dir / existing) if existing else None,
+            url=asset_url,
+            metadata={
+                "asset_type": "roleboard",
+                "reference_source": "roleboard_generation",
+                "role_id": role.id,
+                "role_name": role.name,
+                "appearance_id": appearance.id,
+                "appearance_name": appearance.name,
+            },
+        )
+
+    def _key_vision_ref(self, project_dir: Path, state: ProjectState, *, reference_for: str) -> AssetRef | None:
+        key_vision = state.metadata.get("key_vision_asset")
+        if isinstance(key_vision, dict):
+            asset_id = str(key_vision.get("asset_id") or state.metadata.get("key_vision_asset_id") or "key_vision_original")
+            asset_path = key_vision.get("asset_path") or state.metadata.get("key_vision_asset_path")
+            asset_url = key_vision.get("asset_url") or state.metadata.get("key_vision_asset_url")
+            name = str(key_vision.get("name") or state.metadata.get("key_vision_name") or "主视觉原图")
+        else:
+            asset_id = str(state.metadata.get("key_vision_asset_id") or "key_vision_original")
+            asset_path = state.metadata.get("key_vision_asset_path")
+            asset_url = state.metadata.get("key_vision_asset_url")
+            name = str(state.metadata.get("key_vision_name") or "主视觉原图")
+        existing = self.layout.existing_project_file(project_dir, str(asset_path)) if asset_path else None
+        if not existing and not asset_url:
+            return None
+        return AssetRef(
+            id=asset_id,
+            type="image",
+            path=str(project_dir / existing) if existing else None,
+            url=str(asset_url) if asset_url else None,
+            metadata={
+                "asset_type": "key_vision",
+                "reference_source": "design_key_vision_image",
+                "reference_role": "style_world_reference",
+                "reference_for": reference_for,
+                "name": name,
+            },
+        )
+
+    def _subject_reference_type(self, provider: object) -> str:
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        return str(options.get("subject_reference_type") or "video_refer").strip()
+
+    def _subject_video_duration(self, provider: object) -> float:
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        value = options.get("subject_video_duration_seconds") or options.get("subject_duration_seconds") or 5
+        return float(value)
+
+
+class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
+    name = "role_subject_video_generation"
+
+    def _prompt(self, role: Role, appearance: RoleAppearance, *, has_key_vision: bool) -> str:
+        parts = [
+            "生成一段用于可灵视频角色主体定制的写实人形角色展示视频。",
+            "视频必须只展示同一个角色，干净背景或低干扰环境，不能出现其他人物、字幕、水印、logo、可读文字或镜头编号。",
+            "<<<image_1>>> 是该角色身份板，必须严格保持脸型、五官、发型、体型比例、服装、配饰、材质和年龄感一致。",
+        ]
+        if has_key_vision:
+            parts.append("<<<image_2>>> 是本剧主视觉，只作为整体写实质感、光影、色调和摄影审美参考。")
+        parts.extend(
+            [
+                f"角色名：{role.name}",
+                f"角色简介：{role.intro}",
+                f"外观描述：{appearance.desc or appearance.prompt or appearance.roleboard_prompt or ''}",
+                "动作设计：角色先以三分之二侧身静立，然后缓慢转向镜头旁侧，微微抬眼，进行一次自然呼吸和轻微手部动作；不要夸张表演。",
+                "镜头要求：中近景到半身，稳定镜头，人物全程清晰，面部无遮挡，服装关键细节可见，便于后续主体库识别。",
+            ]
+        )
+        return "\n".join(part for part in parts if part)
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self._video_provider(node_name=self.name)
+        if not self._provider_supports_subject_elements(provider):
+            self.repo.save_node_output(
+                project_dir,
+                self.name,
+                RoleSubjectVideoGenerationOutput(
+                    generated_subject_videos=[],
+                    skipped_subject_videos=[
+                        {
+                            "reason": "provider_does_not_support_subject_elements",
+                            "provider": getattr(provider, "name", "unknown"),
+                        }
+                    ],
+                ),
+            )
+            return state
+
+        force = bool(getattr(self.workflow, "_force_pregen", False))
+        generated: list[RoleSubjectVideoGenerationItem] = []
+        skipped: list[dict[str, Any]] = []
+        duration = self._subject_video_duration(provider)
+        targets = self._target_role_appearances(state)
+        for role, appearance in targets:
+            asset_id = normalize_id(f"{appearance.id}", "subject_video")
+            output_path = self.layout.video_asset_path(project_dir, "roles", asset_id)
+            existing_video_path = self.layout.existing_project_file(project_dir, appearance.subject_video_asset_path)
+            if not force and (existing_video_path or appearance.subject_video_asset_url):
+                generated.append(
+                    RoleSubjectVideoGenerationItem(
+                        role_id=role.id,
+                        role_name=role.name,
+                        appearance_id=appearance.id,
+                        appearance_name=appearance.name,
+                        asset_id=appearance.subject_video_asset_id or asset_id,
+                        prompt="",
+                        duration_seconds=duration,
+                        asset_path=existing_video_path or appearance.subject_video_asset_path,
+                        asset_url=appearance.subject_video_asset_url,
+                        provider=appearance.subject_video_provider or getattr(provider, "name", "unknown"),
+                        model=appearance.subject_video_model or getattr(provider, "model", ""),
+                        task_id=appearance.subject_video_task_id,
+                        task_status=appearance.subject_video_task_status,
+                        request_id=appearance.subject_video_request_id,
+                        usage=appearance.subject_video_usage,
+                        raw_response=appearance.subject_video_raw_response or {"resumed_from_existing_subject_video": True},
+                    )
+                )
+                continue
+
+            roleboard_ref = self._roleboard_ref(project_dir, role, appearance)
+            if roleboard_ref is None:
+                skipped.append({"role_id": role.id, "appearance_id": appearance.id, "reason": "missing_roleboard"})
+                continue
+            refs = [roleboard_ref]
+            key_vision_ref = self._key_vision_ref(project_dir, state, reference_for=asset_id)
+            if key_vision_ref is not None:
+                refs.append(key_vision_ref)
+            prompt = self._prompt(role, appearance, has_key_vision=key_vision_ref is not None)
+            result = await provider.generate_video(
+                prompt,
+                refs=refs,
+                duration=duration,
+                wait=True,
+                metadata={
+                    "node_name": self.name,
+                    "project_id": state.project_id,
+                    "asset_id": asset_id,
+                    "asset_type": "role_subject_video",
+                    "role_id": role.id,
+                    "role_name": role.name,
+                    "appearance_id": appearance.id,
+                    "appearance_name": appearance.name,
+                    "duration": duration,
+                    "external_task_id": f"{state.project_id}_{asset_id}",
+                },
+            )
+            asset_path = await self.media_store.write_generated_video(project_dir, output_path, result)
+            appearance.subject_video_asset_id = asset_id
+            appearance.subject_video_asset_path = asset_path
+            appearance.subject_video_asset_url = result.video_url
+            appearance.subject_video_provider = result.provider or getattr(provider, "name", None)
+            appearance.subject_video_model = result.model or getattr(provider, "model", None)
+            appearance.subject_video_task_id = result.task_id
+            appearance.subject_video_task_status = result.task_status
+            appearance.subject_video_request_id = result.request_id
+            appearance.subject_video_usage = result.usage
+            appearance.subject_video_raw_response = result.raw_response
+            generated.append(
+                RoleSubjectVideoGenerationItem(
+                    role_id=role.id,
+                    role_name=role.name,
+                    appearance_id=appearance.id,
+                    appearance_name=appearance.name,
+                    asset_id=asset_id,
+                    prompt=prompt,
+                    duration_seconds=duration,
+                    asset_path=asset_path,
+                    asset_url=result.video_url,
+                    provider=result.provider or getattr(provider, "name", "unknown"),
+                    model=result.model or getattr(provider, "model", ""),
+                    task_id=result.task_id,
+                    task_status=result.task_status,
+                    request_id=result.request_id,
+                    usage=result.usage,
+                    raw_response=result.raw_response,
+                )
+            )
+
+        self.repo.save_node_output(
+            project_dir,
+            self.name,
+            RoleSubjectVideoGenerationOutput(
+                generated_subject_videos=generated,
+                skipped_subject_videos=skipped,
+            ),
+        )
+        return state
+
+
+class RoleSubjectElementGenerationNode(RoleSubjectNodeBase):
+    name = "role_subject_element_generation"
+
+    @staticmethod
+    def _element_description(role: Role, appearance: RoleAppearance) -> str:
+        text = " ".join(
+            str(part or "").strip()
+            for part in (
+                role.name,
+                role.intro,
+                appearance.desc,
+                appearance.prompt,
+            )
+            if str(part or "").strip()
+        )
+        return text[:100] or role.name[:100]
+
+    def _image_refs(self, project_dir: Path, role: Role, appearance: RoleAppearance) -> list[AssetRef]:
+        ref = self._roleboard_ref(project_dir, role, appearance)
+        return [ref] if ref is not None else []
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self._video_provider(node_name=self.name)
+        if not self._provider_supports_subject_elements(provider):
+            self.repo.save_node_output(
+                project_dir,
+                self.name,
+                RoleSubjectElementGenerationOutput(
+                    generated_subject_elements=[],
+                    skipped_subject_elements=[
+                        {
+                            "reason": "provider_does_not_support_subject_elements",
+                            "provider": getattr(provider, "name", "unknown"),
+                        }
+                    ],
+                ),
+            )
+            return state
+
+        force = bool(getattr(self.workflow, "_force_pregen", False))
+        reference_type = self._subject_reference_type(provider)
+        generated: list[RoleSubjectElementGenerationItem] = []
+        skipped: list[dict[str, Any]] = []
+        for role, appearance in self._target_role_appearances(state):
+            if not force and appearance.subject_element_id:
+                generated.append(
+                    RoleSubjectElementGenerationItem(
+                        role_id=role.id,
+                        role_name=role.name,
+                        appearance_id=appearance.id,
+                        appearance_name=appearance.name,
+                        reference_type=appearance.subject_element_reference_type or reference_type,
+                        element_id=appearance.subject_element_id,
+                        provider=appearance.subject_element_provider or getattr(provider, "name", "unknown"),
+                        model=appearance.subject_element_model or getattr(provider, "subject_element_model", ""),
+                        task_id=appearance.subject_element_task_id,
+                        task_status=appearance.subject_element_task_status,
+                        request_id=appearance.subject_element_request_id,
+                        usage=appearance.subject_element_usage,
+                        raw_response=appearance.subject_element_raw_response or {"resumed_from_existing_subject_element": True},
+                    )
+                )
+                continue
+
+            video_url = appearance.subject_video_asset_url
+            image_refs = self._image_refs(project_dir, role, appearance) if reference_type == "image_refer" else []
+            if reference_type == "video_refer" and not video_url:
+                raise ValueError(
+                    f"{self.name} requires subject video URL for {role.name}/{appearance.name}; "
+                    "run role_subject_video_generation with Kling first"
+                )
+            if reference_type == "image_refer" and not image_refs:
+                raise ValueError(f"{self.name} requires roleboard image for {role.name}/{appearance.name}")
+
+            result = await provider.generate_subject_element(
+                element_name=role.name[:20],
+                element_description=self._element_description(role, appearance),
+                reference_type=reference_type,
+                video_url=video_url,
+                image_refs=image_refs,
+                wait=True,
+                metadata={
+                    "node_name": self.name,
+                    "project_id": state.project_id,
+                    "role_id": role.id,
+                    "role_name": role.name,
+                    "appearance_id": appearance.id,
+                    "appearance_name": appearance.name,
+                    "external_task_id": f"{state.project_id}_{appearance.id}_subject_element",
+                },
+            )
+            if not result.element_id:
+                raise ValueError(f"Kling subject element task for {role.name}/{appearance.name} returned no element_id")
+            appearance.subject_element_provider = result.provider or getattr(provider, "name", None)
+            appearance.subject_element_model = result.model or getattr(provider, "subject_element_model", None)
+            appearance.subject_element_reference_type = reference_type
+            appearance.subject_element_id = result.element_id
+            appearance.subject_element_task_id = result.task_id
+            appearance.subject_element_task_status = result.task_status
+            appearance.subject_element_request_id = result.request_id
+            appearance.subject_element_usage = result.usage
+            appearance.subject_element_raw_response = result.raw_response
+            generated.append(
+                RoleSubjectElementGenerationItem(
+                    role_id=role.id,
+                    role_name=role.name,
+                    appearance_id=appearance.id,
+                    appearance_name=appearance.name,
+                    reference_type=reference_type,
+                    element_id=result.element_id,
+                    provider=result.provider or getattr(provider, "name", "unknown"),
+                    model=result.model or getattr(provider, "subject_element_model", ""),
+                    task_id=result.task_id,
+                    task_status=result.task_status,
+                    request_id=result.request_id,
+                    usage=result.usage,
+                    raw_response=result.raw_response,
+                )
+            )
+
+        self.repo.save_node_output(
+            project_dir,
+            self.name,
+            RoleSubjectElementGenerationOutput(
+                generated_subject_elements=generated,
+                skipped_subject_elements=skipped,
+            ),
+        )
+        return state
+
+
+def build_role_subject_nodes(workflow: Any) -> list[WorkflowNode]:
+    runners = {
+        RoleSubjectVideoGenerationNode.name: RoleSubjectVideoGenerationNode(workflow=workflow),
+        RoleSubjectElementGenerationNode.name: RoleSubjectElementGenerationNode(workflow=workflow),
+    }
+    return [WorkflowNode(name=node_name, run=runners[node_name].run) for node_name in ROLE_SUBJECT_NODE_NAMES]
+
+
+__all__ = [
+    "ROLE_SUBJECT_NODE_NAMES",
+    "RoleSubjectElementGenerationNode",
+    "RoleSubjectVideoGenerationNode",
+    "build_role_subject_nodes",
+]

@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-Modality = Literal["text", "json", "image", "video", "audio", "file", "url"]
+Modality = Literal["text", "json", "image", "video", "audio", "file", "url", "element"]
 ModelCapability = Literal["text", "image", "video", "audio", "music", "judge"]
 ParamType = Literal["string", "integer", "number", "boolean", "array", "object", "any"]
 
@@ -83,6 +83,7 @@ class ModelSpec(BaseModel):
             "max_reference_images": 0,
             "max_reference_audio": 0,
             "max_reference_videos": 0,
+            "max_reference_elements": 0,
         }
         for ref in refs:
             ref_type = str(getattr(ref, "type", "") or "")
@@ -92,6 +93,8 @@ class ModelSpec(BaseModel):
                 counts["max_reference_audio"] += 1
             elif ref_type == "video":
                 counts["max_reference_videos"] += 1
+            elif ref_type == "element":
+                counts["max_reference_elements"] += 1
 
         for key, actual in counts.items():
             limit = self._int_limit(key)

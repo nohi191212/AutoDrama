@@ -39,7 +39,7 @@ class AudioJudgeLLM(Protocol):
 
 class AssetRef(BaseModel):
     id: str | None = None
-    type: Literal["image", "video", "audio", "file", "url"] = "url"
+    type: Literal["image", "video", "audio", "file", "url", "element"] = "url"
     path: str | None = None
     url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -178,6 +178,17 @@ class VideoGenerationResult(BaseModel):
     video_data: str | None = None
     last_frame_url: str | None = None
     last_frame_data: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class SubjectElementResult(BaseModel):
+    provider: str
+    model: str
+    task_id: str | None = None
+    task_status: str | None = None
+    element_id: str | None = None
     request_id: str | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
     raw_response: dict[str, Any] = Field(default_factory=dict)

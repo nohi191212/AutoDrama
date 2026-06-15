@@ -11,6 +11,7 @@ from autodrama.workflows.nodes.dynamic_asset_solidification_node import (
     build_dynamic_asset_solidification_episode_node,
 )
 from autodrama.workflows.nodes.role_nodes import ROLE_NODE_NAMES, build_role_nodes
+from autodrama.workflows.nodes.role_subject_nodes import ROLE_SUBJECT_NODE_NAMES, build_role_subject_nodes
 from autodrama.workflows.nodes.script_nodes import SCRIPT_NODE_NAMES, build_script_nodes
 from autodrama.workflows.nodes.shot_dialogue_audio_node import (
     SHOT_DIALOGUE_AUDIO_NODE_NAME,
@@ -45,6 +46,7 @@ def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
         *build_script_nodes(workflow, after_novel_nodes=build_director_nodes(workflow)),
         *build_role_nodes(workflow),
         *roleboard_nodes,
+        *build_role_subject_nodes(workflow),
         *build_storyboard_asset_nodes(workflow),
         *build_voice_nodes(workflow),
     ]
@@ -64,6 +66,7 @@ PREGEN_NODE_NAMES = [
     *SCRIPT_NODE_NAMES[2:],
     *ROLE_NODE_NAMES,
     *ROLEBOARD_STATIC_NODE_NAMES,
+    *ROLE_SUBJECT_NODE_NAMES,
     *STORYBOARD_ASSET_NODE_NAMES,
     *VOICE_NODE_NAMES,
 ]
@@ -96,6 +99,7 @@ __all__ = [
     "GENERATION_NODE_NAMES",
     "PREGEN_NODE_NAMES",
     "ROLE_NODE_NAMES",
+    "ROLE_SUBJECT_NODE_NAMES",
     "SCRIPT_NODE_NAMES",
     "SHOT_DIALOGUE_AUDIO_NODE_NAME",
     "SHOT_VIDEO_NODE_NAME",
@@ -109,6 +113,7 @@ __all__ = [
     "build_manual_pregen_nodes",
     "build_pregen_nodes",
     "build_role_nodes",
+    "build_role_subject_nodes",
     "build_script_nodes",
     "build_shot_dialogue_audio_episode_node",
     "build_shot_video_episode_node",

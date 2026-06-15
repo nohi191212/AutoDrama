@@ -188,6 +188,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         image_refs = [ref for ref in refs if getattr(ref, "type", None) == "image"]
         audio_refs = [ref for ref in refs if getattr(ref, "type", None) == "audio"]
         video_refs = [ref for ref in refs if getattr(ref, "type", None) == "video"]
+        element_refs = [ref for ref in refs if getattr(ref, "type", None) == "element"]
 
         frame_image_refs = [
             ref
@@ -206,6 +207,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             return {"image": selected_frames, "audio": [], "video": []}
 
         max_images = int(getattr(provider, "max_reference_images", 99) or 99)
+        max_elements = int(getattr(provider, "max_reference_elements", 99) or 99)
         max_audio = (
             int(getattr(provider, "max_reference_audio", 0) or 0)
             if cls._shot_video_provider_supports_audio_refs(provider)
@@ -216,13 +218,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             video_refs = [ref for ref in video_refs if cls._shot_video_ref_has_web_url(ref)]
         return {
             "image": image_refs[:max_images],
+            "element": element_refs[:max_elements],
             "audio": audio_refs[:max_audio],
             "video": video_refs[:max_videos],
         }
 
     def _shot_video_refs_for_provider(self, refs: list, provider=None) -> list:
         groups = self._shot_video_prompt_ref_groups(refs, provider=provider)
-        return [*groups["image"], *groups["audio"], *groups["video"]]
+        return [*groups["image"], *groups.get("element", []), *groups["audio"], *groups["video"]]
 
     def _shot_video_reference_plan(
         self,
@@ -248,6 +251,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                         "type": getattr(ref, "type", None),
                         "asset_type": self._shot_video_ref_asset_type(ref),
                         "label": self._shot_video_ref_label(ref),
+                        "element_id": (getattr(ref, "metadata", {}) or {}).get("element_id"),
                         "path": compact_ref_value(getattr(ref, "path", None)),
                         "url": compact_ref_value(getattr(ref, "url", None)),
                     }
@@ -258,18 +262,37 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             str(item.get("asset_type") or "")
             for item in modal_plan.get("image", [])
         }
-        expected_static_anchors = ["storyboard_panel", "roleboard", "key_vision"]
-        return {
-            "static_anchor_policy": "storyboard_panel + roleboard + key_vision when available",
-            "expected_static_anchors": expected_static_anchors,
-            "present_static_anchors": [
+        element_asset_types = {
+            str(item.get("asset_type") or "")
+            for item in modal_plan.get("element", [])
+        }
+        if bool(getattr(provider, "supports_subject_elements", False)) or "role_subject_element" in element_asset_types:
+            expected_static_anchors = ["storyboard_panel", "key_vision", "role_subject_element"]
+            present_static_anchors = [
+                "storyboard_panel" if "storyboard_panel" in image_asset_types else "",
+                "key_vision" if "key_vision" in image_asset_types else "",
+                "role_subject_element" if "role_subject_element" in element_asset_types else "",
+            ]
+            present_static_anchors = [asset_type for asset_type in present_static_anchors if asset_type]
+        else:
+            expected_static_anchors = ["storyboard_panel", "roleboard", "key_vision"]
+            present_static_anchors = [
                 asset_type for asset_type in expected_static_anchors if asset_type in image_asset_types
-            ],
+            ]
+        return {
+            "static_anchor_policy": (
+                "storyboard_panel + key_vision + role_subject_element when Kling subject mode is active"
+                if "role_subject_element" in expected_static_anchors
+                else "storyboard_panel + roleboard + key_vision when available"
+            ),
+            "expected_static_anchors": expected_static_anchors,
+            "present_static_anchors": present_static_anchors,
             "missing_static_anchors": [
-                asset_type for asset_type in expected_static_anchors if asset_type not in image_asset_types
+                asset_type for asset_type in expected_static_anchors if asset_type not in present_static_anchors
             ],
             "limits": {
                 "max_reference_images": int(getattr(provider, "max_reference_images", 99) or 99),
+                "max_reference_elements": int(getattr(provider, "max_reference_elements", 99) or 99),
                 "max_reference_audio": (
                     int(getattr(provider, "max_reference_audio", 0) or 0)
                     if self._shot_video_provider_supports_audio_refs(provider)
@@ -407,6 +430,60 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             )
         return f"{prefix}: 视频参考素材。只使用其动态规律或空间关系，不复刻画面内容。"
 
+    @classmethod
+    def _shot_video_element_ref_instruction(cls, ref, index: int) -> str:
+        metadata = getattr(ref, "metadata", {}) or {}
+        role_name = str(metadata.get("role_name") or cls._shot_video_ref_label(ref)).strip() or "角色主体"
+        appearance_name = str(metadata.get("appearance_name") or metadata.get("name") or "").strip()
+        label = f"{role_name}/{appearance_name}" if appearance_name and appearance_name != role_name else role_name
+        return (
+            f"<<<element_{index}>>> = {label} 的可灵主体库主体。必须把它作为当前镜头内同一人物，"
+            "锁定脸型、五官、发型、体型比例、服装、配饰、年龄感和身份气质；"
+            "动作、站位、表情和口型仍以当前 shot 描述、故事板和对白约束为准。"
+        )
+
+    def _shot_video_kling_reference_material_prompt(
+        self,
+        refs: list,
+        *,
+        provider=None,
+    ) -> str:
+        groups = self._shot_video_prompt_ref_groups(refs, provider=provider)
+        image_refs = groups["image"]
+        element_refs = groups.get("element", [])
+        parts = [
+            "Kling Omni 素材引用规则: prompt 中必须用 <<<image_1>>>、<<<image_2>>>、<<<element_1>>> 等占位符引用实际传入素材；占位符编号与 payload 中 image_list/element_list 的顺序一致。"
+        ]
+        for index, ref in enumerate(image_refs, start=1):
+            asset_type = self._shot_video_ref_asset_type(ref)
+            if asset_type == "storyboard_panel":
+                parts.append(
+                    f"<<<image_{index}>>> = 当前 shot 故事板单格。只锁定构图、景别、机位、人物站位、动作方向和镜头运动；不要继承黑白线稿、编号、边框或文字。"
+                )
+            elif asset_type == "key_vision":
+                parts.append(
+                    f"<<<image_{index}>>> = 主视觉原图。只锁定世界观、写实质感、色调、光影、材质和整体制作水准；不要覆盖当前 shot 的构图、动作、出场角色或剧情节奏。"
+                )
+            else:
+                parts.append(
+                    f"<<<image_{index}>>> = {self._shot_video_static_anchor_label(asset_type)}。只按素材来源提供静态外观或空间参考，不作为首帧或尾帧。"
+                )
+        for index, ref in enumerate(element_refs, start=1):
+            parts.append(self._shot_video_element_ref_instruction(ref, index))
+        if image_refs and element_refs:
+            parts.append(
+                "主体生成模式: 让主体 <<<element_1>>> 按照 <<<image_1>>> 的构图、景别、机位、动作方向和镜头运动完成当前 shot；"
+                "整体世界观、色调、光影、材质和写实制作质感参考 <<<image_2>>>。"
+            )
+        elif element_refs:
+            parts.append("主体生成模式: 当前 shot 的人物身份以 element_list 中的可灵主体为准。")
+        if not element_refs:
+            parts.append("本次没有可用可灵主体 element；如果 provider 要求主体生成模式，应先运行 role_subject_element_generation。")
+        parts.append(
+            "素材职责边界: 当前 shot 的 video_prompt 是剧情、动作和对白内容的唯一来源；参考素材不能新增剧情、改台词或改角色关系。"
+        )
+        return "\n".join(parts)
+
     def _shot_video_reference_material_prompt(
         self,
         state: ProjectState,
@@ -426,6 +503,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         except Exception:
             refs = []
         groups = self._shot_video_prompt_ref_groups(refs, provider=provider)
+        if bool(getattr(provider, "supports_kling_omni_placeholders", False)):
+            return self._shot_video_kling_reference_material_prompt(refs, provider=provider)
         image_refs = groups["image"]
         audio_refs = groups["audio"]
         video_refs = groups["video"]

@@ -16,6 +16,11 @@ from autodrama.workflows.nodes import (  # noqa: E402
     PREGEN_NODE_NAMES,
 )
 from autodrama.workflows.nodes.role_nodes import ROLE_NODE_NAMES, RoleboardPromptNode  # noqa: E402
+from autodrama.workflows.nodes.role_subject_nodes import (  # noqa: E402
+    ROLE_SUBJECT_NODE_NAMES,
+    RoleSubjectElementGenerationNode,
+    RoleSubjectVideoGenerationNode,
+)
 from autodrama.workflows.nodes.static_asset_nodes import (  # noqa: E402
     STATIC_ASSET_NODE_NAMES,
     RoleAppearanceGenerationBase,
@@ -47,6 +52,8 @@ def require(condition: bool, message: str) -> None:
 def main() -> None:
     require(RoleboardPromptNode.name == "roleboard_prompt", "roleboard prompt node name mismatch")
     require(RoleboardGenerationNode.name == "roleboard_generation", "roleboard generation node name mismatch")
+    require(RoleSubjectVideoGenerationNode.name == "role_subject_video_generation", "role subject video node name mismatch")
+    require(RoleSubjectElementGenerationNode.name == "role_subject_element_generation", "role subject element node name mismatch")
     require(StoryboardPromptNode.name == "storyboard_prompt", "storyboard prompt node name mismatch")
     require(PregenStoryboardGenerationNode.name == "storyboard_generation", "storyboard generation node name mismatch")
     require(StoryboardBBoxDetectionNode.name == "storyboard_bbox_detection", "storyboard bbox node name mismatch")
@@ -55,6 +62,10 @@ def main() -> None:
     require(RoleVoiceSelectNode.name == "role_voice_select", "role voice select node name mismatch")
     require("roleboard_prompt" in ROLE_NODE_NAMES, "roleboard_prompt missing from role node names")
     require("roleboard_generation" in STATIC_ASSET_NODE_NAMES, "roleboard_generation missing from static names")
+    require(
+        ROLE_SUBJECT_NODE_NAMES == ["role_subject_video_generation", "role_subject_element_generation"],
+        "role subject node names mismatch",
+    )
     require(
         STORYBOARD_ASSET_NODE_NAMES
         == [
@@ -71,6 +82,8 @@ def main() -> None:
     expected_visual_voice_chain = [
         "roleboard_prompt",
         "roleboard_generation",
+        "role_subject_video_generation",
+        "role_subject_element_generation",
         "storyboard_prompt",
         "storyboard_generation",
         "storyboard_bbox_detection",
@@ -82,6 +95,7 @@ def main() -> None:
         node_name
         for node_name in PREGEN_NODE_NAMES
         if node_name.startswith("roleboard_")
+        or node_name.startswith("role_subject_")
         or node_name.startswith("storyboard_")
         or node_name == "shot_manifest_generation"
         or node_name.startswith("role_voice_")
@@ -99,6 +113,8 @@ def main() -> None:
     require(
         PREGEN_NODE_NAMES.index("roleboard_prompt")
         < PREGEN_NODE_NAMES.index("roleboard_generation")
+        < PREGEN_NODE_NAMES.index("role_subject_video_generation")
+        < PREGEN_NODE_NAMES.index("role_subject_element_generation")
         < PREGEN_NODE_NAMES.index("storyboard_prompt")
         < PREGEN_NODE_NAMES.index("storyboard_generation")
         < PREGEN_NODE_NAMES.index("storyboard_bbox_detection")
@@ -111,6 +127,8 @@ def main() -> None:
         {
             "roleboard_prompt",
             "roleboard_generation",
+            "role_subject_video_generation",
+            "role_subject_element_generation",
             "storyboard_prompt",
             "storyboard_generation",
             "storyboard_bbox_detection",
