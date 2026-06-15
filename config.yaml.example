@@ -180,10 +180,16 @@ nodes:
   #   params:
   #     aspect_ratio: "9:16"
   #     mode: pro
-  #     sound: "off"
+  #     sound: "on"
   #     watermark: false
   #     max_reference_images: 2
   #     max_reference_elements: 3
+  # role_subject_video_intro_text:
+  #   model: rightcode:gpt-5.5
+  #   params:
+  #     reasoning_effort: low
+  #     temperature: 0.5
+  #     response_format: json_object
   # role_subject_element_generation:
   #   model: kling:kling-v3-omni
   #   params:

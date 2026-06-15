@@ -62,6 +62,7 @@ class RoleAppearance(BaseModel):
     subject_video_asset_id: str | None = None
     subject_video_asset_path: str | None = None
     subject_video_asset_url: str | None = None
+    subject_video_intro_text: str | None = None
     subject_video_provider: str | None = None
     subject_video_model: str | None = None
     subject_video_task_id: str | None = None
@@ -742,6 +743,7 @@ class RoleSubjectVideoGenerationItem(BaseModel):
     appearance_name: str
     asset_id: str
     prompt: str
+    intro_text: str | None = None
     duration_seconds: float | None = None
     asset_path: str | None = None
     asset_url: str | None = None
@@ -757,6 +759,10 @@ class RoleSubjectVideoGenerationItem(BaseModel):
 class RoleSubjectVideoGenerationOutput(BaseModel):
     generated_subject_videos: list[RoleSubjectVideoGenerationItem]
     skipped_subject_videos: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RoleSubjectVideoIntroTextOutput(BaseModel):
+    intro_text: str
 
 
 class RoleSubjectElementGenerationItem(BaseModel):

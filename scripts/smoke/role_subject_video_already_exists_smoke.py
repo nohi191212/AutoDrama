@@ -16,7 +16,7 @@ if str(SRC_DIR) not in sys.path:
 
 from autodrama.config import load_settings  # noqa: E402
 from autodrama.core.errors import ProviderBadResponseError  # noqa: E402
-from autodrama.core.schemas import Role, RoleAppearance  # noqa: E402
+from autodrama.core.schemas import Role, RoleAppearance, RoleSubjectVideoIntroTextOutput  # noqa: E402
 from autodrama.providers.base import AssetRef, VideoGenerationResult  # noqa: E402
 from autodrama.repositories.project_repo import ProjectRepository  # noqa: E402
 from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
@@ -41,6 +41,8 @@ class AlreadyExistsVideoProvider:
         self.generate_count = 0
         self.query_count = 0
         self.external_task_id: str | None = None
+        self.prompt: str | None = None
+        self.metadata: dict[str, Any] = {}
 
     async def generate_video(
         self,
@@ -51,9 +53,11 @@ class AlreadyExistsVideoProvider:
         wait: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> VideoGenerationResult:
-        del prompt, refs, duration, wait
+        del refs, duration, wait
         self.generate_count += 1
-        self.external_task_id = str((metadata or {}).get("external_task_id") or "")
+        self.prompt = prompt
+        self.metadata = dict(metadata or {})
+        self.external_task_id = str(self.metadata.get("external_task_id") or "")
         raise ProviderBadResponseError(
             "Kling omni video submit failed with HTTP 400: "
             f'{{"code":1201,"message":"External_task_id {self.external_task_id} already exists"}}'
@@ -80,13 +84,41 @@ class AlreadyExistsVideoProvider:
         )
 
 
+class AlreadyExistsTextProvider:
+    name = "fake-text"
+    model = "fake-gpt"
+
+    def __init__(self) -> None:
+        self.generate_count = 0
+
+    async def generate_json(
+        self,
+        prompt: str,
+        schema: type[RoleSubjectVideoIntroTextOutput],
+        *,
+        temperature: float = 0.7,
+        metadata: dict[str, Any] | None = None,
+        refs: list[AssetRef] | None = None,
+    ) -> RoleSubjectVideoIntroTextOutput:
+        del prompt, temperature, metadata, refs
+        self.generate_count += 1
+        require(schema is RoleSubjectVideoIntroTextOutput, f"unexpected schema: {schema}")
+        return RoleSubjectVideoIntroTextOutput(intro_text="我是林舟，我会守住真相。")
+
+
 class AlreadyExistsRouter:
-    def __init__(self, provider: AlreadyExistsVideoProvider) -> None:
-        self.provider = provider
+    def __init__(self, video_provider: AlreadyExistsVideoProvider, text_provider: AlreadyExistsTextProvider) -> None:
+        self.video_provider = video_provider
+        self.text_provider = text_provider
 
     def video(self, purpose: str, *, node_name: str | None = None) -> AlreadyExistsVideoProvider:
         del purpose, node_name
-        return self.provider
+        return self.video_provider
+
+    def text(self, purpose: str, *, node_name: str | None = None) -> AlreadyExistsTextProvider:
+        del purpose
+        require(node_name == "role_subject_video_intro_text", f"unexpected text node: {node_name}")
+        return self.text_provider
 
 
 class AlreadyExistsMediaStore:
@@ -148,17 +180,26 @@ async def main_async() -> int:
     repo.save_state(project_dir, state)
 
     provider = AlreadyExistsVideoProvider()
+    text_provider = AlreadyExistsTextProvider()
     media_store = AlreadyExistsMediaStore()
-    workflow = PregenWorkflow(repo=repo, router=AlreadyExistsRouter(provider))
+    workflow = PregenWorkflow(repo=repo, router=AlreadyExistsRouter(provider, text_provider))
     workflow.media_store = media_store
 
     await workflow.run(project_dir, only="role_subject_video_generation")
 
     restored_state = repo.load_state(project_dir)
     restored_appearance = restored_state.roles[role.id].appearances[appearance.id]
+    require(text_provider.generate_count == 1, f"expected one intro text generation, got {text_provider.generate_count}")
     require(provider.generate_count == 1, f"expected one submit attempt, got {provider.generate_count}")
     require(provider.query_count == 1, f"expected one external task query, got {provider.query_count}")
     require(media_store.write_count == 1, f"expected one video write, got {media_store.write_count}")
+    require("我是林舟，我会守住真相。" in (provider.prompt or ""), "intro text missing from video prompt")
+    require(provider.metadata.get("sound") == "on", "video metadata sound must be on")
+    require(provider.metadata.get("parameters", {}).get("sound") == "on", "video payload sound override must be on")
+    require(
+        str(provider.external_task_id or "").endswith("_voiced"),
+        f"voiced external_task_id missing suffix: {provider.external_task_id}",
+    )
     require(
         restored_appearance.subject_video_asset_path
         == "assets/videos/roles/role_lin_zhou_base_subject_video.mp4",
@@ -173,6 +214,10 @@ async def main_async() -> int:
         "subject video URL was not saved",
     )
     require(
+        restored_appearance.subject_video_intro_text == "我是林舟，我会守住真相。",
+        "intro text was not saved",
+    )
+    require(
         restored_appearance.subject_video_task_id == "system-task-from-external-id",
         "system task id was not saved",
     )
@@ -182,6 +227,7 @@ async def main_async() -> int:
     generated = node_output["generated_subject_videos"]
     require(len(generated) == 1, f"expected one recovered subject video item, got {len(generated)}")
     require(generated[0]["asset_url"] == restored_appearance.subject_video_asset_url, "node output URL mismatch")
+    require(generated[0]["intro_text"] == restored_appearance.subject_video_intro_text, "node output intro mismatch")
 
     print("role_subject_video_already_exists_smoke=ok")
     print(f"project_dir={project_dir}")

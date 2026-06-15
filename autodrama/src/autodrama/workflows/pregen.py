@@ -515,6 +515,7 @@ class PregenWorkflow:
             appearance.subject_video_asset_id = existing_appearance.subject_video_asset_id
             appearance.subject_video_asset_path = existing_appearance.subject_video_asset_path
             appearance.subject_video_asset_url = existing_appearance.subject_video_asset_url
+            appearance.subject_video_intro_text = existing_appearance.subject_video_intro_text
             appearance.subject_video_provider = existing_appearance.subject_video_provider
             appearance.subject_video_model = existing_appearance.subject_video_model
             appearance.subject_video_task_id = existing_appearance.subject_video_task_id

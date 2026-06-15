@@ -14,6 +14,7 @@ from autodrama.core.schemas import (
     RoleSubjectElementGenerationOutput,
     RoleSubjectVideoGenerationItem,
     RoleSubjectVideoGenerationOutput,
+    RoleSubjectVideoIntroTextOutput,
 )
 from autodrama.providers.base import AssetRef, VideoGenerationResult
 from autodrama.workflows.runner import WorkflowNode
@@ -168,6 +169,58 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                 return path
         return self.layout.video_asset_path(project_dir, "roles", asset_id)
 
+    @staticmethod
+    def _clean_intro_text(value: object, *, role: Role) -> str:
+        text = " ".join(str(value or "").replace("\n", " ").split())
+        text = text.strip().strip("“”\"'` ")
+        text = text.replace("：", ":")
+        if ":" in text:
+            prefix, body = text.split(":", 1)
+            if role.name in prefix or len(prefix) <= 8:
+                text = body.strip()
+        text = text.strip().strip("“”\"'` ")
+        return text or f"我是{role.name}，请记住我的样子。"
+
+    def _intro_text_prompt(self, role: Role, appearance: RoleAppearance) -> str:
+        return "\n".join(
+            [
+                "为角色主体视频生成一句约5秒的中文自我介绍口播台词。",
+                "要求：",
+                "1. 第一人称，只能是一句自然台词，符合角色身份、气质和当前外观设定。",
+                "2. 约5秒内能说完，控制在12到24个汉字左右。",
+                "3. 不要写角色名标签、动作说明、括号、旁白、字幕、引号、分镜编号或舞台提示。",
+                "4. 不要剧透剧情，只表达角色本人可被主体库识别的稳定气质。",
+                "",
+                f"角色名：{role.name}",
+                f"角色简介：{role.intro}",
+                f"外观设定：{appearance.desc or appearance.prompt or appearance.roleboard_prompt or ''}",
+            ]
+        )
+
+    async def _generate_intro_text(
+        self,
+        role: Role,
+        appearance: RoleAppearance,
+        *,
+        duration_seconds: float,
+    ) -> str:
+        provider = self.router.text("role", node_name="role_subject_video_intro_text")
+        output = await provider.generate_json(
+            self._intro_text_prompt(role, appearance),
+            RoleSubjectVideoIntroTextOutput,
+            temperature=0.5,
+            metadata={
+                "node_name": "role_subject_video_intro_text",
+                "source_node": self.name,
+                "role_id": role.id,
+                "role_name": role.name,
+                "appearance_id": appearance.id,
+                "appearance_name": appearance.name,
+                "target_duration_seconds": duration_seconds,
+            },
+        )
+        return self._clean_intro_text(output.intro_text, role=role)
+
     async def _query_existing_subject_video_task(
         self,
         provider: object,
@@ -208,9 +261,16 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
             f"but it did not finish after {max_polls} polls; last status={last_status}"
         )
 
-    def _prompt(self, role: Role, appearance: RoleAppearance, *, has_key_vision: bool) -> str:
+    def _prompt(
+        self,
+        role: Role,
+        appearance: RoleAppearance,
+        *,
+        has_key_vision: bool,
+        intro_text: str,
+    ) -> str:
         parts = [
-            "生成一段用于可灵视频角色主体定制的写实人形角色展示视频。",
+            "生成一段用于可灵视频角色主体定制的写实人形角色展示视频，视频必须带角色本人自然口播声音。",
             "视频必须只展示同一个角色，干净背景或低干扰环境，不能出现其他人物、字幕、水印、logo、可读文字或镜头编号。",
             "<<<image_1>>> 是该角色身份板，必须严格保持脸型、五官、发型、体型比例、服装、配饰、材质和年龄感一致。",
         ]
@@ -221,7 +281,9 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                 f"角色名：{role.name}",
                 f"角色简介：{role.intro}",
                 f"外观描述：{appearance.desc or appearance.prompt or appearance.roleboard_prompt or ''}",
-                "动作设计：角色先以三分之二侧身静立，然后缓慢转向镜头旁侧，微微抬眼，进行一次自然呼吸和轻微手部动作；不要夸张表演。",
+                f"自我介绍口播台词：{intro_text}",
+                "声音要求：角色必须用自然中文口播完整说出上面的自我介绍台词；口型、表情和节奏必须与台词同步，声音清晰靠前，不要背景音乐、旁白、混响夸张音效或字幕。",
+                "动作设计：角色先以三分之二侧身静立，然后缓慢转向镜头旁侧，微微抬眼，进行一次自然呼吸和轻微手部动作；口播时表情克制自然，不要夸张表演。",
                 "镜头要求：中近景到半身，稳定镜头，人物全程清晰，面部无遮挡，服装关键细节可见，便于后续主体库识别。",
             ]
         )
@@ -254,7 +316,8 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
             asset_id = normalize_id(f"{appearance.id}", "subject_video")
             output_path = self.layout.video_asset_path(project_dir, "roles", asset_id)
             existing_video_path = self.layout.existing_project_file(project_dir, appearance.subject_video_asset_path)
-            if not force and existing_video_path:
+            existing_has_intro_audio = bool(str(appearance.subject_video_intro_text or "").strip())
+            if not force and existing_video_path and existing_has_intro_audio:
                 generated.append(
                     RoleSubjectVideoGenerationItem(
                         role_id=role.id,
@@ -263,6 +326,7 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                         appearance_name=appearance.name,
                         asset_id=appearance.subject_video_asset_id or asset_id,
                         prompt="",
+                        intro_text=appearance.subject_video_intro_text,
                         duration_seconds=duration,
                         asset_path=existing_video_path or appearance.subject_video_asset_path,
                         asset_url=appearance.subject_video_asset_url,
@@ -276,7 +340,7 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                     )
                 )
                 continue
-            if not force and appearance.subject_video_asset_url:
+            if not force and appearance.subject_video_asset_url and existing_has_intro_audio:
                 resumed_asset_id = appearance.subject_video_asset_id or asset_id
                 result = VideoGenerationResult(
                     provider=str(
@@ -321,6 +385,7 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                         appearance_name=appearance.name,
                         asset_id=resumed_asset_id,
                         prompt="",
+                        intro_text=appearance.subject_video_intro_text,
                         duration_seconds=duration,
                         asset_path=restored_asset_path,
                         asset_url=appearance.subject_video_asset_url,
@@ -343,8 +408,14 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
             key_vision_ref = self._key_vision_ref(project_dir, state, reference_for=asset_id)
             if key_vision_ref is not None:
                 refs.append(key_vision_ref)
-            prompt = self._prompt(role, appearance, has_key_vision=key_vision_ref is not None)
-            external_task_id = f"{state.project_id}_{asset_id}"
+            intro_text = await self._generate_intro_text(role, appearance, duration_seconds=duration)
+            prompt = self._prompt(
+                role,
+                appearance,
+                has_key_vision=key_vision_ref is not None,
+                intro_text=intro_text,
+            )
+            external_task_id = f"{state.project_id}_{asset_id}_voiced"
             metadata = {
                 "node_name": self.name,
                 "project_id": state.project_id,
@@ -356,6 +427,9 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                 "appearance_name": appearance.name,
                 "duration": duration,
                 "external_task_id": external_task_id,
+                "intro_text": intro_text,
+                "sound": "on",
+                "parameters": {"sound": "on"},
             }
             try:
                 result = await provider.generate_video(
@@ -378,6 +452,7 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
             appearance.subject_video_asset_id = asset_id
             appearance.subject_video_asset_path = asset_path
             appearance.subject_video_asset_url = result.video_url
+            appearance.subject_video_intro_text = intro_text
             appearance.subject_video_provider = result.provider or getattr(provider, "name", None)
             appearance.subject_video_model = result.model or getattr(provider, "model", None)
             appearance.subject_video_task_id = result.task_id
@@ -393,6 +468,7 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                     appearance_name=appearance.name,
                     asset_id=asset_id,
                     prompt=prompt,
+                    intro_text=intro_text,
                     duration_seconds=duration,
                     asset_path=asset_path,
                     asset_url=result.video_url,

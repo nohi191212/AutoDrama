@@ -99,6 +99,7 @@ async def main_async() -> int:
         subject_video_asset_id="subject_video_role_lin_zhou_base",
         subject_video_asset_path="assets/videos/roles/subject_video_role_lin_zhou_base.mp4",
         subject_video_asset_url="https://example.invalid/restorable-subject.mp4",
+        subject_video_intro_text="我是林舟，我会记住这一刻。",
         subject_video_provider="kling",
         subject_video_model="kling-v3-omni",
         subject_video_task_id="task-restorable",

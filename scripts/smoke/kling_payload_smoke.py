@@ -77,6 +77,13 @@ def main() -> int:
     require("<<<element_1>>>" in payload["prompt"], payload["prompt"])
     require("<<<image_1>>>" in payload["prompt"], payload["prompt"])
     require("<<<image_2>>>" in payload["prompt"], payload["prompt"])
+    voiced_payload = provider.build_payload(
+        "角色面向镜头说出一句自我介绍。",
+        refs=refs[:1],
+        duration=5,
+        metadata={"sound": "off", "parameters": {"sound": "on"}},
+    )
+    require(voiced_payload["sound"] == "on", json.dumps(voiced_payload, ensure_ascii=False))
 
     subject_payload = provider.build_subject_element_payload(
         element_name="林舟",
@@ -103,4 +110,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

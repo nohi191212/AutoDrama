@@ -20,6 +20,7 @@ from autodrama.core.schemas import (
     RoleDuplicateAuditReviewOutput,
     RoleEpisodeKeyAuditReviewOutput,
     RoleExtractOutput,
+    RoleSubjectVideoIntroTextOutput,
     RoleboardPromptModelOutput,
     SafeImagePromptRewriteOutput,
     ScriptDetailExpandOutput,
@@ -321,6 +322,9 @@ class FakeTextProvider:
                 "voice_profile_prompt": f"{role_name}的常规音色，真人短剧对白质感，语速自然，咬字清晰，情绪克制。",
                 "design_notes": "fake provider roleboard prompt fixture",
             }
+        elif schema is RoleSubjectVideoIntroTextOutput or node_name == "role_subject_video_intro_text":
+            role_name = str(metadata.get("role_name") or "林舟").strip() or "林舟"
+            data = {"intro_text": f"我是{role_name}，我会记住这一刻。"}
         elif schema is StoryboardPromptOutput or node_name == "storyboard_prompt":
             expected_keys = metadata.get("expected_keys") or episode_keys
             storyboard_episode_keys = [str(key) for key in expected_keys]
