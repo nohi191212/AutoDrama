@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
+from autodrama.core.errors import ProviderBadResponseError, ProviderError
 from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import (
     ProjectState,
@@ -13,7 +15,7 @@ from autodrama.core.schemas import (
     RoleSubjectVideoGenerationItem,
     RoleSubjectVideoGenerationOutput,
 )
-from autodrama.providers.base import AssetRef
+from autodrama.providers.base import AssetRef, VideoGenerationResult
 from autodrama.workflows.runner import WorkflowNode
 
 
@@ -128,6 +130,84 @@ class RoleSubjectNodeBase:
 class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
     name = "role_subject_video_generation"
 
+    @staticmethod
+    def _external_task_already_exists(exc: ProviderBadResponseError) -> bool:
+        text = str(exc)
+        lowered = text.casefold()
+        return "external_task_id" in lowered and ("already exists" in lowered or "已存在" in text)
+
+    @staticmethod
+    def _video_success_statuses(provider: object) -> set[str]:
+        statuses = getattr(provider, "_TERMINAL_SUCCESS", {"succeeded", "success", "completed", "done"})
+        return {str(status).strip().lower() for status in statuses}
+
+    @staticmethod
+    def _video_failure_statuses(provider: object) -> set[str]:
+        statuses = getattr(
+            provider,
+            "_TERMINAL_FAILURE",
+            {"failed", "fail", "error", "expired", "cancelled", "canceled"},
+        )
+        return {str(status).strip().lower() for status in statuses}
+
+    def _subject_video_download_output_path(
+        self,
+        project_dir: Path,
+        appearance: RoleAppearance,
+        asset_id: str,
+    ) -> Path:
+        if appearance.subject_video_asset_path:
+            path = Path(appearance.subject_video_asset_path)
+            if not path.is_absolute():
+                return project_dir / path
+            try:
+                path.relative_to(project_dir)
+            except ValueError:
+                pass
+            else:
+                return path
+        return self.layout.video_asset_path(project_dir, "roles", asset_id)
+
+    async def _query_existing_subject_video_task(
+        self,
+        provider: object,
+        *,
+        external_task_id: str,
+        role: Role,
+        appearance: RoleAppearance,
+    ) -> VideoGenerationResult:
+        query_video_task = getattr(provider, "query_video_task", None)
+        if query_video_task is None:
+            raise ProviderError(
+                f"{self.name} cannot recover existing subject video for {role.name}/{appearance.name}: "
+                "provider does not support query_video_task"
+            )
+        success_statuses = self._video_success_statuses(provider)
+        failure_statuses = self._video_failure_statuses(provider)
+        max_polls = int(getattr(provider, "max_polls", 120))
+        poll_interval_seconds = float(getattr(provider, "poll_interval_seconds", 5))
+        last_result: VideoGenerationResult | None = None
+        for poll_index in range(1, max_polls + 1):
+            if poll_index > 1 and poll_interval_seconds > 0:
+                await asyncio.sleep(poll_interval_seconds)
+            result = await query_video_task(external_task_id)
+            last_result = result
+            status = str(result.task_status or "").strip().lower()
+            if status in success_statuses:
+                return result
+            if status in failure_statuses:
+                raise ProviderError(
+                    f"{self.name} recovered existing task {external_task_id} for "
+                    f"{role.name}/{appearance.name}, but it ended with status {result.task_status}"
+                )
+            if result.video_url and not status:
+                return result
+        last_status = last_result.task_status if last_result is not None else "-"
+        raise ProviderError(
+            f"{self.name} recovered existing task {external_task_id} for {role.name}/{appearance.name}, "
+            f"but it did not finish after {max_polls} polls; last status={last_status}"
+        )
+
     def _prompt(self, role: Role, appearance: RoleAppearance, *, has_key_vision: bool) -> str:
         parts = [
             "生成一段用于可灵视频角色主体定制的写实人形角色展示视频。",
@@ -174,7 +254,7 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
             asset_id = normalize_id(f"{appearance.id}", "subject_video")
             output_path = self.layout.video_asset_path(project_dir, "roles", asset_id)
             existing_video_path = self.layout.existing_project_file(project_dir, appearance.subject_video_asset_path)
-            if not force and (existing_video_path or appearance.subject_video_asset_url):
+            if not force and existing_video_path:
                 generated.append(
                     RoleSubjectVideoGenerationItem(
                         role_id=role.id,
@@ -196,6 +276,64 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                     )
                 )
                 continue
+            if not force and appearance.subject_video_asset_url:
+                resumed_asset_id = appearance.subject_video_asset_id or asset_id
+                result = VideoGenerationResult(
+                    provider=str(
+                        appearance.subject_video_provider
+                        or getattr(provider, "name", "unknown")
+                        or "unknown"
+                    ),
+                    model=str(appearance.subject_video_model or getattr(provider, "model", "") or ""),
+                    task_id=appearance.subject_video_task_id,
+                    task_status=appearance.subject_video_task_status,
+                    video_url=appearance.subject_video_asset_url,
+                    request_id=appearance.subject_video_request_id,
+                    usage=dict(appearance.subject_video_usage or {}),
+                    raw_response=dict(
+                        appearance.subject_video_raw_response or {"resumed_from_existing_subject_video": True}
+                    ),
+                )
+                restored_asset_path = await self.media_store.write_generated_video(
+                    project_dir,
+                    self._subject_video_download_output_path(project_dir, appearance, resumed_asset_id),
+                    result,
+                )
+                if not restored_asset_path:
+                    raise ValueError(
+                        f"{self.name} could not restore local subject video for "
+                        f"{role.name}/{appearance.name}: missing video URL"
+                    )
+                appearance.subject_video_asset_id = resumed_asset_id
+                appearance.subject_video_asset_path = restored_asset_path
+                appearance.subject_video_provider = result.provider
+                appearance.subject_video_model = result.model
+                appearance.subject_video_task_id = result.task_id
+                appearance.subject_video_task_status = result.task_status
+                appearance.subject_video_request_id = result.request_id
+                appearance.subject_video_usage = result.usage
+                appearance.subject_video_raw_response = result.raw_response
+                generated.append(
+                    RoleSubjectVideoGenerationItem(
+                        role_id=role.id,
+                        role_name=role.name,
+                        appearance_id=appearance.id,
+                        appearance_name=appearance.name,
+                        asset_id=resumed_asset_id,
+                        prompt="",
+                        duration_seconds=duration,
+                        asset_path=restored_asset_path,
+                        asset_url=appearance.subject_video_asset_url,
+                        provider=result.provider,
+                        model=result.model,
+                        task_id=result.task_id,
+                        task_status=result.task_status,
+                        request_id=result.request_id,
+                        usage=result.usage,
+                        raw_response=result.raw_response,
+                    )
+                )
+                continue
 
             roleboard_ref = self._roleboard_ref(project_dir, role, appearance)
             if roleboard_ref is None:
@@ -206,24 +344,36 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
             if key_vision_ref is not None:
                 refs.append(key_vision_ref)
             prompt = self._prompt(role, appearance, has_key_vision=key_vision_ref is not None)
-            result = await provider.generate_video(
-                prompt,
-                refs=refs,
-                duration=duration,
-                wait=True,
-                metadata={
-                    "node_name": self.name,
-                    "project_id": state.project_id,
-                    "asset_id": asset_id,
-                    "asset_type": "role_subject_video",
-                    "role_id": role.id,
-                    "role_name": role.name,
-                    "appearance_id": appearance.id,
-                    "appearance_name": appearance.name,
-                    "duration": duration,
-                    "external_task_id": f"{state.project_id}_{asset_id}",
-                },
-            )
+            external_task_id = f"{state.project_id}_{asset_id}"
+            metadata = {
+                "node_name": self.name,
+                "project_id": state.project_id,
+                "asset_id": asset_id,
+                "asset_type": "role_subject_video",
+                "role_id": role.id,
+                "role_name": role.name,
+                "appearance_id": appearance.id,
+                "appearance_name": appearance.name,
+                "duration": duration,
+                "external_task_id": external_task_id,
+            }
+            try:
+                result = await provider.generate_video(
+                    prompt,
+                    refs=refs,
+                    duration=duration,
+                    wait=True,
+                    metadata=metadata,
+                )
+            except ProviderBadResponseError as exc:
+                if not self._external_task_already_exists(exc):
+                    raise
+                result = await self._query_existing_subject_video_task(
+                    provider,
+                    external_task_id=external_task_id,
+                    role=role,
+                    appearance=appearance,
+                )
             asset_path = await self.media_store.write_generated_video(project_dir, output_path, result)
             appearance.subject_video_asset_id = asset_id
             appearance.subject_video_asset_path = asset_path
