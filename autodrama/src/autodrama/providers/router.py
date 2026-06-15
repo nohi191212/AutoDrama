@@ -21,6 +21,7 @@ from autodrama.providers.base import (
 )
 from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
 from autodrama.providers.elevenlabs.music.compose import ElevenLabsMusicProvider
+from autodrama.providers.google.text.gemini import GeminiTextProvider
 from autodrama.providers.kling.video.omni import KlingOmniVideoProvider
 from autodrama.providers.local.mock.fake import (
     FakeAudioJudgeProvider,
@@ -51,6 +52,7 @@ MINIMAX_MUSIC_PROVIDER_NAMES = {"minimax", "minimax_music"}
 ELEVENLABS_MUSIC_PROVIDER_NAMES = {"elevenlabs", "elevenlabs_music"}
 VOLCENGINE_IMAGE_PROVIDER_NAMES = {"volcengine", "seedream", "volcengine_seedream"}
 KLING_VIDEO_PROVIDER_NAMES = {"kling", "kling_omni", "kling_video"}
+GOOGLE_TEXT_PROVIDER_NAMES = {"google", "gemini"}
 
 
 class BoundProviderProxy:
@@ -164,6 +166,57 @@ class BoundProviderProxy:
             metadata=merged_metadata,
         )
 
+    async def create_subject_element(
+        self,
+        *,
+        element_name,
+        element_description,
+        reference_type,
+        video_url=None,
+        image_refs=None,
+        metadata=None,
+    ):
+        return await self._provider.create_subject_element(
+            element_name=element_name,
+            element_description=element_description,
+            reference_type=reference_type,
+            video_url=video_url,
+            image_refs=image_refs,
+            metadata=self._metadata(metadata),
+        )
+
+    async def query_subject_element_task(self, task_id):
+        return await self._provider.query_subject_element_task(task_id)
+
+    async def query_subject_element(self, *, task_id=None, external_task_id=None):
+        if hasattr(self._provider, "query_subject_element"):
+            return await self._provider.query_subject_element(task_id=task_id, external_task_id=external_task_id)
+        query_id = external_task_id or task_id
+        if query_id is None:
+            raise ValueError("Subject element query requires task_id or external_task_id")
+        return await self._provider.query_subject_element_task(query_id)
+
+    async def generate_subject_element(
+        self,
+        *,
+        element_name,
+        element_description,
+        reference_type,
+        video_url=None,
+        image_refs=None,
+        wait: bool = True,
+        metadata=None,
+    ):
+        return await self._provider.generate_subject_element(
+            element_name=element_name,
+            element_description=element_description,
+            reference_type=reference_type,
+            video_url=video_url,
+            image_refs=image_refs,
+            wait=wait,
+            metadata=self._metadata(metadata),
+        )
+
     async def create_voice(self, *, voice_prompt, preview_text, preferred_name, metadata=None):
         return await self._provider.create_voice(
             voice_prompt=voice_prompt,
@@ -225,6 +278,15 @@ class ProviderRouter:
             {"rightcode"},
             lambda provider_name, purpose, **_: RightCodeTextProvider(
                 self._settings_for(provider_name),
+                self.settings.runtime,
+                model_key=purpose,
+            ),
+        )
+        self.registry.register(
+            "text",
+            GOOGLE_TEXT_PROVIDER_NAMES,
+            lambda provider_name, purpose, **_: GeminiTextProvider(
+                self._settings_for("google" if provider_name == "gemini" else provider_name),
                 self.settings.runtime,
                 model_key=purpose,
             ),

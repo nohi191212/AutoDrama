@@ -41,6 +41,12 @@ if "%~1"=="--generation" (
   shift
   goto parse
 )
+if "%~1"=="--postgen" (
+  set "WORKFLOW=postgen"
+  if "%UNTIL%"=="role_voice_select" set "UNTIL=postgen_video_composition"
+  shift
+  goto parse
+)
 if "%~1"=="--pregen" (
   set "WORKFLOW=pregen"
   shift
@@ -115,9 +121,10 @@ echo Usage:
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
 echo   run\start.cmd [--only NODE] [--episodes 1,3] [--roles ROLE1,ROLE2] [--shots 1-3]
 echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force]
+echo   run\start.cmd --postgen [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-9] [--only NODE] [--fake] [--force]
 echo   --episode is accepted as an alias for --episodes.
 echo   --role is accepted as an alias for --roles.
-echo   run\start.cmd --workflow pregen^|generation [options]
+echo   run\start.cmd --workflow pregen^|generation^|postgen [options]
 echo.
 echo This is the native Windows entry point. It uses runtime.python.windows
 echo from config.yaml when available, otherwise D:\miniforge3\envs\autodrama\python.exe.
@@ -134,6 +141,7 @@ echo   storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop,
 echo   shot_manifest_generation, then role_voice_select.
 echo   pregen --roles is supported with --only role_voice_select.
 echo   generation starts with shot_dialogue_audio_generation, then shot_video_generation and solidification.
+echo   postgen collects generated shot videos, asks for an edit plan, validates it, and composes final episode video.
 goto end
 
 :help_error
@@ -141,6 +149,7 @@ echo Usage: 1>&2
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force] 1>&2
 echo   run\start.cmd [--only NODE] [--episodes 1,3] [--roles ROLE1,ROLE2] 1>&2
 echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force] 1>&2
+echo   run\start.cmd --postgen [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-9] [--only NODE] [--fake] [--force] 1>&2
 echo   --episode is accepted as an alias for --episodes. 1>&2
 echo   --role is accepted as an alias for --roles. 1>&2
 exit /b 2
@@ -148,13 +157,17 @@ exit /b 2
 :run
 if /I "%WORKFLOW%"=="pregen" goto workflow_ok
 if /I "%WORKFLOW%"=="generation" goto workflow_ok
+if /I "%WORKFLOW%"=="postgen" goto workflow_ok
 echo Unsupported workflow: %WORKFLOW% 1>&2
-echo Expected pregen or generation. 1>&2
+echo Expected pregen, generation, or postgen. 1>&2
 exit /b 2
 
 :workflow_ok
 if /I "%WORKFLOW%"=="generation" (
   if "%UNTIL%"=="role_voice_select" set "UNTIL=dynamic_asset_solidification"
+)
+if /I "%WORKFLOW%"=="postgen" (
+  if "%UNTIL%"=="role_voice_select" set "UNTIL=postgen_video_composition"
 )
 
 for /f "tokens=1,* delims=:" %%A in ('findstr /R /C:"^[ ][ ]*windows:" "%CONFIG%" 2^>nul') do (
@@ -187,6 +200,7 @@ if not "%EPISODES%"=="" set "EPISODE_ARGS=--episodes "%EPISODES%""
 
 set "SHOT_ARGS="
 if /I "%WORKFLOW%"=="generation" if not "%SHOTS%"=="" set "SHOT_ARGS=--shots "%SHOTS%""
+if /I "%WORKFLOW%"=="postgen" if not "%SHOTS%"=="" set "SHOT_ARGS=--shots "%SHOTS%""
 
 set "ROLE_ARGS="
 if /I "%WORKFLOW%"=="pregen" if not "%ROLES%"=="" set "ROLE_ARGS=--roles "%ROLES%""

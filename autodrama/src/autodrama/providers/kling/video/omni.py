@@ -382,12 +382,24 @@ class KlingOmniVideoProvider:
         return payload
 
     async def query_subject_element_task(self, task_id: str) -> SubjectElementResult:
+        return await self.query_subject_element(task_id=task_id)
+
+    async def query_subject_element(
+        self,
+        *,
+        task_id: str | None = None,
+        external_task_id: str | None = None,
+    ) -> SubjectElementResult:
+        if not task_id and not external_task_id:
+            raise ValueError("Kling subject element query requires task_id or external_task_id")
+        if task_id and external_task_id:
+            raise ValueError("Kling subject element query accepts only one of task_id or external_task_id")
         async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
             response = await client.get(
                 self._query_url(
                     option_key="subject_element_query_endpoint",
                     default_path=self.subject_element_path,
-                    task_id=task_id,
+                    task_id=external_task_id or task_id,
                 ),
                 headers=self._headers(),
             )
@@ -425,7 +437,7 @@ class KlingOmniVideoProvider:
         task_id = result.task_id
         for _poll_index in range(1, self.max_polls + 1):
             await asyncio.sleep(self.poll_interval_seconds)
-            result = await self.query_subject_element_task(task_id)
+            result = await self.query_subject_element(task_id=task_id)
             status = str(result.task_status or "").strip().lower()
             if status in self._TERMINAL_SUCCESS:
                 return result
@@ -483,12 +495,14 @@ class KlingOmniVideoProvider:
         fallback_task_id: str | None = None,
         fallback_model: str | None = None,
     ) -> SubjectElementResult:
-        element_id = cls._first(body, "element_id", "elementId")
+        task_id = cls._task_id(body) or fallback_task_id
+        task_status = cls._status(body)
+        element_id = cls._subject_element_id(body)
         return SubjectElementResult(
             provider=cls.name,
             model=str(cls._first(body, "model_name", "model") or fallback_model or "advanced-custom-elements"),
-            task_id=cls._task_id(body) or fallback_task_id,
-            task_status=cls._status(body),
+            task_id=task_id,
+            task_status=task_status,
             element_id=str(element_id) if element_id is not None else None,
             request_id=request_id or cls._first(body, "request_id", "requestId"),
             usage=cls._usage(body),
@@ -509,6 +523,50 @@ class KlingOmniVideoProvider:
     def _usage(cls, body: dict[str, Any]) -> dict[str, Any]:
         value = cls._first(body, "usage")
         return dict(value) if isinstance(value, dict) else {}
+
+    @classmethod
+    def _subject_element_id(cls, value: object, *, allow_generic_id: bool = False) -> Any:
+        direct_keys = (
+            "element_id",
+            "elementId",
+            "subject_element_id",
+            "subjectElementId",
+            "custom_element_id",
+            "customElementId",
+        )
+        if isinstance(value, dict):
+            for key in direct_keys:
+                candidate = value.get(key)
+                if candidate is not None:
+                    return candidate
+            if allow_generic_id:
+                candidate = value.get("id")
+                if candidate is not None:
+                    return candidate
+            for key in ("data", "output", "result", "task_result", "taskResult", "content"):
+                found = cls._subject_element_id(value.get(key))
+                if found is not None:
+                    return found
+            for key in (
+                "elements",
+                "element_list",
+                "elementList",
+                "custom_elements",
+                "customElements",
+                "subject_elements",
+                "subjectElements",
+                "works",
+                "items",
+            ):
+                found = cls._subject_element_id(value.get(key), allow_generic_id=True)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for item in value:
+                found = cls._subject_element_id(item, allow_generic_id=allow_generic_id)
+                if found is not None:
+                    return found
+        return None
 
     @classmethod
     def _first_url(cls, value: object) -> str | None:

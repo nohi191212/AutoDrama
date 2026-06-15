@@ -74,6 +74,28 @@ models:
       thinking_enabled:
         type: boolean
 
+  google:gemini-3.5-flash:
+    provider: google
+    family: gemini
+    capability: text
+    input_modalities: [text]
+    output_modalities: [json]
+    limits:
+      max_output_tokens: 8192
+    params_schema:
+      temperature:
+        type: number
+        min: 0
+        max: 2
+      response_format:
+        type: string
+        enum: [json_object, text]
+      max_output_tokens:
+        type: integer
+        min: 1
+      thinking_level:
+        type: string
+
   toapi:gpt-image-2:
     provider: toapi
     family: gpt-image

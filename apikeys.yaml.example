@@ -10,6 +10,9 @@ RIGHTCODE_API_KEY: ""
 # DeepSeek text generation
 DEEPSEEK_API_KEY: ""
 
+# Google Gemini text generation
+GOOGLE_API_KEY: ""
+
 # MiniMax audio/music, if enabled
 MINIMAX_API_KEY: ""
 MINIMAX_GROUP_ID: ""

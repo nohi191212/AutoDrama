@@ -122,6 +122,40 @@ def main() -> int:
     )
     require(nested_video_result.video_url == "https://example.invalid/generated.mp4", str(nested_video_result))
 
+    nested_subject_result = KlingOmniVideoProvider._subject_result(
+        {
+            "code": 0,
+            "data": {
+                "task_id": "subject-task-with-result",
+                "task_status": "succeed",
+                "task_result": {
+                    "elements": [
+                        {
+                            "element_id": 987654321,
+                            "name": "Lin Zhou subject",
+                        }
+                    ]
+                },
+            },
+        },
+        fallback_model="advanced-custom-elements",
+    )
+    require(nested_subject_result.element_id == "987654321", str(nested_subject_result))
+
+    submitted_subject_result = KlingOmniVideoProvider._subject_result(
+        {
+            "code": 0,
+            "data": {
+                "task_id": "123456789",
+                "task_status": "submitted",
+                "task_info": {"external_task_id": "demo_role_linz_subject"},
+            },
+        },
+        fallback_model="advanced-custom-elements",
+    )
+    require(submitted_subject_result.element_id is None, str(submitted_subject_result))
+    require(submitted_subject_result.task_id == "123456789", str(submitted_subject_result))
+
     print("kling_payload_smoke=ok")
     print(f"omni_payload_path={payload_path}")
     print(f"subject_payload_path={subject_path}")

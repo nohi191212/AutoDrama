@@ -67,6 +67,16 @@ class GenerationSettings(BaseModel):
     layout_design_style_prompt: str = ""
 
 
+class PostgenSettings(BaseModel):
+    max_source_clips_per_plan: int = Field(default=9, ge=1, le=9)
+    render_width: int = Field(default=720, ge=64)
+    render_height: int = Field(default=1280, ge=64)
+    fps: int = Field(default=25, ge=1, le=120)
+    burn_subtitles: bool = True
+    edit_plan_mode: Literal["llm", "deterministic"] = "llm"
+    keep_tmp_cuts: bool = True
+
+
 class ProviderSettings(BaseModel):
     base_url: str | None = None
     api_key_env: str | None = None
@@ -100,6 +110,7 @@ class Settings(BaseModel):
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     generation: GenerationSettings = Field(default_factory=GenerationSettings)
+    postgen: PostgenSettings = Field(default_factory=PostgenSettings)
     providers: dict[str, ProviderSettings] = Field(default_factory=dict)
     routing: dict[str, dict[str, str]] = Field(default_factory=dict)
     model_catalog_file: Path | None = Path("./model_catalog.yaml")

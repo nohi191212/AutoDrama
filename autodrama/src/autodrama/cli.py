@@ -17,6 +17,7 @@ from autodrama.services.voice_catalog_service import VoiceCatalogService
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.generation import DEFAULT_GENERATION_NODES, GENERATION_NODES, GenerationWorkflow
 from autodrama.workflows.pregen import PREGEN_NODES, PREGEN_ONLY_NODES, PregenWorkflow
+from autodrama.workflows.postgen import POSTGEN_NODES, PostgenWorkflow
 from autodrama.workflows.selection import (
     parse_episode_keys as parse_episode_keys_value,
     parse_shot_selectors as parse_shot_selectors_value,
@@ -170,6 +171,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     generation_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     generation_parser.add_argument("--force", action="store_true")
+
+    postgen_parser = run_subparsers.add_parser("postgen", help="Run post-generation editing/composition")
+    postgen_parser.add_argument("--config", required=True)
+    postgen_parser.add_argument("--project")
+    postgen_parser.add_argument("--until", choices=POSTGEN_NODES, default=POSTGEN_NODES[-1])
+    postgen_parser.add_argument(
+        "--only",
+        "--node",
+        dest="only",
+        choices=POSTGEN_NODES,
+        help="Run exactly one post-generation node.",
+    )
+    postgen_parser.add_argument(
+        "--episodes",
+        "--episode",
+        dest="episodes",
+        help="Comma-separated episode keys or numbers to post-process.",
+    )
+    postgen_parser.add_argument(
+        "--shots",
+        help="Comma-separated shot indexes or ids to include in the postgen source clip set.",
+    )
+    postgen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
+    postgen_parser.add_argument("--force", action="store_true")
 
     catalog_parser = subparsers.add_parser("voice-catalog", help="Build or inspect reusable provider voice catalogs")
     catalog_subparsers = catalog_parser.add_subparsers(dest="action", required=True)
@@ -732,6 +757,46 @@ async def cmd_run_generation(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_run_postgen(args: argparse.Namespace) -> int:
+    settings = load_settings(args.config)
+    repo = ProjectRepository(settings)
+    project_dir = repo.resolve_active_project_dir(args.project)
+    episode_keys = parse_episode_keys(args.episodes)
+
+    provider_override = "fake" if args.provider == "fake" else None
+    router = ProviderRouter(settings, provider_override=provider_override)
+    workflow = PostgenWorkflow(repo=repo, router=router)
+    state = await workflow.run(
+        project_dir,
+        until=args.until,
+        force=args.force,
+        episode_keys=episode_keys,
+        only=args.only,
+        shot_selectors=parse_shot_selectors(args.shots),
+    )
+    get_logger().info(
+        "run summary workflow=postgen project_id=%s current_node=%s project_dir=%s",
+        state.project_id,
+        state.current_node,
+        project_dir,
+    )
+    print(
+        json.dumps(
+            {
+                "project_id": state.project_id,
+                "current_node": state.current_node,
+                "completed_nodes": state.completed_nodes,
+                "project_dir": str(project_dir),
+                "shots": args.shots or None,
+                "postgen_outputs": str(project_dir / "outputs" / "videos"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def cmd_inspect_state(args: argparse.Namespace) -> int:
     settings = load_settings(args.config)
     repo = ProjectRepository(settings)
@@ -780,7 +845,7 @@ def cmd_inspect_nodes(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
-    if argv and argv[0] in {"pregen", "generation"}:
+    if argv and argv[0] in {"pregen", "generation", "postgen"}:
         argv = ["run", *argv]
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -793,6 +858,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(cmd_run_pregen(args))
     if args.command == "run" and args.workflow == "generation":
         return asyncio.run(cmd_run_generation(args))
+    if args.command == "run" and args.workflow == "postgen":
+        return asyncio.run(cmd_run_postgen(args))
     if args.command == "voice-catalog" and args.action == "build":
         return asyncio.run(cmd_voice_catalog_build(args))
     if args.command == "voice-catalog" and args.action == "inspect":

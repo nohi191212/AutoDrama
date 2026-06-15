@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from io import BytesIO
+import json
 import re
 from typing import Any, TypeVar
 
@@ -36,6 +37,7 @@ from autodrama.core.voice_catalog import (
     VoiceSelectAudioJudgeOutput,
     VoiceSelectShortlistOutput,
 )
+from autodrama.postgen.schemas import PostgenEditPlan
 from autodrama.providers.base import (
     AssetRef,
     ImageGenerationResult,
@@ -65,6 +67,27 @@ def _extract_markdown_section(prompt: str, heading: str, next_heading: str | Non
         if next_marker in text:
             text = text.split(next_marker, 1)[0].strip()
     return text.strip()
+
+
+def _extract_json_after_label(prompt: str, label: str) -> Any:
+    marker = f"{label}："
+    start = prompt.find(marker)
+    if start < 0:
+        marker = f"{label}:"
+        start = prompt.find(marker)
+    if start < 0:
+        return None
+    text = prompt[start + len(marker) :].strip()
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(text[index:])
+        except Exception:
+            continue
+        return parsed
+    return None
 
 
 def _episode_keys(episode_count: int) -> list[str]:
@@ -607,6 +630,74 @@ class FakeTextProvider:
             ]
             data = {
                 "bgms": bgms
+            }
+        elif schema is PostgenEditPlan or node_name == "postgen_edit_plan_generation":
+            episode_key = str(metadata.get("episode_key") or episode_keys[0])
+            clips = _extract_json_after_label(prompt, "输入镜头 JSON")
+            if not isinstance(clips, list) or not clips:
+                clips = [
+                    {
+                        "shot_id": f"{episode_key}_shot_001",
+                        "shot_index": 1,
+                        "source_path": "assets/videos/shots/fake_shot_001.mp4",
+                        "duration_seconds": 2.0,
+                    }
+                ]
+            normalized_clips = []
+            timeline = []
+            for index, clip in enumerate(clips[:9], start=1):
+                if not isinstance(clip, dict):
+                    continue
+                shot_id = str(clip.get("shot_id") or f"{episode_key}_shot_{index:03d}")
+                duration = max(0.25, float(clip.get("duration_seconds") or 2.0))
+                source_in = min(0.15, duration * 0.1)
+                source_out = max(source_in + 0.25, duration - min(0.15, duration * 0.1))
+                source_path = str(clip.get("source_path") or clip.get("path") or f"assets/videos/shots/{shot_id}.mp4")
+                normalized_clips.append(
+                    {
+                        "episode_key": episode_key,
+                        "shot_id": shot_id,
+                        "shot_index": int(clip.get("shot_index") or clip.get("index") or index),
+                        "title": clip.get("title"),
+                        "source_path": source_path,
+                        "duration_seconds": duration,
+                        "dialogue_lines": list(clip.get("dialogue_lines") or clip.get("dialogue") or []),
+                        "role_ids": list(clip.get("role_ids") or []),
+                        "prop_ids": list(clip.get("prop_ids") or []),
+                        "content": clip.get("content"),
+                        "video_prompt": clip.get("video_prompt"),
+                        "camera_movement": clip.get("camera_movement"),
+                        "transition_hint": clip.get("transition_hint"),
+                    }
+                )
+                timeline.append(
+                    {
+                        "clip_id": f"{episode_key}_cut_{index:03d}",
+                        "shot_id": shot_id,
+                        "source_in": round(source_in, 3),
+                        "source_out": round(source_out, 3),
+                        "speed": 1.0,
+                        "transition_after": {"type": "cut"},
+                        "rationale": "fake provider trims short handles for postgen smoke.",
+                    }
+                )
+            output_path_match = re.search(r"output_path=([^,\n]+)", prompt)
+            output_path = output_path_match.group(1).strip() if output_path_match else f"outputs/videos/{episode_key}_postgen.mp4"
+            data = {
+                "schema_version": "autodrama.postgen.edit_plan.v1",
+                "episode_key": episode_key,
+                "source_clips": normalized_clips,
+                "timeline": timeline,
+                "output": {
+                    "path": output_path,
+                    "width": 720,
+                    "height": 1280,
+                    "fps": 25,
+                    "burn_subtitles": True,
+                    "audio": False,
+                },
+                "warnings": [],
+                "metadata": {"provider": "fake", "model": "fake"},
             }
         elif schema is SafeImagePromptRewriteOutput or node_name == "image_prompt_safety_rewrite":
             original_prompt = _extract_markdown_section(prompt, "原始图像生成 prompt", "## 安全失败信息")

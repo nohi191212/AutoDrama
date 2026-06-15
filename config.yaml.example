@@ -231,6 +231,11 @@ nodes:
       reasoning_effort: low
       temperature: 0.2
       response_format: json_object
+  postgen_edit_plan_generation:
+    model: google:gemini-3.5-flash
+    params:
+      temperature: 0.2
+      response_format: json_object
 
 project:
   # Stable ID is recommended because resume relies on it.
@@ -301,6 +306,16 @@ generation:
     场景图保持国漫CG/动画电影无人物空场景质感，空间结构清晰，前中后景层次明确；
     材质、光源、阴影、空气粒子和色彩关系稳定可复用，适配16:9短剧构图。
     不出现人物、背影、手、剪影、字幕、水印、文字标识或无关logo。
+
+postgen:
+  max_source_clips_per_plan: 9
+  render_width: 720
+  render_height: 1280
+  fps: 25
+  burn_subtitles: true
+  # Use deterministic for local dry-runs; llm calls routing.text.postgen_edit_plan.
+  edit_plan_mode: llm
+  keep_tmp_cuts: true
 
 providers:
   aliyun:
@@ -407,6 +422,17 @@ providers:
       thinking_enabled: true
       storyboard_reasoning_effort: max
       storyboard_thinking_enabled: true
+
+  google:
+    base_url: https://generativelanguage.googleapis.com
+    api_key_env: GOOGLE_API_KEY
+    models:
+      text: gemini-3.5-flash
+      postgen_edit_plan: gemini-3.5-flash
+    options:
+      response_format: json_object
+      temperature: 0.2
+      max_output_tokens: 8192
 
   minimax:
     base_url: https://api.minimaxi.com
@@ -595,6 +621,7 @@ routing:
     prop: rightcode
     layout: rightcode
     storyboard: rightcode
+    postgen_edit_plan: google
     edit_plan: rightcode
     bgm_plan: rightcode
   image:

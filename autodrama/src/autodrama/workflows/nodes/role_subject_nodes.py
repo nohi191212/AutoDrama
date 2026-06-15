@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from autodrama.core.schemas import (
     RoleSubjectVideoGenerationOutput,
     RoleSubjectVideoIntroTextOutput,
 )
-from autodrama.providers.base import AssetRef, VideoGenerationResult
+from autodrama.providers.base import AssetRef, SubjectElementResult, VideoGenerationResult
 from autodrama.workflows.runner import WorkflowNode
 
 
@@ -566,6 +567,12 @@ class RoleSubjectElementGenerationNode(RoleSubjectNodeBase):
     name = "role_subject_element_generation"
 
     @staticmethod
+    def _external_task_already_exists(exc: ProviderBadResponseError) -> bool:
+        text = str(exc)
+        lowered = text.casefold()
+        return "external_task_id" in lowered and ("already exists" in lowered or "已存在" in text)
+
+    @staticmethod
     def _element_description(role: Role, appearance: RoleAppearance) -> str:
         text = " ".join(
             str(part or "").strip()
@@ -582,6 +589,77 @@ class RoleSubjectElementGenerationNode(RoleSubjectNodeBase):
     def _image_refs(self, project_dir: Path, role: Role, appearance: RoleAppearance) -> list[AssetRef]:
         ref = self._roleboard_ref(project_dir, role, appearance)
         return [ref] if ref is not None else []
+
+    @staticmethod
+    def _subject_success_statuses(provider: object) -> set[str]:
+        statuses = getattr(provider, "_TERMINAL_SUCCESS", {"succeed", "succeeded", "success", "completed", "done"})
+        return {str(status).strip().lower() for status in statuses}
+
+    @staticmethod
+    def _subject_failure_statuses(provider: object) -> set[str]:
+        statuses = getattr(
+            provider,
+            "_TERMINAL_FAILURE",
+            {"failed", "fail", "error", "expired", "cancelled", "canceled"},
+        )
+        return {str(status).strip().lower() for status in statuses}
+
+    @staticmethod
+    def _raw_response_excerpt(result: SubjectElementResult) -> str:
+        try:
+            text = json.dumps(result.raw_response or {}, ensure_ascii=False, default=str)
+        except TypeError:
+            text = repr(result.raw_response)
+        return text[:1000]
+
+    async def _query_existing_subject_element_task(
+        self,
+        provider: object,
+        *,
+        external_task_id: str,
+        role: Role,
+        appearance: RoleAppearance,
+    ) -> SubjectElementResult:
+        query_subject_element = getattr(provider, "query_subject_element", None)
+        if query_subject_element is not None:
+            async def query() -> SubjectElementResult:
+                return await query_subject_element(external_task_id=external_task_id)
+        else:
+            query_subject_element_task = getattr(provider, "query_subject_element_task", None)
+            if query_subject_element_task is None:
+                raise ProviderError(
+                    f"{self.name} cannot recover existing subject element for {role.name}/{appearance.name}: "
+                    "provider does not support query_subject_element"
+                )
+
+            async def query() -> SubjectElementResult:
+                return await query_subject_element_task(external_task_id)
+
+        success_statuses = self._subject_success_statuses(provider)
+        failure_statuses = self._subject_failure_statuses(provider)
+        max_polls = int(getattr(provider, "max_polls", 120))
+        poll_interval_seconds = float(getattr(provider, "poll_interval_seconds", 5))
+        last_result: SubjectElementResult | None = None
+        for poll_index in range(1, max_polls + 1):
+            if poll_index > 1 and poll_interval_seconds > 0:
+                await asyncio.sleep(poll_interval_seconds)
+            result = await query()
+            last_result = result
+            status = str(result.task_status or "").strip().lower()
+            if status in success_statuses:
+                return result
+            if status in failure_statuses:
+                raise ProviderError(
+                    f"{self.name} recovered existing task {external_task_id} for "
+                    f"{role.name}/{appearance.name}, but it ended with status {result.task_status}"
+                )
+            if result.element_id and not status:
+                return result
+        last_status = last_result.task_status if last_result is not None else "-"
+        raise ProviderError(
+            f"{self.name} recovered existing task {external_task_id} for {role.name}/{appearance.name}, "
+            f"but it did not finish after {max_polls} polls; last status={last_status}"
+        )
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self._video_provider(node_name=self.name)
@@ -636,25 +714,41 @@ class RoleSubjectElementGenerationNode(RoleSubjectNodeBase):
             if reference_type == "image_refer" and not image_refs:
                 raise ValueError(f"{self.name} requires roleboard image for {role.name}/{appearance.name}")
 
-            result = await provider.generate_subject_element(
-                element_name=role.name[:20],
-                element_description=self._element_description(role, appearance),
-                reference_type=reference_type,
-                video_url=video_url,
-                image_refs=image_refs,
-                wait=True,
-                metadata={
-                    "node_name": self.name,
-                    "project_id": state.project_id,
-                    "role_id": role.id,
-                    "role_name": role.name,
-                    "appearance_id": appearance.id,
-                    "appearance_name": appearance.name,
-                    "external_task_id": f"{state.project_id}_{appearance.id}_subject_element",
-                },
-            )
+            external_task_id = f"{state.project_id}_{appearance.id}_subject_element"
+            metadata = {
+                "node_name": self.name,
+                "project_id": state.project_id,
+                "role_id": role.id,
+                "role_name": role.name,
+                "appearance_id": appearance.id,
+                "appearance_name": appearance.name,
+                "external_task_id": external_task_id,
+            }
+            try:
+                result = await provider.generate_subject_element(
+                    element_name=role.name[:20],
+                    element_description=self._element_description(role, appearance),
+                    reference_type=reference_type,
+                    video_url=video_url,
+                    image_refs=image_refs,
+                    wait=True,
+                    metadata=metadata,
+                )
+            except ProviderBadResponseError as exc:
+                if not self._external_task_already_exists(exc):
+                    raise
+                result = await self._query_existing_subject_element_task(
+                    provider,
+                    external_task_id=external_task_id,
+                    role=role,
+                    appearance=appearance,
+                )
             if not result.element_id:
-                raise ValueError(f"Kling subject element task for {role.name}/{appearance.name} returned no element_id")
+                raise ValueError(
+                    f"Kling subject element task for {role.name}/{appearance.name} returned no element_id; "
+                    f"task_id={result.task_id or '-'} status={result.task_status or '-'} "
+                    f"request_id={result.request_id or '-'} raw_response={self._raw_response_excerpt(result)}"
+                )
             appearance.subject_element_provider = result.provider or getattr(provider, "name", None)
             appearance.subject_element_model = result.model or getattr(provider, "subject_element_model", None)
             appearance.subject_element_reference_type = reference_type
