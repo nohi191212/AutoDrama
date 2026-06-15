@@ -513,7 +513,7 @@ class KlingOmniVideoProvider:
     @classmethod
     def _first_url(cls, value: object) -> str | None:
         if isinstance(value, dict):
-            for key in ("video_url", "videoUrl"):
+            for key in ("video_url", "videoUrl", "url"):
                 candidate = value.get(key)
                 if isinstance(candidate, str) and candidate:
                     return candidate

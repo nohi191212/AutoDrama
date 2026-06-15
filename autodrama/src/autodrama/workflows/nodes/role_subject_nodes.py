@@ -127,6 +127,35 @@ class RoleSubjectNodeBase:
         value = options.get("subject_video_duration_seconds") or options.get("subject_duration_seconds") or 5
         return float(value)
 
+    @staticmethod
+    def _bounded_concurrency(provider: object, *option_names: str, default: int = 1, cap: int = 5) -> int:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        value: object = None
+        for source in (params, options):
+            if not isinstance(source, dict):
+                continue
+            for name in option_names:
+                if name in source:
+                    value = source[name]
+                    break
+            if value is not None:
+                break
+        if value is None:
+            for name in option_names:
+                value = getattr(provider, name, None)
+                if value is not None:
+                    break
+        if value is None:
+            value = default
+        try:
+            resolved = int(value)
+        except (TypeError, ValueError):
+            resolved = default
+        return max(1, min(cap, resolved))
+
 
 class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
     name = "role_subject_video_generation"
@@ -312,13 +341,27 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
         skipped: list[dict[str, Any]] = []
         duration = self._subject_video_duration(provider)
         targets = self._target_role_appearances(state)
-        for role, appearance in targets:
+        concurrency = self._bounded_concurrency(
+            provider,
+            "role_subject_video_generation_concurrency",
+            "subject_video_generation_concurrency",
+            "video_generation_concurrency",
+            "max_concurrent_videos",
+            default=1,
+            cap=5,
+        )
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def process_target(
+            role: Role,
+            appearance: RoleAppearance,
+        ) -> tuple[RoleSubjectVideoGenerationItem | None, dict[str, Any] | None]:
             asset_id = normalize_id(f"{appearance.id}", "subject_video")
             output_path = self.layout.video_asset_path(project_dir, "roles", asset_id)
             existing_video_path = self.layout.existing_project_file(project_dir, appearance.subject_video_asset_path)
             existing_has_intro_audio = bool(str(appearance.subject_video_intro_text or "").strip())
             if not force and existing_video_path and existing_has_intro_audio:
-                generated.append(
+                return (
                     RoleSubjectVideoGenerationItem(
                         role_id=role.id,
                         role_name=role.name,
@@ -337,9 +380,9 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                         request_id=appearance.subject_video_request_id,
                         usage=appearance.subject_video_usage,
                         raw_response=appearance.subject_video_raw_response or {"resumed_from_existing_subject_video": True},
-                    )
+                    ),
+                    None,
                 )
-                continue
             if not force and appearance.subject_video_asset_url and existing_has_intro_audio:
                 resumed_asset_id = appearance.subject_video_asset_id or asset_id
                 result = VideoGenerationResult(
@@ -377,7 +420,7 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                 appearance.subject_video_request_id = result.request_id
                 appearance.subject_video_usage = result.usage
                 appearance.subject_video_raw_response = result.raw_response
-                generated.append(
+                return (
                     RoleSubjectVideoGenerationItem(
                         role_id=role.id,
                         role_name=role.name,
@@ -396,14 +439,13 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                         request_id=result.request_id,
                         usage=result.usage,
                         raw_response=result.raw_response,
-                    )
+                    ),
+                    None,
                 )
-                continue
 
             roleboard_ref = self._roleboard_ref(project_dir, role, appearance)
             if roleboard_ref is None:
-                skipped.append({"role_id": role.id, "appearance_id": appearance.id, "reason": "missing_roleboard"})
-                continue
+                return None, {"role_id": role.id, "appearance_id": appearance.id, "reason": "missing_roleboard"}
             refs = [roleboard_ref]
             key_vision_ref = self._key_vision_ref(project_dir, state, reference_for=asset_id)
             if key_vision_ref is not None:
@@ -449,6 +491,11 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                     appearance=appearance,
                 )
             asset_path = await self.media_store.write_generated_video(project_dir, output_path, result)
+            if not asset_path:
+                raise ValueError(
+                    f"{self.name} could not save local subject video for "
+                    f"{role.name}/{appearance.name}: provider result has no downloadable video URL"
+                )
             appearance.subject_video_asset_id = asset_id
             appearance.subject_video_asset_path = asset_path
             appearance.subject_video_asset_url = result.video_url
@@ -460,7 +507,7 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
             appearance.subject_video_request_id = result.request_id
             appearance.subject_video_usage = result.usage
             appearance.subject_video_raw_response = result.raw_response
-            generated.append(
+            return (
                 RoleSubjectVideoGenerationItem(
                     role_id=role.id,
                     role_name=role.name,
@@ -479,8 +526,30 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                     request_id=result.request_id,
                     usage=result.usage,
                     raw_response=result.raw_response,
-                )
+                ),
+                None,
             )
+
+        async def run_target(
+            role: Role,
+            appearance: RoleAppearance,
+        ) -> tuple[RoleSubjectVideoGenerationItem | None, dict[str, Any] | None]:
+            async with semaphore:
+                return await process_target(role, appearance)
+
+        tasks = [asyncio.create_task(run_target(role, appearance)) for role, appearance in targets]
+        try:
+            results = await asyncio.gather(*tasks)
+        except Exception:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        for item, skip in results:
+            if item is not None:
+                generated.append(item)
+            if skip is not None:
+                skipped.append(skip)
 
         self.repo.save_node_output(
             project_dir,

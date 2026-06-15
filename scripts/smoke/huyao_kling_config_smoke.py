@@ -41,6 +41,14 @@ def main() -> int:
         "shot_video_generation must bind to kling-v3-omni",
     )
     require(
+        settings.nodes["role_subject_video_generation"].params.get("role_subject_video_generation_concurrency") == 5,
+        "role_subject_video_generation_concurrency must be 5",
+    )
+    require(
+        settings.nodes["shot_video_generation"].params.get("shot_video_generation_concurrency") == 5,
+        "shot_video_generation_concurrency must be 5",
+    )
+    require(
         settings.providers["kling"].options.get("video_reference_mode") == "subject_storyboard_key_vision",
         "Kling video_reference_mode must use subject/storyboard/key-vision refs",
     )

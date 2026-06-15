@@ -58,6 +58,35 @@ class DynamicAssetNodeMixin:
         return bool(getattr(workflow, "_suppress_internal_generation_shot_logs", False))
 
     @staticmethod
+    def _bounded_concurrency(provider: object, *option_names: str, default: int = 1, cap: int = 5) -> int:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        value: object = None
+        for source in (params, options):
+            if not isinstance(source, dict):
+                continue
+            for name in option_names:
+                if name in source:
+                    value = source[name]
+                    break
+            if value is not None:
+                break
+        if value is None:
+            for name in option_names:
+                value = getattr(provider, name, None)
+                if value is not None:
+                    break
+        if value is None:
+            value = default
+        try:
+            resolved = int(value)
+        except (TypeError, ValueError):
+            resolved = default
+        return max(1, min(cap, resolved))
+
+    @staticmethod
     def _prompt_log_safe_name(value: object, *, fallback: str) -> str:
         text = str(value or "").strip() or fallback
         invalid = '<>:"/\\|?*'
@@ -482,13 +511,21 @@ class DynamicAssetNodeMixin:
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        generated: list[ShotVideoGenerationItem] = []
         episode = self._load_storyboard_episode(project_dir, episode_key)
         shots = self._active_shots_for_episode(episode)
+        concurrency = self._bounded_concurrency(
+            provider,
+            "shot_video_generation_concurrency",
+            "video_generation_concurrency",
+            "max_concurrent_videos",
+            default=1,
+            cap=5,
+        )
         get_logger().info(
-            "node=shot_video_generation episode=%s total_videos=%d",
+            "node=shot_video_generation episode=%s total_videos=%d concurrency=%d",
             episode.episode_key,
             len(shots),
+            concurrency,
         )
         registry = load_generation_tasks(project_dir, project_id=state.project_id)
         task_file = generation_tasks_path(project_dir)
@@ -499,7 +536,52 @@ class DynamicAssetNodeMixin:
         poll_interval_seconds = float(getattr(provider, "poll_interval_seconds", 5))
         status_log_interval_polls = max(1, int(getattr(provider, "status_log_interval_polls", 6)))
         force_generation = bool(getattr(self, "_force_generation", False))
-        for shot in shots:
+        semaphore = asyncio.Semaphore(concurrency)
+        registry_lock = asyncio.Lock()
+        episode_lock = asyncio.Lock()
+        reference_mode = self._video_reference_mode(provider)
+        waits_for_previous_video = self._video_reference_mode_uses_previous_scene_video(reference_mode)
+
+        async def task_snapshot(task_key: str) -> dict[str, Any] | None:
+            async with registry_lock:
+                task = find_generation_task(registry, task_key)
+                return dict(task) if task is not None else None
+
+        async def save_task_item(task_item: dict[str, Any], *, clear_stale: bool = False) -> dict[str, Any]:
+            async with registry_lock:
+                task = upsert_generation_task(registry, task_item)
+                if clear_stale:
+                    for stale_key in (
+                        "previous_task_status",
+                        "stale_at",
+                        "stale_reason",
+                        "stale_task_id",
+                        "stale_asset_path",
+                    ):
+                        task.pop(stale_key, None)
+                save_generation_tasks(self.repo, project_dir, registry)
+                return dict(task)
+
+        async def apply_result_and_save(
+            shot: StoryboardShot,
+            *,
+            asset_id: str,
+            result: VideoGenerationResult,
+            asset_path: str | None = None,
+            last_frame_asset_path: str | None = None,
+        ) -> None:
+            async with episode_lock:
+                self._apply_shot_video_result(
+                    shot,
+                    asset_id=asset_id,
+                    result=result,
+                    provider=provider,
+                    asset_path=asset_path,
+                    last_frame_asset_path=last_frame_asset_path,
+                )
+                self._save_storyboard_episode(project_dir, episode)
+
+        async def process_shot(shot: StoryboardShot) -> ShotVideoGenerationItem:
             self._log_generation_shot_started(episode.episode_key, shot, "shot_video_generation")
             asset_id = normalize_id(f"{shot.shot_id}", "video")
             prompt = self._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
@@ -519,7 +601,7 @@ class DynamicAssetNodeMixin:
             task_key = self._shot_video_task_key(episode.episode_key, shot.shot_id)
             output_path = self._video_asset_path(project_dir, "shots", asset_id)
             planned_asset_path = self._project_relative(project_dir, output_path)
-            existing_task = find_generation_task(registry, task_key)
+            existing_task = await task_snapshot(task_key)
             existing_status = task_status(existing_task)
             saved_asset_path = (
                 str((existing_task or {}).get("asset_path") or shot.video_asset_path or "")
@@ -541,8 +623,7 @@ class DynamicAssetNodeMixin:
                     saved_asset_path or planned_asset_path,
                     extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                 )
-                existing_task = upsert_generation_task(
-                    registry,
+                existing_task = await save_task_item(
                     {
                         "task_key": task_key,
                         "task_status": "stale",
@@ -553,7 +634,6 @@ class DynamicAssetNodeMixin:
                         "stale_asset_path": saved_asset_path or planned_asset_path,
                     },
                 )
-                save_generation_tasks(self.repo, project_dir, registry)
                 existing_status = task_status(existing_task)
 
             if not force_generation and existing_status in success_statuses and self._path_exists(project_dir, saved_asset_path):
@@ -581,34 +661,28 @@ class DynamicAssetNodeMixin:
                 if not last_frame_asset_path:
                     last_frame_asset_path = await self._write_video_last_frame(project_dir, asset_id, result)
                     if last_frame_asset_path:
-                        upsert_generation_task(
-                            registry,
+                        await save_task_item(
                             {
                                 "task_key": task_key,
                                 "last_frame_asset_path": last_frame_asset_path,
                             },
                         )
-                        save_generation_tasks(self.repo, project_dir, registry)
-                self._apply_shot_video_result(
+                await apply_result_and_save(
                     shot,
                     asset_id=asset_id,
                     result=result,
-                    provider=provider,
                     asset_path=saved_asset_path,
                     last_frame_asset_path=last_frame_asset_path,
                 )
-                self._save_storyboard_episode(project_dir, episode)
-                generated.append(
-                    self._shot_video_item(
-                        episode_key=episode.episode_key,
-                        shot=shot,
-                        asset_id=asset_id,
-                        prompt=prompt,
-                        duration_seconds=shot.duration_seconds,
-                        asset_path=saved_asset_path,
-                        result=result,
-                        provider=provider,
-                    )
+                item = self._shot_video_item(
+                    episode_key=episode.episode_key,
+                    shot=shot,
+                    asset_id=asset_id,
+                    prompt=prompt,
+                    duration_seconds=shot.duration_seconds,
+                    asset_path=saved_asset_path,
+                    result=result,
+                    provider=provider,
                 )
                 self._log_generation_shot_finished(
                     episode.episode_key,
@@ -616,7 +690,7 @@ class DynamicAssetNodeMixin:
                     "shot_video_generation",
                     saved_asset_path,
                 )
-                continue
+                return item
 
             task: dict[str, Any]
             last_logged_status: str | None
@@ -720,8 +794,7 @@ class DynamicAssetNodeMixin:
                         error,
                     )
                     raise error
-                task = upsert_generation_task(
-                    registry,
+                task = await save_task_item(
                     self._shot_video_task_item(
                         task_key=task_key,
                         state=state,
@@ -733,18 +806,9 @@ class DynamicAssetNodeMixin:
                         result=result,
                         provider=provider,
                     ),
+                    clear_stale=True,
                 )
-                for stale_key in (
-                    "previous_task_status",
-                    "stale_at",
-                    "stale_reason",
-                    "stale_task_id",
-                    "stale_asset_path",
-                ):
-                    task.pop(stale_key, None)
-                save_generation_tasks(self.repo, project_dir, registry)
-                self._apply_shot_video_result(shot, asset_id=asset_id, result=result, provider=provider)
-                self._save_storyboard_episode(project_dir, episode)
+                await apply_result_and_save(shot, asset_id=asset_id, result=result)
                 last_logged_status = task_status(task)
                 get_logger().info(
                     "%s video task submitted: %s queue=%s",
@@ -764,8 +828,7 @@ class DynamicAssetNodeMixin:
             for poll_index in range(1, max_polls + 1):
                 result = await provider.query_video_task(task_id)
                 status = (result.task_status or "").strip().lower()
-                task = upsert_generation_task(
-                    registry,
+                task = await save_task_item(
                     self._shot_video_task_item(
                         task_key=task_key,
                         state=state,
@@ -778,9 +841,7 @@ class DynamicAssetNodeMixin:
                         provider=provider,
                     ),
                 )
-                save_generation_tasks(self.repo, project_dir, registry)
-                self._apply_shot_video_result(shot, asset_id=asset_id, result=result, provider=provider)
-                self._save_storyboard_episode(project_dir, episode)
+                await apply_result_and_save(shot, asset_id=asset_id, result=result)
 
                 if status != last_logged_status or poll_index == 1 or poll_index % status_log_interval_polls == 0:
                     get_logger().info(
@@ -809,15 +870,13 @@ class DynamicAssetNodeMixin:
                         asset_id,
                         result,
                     )
-                    self._apply_shot_video_result(
+                    await apply_result_and_save(
                         shot,
                         asset_id=asset_id,
                         result=result,
-                        provider=provider,
                         asset_path=asset_path,
                         last_frame_asset_path=last_frame_asset_path,
                     )
-                    self._save_storyboard_episode(project_dir, episode)
                     completed_task_item = self._shot_video_task_item(
                         task_key=task_key,
                         state=state,
@@ -832,19 +891,16 @@ class DynamicAssetNodeMixin:
                     )
                     if last_frame_asset_path:
                         completed_task_item["last_frame_asset_path"] = last_frame_asset_path
-                    task = upsert_generation_task(registry, completed_task_item)
-                    save_generation_tasks(self.repo, project_dir, registry)
-                    generated.append(
-                        self._shot_video_item(
-                            episode_key=episode.episode_key,
-                            shot=shot,
-                            asset_id=asset_id,
-                            prompt=prompt,
-                            duration_seconds=shot.duration_seconds,
-                            asset_path=asset_path,
-                            result=result,
-                            provider=provider,
-                        )
+                    task = await save_task_item(completed_task_item)
+                    item = self._shot_video_item(
+                        episode_key=episode.episode_key,
+                        shot=shot,
+                        asset_id=asset_id,
+                        prompt=prompt,
+                        duration_seconds=shot.duration_seconds,
+                        asset_path=asset_path,
+                        result=result,
+                        provider=provider,
                     )
                     self._log_generation_shot_finished(
                         episode.episode_key,
@@ -853,18 +909,16 @@ class DynamicAssetNodeMixin:
                         asset_path,
                     )
                     completed = True
-                    break
+                    return item
 
                 if status in failure_statuses:
-                    task = upsert_generation_task(
-                        registry,
+                    task = await save_task_item(
                         {
                             "task_key": task_key,
                             "task_status": result.task_status,
                             "failed_at": now_iso(),
                         },
                     )
-                    save_generation_tasks(self.repo, project_dir, registry)
                     get_logger().error(
                         "%s video task %s failed with status=%s queue=%s",
                         shot.shot_id,
@@ -887,8 +941,7 @@ class DynamicAssetNodeMixin:
 
             if not completed:
                 last_status = task_status(task) or "timeout"
-                task = upsert_generation_task(
-                    registry,
+                task = await save_task_item(
                     {
                         "task_key": task_key,
                         "task_status": "timeout",
@@ -896,7 +949,6 @@ class DynamicAssetNodeMixin:
                         "timed_out_at": now_iso(),
                     },
                 )
-                save_generation_tasks(self.repo, project_dir, registry)
                 get_logger().error(
                     "%s video task %s timed out after %d polls; queue=%s",
                     shot.shot_id,
@@ -917,7 +969,43 @@ class DynamicAssetNodeMixin:
                 )
                 raise error
 
-        self._save_storyboard_episode(project_dir, episode)
+            raise ProviderError(f"Video task for {shot.shot_id} ended without returning an item")
+
+        async def run_shot(
+            shot: StoryboardShot,
+            previous_task: asyncio.Task[ShotVideoGenerationItem] | None,
+        ) -> ShotVideoGenerationItem:
+            if previous_task is not None:
+                await previous_task
+            async with semaphore:
+                return await process_shot(shot)
+
+        tasks: list[asyncio.Task[ShotVideoGenerationItem]] = []
+        tasks_by_shot_id: dict[str, asyncio.Task[ShotVideoGenerationItem]] = {}
+        previous_active_task: asyncio.Task[ShotVideoGenerationItem] | None = None
+        for shot in shots:
+            previous_task: asyncio.Task[ShotVideoGenerationItem] | None = None
+            if waits_for_previous_video:
+                previous_task = previous_active_task
+            elif shot.start_frame_source == "previous_shot_last_frame":
+                previous_shot = self._previous_shot(episode, shot)
+                if previous_shot is not None:
+                    previous_task = tasks_by_shot_id.get(previous_shot.shot_id)
+            task = asyncio.create_task(run_shot(shot, previous_task))
+            tasks.append(task)
+            tasks_by_shot_id[shot.shot_id] = task
+            previous_active_task = task
+
+        try:
+            generated = list(await asyncio.gather(*tasks))
+        except Exception:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        async with episode_lock:
+            self._save_storyboard_episode(project_dir, episode)
 
         return ShotVideoGenerationOutput(generated_videos=generated)
 

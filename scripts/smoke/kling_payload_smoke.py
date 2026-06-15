@@ -101,6 +101,26 @@ def main() -> int:
         json.dumps(subject_payload, ensure_ascii=False),
     )
     require(subject_payload["tag_list"] == [{"tag_id": "o_102"}], json.dumps(subject_payload, ensure_ascii=False))
+    nested_video_result = KlingOmniVideoProvider._video_result(
+        {
+            "code": 0,
+            "data": {
+                "task_id": "task_nested_video",
+                "task_status": "succeed",
+                "task_result": {
+                    "videos": [
+                        {
+                            "id": "video_001",
+                            "url": "https://example.invalid/generated.mp4",
+                            "duration": "5.041",
+                        }
+                    ]
+                },
+            },
+        },
+        fallback_model="kling-v3-omni",
+    )
+    require(nested_video_result.video_url == "https://example.invalid/generated.mp4", str(nested_video_result))
 
     print("kling_payload_smoke=ok")
     print(f"omni_payload_path={payload_path}")

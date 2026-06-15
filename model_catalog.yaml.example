@@ -201,6 +201,18 @@ models:
       max_reference_video_total_duration_seconds:
         type: number
         min: 0
+      shot_video_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      video_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      max_concurrent_videos:
+        type: integer
+        min: 1
+        max: 5
 
   kling:kling-v3-omni:
     provider: kling
@@ -242,6 +254,26 @@ models:
         type: integer
         min: 0
         max: 3
+      role_subject_video_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      subject_video_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      shot_video_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      video_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      max_concurrent_videos:
+        type: integer
+        min: 1
+        max: 5
 
   volcengine:seed-tts-2.0:
     provider: volcengine

@@ -172,6 +172,7 @@ nodes:
       resolution: 720p
       generate_audio: false
       return_last_frame: true
+      shot_video_generation_concurrency: 5
   # Optional Kling subject branch. Switch these bindings plus routing.video.shot to kling
   # to generate role subject videos, create Kling subject elements, and use
   # storyboard panel + key vision + element_list for shot video generation.
@@ -184,6 +185,7 @@ nodes:
   #     watermark: false
   #     max_reference_images: 2
   #     max_reference_elements: 3
+  #     role_subject_video_generation_concurrency: 5
   # role_subject_video_intro_text:
   #   model: rightcode:gpt-5.5
   #   params:
@@ -206,6 +208,7 @@ nodes:
   #     watermark: false
   #     max_reference_images: 2
   #     max_reference_elements: 3
+  #     shot_video_generation_concurrency: 5
   shot_dialogue_audio_generation:
     model: volcengine:seed-tts-2.0
     params:
