@@ -28,12 +28,33 @@ class RoleService:
     def roleboard_style_prompt(state: ProjectState) -> str:
         return str(state.metadata.get("roleboard_style_prompt") or "").strip()
 
+    @classmethod
+    def minute_segments_context(cls, state: ProjectState, episode_keys: list[str] | None = None) -> str:
+        payload = state.metadata.get("minute_segments")
+        if not isinstance(payload, dict) or not payload:
+            return "（暂无分钟片段；请以完整小说正文为准。）"
+        if episode_keys:
+            selected = {str(key) for key in episode_keys}
+            episodes = payload.get("episodes")
+            if isinstance(episodes, list):
+                payload = {
+                    **payload,
+                    "episodes": [
+                        item
+                        for item in episodes
+                        if isinstance(item, dict) and str(item.get("episode_key")) in selected
+                    ],
+                }
+        return cls.format_json(payload)
+
     @staticmethod
     def roleboard_view_requirement() -> str:
         return (
-            "角色身份板一次生成：必须包含同一角色的正面全身、侧面全身、背面全身、头部近景、表情组、"
-            "常用动作姿态、服装材质细节和可复用配饰/道具细节。所有视图必须统一年龄感、脸型、五官、"
-            "发型、服装、身高比例、体型和材质，不得变脸、换衣服或年龄漂移。"
+            "角色身份板一次生成：创建艺术性的 16:9 高端动画工作室角色身份板，不是标准网格参考表。"
+            "画面使用白色或柔和米白色背景，布局不对称、留白充足、所有角色视角彼此分离且不重叠。"
+            "必须包含偏离中心的大型英雄全身视角，并以干净间距加入中性全身、背面、侧面、坐姿、"
+            "倾斜姿势、蹲姿、俯视身体角度、仰视身体角度、表情研究、黑色轮廓研究和面部/头发/服装细节研究。"
+            "所有视图必须统一同一脸、同一发型、同一服装、同一身体比例、同一姿势语言和同一视觉个性。"
         )
 
     async def role_extract(
@@ -50,6 +71,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            minute_segments=self.minute_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             existing_roles=self.format_json(existing_roles),
             episode_keys=", ".join(novel_full),
@@ -80,6 +102,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            minute_segments=self.minute_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             existing_primary_roles=self.format_json(existing_primary_roles),
             episode_keys=", ".join(novel_full),
@@ -111,6 +134,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            minute_segments=self.minute_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(existing_functional_roles),
@@ -169,6 +193,7 @@ class RoleService:
             "role_duplicate_audit",
             title=state.title,
             novel_full=self.format_json(novel_full),
+            minute_segments=self.minute_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             role_index=self.format_json(role_index),
         )
@@ -198,6 +223,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            minute_segments=self.minute_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(functional_roles),
@@ -232,6 +258,7 @@ class RoleService:
             role_extract_item=self.format_json(role_item.model_dump(mode="json")),
             role_novel_extract=self.format_json(role_novel_extract),
             role_novel_full=self.format_json(role_novel_full),
+            minute_segments=self.minute_segments_context(state, list(role_novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(role_novel_full)),
             role_index=self.format_json(role_index),
             key_vision_asset=self.format_json(key_vision_asset or {}),

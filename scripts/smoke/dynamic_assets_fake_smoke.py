@@ -13,12 +13,45 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from autodrama.config import load_settings  # noqa: E402
+from autodrama.core.schemas import Layout  # noqa: E402
 from autodrama.repositories.project_repo import ProjectRepository  # noqa: E402
 from autodrama.providers.router import ProviderRouter  # noqa: E402
 from autodrama.workflows.generation import GenerationWorkflow  # noqa: E402
 from autodrama.workflows.generation_checklist import update_checklist_from_state  # noqa: E402
 from autodrama.workflows.pregen import PregenWorkflow  # noqa: E402
 from smoke_storyboard_fixture import write_fake_storyboard_episode  # noqa: E402
+
+
+def write_layout_assets(repo: ProjectRepository, project_dir: Path) -> None:
+    state = repo.load_state(project_dir)
+    layouts = [
+        Layout(
+            id="layout_雨夜办公室",
+            name="雨夜办公室",
+            desc="雨夜现代办公室，长桌和落地窗可复用。",
+            prompt="无人物办公室场景三视图，冷白灯，桌面整洁。",
+            episode_keys=["episode_001", "episode_002"],
+            asset_id="layout_雨夜办公室",
+            asset_path="assets/images/layouts/layout_雨夜办公室.png",
+        ),
+        Layout(
+            id="layout_会议室",
+            name="会议室",
+            desc="冷色现代会议室，投影屏与长桌可复用。",
+            prompt="无人物会议室场景三视图，投影屏在长墙一侧。",
+            episode_keys=["episode_001", "episode_002"],
+            asset_id="layout_会议室",
+            asset_path="assets/images/layouts/layout_会议室.png",
+        ),
+    ]
+    for layout in layouts:
+        if not layout.asset_path:
+            continue
+        image_path = project_dir / layout.asset_path
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path.write_bytes(b"fake layout image")
+        state.layouts[layout.id] = layout
+    repo.save_state(project_dir, state)
 
 
 async def main_async() -> int:
@@ -42,6 +75,7 @@ async def main_async() -> int:
     state = await pregen_workflow.run(project_dir, until="role_voice_select", force=True)
 
     generation_workflow = GenerationWorkflow(repo=repo, router=router)
+    write_layout_assets(repo, project_dir)
     write_fake_storyboard_episode(generation_workflow, project_dir, "episode_001", shot_count=2)
     write_fake_storyboard_episode(generation_workflow, project_dir, "episode_002", shot_count=2)
     update_checklist_from_state(repo, project_dir, state)
@@ -130,11 +164,12 @@ async def main_async() -> int:
     storyboard_panel_images = list((project_dir / "assets" / "images" / "storyboards" / "panels").glob("*.png"))
     shot_videos = list((project_dir / "assets" / "videos" / "shots").glob("*.mp4"))
     shot_audios = list((project_dir / "assets" / "audios" / "shot_dialogues").glob("*.*"))
+    expected_storyboard_panels = settings.project.episode_count * 2
     if not role_images:
         raise AssertionError("No roleboard image generated")
     if not storyboard_images:
-        raise AssertionError("No 12-panel storyboard image generated")
-    if len(storyboard_panel_images) < 12:
+        raise AssertionError("No storyboard sheet image generated")
+    if len(storyboard_panel_images) < expected_storyboard_panels:
         raise AssertionError(f"Expected storyboard panel crops, got {len(storyboard_panel_images)}")
     if not shot_videos:
         raise AssertionError("No shot video generated")
@@ -144,7 +179,7 @@ async def main_async() -> int:
     episode_001 = json.loads(episode_001_shot_text)
     first_shot_raw = episode_001["shots"][0].get("video_raw_response", {})
     ref_asset_types = first_shot_raw.get("output", {}).get("ref_asset_types", [])
-    expected_ref_types = {"storyboard_panel", "roleboard", "key_vision"}
+    expected_ref_types = {"storyboard_panel", "roleboard", "layout"}
     missing_ref_types = expected_ref_types.difference(ref_asset_types)
     if missing_ref_types:
         raise AssertionError(f"Shot video refs missing expected asset types: {sorted(missing_ref_types)}")

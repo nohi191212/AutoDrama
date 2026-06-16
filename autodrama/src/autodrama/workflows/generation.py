@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import cast
 
@@ -9,6 +10,8 @@ from autodrama.core.schemas import (
     DynamicAssetSolidificationOutput,
     ProjectState,
     ShotDialogueAudioGenerationOutput,
+    ShotVideoPromptCondenseOutput,
+    ShotVideoStoryboardContentOutput,
     ShotVideoGenerationOutput,
     StoryboardEpisodeOutput,
     StoryboardShot,
@@ -18,6 +21,7 @@ from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.dynamic_asset_repo import DynamicAssetRepository
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.utils.prompts import PromptStore
+from autodrama.utils.video_prompts import sanitize_video_prompt_text
 from autodrama.workflows.delegation import PregenWorkflowDelegateMixin
 from autodrama.workflows.generation_checklist import (
     selected_episode_keys_from_checklist,
@@ -59,6 +63,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     def _no_flat_front_facing_video_prompt() -> str:
         return (
             "人物朝向约束: 视频中人物不要呈现证件照式、完全正对镜头的僵硬构图；"
+            "人物不得突然转头对镜头说话；镜头不要正对角色人脸，必须带一些角度。"
             "除非当前剧情明确是对镜头直播、自拍或正面宣告，人物脸部和身体应保持轻微侧转，"
             "可采用约 15-45 度的三分之二侧脸、侧身、过肩、低头抬眼、视线看向画面内对象或镜头旁侧。"
             "即使需要表现人物看向观众方向，也要避免双肩水平、脸部完全平贴镜头、眼睛长时间直盯镜头的静态正面姿势。"
@@ -114,7 +119,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
 
     @classmethod
     def _ensure_dialogue_in_video_prompt_body(cls, body: str, dialogue: list[str]) -> str:
-        body = cls._clean_prompt_text(body)
+        body = sanitize_video_prompt_text(cls._clean_prompt_text(body))
         additions: list[str] = []
         for line in dialogue:
             speaker, dialogue_body = cls._dialogue_text_from_line(line)
@@ -188,7 +193,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         image_refs = [ref for ref in refs if getattr(ref, "type", None) == "image"]
         audio_refs = [ref for ref in refs if getattr(ref, "type", None) == "audio"]
         video_refs = [ref for ref in refs if getattr(ref, "type", None) == "video"]
-        element_refs = [ref for ref in refs if getattr(ref, "type", None) == "element"]
 
         frame_image_refs = [
             ref
@@ -207,7 +211,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             return {"image": selected_frames, "audio": [], "video": []}
 
         max_images = int(getattr(provider, "max_reference_images", 99) or 99)
-        max_elements = int(getattr(provider, "max_reference_elements", 99) or 99)
         max_audio = (
             int(getattr(provider, "max_reference_audio", 0) or 0)
             if cls._shot_video_provider_supports_audio_refs(provider)
@@ -218,14 +221,13 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             video_refs = [ref for ref in video_refs if cls._shot_video_ref_has_web_url(ref)]
         return {
             "image": image_refs[:max_images],
-            "element": element_refs[:max_elements],
             "audio": audio_refs[:max_audio],
             "video": video_refs[:max_videos],
         }
 
     def _shot_video_refs_for_provider(self, refs: list, provider=None) -> list:
         groups = self._shot_video_prompt_ref_groups(refs, provider=provider)
-        return [*groups["image"], *groups.get("element", []), *groups["audio"], *groups["video"]]
+        return [*groups["image"], *groups["audio"], *groups["video"]]
 
     def _shot_video_reference_plan(
         self,
@@ -262,29 +264,12 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             str(item.get("asset_type") or "")
             for item in modal_plan.get("image", [])
         }
-        element_asset_types = {
-            str(item.get("asset_type") or "")
-            for item in modal_plan.get("element", [])
-        }
-        if bool(getattr(provider, "supports_subject_elements", False)) or "role_subject_element" in element_asset_types:
-            expected_static_anchors = ["storyboard_panel", "key_vision", "role_subject_element"]
-            present_static_anchors = [
-                "storyboard_panel" if "storyboard_panel" in image_asset_types else "",
-                "key_vision" if "key_vision" in image_asset_types else "",
-                "role_subject_element" if "role_subject_element" in element_asset_types else "",
-            ]
-            present_static_anchors = [asset_type for asset_type in present_static_anchors if asset_type]
-        else:
-            expected_static_anchors = ["storyboard_panel", "roleboard", "key_vision"]
-            present_static_anchors = [
-                asset_type for asset_type in expected_static_anchors if asset_type in image_asset_types
-            ]
+        expected_static_anchors = ["storyboard_panel", "layout", "roleboard"]
+        present_static_anchors = [
+            asset_type for asset_type in expected_static_anchors if asset_type in image_asset_types
+        ]
         return {
-            "static_anchor_policy": (
-                "storyboard_panel + key_vision + role_subject_element when Kling subject mode is active"
-                if "role_subject_element" in expected_static_anchors
-                else "storyboard_panel + roleboard + key_vision when available"
-            ),
+            "static_anchor_policy": "storyboard_panel + layout + roleboard when available; never pass element refs to shot_video_generation",
             "expected_static_anchors": expected_static_anchors,
             "present_static_anchors": present_static_anchors,
             "missing_static_anchors": [
@@ -292,7 +277,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             ],
             "limits": {
                 "max_reference_images": int(getattr(provider, "max_reference_images", 99) or 99),
-                "max_reference_elements": int(getattr(provider, "max_reference_elements", 99) or 99),
                 "max_reference_audio": (
                     int(getattr(provider, "max_reference_audio", 0) or 0)
                     if self._shot_video_provider_supports_audio_refs(provider)
@@ -306,14 +290,32 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     @staticmethod
     def _shot_video_static_anchor_label(asset_type: str) -> str:
         labels = {
-            "storyboard_panel": "故事板单格",
-            "roleboard": "角色身份板",
+            "storyboard_panel": "12宫格故事板",
+            "roleboard": "人物三视图/角色身份板",
+            "layout": "场景三视图/场景图",
             "key_vision": "主视觉原图",
         }
         return labels.get(asset_type, asset_type)
 
+    @staticmethod
+    def _shot_video_compact_video_ref_label(asset_type: str) -> str:
+        labels = {
+            "reference_video": "同场景参考视频",
+            "previous_shot_video": "上一镜视频",
+            "reference_and_previous_shot_video": "同场景参考视频/上一镜视频",
+        }
+        return labels.get(asset_type, asset_type or "视频参考素材")
+
+    @staticmethod
+    def _shot_video_storyboard_annotation_rule() -> str:
+        return (
+            "若故事板中有制作标注: 红色箭头=身体运动，蓝色箭头=摄影机运动，绿色标记=取景/构图笔记，"
+            "橙色标记=灯光方向，紫色标记=情绪/声音/叙事强调；这些只用于理解镜头设计，"
+            "最终视频禁止生成任何箭头、彩色标记、手写注释、分格线、面板编号或可见文字。"
+        )
+
     def _shot_video_static_anchor_prompt(self, image_refs: list) -> str:
-        expected = ["storyboard_panel", "roleboard", "key_vision"]
+        expected = ["storyboard_panel", "layout", "roleboard"]
         image_slots: dict[str, int] = {}
         for index, ref in enumerate(image_refs, start=1):
             asset_type = self._shot_video_ref_asset_type(ref)
@@ -333,8 +335,13 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         if not present_parts:
             return ""
 
+        if "layout" not in image_slots and "key_vision" in {self._shot_video_ref_asset_type(ref) for ref in image_refs}:
+            present_parts.append(
+                f"{self._shot_video_static_anchor_label('key_vision')}=可选风格参考"
+            )
+
         parts = [
-            "静态三锚点策略: 优先把当前 shot 的故事板单格、角色身份板、主视觉原图作为图片参考一起使用；"
+            "视频输入锚点策略: 优先把当前 shot 的12宫格故事板、当前场景三视图/场景图、画面内人物三视图/角色身份板作为图片参考一起使用；"
             + "；".join(present_parts)
             + "。"
         ]
@@ -346,8 +353,9 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             )
         else:
             parts.append(
-                "三者职责不可互相覆盖: 故事板单格决定构图/景别/机位/动作方向，"
-                "角色身份板决定画面主体外观，主视觉原图决定世界观/色调/光影/整体制作质感。"
+                "三者职责不可互相覆盖: 12宫格故事板决定构图/景别/机位/动作方向、动作节奏和镜头顺序，"
+                "场景三视图/场景图决定空间结构、材质、光照和尺度，人物三视图/角色身份板决定画面主体外观；"
+                "禁止在最终视频中直接展示场景图、场景三视图、参考图版式或三视图布局，场景图仅作为空间与美术参考。"
             )
         return "".join(parts)
 
@@ -364,9 +372,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             )
         if asset_type == "storyboard_panel":
             return (
-                f"{prefix}: 当前 shot 故事板单格，只用于锁定本镜头的构图、景别、机位、人物站位、"
-                "动作方向、镜头运动和镜头顺序；不要复刻黑白线稿风格，不要生成编号、边框、标题或文字标签，"
-                "最终画质、颜色、材质和角色细节仍以当前 shot 描述、角色身份板和主视觉为准。"
+                f"{prefix}: 当前 shot 的12宫格故事板整图，用于锁定本镜头的构图、景别、机位、人物站位、"
+                "动作方向、镜头运动、动作节奏和镜头顺序；不要复刻黑白线稿风格，不要生成宫格、编号、边框、标题或文字标签，"
+                f"{cls._shot_video_storyboard_annotation_rule()}"
+                "最终画质、颜色、材质和角色细节仍以当前 shot 逐秒内容、人物三视图/角色身份板和场景三视图/场景图为准。"
             )
         if asset_type == "key_vision":
             return (
@@ -375,14 +384,15 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             )
         if asset_type == "layout":
             return (
-                f"{prefix}: 场景图，作为空间锚点。锁定场景结构、材质、光照基调、关键背景物和空间尺度；"
-                "不要从场景图擅自添加当前 shot 未出现的人物或剧情动作。"
+                f"{prefix}: 场景三视图/场景图，作为空间锚点。锁定场景结构、材质、光照基调、关键背景物和空间尺度；"
+                "不要从场景图擅自添加当前 shot 未出现的人物或剧情动作；"
+                "禁止直接展示场景图、场景三视图、参考图版式或三视图布局，场景图仅作为参考。"
             )
         if asset_type == "roleboard":
             return (
-                f"{prefix}: 角色身份板，作为当前视觉主体的静态外观锚点。锁定同一人物的脸型、发型、"
+                f"{prefix}: 人物三视图/角色身份板，作为当前视觉主体的静态外观锚点。锁定同一人物的脸型、发型、"
                 "身体比例、服装层次、配饰、色彩、材质、年龄感和表情/动作习惯；不要把它当成当前 shot 的构图图，"
-                "人物在本段中的站位、动作、表情和口型仍以当前 shot 的 video_prompt、故事板单格和对白空间约束为准。"
+                "人物在本段中的站位、动作、表情和口型仍以当前 shot 的逐秒内容、12宫格故事板和对白空间约束为准。"
             )
         if asset_type == "prop":
             return (
@@ -430,17 +440,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             )
         return f"{prefix}: 视频参考素材。只使用其动态规律或空间关系，不复刻画面内容。"
 
-    @classmethod
-    def _shot_video_element_ref_instruction(cls, ref, index: int) -> str:
-        metadata = getattr(ref, "metadata", {}) or {}
-        role_name = str(metadata.get("role_name") or cls._shot_video_ref_label(ref)).strip() or "角色主体"
-        appearance_name = str(metadata.get("appearance_name") or metadata.get("name") or "").strip()
-        label = f"{role_name}/{appearance_name}" if appearance_name and appearance_name != role_name else role_name
-        return (
-            f"<<<element_{index}>>> = {label} 的可灵主体库主体。必须把它作为当前镜头内同一人物，"
-            "锁定脸型、五官、发型、体型比例、服装、配饰、年龄感和身份气质；"
-            "动作、站位、表情和口型仍以当前 shot 描述、故事板和对白约束为准。"
-        )
+    @staticmethod
+    def _shot_video_compact_reference_line(items: list[str]) -> str:
+        if not items:
+            return ""
+        return "素材：" + "；".join(item.rstrip("。") for item in items if item.strip()) + "。"
 
     def _shot_video_kling_reference_material_prompt(
         self,
@@ -450,39 +454,31 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     ) -> str:
         groups = self._shot_video_prompt_ref_groups(refs, provider=provider)
         image_refs = groups["image"]
-        element_refs = groups.get("element", [])
-        parts = [
-            "Kling Omni 素材引用规则: prompt 中必须用 <<<image_1>>>、<<<image_2>>>、<<<element_1>>> 等占位符引用实际传入素材；占位符编号与 payload 中 image_list/element_list 的顺序一致。"
-        ]
+        video_refs = groups.get("video", [])
+        parts: list[str] = []
         for index, ref in enumerate(image_refs, start=1):
             asset_type = self._shot_video_ref_asset_type(ref)
             if asset_type == "storyboard_panel":
                 parts.append(
-                    f"<<<image_{index}>>> = 当前 shot 故事板单格。只锁定构图、景别、机位、人物站位、动作方向和镜头运动；不要继承黑白线稿、编号、边框或文字。"
+                    f"<<<image_{index}>>> 是当前镜头故事板；"
+                    + self._shot_video_storyboard_annotation_rule()
                 )
+            elif asset_type == "layout":
+                parts.append(
+                    f"<<<image_{index}>>> 是当前场景三视图/场景图；"
+                    "只作为空间结构、材质、光照和尺度参考，禁止在最终视频中直接展示场景图、场景三视图、参考图版式或三视图布局。"
+                )
+            elif asset_type == "roleboard":
+                parts.append(f"<<<image_{index}>>> 是当前人物三视图/角色身份板。")
             elif asset_type == "key_vision":
-                parts.append(
-                    f"<<<image_{index}>>> = 主视觉原图。只锁定世界观、写实质感、色调、光影、材质和整体制作水准；不要覆盖当前 shot 的构图、动作、出场角色或剧情节奏。"
-                )
+                parts.append(f"<<<image_{index}>>> 是主视觉风格参考。")
             else:
-                parts.append(
-                    f"<<<image_{index}>>> = {self._shot_video_static_anchor_label(asset_type)}。只按素材来源提供静态外观或空间参考，不作为首帧或尾帧。"
-                )
-        for index, ref in enumerate(element_refs, start=1):
-            parts.append(self._shot_video_element_ref_instruction(ref, index))
-        if image_refs and element_refs:
+                parts.append(f"<<<image_{index}>>> 是{self._shot_video_static_anchor_label(asset_type)}。")
+        for index, ref in enumerate(video_refs, start=1):
             parts.append(
-                "主体生成模式: 让主体 <<<element_1>>> 按照 <<<image_1>>> 的构图、景别、机位、动作方向和镜头运动完成当前 shot；"
-                "整体世界观、色调、光影、材质和写实制作质感参考 <<<image_2>>>。"
+                f"<<<video_{index}>>> 是{self._shot_video_compact_video_ref_label(self._shot_video_ref_asset_type(ref))}。"
             )
-        elif element_refs:
-            parts.append("主体生成模式: 当前 shot 的人物身份以 element_list 中的可灵主体为准。")
-        if not element_refs:
-            parts.append("本次没有可用可灵主体 element；如果 provider 要求主体生成模式，应先运行 role_subject_element_generation。")
-        parts.append(
-            "素材职责边界: 当前 shot 的 video_prompt 是剧情、动作和对白内容的唯一来源；参考素材不能新增剧情、改台词或改角色关系。"
-        )
-        return "\n".join(parts)
+        return self._shot_video_compact_reference_line(parts)
 
     def _shot_video_reference_material_prompt(
         self,
@@ -587,13 +583,15 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             )
         boundary_clauses: list[str] = []
         if "layout" in asset_types:
-            boundary_clauses.append("场景图只锁定无人物空场景的空间结构、材质、光照和尺度")
+            boundary_clauses.append(
+                "场景三视图/场景图只锁定无人物空场景的空间结构、材质、光照和尺度，禁止直接展示场景图、三视图或参考图版式"
+            )
         if "storyboard_panel" in asset_types:
-            boundary_clauses.append("故事板单格只锁定当前 shot 的构图、景别、机位、动作方向、镜头运动和镜头顺序，不锁定线稿画风")
+            boundary_clauses.append("12宫格故事板只锁定当前 shot 的构图、景别、机位、动作方向、动作节奏、镜头运动和镜头顺序，不锁定线稿画风")
         if "key_vision" in asset_types:
             boundary_clauses.append("主视觉原图只锁定世界观、美术风格、色调、光影和质感")
         if "roleboard" in asset_types:
-            boundary_clauses.append("角色身份板只锁定画面中央人物的静态外观、表情和动作习惯")
+            boundary_clauses.append("人物三视图/角色身份板只锁定画面中央人物的静态外观、表情和动作习惯")
         if "prop" in asset_types:
             boundary_clauses.append("道具设计图只锁定道具造型与材质")
         if asset_types.intersection({"reference_video", "reference_and_previous_shot_video"}):
@@ -610,17 +608,17 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 "若二者不同，同场景镜头优先解决空间一致性，上一 shot 镜头只解决硬切后的动作、情绪和叙事连续。"
             )
         conflict_parts = [
-            "当前 shot 的 video_prompt 是剧情、动作和对白内容的唯一来源",
+            "当前 shot 的 per_second_content 和 video_prompt 是剧情、动作和对白内容的来源",
             "参考素材不能新增剧情、改台词、改角色关系",
         ]
         if "storyboard_panel" in asset_types:
-            conflict_parts.append("当前 shot 构图、景别、机位、动作方向和镜头顺序冲突优先听故事板单格")
+            conflict_parts.append("当前 shot 构图、景别、机位、动作方向、动作节奏和镜头顺序冲突优先听12宫格故事板")
         if "key_vision" in asset_types:
             conflict_parts.append("主视觉只解决风格和世界观，不改变当前 shot 的构图和动作")
         if asset_types.intersection({"layout", "reference_video", "reference_and_previous_shot_video"}):
-            conflict_parts.append("空间冲突优先听场景图或同场景镜头视频")
+            conflict_parts.append("空间冲突优先听场景三视图/场景图或同场景镜头视频")
         if "roleboard" in asset_types:
-            conflict_parts.append("画面中央人物外观冲突优先听角色身份板")
+            conflict_parts.append("画面中央人物外观冲突优先听人物三视图/角色身份板")
         if asset_types.intersection({"role_audio", "shot_dialogue_audio"}):
             conflict_parts.append("声音冲突优先听音频")
         parts.append("冲突处理: " + "；".join(conflict_parts) + "。")
@@ -640,7 +638,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         for dialogue_line in shot.dialogue:
             role, dialogue_text, speaker_name = self._role_for_dialogue_line(state, shot, dialogue_line)
             speaker = role.name if role is not None else (speaker_name or "说话者")
-            if self._dialogue_speaker_is_voiceover(dialogue_line):
+            if self._shot_dialogue_is_voiceover(shot, dialogue_line, speaker=speaker, dialogue_text=dialogue_text):
                 parts.append(
                     f"{speaker}的台词“{dialogue_text}”是画外音/VO，声音来自画面外或非实体旁白；"
                     f"不要让{visual_subject}张嘴、对口型或用{speaker}的声音说这句台词。"
@@ -653,6 +651,54 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 )
         return "对白空间约束: " + " ".join(parts)
 
+    def _shot_video_dialogue_core_prompt(self, state: ProjectState, shot: StoryboardShot) -> str:
+        if not shot.dialogue:
+            return ""
+
+        visual_role_names = [
+            state.roles[role_id].name
+            for role_id in self._shot_intro_role_ids(state, shot)
+            if role_id in state.roles
+        ]
+        visual_subject = "、".join(visual_role_names) or "画面内角色"
+        parts: list[str] = []
+        for dialogue_line in shot.dialogue:
+            role, dialogue_text, speaker_name = self._role_for_dialogue_line(state, shot, dialogue_line)
+            speaker = role.name if role is not None else (speaker_name or "说话者")
+            if self._shot_dialogue_is_voiceover(shot, dialogue_line, speaker=speaker, dialogue_text=dialogue_text):
+                parts.append(f"{speaker}画外VO，{visual_subject}不张嘴：“{dialogue_text}”。")
+            else:
+                parts.append(f"{speaker}说“{dialogue_text}”。")
+        return "".join(parts)
+
+    def _shot_dialogue_is_voiceover(
+        self,
+        shot: StoryboardShot,
+        dialogue_line: str,
+        *,
+        speaker: str,
+        dialogue_text: str,
+    ) -> bool:
+        if self._dialogue_speaker_is_voiceover(dialogue_line):
+            return True
+        context = self._clean_prompt_text(f"{shot.video_prompt} {shot.sound_design or ''}").casefold()
+        speaker_text = self._clean_prompt_text(speaker)
+        body = self._clean_prompt_text(dialogue_text)
+        if not context or not body or body not in context:
+            return False
+        markers = ("vo", "v.o", "voiceover", "画外音", "画外vo", "画外", "旁白", "系统播报")
+        if speaker_text and not any(marker in context for marker in markers):
+            return False
+        return any(
+            f"{speaker_text}{marker}" in context
+            or f"{speaker_text}以{marker}" in context
+            or f"{speaker_text}的{marker}" in context
+            or f"{marker}正在说出" in context
+            or f"{marker}说出" in context
+            or f"{marker}先于画面" in context
+            for marker in markers
+        )
+
     def _shot_video_prompt(
         self,
         state: ProjectState,
@@ -661,7 +707,90 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         provider=None,
         project_dir: Path | None = None,
     ) -> str:
+        materials = self._shot_video_prompt_materials(state, episode, shot, provider=provider, project_dir=project_dir)
+        return self._compose_short_shot_video_prompt(materials)
+
+    @staticmethod
+    def _router_supports_text_provider(router: object) -> bool:
+        wrapped = getattr(router, "_router", router)
+        return callable(getattr(wrapped, "text", None))
+
+    async def _shot_video_prompt_async(
+        self,
+        state: ProjectState,
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        provider=None,
+        project_dir: Path | None = None,
+    ) -> str:
+        materials = self._shot_video_prompt_materials(state, episode, shot, provider=provider, project_dir=project_dir)
+        reference_prompt = str(materials.get("reference_prompt") or "")
+        fallback_core = str(materials.get("per_second_content") or materials.get("body") or "").strip()
+        fallback = self._compose_full_shot_video_prompt(materials, fallback_core)
+        if not self._router_supports_text_provider(self.router):
+            return fallback
+        storyboard_content = await self._extract_shot_video_storyboard_content(
+            state,
+            episode,
+            shot,
+            project_dir=project_dir,
+        )
+        if storyboard_content:
+            return self._compose_full_shot_video_prompt(materials, storyboard_content)
+        if self._shot_video_use_full_prompt(provider):
+            return fallback
+        try:
+            condensed = await self._condense_shot_video_core_prompt(materials)
+        except Exception as exc:
+            get_logger().warning(
+                "%s prompt condensation failed, using local short prompt: %s",
+                shot.shot_id,
+                exc,
+                extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
+            )
+            return fallback
+        state.budget.used_text_calls += 1
+        core = self._sanitize_condensed_video_core(condensed.prompt)
+        if not core:
+            return fallback
+        if not self._prompt_preserves_dialogue_mode(materials, core):
+            get_logger().warning(
+                "%s prompt condensation changed dialogue mode, using local short prompt",
+                shot.shot_id,
+                extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
+            )
+            return fallback
+        return "\n".join(item for item in (reference_prompt, core) if item)
+
+    @staticmethod
+    def _shot_video_use_full_prompt(provider=None) -> bool:
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        value = options.get("shot_video_full_prompt")
+        if value is None:
+            value = options.get("video_full_prompt")
+        if value is None:
+            return True
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in {"0", "false", "no", "off", "disabled"}:
+            return False
+        return True
+
+    def _shot_video_prompt_materials(
+        self,
+        state: ProjectState,
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        provider=None,
+        project_dir: Path | None = None,
+    ) -> dict[str, object]:
         body = self._ensure_dialogue_in_video_prompt_body(shot.video_prompt.strip(), shot.dialogue)
+        per_second_content = self._ensure_dialogue_in_video_prompt_body(
+            (shot.per_second_content or shot.video_prompt).strip(),
+            shot.dialogue,
+        )
         reference_mode = self._video_reference_mode(provider)
         preroll_seconds = self._previous_video_preroll_seconds(provider)
         use_previous_video_preroll = (
@@ -671,17 +800,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             and project_dir is not None
             and self._shot_has_previous_video_reference(project_dir, state, episode, shot, provider=provider)
         )
-        parts: list[str] = [self._cg_character_safety_prompt()]
-        parts.append(
-            self._shot_video_reference_material_prompt(
-                state,
-                episode,
-                shot,
-                provider=provider,
-                project_dir=project_dir,
-            )
+        reference_prompt = self._shot_video_reference_material_prompt(
+            state,
+            episode,
+            shot,
+            provider=provider,
+            project_dir=project_dir,
         )
-        parts.append(self._no_flat_front_facing_video_prompt())
+        transition_prompt = ""
         if shot.start_frame_source == "previous_shot_last_frame":
             if self._video_reference_mode_uses_frame_images(reference_mode):
                 lead = (
@@ -699,7 +825,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 if body.startswith(prefix):
                     body = body.removeprefix(prefix).lstrip()
                     break
-            parts.append(lead)
+            transition_prompt = lead
         elif use_previous_video_preroll:
             for prefix in (
                 "首帧为参考图，",
@@ -710,7 +836,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 if body.startswith(prefix):
                     body = body.removeprefix(prefix).lstrip()
                     break
-            parts.append(self._previous_video_preroll_prompt(shot, preroll_seconds))
+            transition_prompt = self._previous_video_preroll_prompt(shot, preroll_seconds)
         else:
             for prefix in (
                 "首帧为参考图，",
@@ -721,24 +847,281 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 if body.startswith(prefix):
                     body = body.removeprefix(prefix).lstrip()
                     break
-            parts.append(
+            transition_prompt = (
                 "本片段按硬切进入当前画面。不要把任何参考素材当作本片段首帧或尾帧，不要逐帧复刻参考素材；"
                 "参考素材只按上方编号职责提供外观、空间、动态或连续性约束。"
             )
-        if dialogue_spatial_prompt := self._shot_video_dialogue_spatial_prompt(state, shot):
-            parts.append(dialogue_spatial_prompt)
-        parts.append("当前 shot 主体视频描述:")
-        parts.append(body)
-        parts.append(
-            "片段首尾只允许硬切；任何 J-Cut 或 L-Cut 只能发生在本片段内部中段，"
-            "不要让声音提前进入本片段之前，也不要让声音拖尾到下一片段。"
+        dialogue_spatial_prompt = self._shot_video_dialogue_spatial_prompt(state, shot)
+        dialogue_core_prompt = self._shot_video_dialogue_core_prompt(state, shot)
+        return {
+            "reference_prompt": reference_prompt,
+            "body": body,
+            "per_second_content": per_second_content,
+            "dialogue": list(shot.dialogue),
+            "sound_design": sanitize_video_prompt_text(shot.sound_design) if shot.sound_design else "",
+            "camera_angle_rule": self._no_flat_front_facing_video_prompt(),
+            "transition_prompt": transition_prompt,
+            "dialogue_spatial_prompt": dialogue_spatial_prompt,
+            "dialogue_core_prompt": dialogue_core_prompt,
+            "duration_seconds": shot.duration_seconds,
+            "title": shot.title,
+            "content": shot.content,
+            "scene_description": shot.scene_description,
+            "composition": shot.composition,
+            "camera_shooting_angle": shot.camera_shooting_angle,
+            "camera_movement": shot.camera_movement,
+            "lighting": shot.lighting,
+        }
+
+    @staticmethod
+    def _compact_video_text(value: object, *, max_chars: int = 180) -> str:
+        text = sanitize_video_prompt_text(value)
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 1].rstrip("，。；、,; ") + "。"
+
+    @classmethod
+    def _strip_dialogue_from_video_body(cls, body: object, dialogue: object) -> str:
+        text = sanitize_video_prompt_text(body)
+        if not isinstance(dialogue, list):
+            return text
+        for line in dialogue:
+            speaker, dialogue_body = cls._dialogue_text_from_line(str(line or ""))
+            normalized_body = cls._clean_prompt_text(dialogue_body).strip("“”\"'。！？!?，,；;：: ")
+            if not normalized_body:
+                continue
+            for wrapped in (
+                f"“{normalized_body}”",
+                f"\"{normalized_body}\"",
+                f"'{normalized_body}'",
+                normalized_body,
+            ):
+                text = text.replace(wrapped, "")
+            if speaker:
+                for phrase in (
+                    f"{speaker}以画外VO说出",
+                    f"{speaker}画外VO说出",
+                    f"{speaker}以画外音说出",
+                    f"{speaker}画外音说出",
+                    f"{speaker}说出",
+                    f"{speaker}说",
+                ):
+                    text = text.replace(phrase, "")
+        text = text.replace("“。”", "").replace("”。", "").replace("“”", "")
+        return sanitize_video_prompt_text(text)
+
+    def _compose_short_shot_video_prompt(self, materials: dict[str, object]) -> str:
+        reference_prompt = str(materials.get("reference_prompt") or "")
+        dialogue_core = self._compact_video_text(materials.get("dialogue_core_prompt"), max_chars=70)
+        body_source = materials.get("per_second_content") or (
+            self._strip_dialogue_from_video_body(materials.get("body"), materials.get("dialogue"))
+            if dialogue_core
+            else materials.get("body")
         )
-        parts.append(
-            "如果背景中存在人群或群众，不要让他们静止不动；让他们进行符合场景逻辑、"
-            "情绪氛围和空间关系的自然移动、避让、聚散或反应，但不要抢占主体动作。"
+        body = self._compact_video_text(body_source, max_chars=72)
+        sound = self._compact_video_text(materials.get("sound_design"), max_chars=22)
+        suffix = "侧角拍摄，不直视镜头；无字幕、logo、水印。"
+        if dialogue_core and len(f"{body} {dialogue_core} 声音：{sound} {suffix}") > 150:
+            body = self._compact_video_text(body, max_chars=56)
+        pieces = [body]
+        if dialogue_core:
+            pieces.append(dialogue_core)
+        if sound:
+            pieces.append(f"声音：{sound}")
+        core = " ".join(piece for piece in pieces if piece)
+        core = f"{core} {suffix}" if core else suffix
+        return "\n".join(item for item in (reference_prompt, core) if item)
+
+    def _compose_full_shot_video_prompt(self, materials: dict[str, object], core: object) -> str:
+        reference_prompt = str(materials.get("reference_prompt") or "")
+        core_text = sanitize_video_prompt_text(core)
+        transition_prompt = sanitize_video_prompt_text(materials.get("transition_prompt"))
+        dialogue_spatial_prompt = sanitize_video_prompt_text(materials.get("dialogue_spatial_prompt"))
+        camera_angle_rule = sanitize_video_prompt_text(materials.get("camera_angle_rule"))
+        suffix = "最终视频必须为电影级真人剧质感，不生成字幕、对白气泡、logo、水印、片段编号、分格线、面板编号或可见文字。"
+        pieces = [
+            reference_prompt,
+            "当前 shot 分镜内容表（由 storyboard_generation.json 中当前 shot 的故事板 prompt 提取，作为本次视频生成的剧情、动作、镜头、声音和对白主依据）:",
+            core_text,
+            transition_prompt,
+            dialogue_spatial_prompt,
+            camera_angle_rule,
+            suffix,
+        ]
+        return "\n".join(piece for piece in pieces if piece)
+
+    def _storyboard_generation_prompt_for_shot(self, project_dir: Path | None, shot: StoryboardShot) -> str | None:
+        if project_dir is None:
+            return None
+        path = self.layout.node_output_path(project_dir, "storyboard_generation")
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        items = payload.get("generated_storyboards") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            return None
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("shot_id") or "").strip() != shot.shot_id:
+                continue
+            prompt = str(item.get("prompt") or "").strip()
+            return prompt or None
+        return None
+
+    def _shot_video_storyboard_content_extract_prompt(
+        self,
+        *,
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        storyboard_generation_prompt: str,
+    ) -> str:
+        payload = {
+            "任务": "从 storyboard_generation.json 中当前 shot 的故事板生成 prompt 里，提取给 shot_video_generation 使用的完整分镜内容表。",
+            "硬性要求": [
+                "只输出 JSON，字段 content_table 和 source_note。",
+                "content_table 必须保留当前 shot 的完整逐秒内容，尤其是 0-1秒、1-2秒 直到该 shot 结束的连续时间段。",
+                "content_table 要保留摄影机、景别、人物动作、情绪、声音、对白/VO、环境和禁用字幕水印等视频生成需要的信息。",
+                "不要提取固定12宫格故事板绘图模板、标注颜色系统、面板编号规则、资产ID、文件名、项目名或故事板图片生成说明。",
+                "不要改写剧情事实，不新增角色、场景、道具或对白。",
+                "如果原文含有明显病句或重复禁用词，可以轻微清理，但不得缩写成摘要。",
+                "输出应是给视频模型看的分镜内容表，不是给图片模型画故事板的提示词。",
+            ],
+            "episode_key": episode.episode_key,
+            "shot_id": shot.shot_id,
+            "duration_seconds": shot.duration_seconds,
+            "storyboard_generation_prompt": storyboard_generation_prompt,
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    async def _extract_shot_video_storyboard_content(
+        self,
+        state: ProjectState,
+        episode: StoryboardEpisodeOutput,
+        shot: StoryboardShot,
+        *,
+        project_dir: Path | None,
+    ) -> str | None:
+        storyboard_generation_prompt = self._storyboard_generation_prompt_for_shot(project_dir, shot)
+        if not storyboard_generation_prompt:
+            return None
+        provider = self.router.text("storyboard", node_name=None)
+        try:
+            extracted = await provider.generate_json(
+                self._shot_video_storyboard_content_extract_prompt(
+                    episode=episode,
+                    shot=shot,
+                    storyboard_generation_prompt=storyboard_generation_prompt,
+                ),
+                ShotVideoStoryboardContentOutput,
+                temperature=0.0,
+                metadata={
+                    "node_name": "shot_video_storyboard_content_extract",
+                    "project_id": state.project_id,
+                    "episode_key": episode.episode_key,
+                    "shot_id": shot.shot_id,
+                    "reasoning_effort": "high",
+                    "console_stream": False,
+                },
+            )
+        except Exception as exc:
+            get_logger().warning(
+                "%s storyboard content extraction failed, using shot manifest prompt: %s",
+                shot.shot_id,
+                exc,
+                extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
+            )
+            return None
+        state.budget.used_text_calls += 1
+        content = sanitize_video_prompt_text(extracted.content_table)
+        if not content or "0-1秒" not in content:
+            return None
+        return content
+
+    def _shot_video_condense_prompt(self, materials: dict[str, object]) -> str:
+        payload = {
+            "目标": "把镜头材料压缩成 60 到 120 个中文字符左右的视频生成核心提示词。",
+            "硬性要求": [
+                "只输出 JSON，字段 prompt。",
+                "prompt 只写核心画面、动作、情绪、声音和必要对白/VO，优先依据 per_second_content，必要时再结合 video_prompt。",
+                "只有 dialogue_core 明确写画外VO时才能写画外音；普通对白必须写角色本人说出并口型匹配。",
+                "必须保留画外音/VO和不要让画面角色张嘴的关系，但不能把普通对白改成画外音。",
+                "不要写素材占位符，素材占位符会由代码另行前置。",
+                "不要写 9:16、16:9、竖版、横版、portrait、landscape。",
+                "不要写字幕、logo、水印以外的长篇禁止说明。",
+                "人物不直视镜头，不突然转头，保持侧角。",
+            ],
+            "镜头材料": {
+                "title": materials.get("title"),
+                "body": materials.get("body"),
+                "per_second_content": materials.get("per_second_content"),
+                "dialogue": materials.get("dialogue"),
+                "dialogue_core": materials.get("dialogue_core_prompt"),
+                "sound_design": materials.get("sound_design"),
+                "dialogue_spatial": materials.get("dialogue_spatial_prompt"),
+                "scene": materials.get("scene_description"),
+                "composition": materials.get("composition"),
+                "camera_angle": materials.get("camera_shooting_angle"),
+                "camera_movement": materials.get("camera_movement"),
+                "lighting": materials.get("lighting"),
+                "duration_seconds": materials.get("duration_seconds"),
+            },
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    async def _condense_shot_video_core_prompt(self, materials: dict[str, object]) -> ShotVideoPromptCondenseOutput:
+        provider = self.router.text("storyboard", node_name=None)
+        return await provider.generate_json(
+            self._shot_video_condense_prompt(materials),
+            ShotVideoPromptCondenseOutput,
+            temperature=0.2,
+            metadata={"node_name": "shot_video_prompt_condense", "project_id": self.repo.settings.project.id},
         )
-        parts.append("全片不要出现任何字幕、标志、logo、水印、文字标识、片段编号、可读文字或无关商标。")
-        return "\n".join(item for item in parts if item)
+
+    @classmethod
+    def _prompt_preserves_dialogue_mode(cls, materials: dict[str, object], prompt: str) -> bool:
+        dialogue = materials.get("dialogue")
+        if not prompt or not isinstance(dialogue, list) or not dialogue:
+            return True
+        dialogue_core = sanitize_video_prompt_text(materials.get("dialogue_core_prompt"))
+        prompt_text = sanitize_video_prompt_text(prompt)
+        for line in dialogue:
+            speaker, dialogue_body = cls._dialogue_text_from_line(str(line or ""))
+            body = cls._clean_prompt_text(dialogue_body).strip("“”\"'。！？!?，,；;：: ")
+            if not body:
+                continue
+            core_mentions_line = body in dialogue_core
+            core_marks_vo = core_mentions_line and any(
+                marker in dialogue_core for marker in ("画外VO", "画外音", "旁白", "不张嘴")
+            )
+            prompt_mentions_line = body in prompt_text
+            prompt_marks_vo = prompt_mentions_line and any(
+                marker in prompt_text for marker in ("画外VO", "画外音", "旁白")
+            )
+            if prompt_marks_vo and not core_marks_vo:
+                return False
+            if not core_marks_vo and not prompt_mentions_line:
+                return False
+            if core_marks_vo and speaker and speaker not in prompt_text:
+                return False
+        return True
+
+    @staticmethod
+    def _sanitize_condensed_video_core(value: object) -> str:
+        text = sanitize_video_prompt_text(value)
+        for token in ("<<<image_", "<<<element_", "<<<video_", "<<<audio_"):
+            if token in text:
+                return ""
+        if text and not any(marker in text for marker in ("侧角", "侧脸", "不直视镜头", "镜头旁侧")):
+            text = f"{text} 侧角拍摄。"
+        if text and not any(marker in text.lower() for marker in ("字幕", "水印", "logo")):
+            text = f"{text} 无字幕、logo、水印。"
+        if len(text) > 120:
+            text = text[:119].rstrip("，。；、,; ") + "。"
+        return text
 
     async def _run_generation_node_for_episode(
         self,

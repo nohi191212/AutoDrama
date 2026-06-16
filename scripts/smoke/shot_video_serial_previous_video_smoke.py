@@ -85,8 +85,8 @@ class VideoRouter:
     def __init__(self, provider: SerialPreviousVideoProvider) -> None:
         self.provider = provider
 
-    def video(self, purpose: str) -> SerialPreviousVideoProvider:
-        del purpose
+    def video(self, purpose: str, *, node_name: str | None = None) -> SerialPreviousVideoProvider:
+        del purpose, node_name
         return self.provider
 
 
@@ -176,6 +176,7 @@ async def main_async() -> int:
         "上一 shot 镜头视频，作为逻辑连贯性锚点" in provider.submissions[1]["prompt"],
         provider.submissions[1]["prompt"],
     )
+    require("当前 shot 主体视频描述:" not in provider.submissions[1]["prompt"], provider.submissions[1]["prompt"])
 
     fourth_refs = provider.submissions[3]["refs"]
     fourth_asset_types = [str(ref.metadata.get("asset_type") or "") for ref in fourth_refs]
@@ -183,6 +184,7 @@ async def main_async() -> int:
     require(fourth_refs[0].metadata.get("previous_shot_id") == "episode_001_shot_003", fourth_refs[0].metadata)
     require("视频1" in provider.submissions[3]["prompt"], provider.submissions[3]["prompt"])
     require("上一 shot 镜头视频，作为逻辑连贯性锚点" in provider.submissions[3]["prompt"], provider.submissions[3]["prompt"])
+    require("当前 shot 主体视频描述:" not in provider.submissions[3]["prompt"], provider.submissions[3]["prompt"])
 
     episode = workflow._load_storyboard_episode(project_dir, "episode_001")
     require(episode.shots[0].video_asset_path, "First shot video was not saved")

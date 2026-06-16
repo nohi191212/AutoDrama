@@ -112,10 +112,11 @@ def main() -> int:
 
     episode = StoryboardEpisodeOutput(episode_key="episode_001", shots=[shot])
     final_prompt = workflow._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
-    require("图片1" in final_prompt and "场景图，作为空间锚点" in final_prompt, final_prompt)
+    require("图片1" in final_prompt and "场景三视图/场景图，作为空间锚点" in final_prompt, final_prompt)
     require("本段视频参考图，作为本段空间参考锚点" not in final_prompt, final_prompt)
     require("音频1" in final_prompt and "角色说话声音锚点" in final_prompt, final_prompt)
-    require("当前 shot 主体视频描述:" in final_prompt, final_prompt)
+    require("林舟平静发言" in final_prompt, final_prompt)
+    require("侧角" in final_prompt and "无字幕" in final_prompt, final_prompt)
 
     no_audio_provider = NoAudioReferenceVideoProvider()
     no_audio_refs = workflow._shot_video_refs_for_provider(refs, provider=no_audio_provider)

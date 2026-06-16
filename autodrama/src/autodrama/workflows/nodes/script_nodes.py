@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from autodrama.core.schemas import ProjectState, ScriptNovelExtractOutput, ScriptNovelOutput
+from autodrama.core.schemas import MinuteSegmentOutput, ProjectState, ScriptNovelExtractOutput, ScriptNovelOutput
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
@@ -16,6 +16,7 @@ SCRIPT_NODE_NAMES = [
     "script_outline",
     "script_novel",
     "script_novel_extract",
+    "minute_segment",
 ]
 
 SCRIPT_NOVEL_EXTRACT_BATCH_SIZE = 5
@@ -362,6 +363,121 @@ class ScriptNovelExtractNode(ScriptNodeBase):
         return state
 
 
+class MinuteSegmentNode(ScriptNodeBase):
+    name = "minute_segment"
+
+    @staticmethod
+    def _dedupe_texts(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        cleaned: list[str] = []
+        for value in values:
+            text = " ".join(str(value or "").split()).strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+        return cleaned
+
+    def validate_minute_segments(self, output: MinuteSegmentOutput, state: ProjectState) -> MinuteSegmentOutput:
+        expected_keys = self.expected_episode_keys(state)
+        expected = set(expected_keys)
+        by_episode = {episode.episode_key: episode for episode in output.episodes}
+        actual = set(by_episode)
+        if actual != expected:
+            raise ValueError(
+                "minute_segment.episodes must contain exactly "
+                f"{', '.join(expected_keys)}; got {', '.join(sorted(actual)) or '-'}"
+            )
+
+        target_duration = self.script_service.episode_duration_seconds(state)
+        ordered_episodes = []
+        for episode_key in expected_keys:
+            episode = by_episode[episode_key]
+            episode.episode_key = episode_key
+            episode.target_duration_seconds = int(episode.target_duration_seconds or target_duration)
+            if episode.target_duration_seconds != target_duration:
+                raise ValueError(
+                    f"minute_segment target_duration_seconds for {episode_key} must be {target_duration}; "
+                    f"got {episode.target_duration_seconds}"
+                )
+            if not episode.segments:
+                raise ValueError(f"minute_segment must return at least one segment for {episode_key}")
+            ordered_segments = sorted(episode.segments, key=lambda item: int(item.index))
+            expected_indexes = list(range(1, len(ordered_segments) + 1))
+            actual_indexes = [int(item.index) for item in ordered_segments]
+            if actual_indexes != expected_indexes:
+                raise ValueError(
+                    f"minute_segment segment indexes for {episode_key} must be 1-{len(ordered_segments)}; "
+                    f"got {actual_indexes}"
+                )
+            for segment in ordered_segments:
+                segment.episode_key = episode_key
+                segment.minute_id = str(segment.minute_id or "").strip() or f"{episode_key}_minute_{segment.index:03d}"
+                segment.title = " ".join(str(segment.title or "").split()).strip() or f"分钟片段{segment.index:03d}"
+                segment.summary = " ".join(str(segment.summary or "").split()).strip()
+                if not segment.summary:
+                    raise ValueError(f"minute_segment summary is empty for {segment.minute_id}")
+                segment.start_second = max(0.0, float(segment.start_second))
+                segment.end_second = max(segment.start_second + 1.0, float(segment.end_second))
+                if segment.end_second > target_duration:
+                    segment.end_second = float(target_duration)
+                if segment.start_second >= segment.end_second:
+                    raise ValueError(
+                        f"minute_segment has invalid time range for {segment.minute_id}: "
+                        f"{segment.start_second}-{segment.end_second}"
+                    )
+                segment.visual_events = self._dedupe_texts(segment.visual_events)
+                segment.role_names = self._dedupe_texts(segment.role_names)
+                segment.prop_names = self._dedupe_texts(segment.prop_names)
+                segment.layout_names = self._dedupe_texts(segment.layout_names)
+            episode.segments = ordered_segments
+            ordered_episodes.append(episode)
+        return MinuteSegmentOutput(episodes=ordered_episodes)
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("script", node_name=self.name)
+        self.logger.info(
+            "node=minute_segment provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        episode_keys = self.expected_episode_keys(state)
+        self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        self.validate_episode_keys("script_novel_extract.novel_extract", state.script.novel_extract, state)
+        novel_full = self.script_contents.load_contents(
+            project_dir,
+            state.script.novel_full,
+            episode_keys,
+            label="script_novel.novel_full",
+        )
+        novel_extract = self.script_contents.load_contents(
+            project_dir,
+            state.script.novel_extract,
+            episode_keys,
+            label="script_novel_extract.novel_extract",
+        )
+        output = await self.script_service.minute_segment(
+            state,
+            provider,
+            novel_full=novel_full,
+            novel_extract=novel_extract,
+            director_prep=DirectorService.director_prep_context(state, episode_keys=episode_keys),
+        )
+        output = self.validate_minute_segments(output, state)
+        self.repo.save_node_output(project_dir, self.name, output)
+        state.metadata["minute_segments"] = output.model_dump(mode="json")
+        state.metadata["minute_segment_path"] = self.layout.project_relative(
+            project_dir,
+            self.layout.node_output_path(project_dir, self.name),
+        )
+        state.metadata["minute_segment_episode_keys"] = episode_keys
+        state.budget.used_text_calls += 1
+        return state
+
+
 def build_script_node_runners(workflow: Any) -> dict[str, ScriptNodeBase]:
     script_contents = getattr(workflow, "script_contents", None)
     if script_contents is None:
@@ -383,6 +499,7 @@ def build_script_node_runners(workflow: Any) -> dict[str, ScriptNodeBase]:
         ScriptOutlineNode.name: ScriptOutlineNode(**deps),
         ScriptNovelNode.name: ScriptNovelNode(**deps),
         ScriptNovelExtractNode.name: ScriptNovelExtractNode(**deps),
+        MinuteSegmentNode.name: MinuteSegmentNode(**deps),
     }
 
 
@@ -400,6 +517,7 @@ def build_script_nodes(workflow: Any, after_novel_nodes: list[WorkflowNode] | No
 __all__ = [
     "SCRIPT_NODE_NAMES",
     "SCRIPT_NOVEL_EXTRACT_BATCH_SIZE",
+    "MinuteSegmentNode",
     "ScriptNovelExtractNode",
     "ScriptNovelNode",
     "ScriptOutlineNode",

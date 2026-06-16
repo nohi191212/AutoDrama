@@ -89,8 +89,8 @@ class VideoRouter:
     def __init__(self, provider: InheritanceVideoProvider) -> None:
         self.provider = provider
 
-    def video(self, purpose: str) -> InheritanceVideoProvider:
-        del purpose
+    def video(self, purpose: str, *, node_name: str | None = None) -> InheritanceVideoProvider:
+        del purpose, node_name
         return self.provider
 
 

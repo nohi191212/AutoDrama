@@ -58,6 +58,16 @@ class RightCodeTextProvider:
             ),
             default=True,
         )
+        self.console_stream = self._bool_option(
+            settings.options.get(
+                f"{model_key}_console_stream",
+                settings.options.get(
+                    "text_console_stream",
+                    settings.options.get("rightcode_console_stream", settings.options.get("console_stream", False)),
+                ),
+            ),
+            default=False,
+        )
 
     @staticmethod
     def _resolve_endpoint(base_url: str) -> str:
@@ -146,6 +156,11 @@ class RightCodeTextProvider:
         if isinstance(metadata_parameters, dict):
             merged.update(metadata_parameters)
         return merged
+
+    def _console_stream_enabled(self, metadata: dict[str, Any]) -> bool:
+        if "console_stream" in metadata:
+            return self._bool_option(metadata.get("console_stream"), default=False)
+        return self.console_stream
 
     @staticmethod
     def _audio_format(ref: AssetRef) -> str:
@@ -260,8 +275,13 @@ class RightCodeTextProvider:
         }
         if self.use_response_format:
             payload["text"] = {"format": {"type": "json_object"}}
-        if self.reasoning_effort:
-            payload["reasoning"] = {"effort": self.reasoning_effort}
+        reasoning_effort = (
+            metadata.get(f"{self.model_key}_reasoning_effort")
+            or metadata.get("reasoning_effort")
+            or self.reasoning_effort
+        )
+        if reasoning_effort:
+            payload["reasoning"] = {"effort": str(reasoning_effort)}
         payload.update(self._extra_parameters(metadata))
         return payload
 
@@ -340,12 +360,22 @@ class RightCodeTextProvider:
         except Exception:
             return
 
-    async def _post_responses(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post_responses(
+        self,
+        payload: dict[str, Any],
+        *,
+        console_stream: bool = False,
+        console_stream_label: str | None = None,
+    ) -> dict[str, Any]:
         if not self.api_key:
             raise ProviderAuthError("Missing RightCode API key environment variable")
 
         if payload.get("stream"):
-            return await self._stream_responses(payload)
+            return await self._stream_responses(
+                payload,
+                console_stream=console_stream,
+                console_stream_label=console_stream_label,
+            )
 
         async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
             response = await client.post(
@@ -376,7 +406,13 @@ class RightCodeTextProvider:
             raise ProviderBadResponseError(f"RightCode text response must be a JSON object: {body!r}")
         return body
 
-    async def _stream_responses(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _stream_responses(
+        self,
+        payload: dict[str, Any],
+        *,
+        console_stream: bool = False,
+        console_stream_label: str | None = None,
+    ) -> dict[str, Any]:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -390,7 +426,11 @@ class RightCodeTextProvider:
                             "RightCode text streaming request failed with HTTP "
                             f"{response.status_code}: {body.decode('utf-8', errors='replace')[:500]}"
                         )
-                    parsed = await self._read_stream_response(response)
+                    parsed = await self._read_stream_response(
+                        response,
+                        console_stream=console_stream,
+                        console_stream_label=console_stream_label,
+                    )
                     if parsed is None:
                         raise ProviderBadResponseError("RightCode text streaming response did not contain output")
                     return parsed
@@ -401,8 +441,17 @@ class RightCodeTextProvider:
                 ) from exc
 
     @classmethod
-    async def _read_stream_response(cls, response: httpx.Response) -> dict[str, Any] | None:
+    async def _read_stream_response(
+        cls,
+        response: httpx.Response,
+        *,
+        console_stream: bool = False,
+        console_stream_label: str | None = None,
+    ) -> dict[str, Any] | None:
         events: list[dict[str, Any]] = []
+        printed_any = False
+        if console_stream:
+            cls._print_stream_boundary(console_stream_label, start=True)
         async for raw_line in response.aiter_lines():
             if cls._stream_line_is_done(raw_line):
                 break
@@ -410,18 +459,86 @@ class RightCodeTextProvider:
             if event is None:
                 continue
             events.append(event)
+            if console_stream:
+                for chunk in cls._stream_console_chunks(event):
+                    cls._print_stream_chunk(chunk)
+                    printed_any = True
             event_type = str(event.get("type") or "")
             if event_type in {"response.failed", "response.incomplete"}:
                 error = event.get("error")
                 response_payload = event.get("response")
                 if isinstance(response_payload, dict) and response_payload.get("error") is not None:
                     error = response_payload.get("error")
+                if console_stream:
+                    cls._print_stream_boundary(console_stream_label, start=False, printed_any=printed_any)
                 raise ProviderBadResponseError(f"RightCode text stream ended with {event_type}: {error!r}")
             if event_type == "response.completed":
-                return cls._payload_from_stream_events(events)
+                payload = cls._payload_from_stream_events(events)
+                if console_stream and not printed_any and payload is not None:
+                    try:
+                        content = cls._message_content(payload)
+                    except Exception:
+                        content = ""
+                    if content:
+                        cls._print_stream_chunk(content)
+                        printed_any = True
+                if console_stream:
+                    cls._print_stream_boundary(console_stream_label, start=False, printed_any=printed_any)
+                return payload
             if event_type in {"response.output_text.done", "response.output_text.completed"} and event.get("text"):
-                return cls._payload_from_stream_events(events)
-        return cls._payload_from_stream_events(events)
+                payload = cls._payload_from_stream_events(events)
+                if console_stream:
+                    cls._print_stream_boundary(console_stream_label, start=False, printed_any=printed_any)
+                return payload
+        payload = cls._payload_from_stream_events(events)
+        if console_stream:
+            cls._print_stream_boundary(console_stream_label, start=False, printed_any=printed_any)
+        return payload
+
+    @staticmethod
+    def _print_stream_chunk(chunk: str) -> None:
+        try:
+            print(chunk, end="", flush=True)
+        except OSError:
+            return
+
+    @staticmethod
+    def _print_stream_boundary(
+        label: str | None,
+        *,
+        start: bool,
+        printed_any: bool = False,
+    ) -> None:
+        title = label or "RightCode text stream"
+        if start:
+            message = f"\n{'=' * 100}\n{title}\n{'-' * 100}\n"
+        else:
+            prefix = "\n" if printed_any else ""
+            message = f"{prefix}\n{'-' * 100}\nEND {title}\n{'=' * 100}\n"
+        try:
+            print(message, end="", flush=True)
+        except OSError:
+            return
+
+    @staticmethod
+    def _stream_console_chunks(event: dict[str, Any]) -> list[str]:
+        chunks: list[str] = []
+        event_type = str(event.get("type") or "")
+        delta = event.get("delta")
+        if event_type == "response.output_text.delta" and isinstance(delta, str):
+            chunks.append(delta)
+
+        choices = event.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                value = choice.get("delta")
+                if isinstance(value, dict):
+                    content = value.get("content")
+                    if isinstance(content, str):
+                        chunks.append(content)
+        return chunks
 
     @staticmethod
     def _stream_line_is_done(raw_line: str) -> bool:
@@ -573,6 +690,11 @@ class RightCodeTextProvider:
         for attempt in range(1, max_attempts + 1):
             content = ""
             payload = self.build_payload(prompt, schema, temperature=temperature, metadata=metadata, refs=refs)
+            console_stream = self._console_stream_enabled(metadata)
+            console_stream_label = (
+                f"RIGHTCODE STREAM node={metadata.get('node_name', '-')}"
+                f" schema={schema.__name__} attempt={attempt}/{max_attempts}"
+            )
             self._write_detail_log(
                 "RIGHTCODE TEXT REQUEST",
                 metadata=metadata,
@@ -582,8 +704,9 @@ class RightCodeTextProvider:
                     "schema": schema.__name__,
                     "temperature": temperature,
                     "response_format": payload.get("text"),
-                    "reasoning_effort": self.reasoning_effort,
+                    "reasoning_effort": (payload.get("reasoning") or {}).get("effort"),
                     "stream": payload.get("stream"),
+                    "console_stream": console_stream,
                 },
                 sections=[
                     ("INSTRUCTIONS", str(payload.get("instructions"))),
@@ -592,7 +715,11 @@ class RightCodeTextProvider:
             )
 
             try:
-                response_payload = await self._post_responses(payload)
+                response_payload = await self._post_responses(
+                    payload,
+                    console_stream=console_stream,
+                    console_stream_label=console_stream_label,
+                )
                 content = self._message_content(response_payload)
                 if not content.strip():
                     raise ProviderBadResponseError("RightCode text response content is empty")

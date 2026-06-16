@@ -1426,6 +1426,26 @@ class LayoutDedupeReviewNode(StaticAssetNodeBase):
 class LayoutImageGenerationNode(StaticAssetNodeBase):
     name = "layout_image_generation"
 
+    @staticmethod
+    def _three_view_layout_prompt(layout: Layout) -> str:
+        prompt = str(layout.prompt or "").strip()
+        marker = "无人物场景三视图设定板"
+        if marker in prompt and ("顶视" in prompt or "平面" in prompt) and ("侧向" in prompt or "45" in prompt):
+            return prompt
+
+        prefix = (
+            "请生成一张横向16:9无人物场景三视图设定板，画面分成三个并列视图："
+            "左侧为顶视平面/空间动线图，中间为正向主视/入口朝向立面图，右侧为侧向或45度透视图。"
+            "三个视图必须表现同一个空间、同一套固定结构、同一光源方向和同一材质设定，不能变成三个不同场景。"
+            "顶视平面图要交代入口、窗/墙/柱/地面边界、主要家具或固定装置、角色可站位区域、摄影机可站位区域、"
+            "剧情关键道具可摆放位置和行动动线；正向主视要交代空间高度、前中后景层次、背景锚点、主光源、"
+            "墙面/天花/地面关系和稳定构图；侧向或45度透视要交代空间纵深、遮挡关系、可绕行路径、"
+            "道具与人物站位的前后关系、材质厚度、反射/阴影和空气粒子状态。"
+            "允许少量不可读的小标签或分区标题，但不要出现人物、背影、手、剪影、剧情文字、字幕、水印、logo、项目名、文件名或ID。"
+        )
+        identity = f"场景名称：{layout.name}。场景说明：{layout.desc}。"
+        return f"{prefix}\n\n{identity}\n\n原始场景设定：{prompt}"
+
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("layout", node_name=self.name)
         self.logger.info(
@@ -1461,7 +1481,7 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
                 except Exception as exc:
                     self.logger.warning("layout_image_generation ignored invalid existing node output %s: %s", path, exc)
         for layout in layouts:
-            prompt = layout.prompt
+            prompt = self._three_view_layout_prompt(layout)
             result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
                 provider=provider,
                 state=state,

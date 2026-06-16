@@ -33,6 +33,25 @@ class AssetService:
     def layout_design_style_prompt(state: ProjectState) -> str:
         return str(state.metadata.get("layout_design_style_prompt") or "").strip()
 
+    @classmethod
+    def minute_segments_context(cls, state: ProjectState, episode_keys: list[str] | None = None) -> str:
+        payload = state.metadata.get("minute_segments")
+        if not isinstance(payload, dict) or not payload:
+            return "（暂无分钟片段；请以完整小说正文和分集摘要为准。）"
+        if episode_keys:
+            selected = {str(key) for key in episode_keys}
+            episodes = payload.get("episodes")
+            if isinstance(episodes, list):
+                payload = {
+                    **payload,
+                    "episodes": [
+                        item
+                        for item in episodes
+                        if isinstance(item, dict) and str(item.get("episode_key")) in selected
+                    ],
+                }
+        return cls.format_json(payload)
+
     async def prop_extract(
         self,
         state: ProjectState,
@@ -45,6 +64,7 @@ class AssetService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            minute_segments=self.minute_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             episode_keys=", ".join(novel_full),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
@@ -76,6 +96,7 @@ class AssetService:
             raw_script=state.raw_script,
             prop_extract_item=self.format_json(prop_item.model_dump(mode="json")),
             prop_novel_full=self.format_json(prop_novel_full),
+            minute_segments=self.minute_segments_context(state, list(prop_novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(prop_novel_full)),
             all_prop_extracts=self.format_json(all_prop_extracts),
             existing_prop_designs=self.format_json(existing_prop_designs),
@@ -107,6 +128,7 @@ class AssetService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
+            minute_segments=self.minute_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             episode_keys=", ".join(novel_full),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
@@ -136,6 +158,7 @@ class AssetService:
             title=state.title,
             layout_extracts=self.format_json(layout_extracts),
             episode_stories=self.format_json(episode_stories),
+            minute_segments=self.minute_segments_context(state, list(episode_stories)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(episode_stories)),
             roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
             props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),

@@ -1,49 +1,62 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from math import gcd
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 from autodrama.core.ids import normalize_id
 from autodrama.core.schemas import (
+    MinuteSegmentEpisode,
+    MinuteSegmentOutput,
     ProjectState,
     ShotManifestGenerationEpisodeItem,
     ShotManifestGenerationOutput,
-    StoryboardBBox,
-    StoryboardBBoxDetectionOutput,
-    StoryboardBBoxEpisode,
     StoryboardEpisodeOutput,
-    StoryboardPanelBBoxItem,
-    StoryboardPanelCropItem,
-    StoryboardPanelCropOutput,
     StoryboardPromptEpisode,
     StoryboardPromptOutput,
+    StoryboardPromptShot,
     StoryboardShot,
     StoryboardSheetGenerationItem,
     StoryboardSheetGenerationOutput,
-    StoryboardSourceCoverage,
 )
 from autodrama.providers.base import AssetRef
 from autodrama.services.director_service import DirectorService
+from autodrama.utils.video_prompts import sanitize_video_prompt_text
 from autodrama.workflows.nodes.static_asset_nodes import StaticAssetNodeBase
 from autodrama.workflows.runner import WorkflowNode
 
 STORYBOARD_ASSET_NODE_NAMES = [
     "storyboard_prompt",
     "storyboard_generation",
-    "storyboard_bbox_detection",
-    "storyboard_panel_crop",
     "shot_manifest_generation",
 ]
 STORYBOARD_IMAGE_PROVIDER_NODE_NAME = "storyboard_sheet_generation"
 
 
 class StoryboardAssetNodeBase(StaticAssetNodeBase):
-    PANEL_COUNT = 12
+    STORYBOARD_PANEL_COUNT = 12
+    STORYBOARD_GRID = "4x3"
+    STORYBOARD_PANEL_ASPECT_RATIO = "16:9"
+    TARGET_SHOT_SECONDS = 15
 
     @staticmethod
     def _format_json(value: object) -> str:
+        def to_jsonable(item: object) -> object:
+            if isinstance(item, BaseModel):
+                return item.model_dump(mode="json")
+            if isinstance(item, dict):
+                return {key: to_jsonable(val) for key, val in item.items()}
+            if isinstance(item, list):
+                return [to_jsonable(val) for val in item]
+            if isinstance(item, tuple):
+                return [to_jsonable(val) for val in item]
+            return item
+
+        value = to_jsonable(value)
         return json.dumps(value, ensure_ascii=False, indent=2)
 
     @staticmethod
@@ -99,16 +112,40 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 return ratio
         return "9:16"
 
-    def storyboard_grid(self, aspect_ratio: str) -> str:
-        ratio_number = self._ratio_number(aspect_ratio)
-        return "3x4" if ratio_number is not None and ratio_number < 1 else "4x3"
+    @classmethod
+    def storyboard_grid(cls) -> str:
+        return cls.STORYBOARD_GRID
 
-    def storyboard_sheet_size(self, aspect_ratio: str) -> str:
-        ratio_number = self._ratio_number(aspect_ratio)
-        return "9:16" if ratio_number is not None and ratio_number < 1 else "16:9"
+    @classmethod
+    def storyboard_panel_aspect_ratio(cls) -> str:
+        return cls.STORYBOARD_PANEL_ASPECT_RATIO
+
+    @classmethod
+    def storyboard_sheet_size(cls) -> str:
+        return "16:9"
 
     def target_episode_keys(self, state: ProjectState) -> list[str]:
         return self.active_episode_keys(state) or self.expected_episode_keys(state)
+
+    def target_shot_count(self, state: ProjectState) -> int:
+        duration = self.script_service.episode_duration_seconds(state)
+        return max(1, int((duration + self.TARGET_SHOT_SECONDS - 1) // self.TARGET_SHOT_SECONDS))
+
+    @staticmethod
+    def shot_count_for_episode(episode: StoryboardPromptEpisode) -> int:
+        return len(episode.shots)
+
+    def load_minute_segment_output(self, project_dir: Path) -> MinuteSegmentOutput:
+        path = self.layout.node_output_path(project_dir, "minute_segment")
+        if not path.exists():
+            raise FileNotFoundError("minute_segment output is missing; run pregen through minute_segment first")
+        return MinuteSegmentOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def minute_segments_by_episode(self, project_dir: Path) -> dict[str, MinuteSegmentEpisode]:
+        return {
+            episode.episode_key: episode
+            for episode in self.load_minute_segment_output(project_dir).episodes
+        }
 
     def episode_story_context(self, project_dir: Path, state: ProjectState, episode_keys: list[str]) -> dict[str, str]:
         refs = state.script.novel_extract
@@ -147,6 +184,34 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
             )
         return context
 
+    def layout_context(self, state: ProjectState) -> list[dict[str, object]]:
+        return [
+            {
+                "layout_id": layout.id,
+                "layout_name": layout.name,
+                "desc": layout.desc,
+                "episode_keys": layout.episode_keys,
+                "asset_path": layout.asset_path,
+                "asset_url": layout.asset_url,
+            }
+            for layout in state.layouts.values()
+        ]
+
+    def prop_context(self, state: ProjectState) -> list[dict[str, object]]:
+        return [
+            {
+                "prop_id": prop.id,
+                "prop_name": prop.name,
+                "status": prop.status,
+                "desc": prop.desc,
+                "episode_keys": prop.episode_keys,
+                "owner_role_id": prop.owner_role_id,
+                "asset_path": prop.asset_path,
+                "asset_url": prop.asset_url,
+            }
+            for prop in state.props.values()
+        ]
+
     def load_storyboard_prompt_output(self, project_dir: Path) -> StoryboardPromptOutput:
         path = self.layout.node_output_path(project_dir, "storyboard_prompt")
         if not path.exists():
@@ -159,32 +224,31 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
             raise FileNotFoundError("storyboard_generation output is missing; run pregen through storyboard_generation first")
         return StoryboardSheetGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
-    def load_storyboard_bbox_output(self, project_dir: Path) -> StoryboardBBoxDetectionOutput:
-        path = self.layout.node_output_path(project_dir, "storyboard_bbox_detection")
-        if not path.exists():
-            raise FileNotFoundError(
-                "storyboard_bbox_detection output is missing; run pregen through storyboard_bbox_detection first"
-            )
-        return StoryboardBBoxDetectionOutput.model_validate_json(path.read_text(encoding="utf-8"))
+    @staticmethod
+    def storyboard_panel_asset_id(shot_id: str) -> str:
+        return f"{str(shot_id).strip()}_storyboard_panel"
 
-    def load_storyboard_panel_crop_output(self, project_dir: Path) -> StoryboardPanelCropOutput:
-        path = self.layout.node_output_path(project_dir, "storyboard_panel_crop")
-        if not path.exists():
-            raise FileNotFoundError(
-                "storyboard_panel_crop output is missing; run pregen through storyboard_panel_crop first"
-            )
-        return StoryboardPanelCropOutput.model_validate_json(path.read_text(encoding="utf-8"))
+    @staticmethod
+    def shot_id_for_episode_index(episode_key: str, index: int) -> str:
+        return f"{episode_key}_shot_{index:03d}"
+
+    @staticmethod
+    def episode_key_from_shot_id(shot_id: str) -> str:
+        text = str(shot_id or "").strip()
+        if "_shot_" not in text:
+            return ""
+        return text.rsplit("_shot_", 1)[0]
 
     def validate_storyboard_prompt_output(
         self,
         output: StoryboardPromptOutput,
         *,
         expected_episode_keys: list[str],
-        aspect_ratio: str,
-        grid: str,
+        shot_count: int,
     ) -> StoryboardPromptOutput:
         expected = set(expected_episode_keys)
         seen: set[str] = set()
+        seen_shots: set[str] = set()
         cleaned: list[StoryboardPromptEpisode] = []
         for episode in output.storyboards:
             episode.episode_key = str(episode.episode_key or "").strip()
@@ -196,22 +260,42 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
             if episode.episode_key in seen:
                 raise ValueError(f"storyboard_prompt returned duplicate episode_key: {episode.episode_key}")
             seen.add(episode.episode_key)
-            episode.aspect_ratio = str(episode.aspect_ratio or aspect_ratio).strip() or aspect_ratio
-            episode.grid = str(episode.grid or grid).strip() or grid
-            episode.image_prompt = str(episode.image_prompt or "").strip()
-            if not episode.image_prompt:
-                raise ValueError(f"storyboard_prompt returned empty image_prompt for {episode.episode_key}")
-            if len(episode.panels) != self.PANEL_COUNT:
+            if len(episode.shots) != shot_count:
                 raise ValueError(
-                    f"storyboard_prompt must return {self.PANEL_COUNT} panels for {episode.episode_key}; "
-                    f"got {len(episode.panels)}"
+                    f"storyboard_prompt must return {shot_count} shots for {episode.episode_key}; "
+                    f"got {len(episode.shots)}"
                 )
-            for expected_index, panel in enumerate(episode.panels, start=1):
-                if panel.index != expected_index:
+            validated_shots: list[StoryboardPromptShot] = []
+            for expected_index, shot in enumerate(episode.shots, start=1):
+                expected_shot_id = self.shot_id_for_episode_index(episode.episode_key, expected_index)
+                shot.shot_id = str(shot.shot_id or "").strip()
+                if shot.shot_id != expected_shot_id:
                     raise ValueError(
-                        f"storyboard_prompt panel index mismatch for {episode.episode_key}: "
-                        f"expected {expected_index}, got {panel.index}"
+                        f"storyboard_prompt shot_id mismatch for {episode.episode_key} index={expected_index}: "
+                        f"expected {expected_shot_id}, got {shot.shot_id or '-'}"
                     )
+                if shot.shot_id in seen_shots:
+                    raise ValueError(f"storyboard_prompt returned duplicate shot_id: {shot.shot_id}")
+                seen_shots.add(shot.shot_id)
+                try:
+                    shot.duration_seconds = float(shot.duration_seconds)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"storyboard_prompt invalid duration_seconds for {shot.shot_id}") from exc
+                if not 12 <= shot.duration_seconds <= 15:
+                    raise ValueError(
+                        f"storyboard_prompt duration_seconds for {shot.shot_id} must be 12-15; "
+                        f"got {shot.duration_seconds}"
+                    )
+                shot.role_ids = self._dedupe_nonempty_texts(shot.role_ids)
+                shot.layout_ids = self._dedupe_nonempty_texts(shot.layout_ids)
+                shot.prop_ids = self._dedupe_nonempty_texts(shot.prop_ids)
+                if not shot.layout_ids:
+                    raise ValueError(f"storyboard_prompt layout_ids is empty for {shot.shot_id}")
+                shot.video_prompt = sanitize_video_prompt_text(str(shot.video_prompt or "").strip())
+                if not shot.video_prompt:
+                    raise ValueError(f"storyboard_prompt returned empty video_prompt for {shot.shot_id}")
+                validated_shots.append(shot)
+            episode.shots = validated_shots
             cleaned.append(episode)
         missing = [episode_key for episode_key in expected_episode_keys if episode_key not in seen]
         if missing:
@@ -245,179 +329,136 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
             storyboards=[by_episode[episode_key] for episode_key in ordered_keys if episode_key in by_episode]
         )
 
-    def roleboard_reference_refs(self, project_dir: Path, state: ProjectState, *, limit: int) -> list[AssetRef]:
-        refs: list[AssetRef] = []
-        key_vision = state.metadata.get("key_vision_asset")
-        if isinstance(key_vision, dict):
-            asset_path = key_vision.get("asset_path")
-            asset_url = key_vision.get("asset_url")
-        else:
-            asset_path = state.metadata.get("key_vision_asset_path")
-            asset_url = state.metadata.get("key_vision_asset_url")
-        existing_key_vision = self.layout.existing_project_file(project_dir, str(asset_path)) if asset_path else None
-        if existing_key_vision or asset_url:
-            refs.append(
-                AssetRef(
-                    id="key_vision_original",
-                    type="image",
-                    path=str(project_dir / existing_key_vision) if existing_key_vision else None,
-                    url=str(asset_url) if asset_url else None,
-                    metadata={"asset_type": "key_vision", "reference_for": "storyboard"},
-                )
-            )
+    @classmethod
+    def _dedupe_nonempty_texts(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for value in values or []:
+            text = " ".join(str(value or "").split()).strip()
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(text)
+        return cleaned
 
-        for role in state.roles.values():
-            for appearance in role.appearances.values():
-                asset_path = appearance.asset_path or appearance.design_image_asset_path
-                asset_url = appearance.asset_url or appearance.design_image_asset_url
-                existing = self.layout.existing_project_file(project_dir, asset_path)
-                if not existing and not asset_url:
-                    continue
-                refs.append(
-                    AssetRef(
-                        id=appearance.asset_id or appearance.design_image_asset_id or appearance.id,
-                        type="image",
-                        path=str(project_dir / existing) if existing else None,
-                        url=asset_url,
-                        metadata={
-                            "asset_type": "roleboard",
-                            "role_id": role.id,
-                            "role_name": role.name,
-                            "appearance_id": appearance.id,
-                            "appearance_name": appearance.name,
-                            "reference_for": "storyboard",
-                        },
-                    )
+    def storyboard_reference_refs(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        shot: StoryboardPromptShot,
+        *,
+        limit: int,
+    ) -> list[AssetRef]:
+        refs: list[AssetRef] = []
+
+        def append(ref: AssetRef) -> bool:
+            if len(refs) >= limit:
+                return False
+            refs.append(ref)
+            return len(refs) < limit
+
+        for layout_id in shot.layout_ids:
+            layout = state.layouts.get(layout_id)
+            if layout is None:
+                continue
+            existing = self.layout.existing_project_file(project_dir, layout.asset_path)
+            if not existing and not layout.asset_url:
+                continue
+            if not append(
+                AssetRef(
+                    id=layout.asset_id or layout.id,
+                    type="image",
+                    path=str(project_dir / existing) if existing else None,
+                    url=layout.asset_url,
+                    metadata={
+                        "asset_type": "layout",
+                        "layout_id": layout.id,
+                        "layout_name": layout.name,
+                        "reference_for": "storyboard",
+                    },
                 )
-                if len(refs) >= limit:
-                    return refs
+            ):
+                return refs
+
+        for role_id in shot.role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
+            if appearance is None:
+                continue
+            asset_path = appearance.asset_path or appearance.design_image_asset_path
+            asset_url = appearance.asset_url or appearance.design_image_asset_url
+            existing = self.layout.existing_project_file(project_dir, asset_path)
+            if not existing and not asset_url:
+                continue
+            if not append(
+                AssetRef(
+                    id=appearance.asset_id or appearance.design_image_asset_id or appearance.id,
+                    type="image",
+                    path=str(project_dir / existing) if existing else None,
+                    url=asset_url,
+                    metadata={
+                        "asset_type": "roleboard",
+                        "role_id": role.id,
+                        "role_name": role.name,
+                        "appearance_id": appearance.id,
+                        "appearance_name": appearance.name,
+                        "reference_for": "storyboard",
+                    },
+                )
+            ):
+                return refs
+
+        for prop_id in shot.prop_ids:
+            prop = state.props.get(prop_id)
+            if prop is None:
+                continue
+            existing = self.layout.existing_project_file(project_dir, prop.asset_path)
+            if not existing and not prop.asset_url:
+                continue
+            if not append(
+                AssetRef(
+                    id=prop.asset_id or prop.id,
+                    type="image",
+                    path=str(project_dir / existing) if existing else None,
+                    url=prop.asset_url,
+                    metadata={
+                        "asset_type": "prop",
+                        "prop_id": prop.id,
+                        "prop_name": prop.name,
+                        "reference_for": "storyboard",
+                    },
+                )
+            ):
+                return refs
+
         return refs[:limit]
 
-    def storyboard_image_prompt(self, episode: StoryboardPromptEpisode) -> str:
-        panel_lines = []
-        for panel in episode.panels:
-            panel_lines.append(
-                (
-                    f"{panel.index}. {panel.title}；景别：{panel.shot_size}；机位：{panel.camera_position}；"
-                    f"构图：{panel.composition}；动作：{panel.action}；情绪：{panel.emotion}；"
-                    f"镜头运动：{panel.camera_movement}；音效：{panel.sound_effects}"
-                )
-            )
+    def storyboard_image_prompt(self, episode_key: str, shot: StoryboardPromptShot) -> str:
         return "\n".join(
             [
                 (
-                    f"生成一张黑白线稿 12 宫格故事板，episode={episode.episode_key}，网格 {episode.grid}，"
-                    f"每个宫格内部画幅比例必须是 {episode.aspect_ratio}。"
+                    f"为 {episode_key} 的 {shot.shot_id} 生成一张完整分镜故事板图。"
+                    f"这个 video shot 时长 {shot.duration_seconds:g} 秒，一张故事板覆盖整个 12-15 秒 video shot。"
                 ),
-                "每格只做清晰分镜草图：线条干净、灰阶阴影少量、人物动势明确、构图方向准确、镜头顺序准确。",
-                "每格左上角可放很小编号 1-12 和极短标题；不要出现对白气泡、字幕、水印、logo、文件名、项目名或大段文字。",
-                "角色外观参考传入的角色身份板，保持脸型、发型、服装、配饰和体型稳定；但画面风格必须是黑白线稿故事板，不追求最终画质。",
-                "原始故事板生成 prompt：",
-                episode.image_prompt,
-                "逐格分镜脚本：",
-                "\n".join(panel_lines),
+                "固定要求：16:9 故事板表格，严格 4 列 x 3 行 = 12 个电影风格面板。每个宫格对应约 1-1.2 秒画面，它不是一个 shot；12 个宫格合起来覆盖当前 12-15 秒 video shot 的连续动作。",
+                "实际故事板绘图必须仅为黑白：粗糙的铅笔线条、最小细节、快速手势绘图能量、简单的解剖结构构建、强烈的轮廓可读性。保持艺术作品轻量、动态且未完成，像早期影视预演分镜，不要画成最终彩色成片。",
+                "请将下方 video_prompt 拆解成 12 个连续推进的关键画面。每个面板都必须清楚体现画面内容、人物动作、镜头关系和情绪节奏；画面之间必须有明确叙事推进感，而不是彼此孤立的静态图片。",
+                "每个面板必须包含可见的动作、状态变化或镜头推进。避免重复、呆板或静态站立构图；角色动作、表情、姿态和场景变化必须服务剧情发展，强化连续性、节奏感和视觉张力。",
+                "使用电影感摄影方式，包含但不限于：手持感、快速平移、环绕运动、俯拍、仰拍、侧面轮廓、侵略性特写、长焦压缩、极端负空间。镜头语言要服务剧情，不要平均分配，要根据情绪和叙事重点变化。",
+                "环境保持简洁，只保留对剧情有帮助的关键场景元素。避免无关杂乱背景，重点突出人物、动作、空间关系、光线方向和氛围。",
+                "标注颜色系统：红色箭头=身体运动，蓝色箭头=摄影机运动，绿色标记=取景/构图笔记，橙色标记=灯光方向，紫色标记=情绪/声音/叙事强调，黑色文本=简短镜头笔记和面板标签。标注必须少量、清晰、服务制作，不要遮挡主体。",
+                "宫格之间有清晰分隔和留白，不得重叠、裁脸或压住人物肢体。允许很小的面板编号 01-12 和极短制作注释；不要生成字幕、对白气泡、水印、logo、文件名、项目名、资产 ID、二维码或大段可读文字。",
+                "输入参考图优先级：角色外观以传入的人物身份板/角色板为准；场景空间以传入的场景图/场景三视图为准；如有道具参考图，道具以传入的道具设计图为准。禁止使用主视觉图/key_vision 作为参考或构图依据。",
+                "storyboard_generation 的输入由当前 storyboard_prompt 的 shot.video_prompt、对应角色身份板图、对应场景图和本固定 12 宫格故事板模板组成；不要参考主视觉图，不要新增剧情事实、角色、场景或道具。",
+                "当前 shot 视频提示词：",
+                shot.video_prompt,
             ]
         )
-
-    @staticmethod
-    def bbox_is_valid(bbox: StoryboardBBox) -> bool:
-        return bbox.x_min < bbox.x_max and bbox.y_min < bbox.y_max
-
-    @staticmethod
-    def bbox_contains(outer: StoryboardBBox, inner: StoryboardBBox) -> bool:
-        return (
-            outer.x_min <= inner.x_min
-            and outer.y_min <= inner.y_min
-            and outer.x_max >= inner.x_max
-            and outer.y_max >= inner.y_max
-        )
-
-    def validate_storyboard_bbox_episode(
-        self,
-        episode: StoryboardBBoxEpisode,
-        *,
-        expected_episode_key: str,
-    ) -> StoryboardBBoxEpisode:
-        episode.episode_key = str(episode.episode_key or "").strip()
-        if episode.episode_key != expected_episode_key:
-            raise ValueError(
-                f"storyboard_bbox_detection returned episode_key {episode.episode_key!r}; "
-                f"expected {expected_episode_key!r}"
-            )
-        if int(episode.panel_count) != self.PANEL_COUNT:
-            raise ValueError(
-                f"storyboard_bbox_detection panel_count must be {self.PANEL_COUNT} for {episode.episode_key}; "
-                f"got {episode.panel_count}"
-            )
-        if len(episode.panels) != self.PANEL_COUNT:
-            raise ValueError(
-                f"storyboard_bbox_detection must return {self.PANEL_COUNT} panels for {episode.episode_key}; "
-                f"got {len(episode.panels)}"
-            )
-        expected_indexes = set(range(1, self.PANEL_COUNT + 1))
-        actual_indexes = {int(panel.shot_index) for panel in episode.panels}
-        if actual_indexes != expected_indexes:
-            raise ValueError(
-                f"storyboard_bbox_detection shot_index set mismatch for {episode.episode_key}: "
-                f"expected 1-{self.PANEL_COUNT}, got {sorted(actual_indexes)}"
-            )
-        for panel in episode.panels:
-            if not self.bbox_is_valid(panel.bbox_1000):
-                raise ValueError(
-                    f"storyboard_bbox_detection invalid bbox_1000 for {episode.episode_key} "
-                    f"shot_index={panel.shot_index}: {panel.bbox_1000.model_dump(mode='json')}"
-                )
-            if panel.content_bbox_1000 is not None and not self.bbox_is_valid(panel.content_bbox_1000):
-                raise ValueError(
-                    f"storyboard_bbox_detection invalid content_bbox_1000 for {episode.episode_key} "
-                    f"shot_index={panel.shot_index}: {panel.content_bbox_1000.model_dump(mode='json')}"
-                )
-            if panel.content_bbox_1000 is not None and not self.bbox_contains(
-                panel.bbox_1000,
-                panel.content_bbox_1000,
-            ):
-                raise ValueError(
-                    f"storyboard_bbox_detection content_bbox_1000 must be inside bbox_1000 for "
-                    f"{episode.episode_key} shot_index={panel.shot_index}"
-                )
-        episode.panels = sorted(episode.panels, key=lambda panel: int(panel.shot_index))
-        return episode
-
-    def merge_storyboard_bbox_outputs(
-        self,
-        *,
-        project_dir: Path,
-        generated_output: StoryboardBBoxDetectionOutput,
-        all_episode_keys: list[str],
-    ) -> StoryboardBBoxDetectionOutput:
-        existing_path = self.layout.node_output_path(project_dir, "storyboard_bbox_detection")
-        by_episode: dict[str, StoryboardBBoxEpisode] = {}
-        if existing_path.exists():
-            try:
-                existing = StoryboardBBoxDetectionOutput.model_validate_json(existing_path.read_text(encoding="utf-8"))
-                by_episode.update({episode.episode_key: episode for episode in existing.episodes})
-            except Exception as exc:
-                self.logger.warning(
-                    "storyboard_bbox_detection ignored invalid existing output %s: %s",
-                    existing_path,
-                    exc,
-                )
-        by_episode.update({episode.episode_key: episode for episode in generated_output.episodes})
-        return StoryboardBBoxDetectionOutput(
-            episodes=[by_episode[episode_key] for episode_key in all_episode_keys if episode_key in by_episode]
-        )
-
-    @staticmethod
-    def bbox_to_pixels(bbox: StoryboardBBox, *, width: int, height: int) -> tuple[int, int, int, int]:
-        x_min = max(0, min(width - 1, round(width * bbox.x_min / 1000)))
-        y_min = max(0, min(height - 1, round(height * bbox.y_min / 1000)))
-        x_max = max(1, min(width, round(width * bbox.x_max / 1000)))
-        y_max = max(1, min(height, round(height * bbox.y_max / 1000)))
-        if x_max <= x_min:
-            x_max = min(width, x_min + 1)
-        if y_max <= y_min:
-            y_max = min(height, y_min + 1)
-        return x_min, y_min, x_max, y_max
 
 
 class StoryboardPromptNode(StoryboardAssetNodeBase):
@@ -433,20 +474,25 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
         self.workflow._hydrate_roles_from_design_files(project_dir, state)
         target_episode_keys = self.target_episode_keys(state)
         all_episode_keys = self.expected_episode_keys(state)
-        aspect_ratio = self.final_aspect_ratio()
-        grid = self.storyboard_grid(aspect_ratio)
+        final_aspect_ratio = self.final_aspect_ratio()
+        shot_count = self.target_shot_count(state)
         prompt = self.workflow.prompts.render(
             "storyboard_prompt",
             title=state.title,
             episode_keys=", ".join(target_episode_keys),
-            panel_count=self.PANEL_COUNT,
-            aspect_ratio=aspect_ratio,
-            grid=grid,
+            shot_count=shot_count,
+            final_aspect_ratio=final_aspect_ratio,
+            storyboard_panel_count=self.STORYBOARD_PANEL_COUNT,
+            storyboard_grid=self.storyboard_grid(),
+            storyboard_panel_aspect_ratio=self.storyboard_panel_aspect_ratio(),
             raw_script=state.raw_script,
             novel_extract=self._format_json(self.episode_story_context(project_dir, state, target_episode_keys)),
             novel_full=self._format_json(self.novel_full_contents(project_dir, state, target_episode_keys)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=target_episode_keys),
             roleboard_context=self._format_json(self.roleboard_context(project_dir, state)),
+            layout_context=self._format_json(self.layout_context(state)),
+            prop_context=self._format_json(self.prop_context(state)),
+            minute_segments=self._format_json(self.minute_segments_by_episode(project_dir)),
         )
         output = await provider.generate_json(
             prompt,
@@ -456,16 +502,16 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
                 "node_name": self.name,
                 "project_id": state.project_id,
                 "expected_keys": target_episode_keys,
-                "panel_count": self.PANEL_COUNT,
-                "aspect_ratio": aspect_ratio,
-                "grid": grid,
+                "shot_count": shot_count,
+                "storyboard_panel_count": self.STORYBOARD_PANEL_COUNT,
+                "storyboard_grid": self.storyboard_grid(),
+                "storyboard_panel_aspect_ratio": self.storyboard_panel_aspect_ratio(),
             },
         )
         output = self.validate_storyboard_prompt_output(
             output,
             expected_episode_keys=target_episode_keys,
-            aspect_ratio=aspect_ratio,
-            grid=grid,
+            shot_count=shot_count,
         )
         merged = self.merge_storyboard_prompt_outputs(
             project_dir=project_dir,
@@ -480,6 +526,8 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
 
 class StoryboardGenerationNode(StoryboardAssetNodeBase):
     name = "storyboard_generation"
+    DEFAULT_CONCURRENCY = 5
+    MAX_CONCURRENCY = 5
 
     def load_existing_output(self, project_dir: Path) -> dict[str, StoryboardSheetGenerationItem]:
         path = self.layout.node_output_path(project_dir, self.name)
@@ -489,7 +537,78 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
             output = StoryboardSheetGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
         except Exception:
             return {}
-        return {item.episode_key: item for item in output.generated_storyboards}
+        return {item.shot_id: item for item in output.generated_storyboards if item.shot_id}
+
+    def _resume_storyboard_sheet_from_existing_file(
+        self,
+        *,
+        project_dir: Path,
+        provider: object,
+        episode: StoryboardPromptEpisode,
+        shot: StoryboardPromptShot,
+        asset_id: str,
+        existing_path: str | None,
+        image_prompt: str,
+    ) -> StoryboardSheetGenerationItem | None:
+        existing_rel = self.layout.existing_project_file(project_dir, existing_path)
+        if not existing_rel:
+            return None
+        return StoryboardSheetGenerationItem(
+            episode_key=episode.episode_key,
+            shot_id=shot.shot_id,
+            asset_id=asset_id,
+            prompt=image_prompt,
+            duration_seconds=shot.duration_seconds,
+            panel_count=self.STORYBOARD_PANEL_COUNT,
+            grid=self.storyboard_grid(),
+            panel_aspect_ratio=self.storyboard_panel_aspect_ratio(),
+            asset_path=existing_rel,
+            asset_url=None,
+            provider=str(getattr(provider, "name", "unknown") or "unknown"),
+            model=str(getattr(provider, "model", "") or ""),
+            request_id=None,
+            usage={},
+            raw_response={"resumed_from_existing_file": True},
+        )
+
+    @classmethod
+    def generation_concurrency(cls, provider: object) -> int:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        value: object = None
+        for source in (params, options):
+            if not isinstance(source, dict):
+                continue
+            for name in (
+                "storyboard_generation_concurrency",
+                "storyboard_sheet_generation_concurrency",
+                "image_generation_concurrency",
+                "max_concurrent_images",
+            ):
+                if name in source:
+                    value = source[name]
+                    break
+            if value is not None:
+                break
+        if value is None:
+            for name in (
+                "storyboard_generation_concurrency",
+                "storyboard_sheet_generation_concurrency",
+                "image_generation_concurrency",
+                "max_concurrent_images",
+            ):
+                value = getattr(provider, name, None)
+                if value is not None:
+                    break
+        if value is None:
+            value = cls.DEFAULT_CONCURRENCY
+        try:
+            resolved = int(value)
+        except (TypeError, ValueError):
+            resolved = cls.DEFAULT_CONCURRENCY
+        return max(1, min(cls.MAX_CONCURRENCY, resolved))
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("storyboard", node_name=STORYBOARD_IMAGE_PROVIDER_NODE_NAME)
@@ -512,78 +631,100 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
         if missing:
             raise ValueError(f"storyboard_generation missing storyboard_prompt episode(s): {', '.join(missing)}")
 
-        existing_by_episode = self.load_existing_output(project_dir)
+        existing_by_shot = self.load_existing_output(project_dir)
         force_pregen = bool(getattr(self.workflow, "_force_pregen", False))
         max_refs = max(0, int(getattr(provider, "max_reference_images", 12) or 12))
-        refs = (
-            self.roleboard_reference_refs(project_dir, state, limit=max_refs)
-            if max_refs and getattr(provider, "supports_reference_images", False)
-            else []
-        )
-        generated_by_episode = dict(existing_by_episode)
+        supports_refs = bool(max_refs and getattr(provider, "supports_reference_images", False))
+        generated_by_shot = dict(existing_by_shot)
 
+        pending: list[tuple[StoryboardPromptEpisode, StoryboardPromptShot]] = []
+        skipped_existing = 0
         for episode in target_storyboards:
-            asset_id = f"{episode.episode_key}_storyboard_12up"
-            output_path = self.layout.image_asset_path(project_dir, "storyboards", asset_id)
-            existing_item = existing_by_episode.get(episode.episode_key)
-            if (
-                not force_pregen
-                and existing_item is not None
-                and self.layout.existing_project_file(project_dir, existing_item.asset_path)
-            ):
-                self.logger.info("%s already exists, reused from %s", asset_id, existing_item.asset_path)
-                generated_by_episode[episode.episode_key] = existing_item
-                continue
+            for shot in episode.shots:
+                asset_id = self.storyboard_panel_asset_id(shot.shot_id)
+                existing_item = existing_by_shot.get(shot.shot_id)
+                output_path = self.layout.image_asset_path(project_dir, "storyboards", asset_id)
+                existing_file_path = self.layout.existing_project_file(project_dir, output_path)
+                if (
+                    not force_pregen
+                    and (
+                        (existing_item is not None and self.layout.existing_project_file(project_dir, existing_item.asset_path))
+                        or existing_file_path is not None
+                    )
+                ):
+                    reuse_source = "json" if existing_item is not None else "file"
+                    if existing_item is None:
+                        image_prompt = self.storyboard_image_prompt(episode.episode_key, shot)
+                        existing_item = self._resume_storyboard_sheet_from_existing_file(
+                            project_dir=project_dir,
+                            provider=provider,
+                            episode=episode,
+                            shot=shot,
+                            asset_id=asset_id,
+                            existing_path=existing_file_path,
+                            image_prompt=image_prompt,
+                        )
+                    if existing_item is None:
+                        pending.append((episode, shot))
+                        continue
+                    print(
+                        (
+                            "[autodrama] storyboard_generation skip existing "
+                            f"source={reuse_source} shot={shot.shot_id} asset_id={asset_id} path={existing_item.asset_path}"
+                        ),
+                        flush=True,
+                    )
+                    self.logger.info("%s already exists, reused from %s", asset_id, existing_item.asset_path)
+                    generated_by_shot[shot.shot_id] = existing_item
+                    skipped_existing += 1
+                    continue
+                pending.append((episode, shot))
 
-            image_prompt = self.storyboard_image_prompt(episode)
-            result, image_prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
-                provider=provider,
-                state=state,
-                node_name=self.name,
-                asset_id=asset_id,
-                prompt=image_prompt,
-                refs=refs,
-                metadata={
-                    "node_name": self.name,
-                    "project_id": state.project_id,
-                    "episode_key": episode.episode_key,
-                    "asset_id": asset_id,
-                    "asset_type": "storyboard",
-                    "panel_count": self.PANEL_COUNT,
-                    "aspect_ratio": episode.aspect_ratio,
-                    "grid": episode.grid,
-                    "size": self.storyboard_sheet_size(episode.aspect_ratio),
-                    "provider_binding_node": STORYBOARD_IMAGE_PROVIDER_NODE_NAME,
-                },
-                context={
-                    "asset_type": "storyboard",
-                    "episode_key": episode.episode_key,
-                    "panel_count": self.PANEL_COUNT,
-                    "aspect_ratio": episode.aspect_ratio,
-                    "grid": episode.grid,
-                },
-            )
-            asset_path = await self.media_store.write_first_generated_image(project_dir, output_path, result)
-            asset_url = self.first_image_url(result)
-            item = StoryboardSheetGenerationItem(
-                episode_key=episode.episode_key,
-                asset_id=asset_id,
-                prompt=image_prompt,
-                asset_path=asset_path,
-                asset_url=asset_url,
-                provider=result.provider,
-                model=result.model,
-                request_id=result.request_id,
-                usage=result.usage,
-                raw_response=result.raw_response,
-            )
-            generated_by_episode[episode.episode_key] = item
-            self.logger.info("%s generated successfully, saved in %s", asset_id, asset_path)
+        concurrency = self.generation_concurrency(provider)
+        print(
+            (
+                "[autodrama] storyboard_generation "
+                f"concurrency={concurrency} pending={len(pending)} skipped_existing={skipped_existing}"
+            ),
+            flush=True,
+        )
+        self.logger.info(
+            "node=storyboard_generation total_images=%d pending_images=%d concurrency=%d",
+            sum(len(episode.shots) for episode in target_storyboards),
+            len(pending),
+            concurrency,
+        )
+        semaphore = asyncio.Semaphore(concurrency)
 
+        async def generate_one(episode: StoryboardPromptEpisode, shot: StoryboardPromptShot) -> StoryboardSheetGenerationItem:
+            async with semaphore:
+                return await self.generate_storyboard_sheet(
+                    provider=provider,
+                    project_dir=project_dir,
+                    state=state,
+                    episode=episode,
+                    shot=shot,
+                    max_refs=max_refs,
+                    supports_refs=supports_refs,
+                )
+
+        tasks = [asyncio.create_task(generate_one(episode, shot)) for episode, shot in pending]
+        try:
+            generated_items = list(await asyncio.gather(*tasks)) if tasks else []
+        except Exception:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        for item in generated_items:
+            generated_by_shot[item.shot_id] = item
+
+        prompt_by_episode = {episode.episode_key: episode for episode in prompt_output.storyboards}
         ordered_items = [
-            generated_by_episode[episode_key]
+            generated_by_shot[shot.shot_id]
             for episode_key in self.expected_episode_keys(state)
-            if episode_key in generated_by_episode
+            for shot in prompt_by_episode.get(episode_key, StoryboardPromptEpisode(episode_key=episode_key, shots=[])).shots
+            if shot.shot_id in generated_by_shot
         ]
         self.repo.save_node_output(
             project_dir,
@@ -592,221 +733,80 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
         )
         return state
 
-
-class StoryboardBBoxDetectionNode(StoryboardAssetNodeBase):
-    name = "storyboard_bbox_detection"
-
-    def storyboard_sheet_by_episode(self, project_dir: Path) -> dict[str, StoryboardSheetGenerationItem]:
-        return {
-            item.episode_key: item
-            for item in self.load_storyboard_sheet_output(project_dir).generated_storyboards
-        }
-
-    def storyboard_prompt_by_episode(self, project_dir: Path) -> dict[str, StoryboardPromptEpisode]:
-        return {
-            episode.episode_key: episode
-            for episode in self.load_storyboard_prompt_output(project_dir).storyboards
-        }
-
-    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("storyboard", node_name=self.name)
-        self.logger.info(
-            "node=storyboard_bbox_detection provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        prompt_by_episode = self.storyboard_prompt_by_episode(project_dir)
-        sheet_by_episode = self.storyboard_sheet_by_episode(project_dir)
-        target_episode_keys = self.target_episode_keys(state)
-        generated_episodes: list[StoryboardBBoxEpisode] = []
-
-        for episode_key in target_episode_keys:
-            storyboard_script = prompt_by_episode.get(episode_key)
-            if storyboard_script is None:
-                raise ValueError(f"storyboard_bbox_detection missing storyboard_prompt episode: {episode_key}")
-            sheet_item = sheet_by_episode.get(episode_key)
-            if sheet_item is None:
-                raise ValueError(f"storyboard_bbox_detection missing storyboard_generation sheet: {episode_key}")
-            sheet_path = self.layout.existing_project_file(project_dir, sheet_item.asset_path)
-            if not sheet_path and not sheet_item.asset_url:
-                raise FileNotFoundError(
-                    f"storyboard_bbox_detection cannot find storyboard image for {episode_key}: "
-                    f"{sheet_item.asset_path or '-'}"
-                )
-            prompt = self.workflow.prompts.render(
-                "storyboard_bbox_detection",
-                title=state.title,
-                episode_key=episode_key,
-                panel_count=self.PANEL_COUNT,
-                storyboard_script=self._format_json(storyboard_script.model_dump(mode="json")),
-            )
-            refs = [
-                AssetRef(
-                    id=sheet_item.asset_id,
-                    type="image",
-                    path=str(project_dir / sheet_path) if sheet_path else None,
-                    url=sheet_item.asset_url,
-                    metadata={
-                        "asset_type": "storyboard_sheet",
-                        "reference_source": "storyboard_generation",
-                        "episode_key": episode_key,
-                        "panel_count": self.PANEL_COUNT,
-                    },
-                )
-            ]
-            output = await provider.generate_json(
-                prompt,
-                StoryboardBBoxDetectionOutput,
-                temperature=0.1,
-                refs=refs,
-                metadata={
-                    "node_name": self.name,
-                    "project_id": state.project_id,
-                    "episode_key": episode_key,
-                    "expected_keys": [episode_key],
-                    "panel_count": self.PANEL_COUNT,
-                    "storyboard_asset_id": sheet_item.asset_id,
-                    "storyboard_asset_path": sheet_item.asset_path,
-                },
-            )
-            if len(output.episodes) != 1:
-                raise ValueError(
-                    f"storyboard_bbox_detection must return exactly one episode for {episode_key}; "
-                    f"got {len(output.episodes)}"
-                )
-            generated_episodes.append(
-                self.validate_storyboard_bbox_episode(
-                    output.episodes[0],
-                    expected_episode_key=episode_key,
-                )
-            )
-            state.budget.used_text_calls += 1
-
-        merged = self.merge_storyboard_bbox_outputs(
-            project_dir=project_dir,
-            generated_output=StoryboardBBoxDetectionOutput(episodes=generated_episodes),
-            all_episode_keys=self.expected_episode_keys(state),
-        )
-        self.repo.save_node_output(project_dir, self.name, merged)
-        return state
-
-
-class StoryboardPanelCropNode(StoryboardAssetNodeBase):
-    name = "storyboard_panel_crop"
-
-    def existing_crop_output(self, project_dir: Path) -> dict[tuple[str, int], StoryboardPanelCropItem]:
-        path = self.layout.node_output_path(project_dir, self.name)
-        if not path.exists():
-            return {}
-        try:
-            output = StoryboardPanelCropOutput.model_validate_json(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            self.logger.warning("storyboard_panel_crop ignored invalid existing output %s: %s", path, exc)
-            return {}
-        return {
-            (item.episode_key, int(item.shot_index)): item
-            for item in output.cropped_panels
-        }
-
-    @staticmethod
-    def selected_crop_bbox(panel: StoryboardPanelBBoxItem) -> tuple[str, StoryboardBBox]:
-        if panel.content_bbox_1000 is not None:
-            return "content_bbox_1000", panel.content_bbox_1000
-        return "bbox_1000", panel.bbox_1000
-
-    def crop_panel(
+    async def generate_storyboard_sheet(
         self,
         *,
+        provider: object,
         project_dir: Path,
-        sheet_item: StoryboardSheetGenerationItem,
-        panel: StoryboardPanelBBoxItem,
-    ) -> StoryboardPanelCropItem:
-        from PIL import Image
-
-        source_path = self.layout.existing_project_file(project_dir, sheet_item.asset_path)
-        if not source_path:
-            raise FileNotFoundError(
-                f"storyboard_panel_crop requires a local storyboard image for {sheet_item.episode_key}; "
-                f"got {sheet_item.asset_path or '-'}"
-            )
-        absolute_source_path = project_dir / source_path
-        bbox_source, bbox = self.selected_crop_bbox(panel)
-        asset_id = f"{sheet_item.episode_key}_shot_{int(panel.shot_index):03d}_storyboard_panel"
-        output_path = project_dir / "assets" / "images" / "storyboards" / "panels" / f"{asset_id}.png"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with Image.open(absolute_source_path) as image:
-            image = image.convert("RGB")
-            width, height = image.size
-            pixel_bbox = self.bbox_to_pixels(bbox, width=width, height=height)
-            cropped = image.crop(pixel_bbox)
-            if cropped.size[0] < 2 or cropped.size[1] < 2:
-                raise ValueError(
-                    f"storyboard_panel_crop produced too small crop for {sheet_item.episode_key} "
-                    f"shot_index={panel.shot_index}: {cropped.size}"
-                )
-            cropped.save(output_path, format="PNG")
-
-        return StoryboardPanelCropItem(
-            episode_key=sheet_item.episode_key,
-            shot_index=int(panel.shot_index),
-            shot_id=panel.shot_id or f"{sheet_item.episode_key}_shot_{int(panel.shot_index):03d}",
-            source_storyboard_asset_path=source_path,
-            bbox_source=bbox_source,
-            bbox_1000=bbox,
+        state: ProjectState,
+        episode: StoryboardPromptEpisode,
+        shot: StoryboardPromptShot,
+        max_refs: int,
+        supports_refs: bool,
+    ) -> StoryboardSheetGenerationItem:
+        asset_id = self.storyboard_panel_asset_id(shot.shot_id)
+        output_path = self.layout.image_asset_path(project_dir, "storyboards", asset_id)
+        refs = self.storyboard_reference_refs(project_dir, state, shot, limit=max_refs) if supports_refs else []
+        image_prompt = self.storyboard_image_prompt(episode.episode_key, shot)
+        result, image_prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
+            provider=provider,
+            state=state,
+            node_name=self.name,
             asset_id=asset_id,
-            asset_path=self.layout.project_relative(project_dir, output_path),
-            warnings=[],
+            prompt=image_prompt,
+            refs=refs,
+            metadata={
+                "node_name": self.name,
+                "project_id": state.project_id,
+                "episode_key": episode.episode_key,
+                "shot_id": shot.shot_id,
+                "asset_id": asset_id,
+                "asset_type": "storyboard_panel",
+                "duration_seconds": shot.duration_seconds,
+                "panel_count": self.STORYBOARD_PANEL_COUNT,
+                "grid": self.storyboard_grid(),
+                "panel_aspect_ratio": self.storyboard_panel_aspect_ratio(),
+                "size": self.storyboard_sheet_size(),
+                "provider_binding_node": STORYBOARD_IMAGE_PROVIDER_NODE_NAME,
+            },
+            context={
+                "asset_type": "storyboard_panel",
+                "episode_key": episode.episode_key,
+                "shot_id": shot.shot_id,
+                "duration_seconds": shot.duration_seconds,
+                "panel_count": self.STORYBOARD_PANEL_COUNT,
+                "grid": self.storyboard_grid(),
+                "panel_aspect_ratio": self.storyboard_panel_aspect_ratio(),
+            },
         )
-
-    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        bbox_output = self.load_storyboard_bbox_output(project_dir)
-        sheet_output = self.load_storyboard_sheet_output(project_dir)
-        target_episode_keys = self.target_episode_keys(state)
-        target_set = set(target_episode_keys)
-        bbox_by_episode = {episode.episode_key: episode for episode in bbox_output.episodes}
-        sheet_by_episode = {item.episode_key: item for item in sheet_output.generated_storyboards}
-        existing_by_key = self.existing_crop_output(project_dir)
-        cropped_by_key = dict(existing_by_key)
-
-        for episode_key in target_episode_keys:
-            bbox_episode = bbox_by_episode.get(episode_key)
-            if bbox_episode is None:
-                raise ValueError(f"storyboard_panel_crop missing bbox episode: {episode_key}")
-            sheet_item = sheet_by_episode.get(episode_key)
-            if sheet_item is None:
-                raise ValueError(f"storyboard_panel_crop missing storyboard image episode: {episode_key}")
-            bbox_episode = self.validate_storyboard_bbox_episode(
-                bbox_episode,
-                expected_episode_key=episode_key,
-            )
-            for panel in bbox_episode.panels:
-                cropped = self.crop_panel(
-                    project_dir=project_dir,
-                    sheet_item=sheet_item,
-                    panel=panel,
-                )
-                cropped_by_key[(cropped.episode_key, int(cropped.shot_index))] = cropped
-                self.logger.info(
-                    "%s shot %03d storyboard panel cropped from %s",
-                    cropped.episode_key,
-                    cropped.shot_index,
-                    cropped.bbox_source,
-                )
-
-        ordered_items = [
-            cropped_by_key[(episode_key, shot_index)]
-            for episode_key in self.expected_episode_keys(state)
-            for shot_index in range(1, self.PANEL_COUNT + 1)
-            if (episode_key, shot_index) in cropped_by_key
-            and (episode_key in target_set or (episode_key, shot_index) in existing_by_key)
-        ]
-        self.repo.save_node_output(
-            project_dir,
-            self.name,
-            StoryboardPanelCropOutput(cropped_panels=ordered_items),
+        asset_path = await self.media_store.write_first_generated_image(project_dir, output_path, result)
+        asset_url = self.first_image_url(result)
+        item = StoryboardSheetGenerationItem(
+            episode_key=episode.episode_key,
+            shot_id=shot.shot_id,
+            asset_id=asset_id,
+            prompt=image_prompt,
+            duration_seconds=shot.duration_seconds,
+            panel_count=self.STORYBOARD_PANEL_COUNT,
+            grid=self.storyboard_grid(),
+            panel_aspect_ratio=self.storyboard_panel_aspect_ratio(),
+            asset_path=asset_path,
+            asset_url=asset_url,
+            provider=result.provider,
+            model=result.model,
+            request_id=result.request_id,
+            usage=result.usage,
+            raw_response=result.raw_response,
         )
-        return state
+        self.logger.info("%s generated successfully, saved in %s", asset_id, asset_path)
+        print(
+            (
+                "[autodrama] storyboard_generation generated "
+                f"shot={shot.shot_id} asset_id={asset_id} path={asset_path}"
+            ),
+            flush=True,
+        )
+        return item
 
 
 class ShotManifestGenerationNode(StoryboardAssetNodeBase):
@@ -851,9 +851,12 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
 
     @classmethod
     def _ensure_dialogue_in_video_prompt(cls, prompt: str, dialogue: list[str]) -> tuple[str, list[str]]:
-        prompt = cls._clean_text(prompt)
+        original_prompt = cls._clean_text(prompt)
+        prompt = sanitize_video_prompt_text(original_prompt)
         additions: list[str] = []
         warnings: list[str] = []
+        if prompt != original_prompt:
+            warnings.append("video_prompt aspect-ratio/provider placeholders were removed")
         for line in dialogue:
             speaker, body = cls._dialogue_text(line)
             if not body or cls._dialogue_body_in_prompt(prompt, body):
@@ -943,21 +946,19 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 appearance_ids.append(appearance.id)
         return appearance_ids
 
-    def _layout_id_for_panel(
+    def _layout_id_for_shot(
         self,
         *,
         state: ProjectState,
-        panel: Any,
+        shot_prompt: StoryboardPromptShot,
         lookup: dict[str, str],
         text: str,
         episode_key: str,
     ) -> str:
-        explicit = self._clean_text(getattr(panel, "layout_id", None))
-        if explicit:
-            return lookup.get(explicit) or lookup.get(explicit.casefold()) or explicit
-        name = self._clean_text(getattr(panel, "layout_name", None))
-        if name:
-            return lookup.get(name) or lookup.get(name.casefold()) or normalize_id("layout", name)
+        for layout_id in shot_prompt.layout_ids:
+            explicit = self._clean_text(layout_id)
+            if explicit:
+                return lookup.get(explicit) or lookup.get(explicit.casefold()) or explicit
         for key, value in lookup.items():
             if key and key in text:
                 return value
@@ -966,53 +967,40 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         return normalize_id("layout", episode_key)
 
     @classmethod
-    def _panel_text(cls, panel: object) -> str:
+    def _prompt_shot_text(cls, shot_prompt: StoryboardPromptShot) -> str:
         parts = [
-            getattr(panel, "title", None),
-            getattr(panel, "content", None),
-            getattr(panel, "scene_description", None),
-            getattr(panel, "composition", None),
-            getattr(panel, "action", None),
-            getattr(panel, "emotion", None),
-            getattr(panel, "sound_effects", None),
-            getattr(panel, "video_prompt", None),
-            " ".join(getattr(panel, "dialogue", []) or []),
+            shot_prompt.shot_id,
+            " ".join(shot_prompt.role_ids),
+            " ".join(shot_prompt.layout_ids),
+            " ".join(shot_prompt.prop_ids),
+            shot_prompt.video_prompt,
         ]
         return " ".join(cls._clean_text(part) for part in parts if cls._clean_text(part))
 
-    def _video_prompt_for_panel(
-        self,
-        *,
-        panel,
-        dialogue: list[str],
-        layout_id: str,
-        role_ids: list[str],
-        prop_ids: list[str],
-    ) -> tuple[str, list[str]]:
-        prompt = self._clean_text(getattr(panel, "video_prompt", None))
-        if not prompt:
-            role_text = "、".join(role_ids) or "画面内角色"
-            prop_text = "、".join(prop_ids)
-            parts = [
-                f"{getattr(panel, 'title', '')}。",
-                f"场景/空间：{layout_id}。",
-                f"景别：{panel.shot_size}；机位：{panel.camera_position}；构图：{panel.composition}。",
-                f"动作：{panel.action}；情绪：{panel.emotion}；镜头运动：{panel.camera_movement}。",
-                f"出场角色：{role_text}。",
-            ]
-            if prop_text:
-                parts.append(f"关键道具：{prop_text}。")
-            if getattr(panel, "scene_description", None):
-                parts.append(f"场景描述：{panel.scene_description}。")
-            if getattr(panel, "lighting", None):
-                parts.append(f"光线：{panel.lighting}。")
-            prompt = " ".join(self._clean_text(part) for part in parts if self._clean_text(part))
-        return self._ensure_dialogue_in_video_prompt(prompt, dialogue)
+    def _video_prompt_for_shot(self, shot_prompt: StoryboardPromptShot) -> tuple[str, list[str]]:
+        original_prompt = self._clean_text(shot_prompt.video_prompt)
+        prompt = sanitize_video_prompt_text(original_prompt)
+        warnings: list[str] = []
+        if prompt != original_prompt:
+            warnings.append("video_prompt aspect-ratio/provider placeholders were removed")
+        if "字幕" not in prompt or "水印" not in prompt:
+            prompt = (
+                (prompt.rstrip("。") + "。" if prompt else "")
+                + "画面不出现字幕、对白气泡、可读文字、水印、logo、片段编号或无关商标。"
+            )
+        return prompt, warnings
+
+    def _per_second_content_for_shot(self, video_prompt: str) -> str | None:
+        prompt = sanitize_video_prompt_text(video_prompt)
+        if any(marker in prompt for marker in ("0-", "0 至", "0到", "第0秒", "第 0 秒")):
+            return prompt
+        return None
 
     @staticmethod
     def _preserve_dynamic_fields(new_shot: StoryboardShot, existing: StoryboardShot | None) -> None:
         if existing is None:
             return
+        new_shot.video_generation_prompt = existing.video_generation_prompt
         new_shot.dialogue_audio_assets = list(existing.dialogue_audio_assets)
         new_shot.shot_bgm_assets = list(existing.shot_bgm_assets)
         new_shot.video_asset_id = existing.video_asset_id
@@ -1033,7 +1021,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         project_dir: Path,
         state: ProjectState,
         storyboard: StoryboardPromptEpisode,
-        crops: dict[tuple[str, int], StoryboardPanelCropItem],
+        storyboard_sheets: dict[str, StoryboardSheetGenerationItem],
         existing_episode: StoryboardEpisodeOutput | None,
     ) -> tuple[StoryboardEpisodeOutput, list[str]]:
         role_lookup = self._role_lookup(state)
@@ -1042,84 +1030,62 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         existing_by_id = {shot.shot_id: shot for shot in (existing_episode.shots if existing_episode else [])}
         existing_by_index = {shot.index: shot for shot in (existing_episode.shots if existing_episode else [])}
         episode_warnings: list[str] = []
-        default_duration = max(1.0, self.script_service.episode_duration_seconds(state) / max(1, len(storyboard.panels)))
         shots: list[StoryboardShot] = []
 
-        for panel in sorted(storyboard.panels, key=lambda item: int(item.index)):
-            shot_index = int(panel.index)
-            shot_id = f"{storyboard.episode_key}_shot_{shot_index:03d}"
-            panel_text = self._panel_text(panel)
+        for shot_index, shot_prompt in enumerate(storyboard.shots, start=1):
+            shot_id = self._clean_text(shot_prompt.shot_id)
+            prompt_text = self._prompt_shot_text(shot_prompt)
             role_ids = self._resolve_ids(
-                explicit_ids=list(getattr(panel, "role_ids", []) or []),
-                names=list(getattr(panel, "role_names", []) or []),
+                explicit_ids=list(shot_prompt.role_ids or []),
+                names=[],
                 lookup=role_lookup,
-                text=panel_text,
+                text=prompt_text,
                 fallback_prefix="role",
             )
             prop_ids = self._resolve_ids(
-                explicit_ids=list(getattr(panel, "prop_ids", []) or []),
-                names=list(getattr(panel, "prop_names", []) or []),
+                explicit_ids=list(shot_prompt.prop_ids or []),
+                names=[],
                 lookup=prop_lookup,
-                text=panel_text,
+                text=prompt_text,
                 fallback_prefix="prop",
             )
-            layout_id = self._layout_id_for_panel(
+            layout_id = self._layout_id_for_shot(
                 state=state,
-                panel=panel,
+                shot_prompt=shot_prompt,
                 lookup=layout_lookup,
-                text=panel_text,
+                text=prompt_text,
                 episode_key=storyboard.episode_key,
             )
-            role_appearance_ids = self._dedupe_texts(
-                list(getattr(panel, "role_appearance_ids", []) or []) or self._first_appearance_ids(state, role_ids)
-            )
-            role_audio_ids = self._dedupe_texts(list(getattr(panel, "role_audio_ids", []) or []))
-            dialogue = self._dedupe_texts(list(getattr(panel, "dialogue", []) or []))
-            video_prompt, prompt_warnings = self._video_prompt_for_panel(
-                panel=panel,
-                dialogue=dialogue,
-                layout_id=layout_id,
-                role_ids=role_ids,
-                prop_ids=prop_ids,
-            )
+            role_appearance_ids = self._first_appearance_ids(state, role_ids)
+            role_audio_ids: list[str] = []
+            dialogue: list[str] = []
+            video_prompt, prompt_warnings = self._video_prompt_for_shot(shot_prompt)
+            per_second_content = self._per_second_content_for_shot(video_prompt)
             episode_warnings.extend(f"{shot_id}: {warning}" for warning in prompt_warnings)
-            crop = crops.get((storyboard.episode_key, shot_index))
-            source_coverage = None
-            if getattr(panel, "source_start_text", None) or getattr(panel, "source_end_text", None):
-                source_coverage = StoryboardSourceCoverage(
-                    start_text=self._clean_text(getattr(panel, "source_start_text", None)),
-                    end_text=self._clean_text(getattr(panel, "source_end_text", None)),
-                    note=self._clean_text(getattr(panel, "source_coverage_note", None))
-                    or f"{storyboard.episode_key} shot {shot_index:03d}",
-                )
+            storyboard_sheet = storyboard_sheets.get(shot_id)
+            if storyboard_sheet is None:
+                raise ValueError(f"shot_manifest_generation missing storyboard_generation image for {shot_id}")
+            if len(shot_prompt.layout_ids) > 1:
+                episode_warnings.append(f"{shot_id}: multiple layout_ids provided; using {layout_id} as primary layout_id")
             shot = StoryboardShot(
                 shot_id=shot_id,
                 index=shot_index,
                 layout_id=layout_id,
-                title=self._clean_text(panel.title) or f"镜头{shot_index:03d}",
-                source_coverage=source_coverage,
-                content=self._clean_text(getattr(panel, "content", None)) or None,
-                scene_description=self._clean_text(getattr(panel, "scene_description", None)) or None,
-                composition=self._clean_text(panel.composition) or None,
-                lighting=self._clean_text(getattr(panel, "lighting", None)) or None,
-                sound_design=self._clean_text(panel.sound_effects) or None,
-                camera_shooting_angle=self._clean_text(panel.camera_position) or None,
-                camera_movement=self._clean_text(panel.camera_movement) or None,
-                focal_length=self._clean_text(getattr(panel, "focal_length", None)) or None,
-                duration_seconds=float(getattr(panel, "duration_seconds", None) or default_duration),
-                transition=self._clean_text(panel.transition) or "硬切",
+                title=f"镜头{shot_index:03d}",
+                content=video_prompt,
+                duration_seconds=float(shot_prompt.duration_seconds),
+                transition="硬切",
                 start_frame_source="new_reference_frame",
-                start_frame_inheritance_reason="本片段按当前镜头清单重新建立画面。",
+                start_frame_inheritance_reason="本片段按当前 shot 的 12 宫格故事板整图重新建立画面。",
                 dialogue=dialogue,
                 role_ids=role_ids,
                 role_appearance_ids=role_appearance_ids,
                 role_audio_ids=role_audio_ids,
                 prop_ids=prop_ids,
-                storyboard_panel_asset_id=crop.asset_id if crop else None,
-                storyboard_panel_asset_path=crop.asset_path if crop else None,
-                source_storyboard_asset_path=crop.source_storyboard_asset_path if crop else None,
-                storyboard_panel_bbox_source=crop.bbox_source if crop else None,
-                storyboard_panel_bbox_1000=crop.bbox_1000 if crop else None,
+                storyboard_panel_asset_id=storyboard_sheet.asset_id,
+                storyboard_panel_asset_path=storyboard_sheet.asset_path,
+                source_storyboard_asset_path=storyboard_sheet.asset_path,
+                per_second_content=per_second_content,
                 video_prompt=video_prompt,
             )
             existing = existing_by_id.get(shot.shot_id) or existing_by_index.get(shot.index)
@@ -1140,30 +1106,24 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         prompt_output = self.load_storyboard_prompt_output(project_dir)
-        crop_output = self.load_storyboard_panel_crop_output(project_dir)
+        sheet_output = self.load_storyboard_sheet_output(project_dir)
         target_episode_keys = self.target_episode_keys(state)
         storyboard_by_episode = {episode.episode_key: episode for episode in prompt_output.storyboards}
-        crops = {
-            (item.episode_key, int(item.shot_index)): item
-            for item in crop_output.cropped_panels
-        }
+        storyboard_sheets = {item.shot_id: item for item in sheet_output.generated_storyboards}
         generated: list[ShotManifestGenerationEpisodeItem] = []
 
         for episode_key in target_episode_keys:
             storyboard = storyboard_by_episode.get(episode_key)
             if storyboard is None:
                 raise ValueError(f"shot_manifest_generation missing storyboard_prompt episode: {episode_key}")
-            if len(storyboard.panels) != self.PANEL_COUNT:
-                raise ValueError(
-                    f"shot_manifest_generation requires {self.PANEL_COUNT} panels for {episode_key}; "
-                    f"got {len(storyboard.panels)}"
-                )
+            if not storyboard.shots:
+                raise ValueError(f"shot_manifest_generation requires at least one shot for {episode_key}")
             existing = self._load_existing_episode(project_dir, episode_key)
             episode, warnings = self._build_episode_manifest(
                 project_dir=project_dir,
                 state=state,
                 storyboard=storyboard,
-                crops=crops,
+                storyboard_sheets=storyboard_sheets,
                 existing_episode=existing,
             )
             self.workflow._save_storyboard_episode(project_dir, episode)
@@ -1230,10 +1190,8 @@ def build_storyboard_asset_node_runners(workflow: Any) -> dict[str, StoryboardAs
 
         deps["logger"] = get_logger()
     return {
-        StoryboardBBoxDetectionNode.name: StoryboardBBoxDetectionNode(**deps),
         StoryboardPromptNode.name: StoryboardPromptNode(**deps),
         StoryboardGenerationNode.name: StoryboardGenerationNode(**deps),
-        StoryboardPanelCropNode.name: StoryboardPanelCropNode(**deps),
         ShotManifestGenerationNode.name: ShotManifestGenerationNode(**deps),
     }
 
@@ -1250,9 +1208,7 @@ __all__ = [
     "STORYBOARD_ASSET_NODE_NAMES",
     "STORYBOARD_IMAGE_PROVIDER_NODE_NAME",
     "ShotManifestGenerationNode",
-    "StoryboardBBoxDetectionNode",
     "StoryboardGenerationNode",
-    "StoryboardPanelCropNode",
     "StoryboardPromptNode",
     "build_storyboard_asset_node_runners",
     "build_storyboard_asset_nodes",

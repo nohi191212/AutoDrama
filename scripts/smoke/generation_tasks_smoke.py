@@ -93,8 +93,8 @@ class VideoRouter:
     def __init__(self, provider: QueueVideoProvider) -> None:
         self.provider = provider
 
-    def video(self, purpose: str) -> QueueVideoProvider:
-        del purpose
+    def video(self, purpose: str, *, node_name: str | None = None) -> QueueVideoProvider:
+        del purpose, node_name
         return self.provider
 
 

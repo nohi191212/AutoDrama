@@ -16,6 +16,7 @@ from autodrama.core.schemas import (
     LayoutDedupeReviewOutput,
     LayoutDesignOutput,
     LayoutExtractOutput,
+    MinuteSegmentOutput,
     PropDesignOutput,
     PropExtractOutput,
     RoleDuplicateAuditReviewOutput,
@@ -28,9 +29,9 @@ from autodrama.core.schemas import (
     ScriptNovelExtractBatchOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
-    StoryboardBBoxDetectionOutput,
     StoryboardEpisodeOutput,
     StoryboardPromptOutput,
+    ShotVideoPromptCondenseOutput,
 )
 from autodrama.core.voice_catalog import (
     VoiceCatalogProfile,
@@ -118,7 +119,22 @@ class FakeTextProvider:
             episode_keys = [str(key) for key in expected_keys]
             episode_count = len(episode_keys)
 
-        if schema is ScriptOutlineOutput or node_name == "script_outline":
+        if schema is ShotVideoPromptCondenseOutput or node_name == "shot_video_prompt_condense":
+            try:
+                materials = json.loads(prompt).get("镜头材料", {})
+            except Exception:
+                materials = {}
+            body = " ".join(str(materials.get("body") or "角色完成当前镜头动作。").split())
+            dialogue_core = " ".join(str(materials.get("dialogue_core") or "").split())
+            sound = " ".join(str(materials.get("sound_design") or "").split())
+            pieces = [body[:72].rstrip("，。；、,; ")]
+            if dialogue_core:
+                pieces.append(dialogue_core[:46].rstrip("，。；、,; "))
+            if sound:
+                pieces.append("声音：" + sound[:28].rstrip("，。；、,; "))
+            pieces.append("侧角拍摄，无字幕logo水印。")
+            data = {"prompt": " ".join(piece for piece in pieces if piece).strip()}
+        elif schema is ScriptOutlineOutput or node_name == "script_outline":
             data = {
                 "logline": "落魄青年在雨夜发现被调包的合同，决定当众反击。",
                 "outline": "林舟被赵启陷害丢掉晋升机会，苏晚提醒他查看旧邮件。林舟逐步发现合同被调包的证据，并在会议上反击。",
@@ -271,6 +287,47 @@ class FakeTextProvider:
                     for index, key in enumerate(batch_keys, start=1)
                 }
             }
+        elif schema is MinuteSegmentOutput or node_name == "minute_segment":
+            expected_keys = metadata.get("expected_keys") or episode_keys
+            segment_seconds = int(metadata.get("segment_seconds") or 60)
+            duration = int(metadata.get("episode_duration_seconds") or episode_duration_seconds or 30)
+            storyboard_episode_keys = [str(key) for key in expected_keys]
+            data = {
+                "episodes": [
+                    {
+                        "episode_key": key,
+                        "target_duration_seconds": duration,
+                        "segments": [
+                            {
+                                "minute_id": f"{key}_minute_{index:03d}",
+                                "episode_key": key,
+                                "index": index,
+                                "start_second": (index - 1) * segment_seconds,
+                                "end_second": min(index * segment_seconds, duration),
+                                "title": "合同证据推进" if index == 1 else "公开反击推进",
+                                "summary": (
+                                    "林舟在雨夜办公室发现合同关键页异常，苏晚递来旧邮件截图，证据链逐步清晰。"
+                                    if index == 1
+                                    else "林舟带着合同和邮件截图进入会议室，赵启的压迫被证据反向逼退。"
+                                ),
+                                "visual_events": [
+                                    "林舟检查合同关键页",
+                                    "邮件截图显示附件时间",
+                                    "赵启在会议室压力下后撤",
+                                ],
+                                "role_names": ["林舟", "苏晚"] if index == 1 else ["林舟", "赵启"],
+                                "prop_names": ["被调包的合同", "邮件截图"],
+                                "layout_names": ["雨夜办公室"] if index == 1 else ["会议室"],
+                                "source_start_text": f"{key}，雨夜办公室的灯只剩下一排。",
+                                "source_end_text": "林舟第一次决定不再退让。",
+                                "source_coverage_note": "fake provider minute segment fixture",
+                            }
+                            for index in range(1, max(1, (duration + segment_seconds - 1) // segment_seconds) + 1)
+                        ],
+                    }
+                    for key in storyboard_episode_keys
+                ]
+            }
         elif schema is RoleExtractOutput or node_name in {
             "role_extract",
             "role_extract_primary",
@@ -351,110 +408,46 @@ class FakeTextProvider:
         elif schema is StoryboardPromptOutput or node_name == "storyboard_prompt":
             expected_keys = metadata.get("expected_keys") or episode_keys
             storyboard_episode_keys = [str(key) for key in expected_keys]
-            panel_count = int(metadata.get("panel_count") or 12)
-            aspect_ratio = str(metadata.get("aspect_ratio") or "9:16")
-            grid = str(metadata.get("grid") or "3x4")
+            shot_count = int(metadata.get("shot_count") or 2)
             data = {
                 "storyboards": [
                     {
                         "episode_key": key,
-                        "aspect_ratio": aspect_ratio,
-                        "grid": grid,
-                        "story_summary": f"{key} fake 12-panel storyboard script.",
-                        "panels": [
+                        "shots": [
                             {
-                                "index": index,
-                                "title": f"镜头{index:02d}",
-                                "shot_size": "中景" if index % 3 else "特写",
-                                "camera_position": "平视略低机位",
-                                "composition": "主角位于画面三分线，关键道具在前景，背景保留空间方向。",
-                                "action": "角色推进调查动作，视线落到证据或对手反应上。",
-                                "emotion": "克制紧张",
-                                "camera_movement": "固定镜头" if index % 2 else "缓慢推近",
-                                "sound_effects": "雨声、纸张摩擦声和低频环境声。",
-                                "transition": "硬切",
-                                "content": "角色围绕合同证据推进调查。",
-                                "scene_description": "雨夜办公室或会议室，冷色顶光。",
-                                "lighting": "冷色室内光，背景略暗。",
-                                "focal_length": "35mm",
-                                "duration_seconds": 4.0,
-                                "dialogue": (
-                                    ["林舟：这份合同被换过，时间线就在这里。"]
-                                    if index == 2
-                                    else []
-                                ),
-                                "role_names": ["林舟", "赵启"] if index == 2 else ["林舟"],
-                                "prop_names": ["邮件截图"] if index == 2 else ["被调包的合同"],
-                                "layout_name": "会议室" if index == 2 else "雨夜办公室",
+                                "shot_id": f"{key}_shot_{index:03d}",
+                                "duration_seconds": 15.0 if index % 2 else 12.0,
+                                "role_ids": ["role_林舟", "role_赵启"] if index == 2 else ["role_林舟"],
+                                "layout_ids": ["layout_会议室"] if index == 2 else ["layout_雨夜办公室"],
+                                "prop_ids": ["prop_邮件截图"] if index == 2 else ["prop_被调包的合同"],
                                 "video_prompt": (
-                                    "会议室内，林舟站在投影屏左侧看向赵启，说：“这份合同被换过，时间线就在这里。”"
-                                    "他说话时口型清晰匹配这句台词，赵启坐在右侧阴影里后撤。"
+                                    "0-1秒：会议室冷光下，35mm 中广角低机位沿会议桌边缘滑入；"
+                                    "1-2秒：被调包的合同和邮件截图在前景掠过；"
+                                    "2-3秒：林舟站在投影屏左侧，以三分之二侧脸看向赵启；"
+                                    "3-4秒：赵启坐在右侧阴影里前倾，手指扣紧扶手；"
+                                    "4-5秒：轨道车轻微横移，林舟把邮件截图推向桌面中央；"
+                                    "5-7秒：林舟说：“这份合同被换过，时间线就在这里。”他说话时口型清晰匹配这句台词；"
+                                    "7-9秒：镜头压近赵启半侧脸，他的视线避开林舟；"
+                                    "9-11秒：合同纸张色差和附件时间在桌面同框；"
+                                    "11-12秒：赵启身体慢慢后撤，会议室低频环境声和纸张摩擦声变清晰。"
                                     "画面不出现字幕、对白气泡、可读文字、水印、logo、片段编号或无关商标。"
                                     if index == 2
-                                    else "雨夜办公室内，林舟低头检查合同页码和电脑邮件附件时间，镜头缓慢推近关键证据。"
+                                    else "0-1秒：雨夜办公室冷白顶灯下，50mm 斜侧近景贴着桌面建立合同；"
+                                    "1-2秒：林舟以半侧脸低头检查合同页码；"
+                                    "2-3秒：手指掀开关键页，浅色纸张进入焦点；"
+                                    "3-4秒：镜头缓慢推近错位装订孔；"
+                                    "4-5秒：雨声和空调低频压住空间；"
+                                    "5-7秒：电脑屏幕边缘的邮件附件时间变亮；"
+                                    "7-9秒：林舟停住动作，视线从合同移到屏幕旁侧；"
+                                    "9-11秒：合同色差、错位装订孔和邮件时间在同一视线方向里连成证据；"
+                                    "11-15秒：林舟抬眼但不看镜头，表情从疲惫变成克制警觉，纸张摩擦声收尾。"
                                     "画面不出现字幕、对白气泡、可读文字、水印、logo、片段编号或无关商标。"
                                 ),
                             }
-                            for index in range(1, panel_count + 1)
+                            for index in range(1, shot_count + 1)
                         ],
-                        "image_prompt": (
-                            f"黑白线稿十二宫格故事板，{key}，{grid} 网格，每格 {aspect_ratio}，"
-                            "镜头顺序清楚，动作和构图准确。"
-                        ),
                     }
                     for key in storyboard_episode_keys
-                ]
-            }
-        elif schema is StoryboardBBoxDetectionOutput or node_name == "storyboard_bbox_detection":
-            episode_key = str(metadata.get("episode_key") or (metadata.get("expected_keys") or episode_keys)[0])
-            columns = 3
-            rows = 4
-            margin = 20
-            gutter = 14
-            panel_width = (1000 - margin * 2 - gutter * (columns - 1)) // columns
-            panel_height = (1000 - margin * 2 - gutter * (rows - 1)) // rows
-            panels = []
-            for index in range(1, 13):
-                row = (index - 1) // columns
-                column = (index - 1) % columns
-                x_min = margin + column * (panel_width + gutter)
-                y_min = margin + row * (panel_height + gutter)
-                x_max = x_min + panel_width
-                y_max = y_min + panel_height
-                panels.append(
-                    {
-                        "shot_index": index,
-                        "shot_id": f"{episode_key}_shot_{index:03d}",
-                        "bbox_1000": {
-                            "x_min": x_min,
-                            "y_min": y_min,
-                            "x_max": x_max,
-                            "y_max": y_max,
-                        },
-                        "content_bbox_1000": {
-                            "x_min": x_min + 10,
-                            "y_min": y_min + 18,
-                            "x_max": x_max - 10,
-                            "y_max": y_max - 10,
-                        },
-                        "visible_label": str(index),
-                        "label_confidence": 1.0,
-                        "bbox_confidence": 1.0,
-                        "shot_match_confidence": 1.0,
-                        "match_reason": "fake provider fixture uses labeled panels.",
-                        "crop_notes": None,
-                    }
-                )
-            data = {
-                "episodes": [
-                    {
-                        "episode_key": episode_key,
-                        "source_width_basis": 1000,
-                        "source_height_basis": 1000,
-                        "panel_count": 12,
-                        "panels": panels,
-                        "warnings": [],
-                    }
                 ]
             }
         elif schema is VoiceSelectShortlistOutput or node_name == "role_voice_select_shortlist":
@@ -782,13 +775,16 @@ class FakeImageProvider:
             width, height = 1200, 1600
             image = Image.new("RGB", (width, height), "white")
             draw = ImageDraw.Draw(image)
-            columns = 3
-            rows = 4
+            panel_count = max(1, int(metadata.get("panel_count") or 12))
+            columns = max(1, int(panel_count**0.5))
+            if panel_count > columns * columns:
+                columns += 1
+            rows = max(1, (panel_count + columns - 1) // columns)
             margin = 24
             gutter = 17
             panel_width = (width - margin * 2 - gutter * (columns - 1)) // columns
             panel_height = (height - margin * 2 - gutter * (rows - 1)) // rows
-            for index in range(1, 13):
+            for index in range(1, panel_count + 1):
                 row = (index - 1) // columns
                 column = (index - 1) % columns
                 x_min = margin + column * (panel_width + gutter)

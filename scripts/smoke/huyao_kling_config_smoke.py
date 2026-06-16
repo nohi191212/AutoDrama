@@ -50,7 +50,19 @@ def main() -> int:
     )
     require(
         settings.providers["kling"].options.get("video_reference_mode") == "subject_storyboard_key_vision",
-        "Kling video_reference_mode must use subject/storyboard/key-vision refs",
+        "Kling video_reference_mode legacy name should remain configured for compatibility",
+    )
+    require(
+        settings.nodes["shot_video_generation"].params.get("max_reference_images") == 3,
+        "shot_video_generation must allow storyboard + layout + roleboard image refs",
+    )
+    require(
+        "max_reference_elements" not in settings.nodes["shot_video_generation"].params,
+        "shot_video_generation must not be configured to pass element refs",
+    )
+    require(
+        settings.providers["kling"].options.get("max_reference_images") == 3,
+        "Kling shot video provider defaults must allow three image refs",
     )
 
     router = ProviderRouter(settings)

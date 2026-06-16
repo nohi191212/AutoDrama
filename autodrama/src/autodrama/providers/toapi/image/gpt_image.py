@@ -163,7 +163,9 @@ class ToAPIImageProvider:
         return payload
 
     def _purpose_model(self, metadata: dict[str, Any]) -> str | None:
-        node_name = str(metadata.get("node_name") or "")
+        node_name = self._purpose_node_name(metadata)
+        if node_name == "storyboard_sheet_generation":
+            return self.settings.models.get("storyboard")
         if node_name == "roleboard_generation":
             return self.settings.models.get("roleboard")
         if node_name == "prop_generation":
@@ -175,7 +177,9 @@ class ToAPIImageProvider:
         return None
 
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
-        node_name = str(metadata.get("node_name") or "")
+        node_name = self._purpose_node_name(metadata)
+        if node_name == "storyboard_sheet_generation":
+            return self.settings.options.get("storyboard_size") or "16:9"
         if node_name == "roleboard_generation":
             return (
                 self.settings.options.get("roleboard_size")
@@ -190,7 +194,9 @@ class ToAPIImageProvider:
         return None
 
     def _purpose_resolution(self, metadata: dict[str, Any]) -> object | None:
-        node_name = str(metadata.get("node_name") or "")
+        node_name = self._purpose_node_name(metadata)
+        if node_name == "storyboard_sheet_generation":
+            return self.settings.options.get("storyboard_resolution")
         if node_name == "roleboard_generation":
             return self.settings.options.get("roleboard_resolution")
         if node_name == "prop_generation":
@@ -200,6 +206,10 @@ class ToAPIImageProvider:
         if node_name == "design_key_vision_image":
             return self.settings.options.get("key_vision_resolution")
         return None
+
+    @staticmethod
+    def _purpose_node_name(metadata: dict[str, Any]) -> str:
+        return str(metadata.get("provider_binding_node") or metadata.get("node_name") or "")
 
     @classmethod
     def _normalize_size(cls, value: object) -> str:
@@ -235,7 +245,13 @@ class ToAPIImageProvider:
         for ref in refs:
             if ref.type != "image":
                 continue
-            if url := self._ref_url(ref):
+
+            local_path = self._local_ref_path(ref)
+            if local_path is not None:
+                uploaded_item = await self._upload_reference_image(client, local_path)
+                images.append(str(uploaded_item["url"]))
+                uploaded.append(uploaded_item)
+            elif url := self._ref_url(ref):
                 images.append(url)
             elif ref.path:
                 uploaded_item = await self._upload_reference_image(client, Path(ref.path))
@@ -244,6 +260,18 @@ class ToAPIImageProvider:
             if len(images) >= self.max_reference_images:
                 break
         return images, uploaded
+
+    @staticmethod
+    def _local_ref_path(ref: AssetRef) -> Path | None:
+        if not ref.path:
+            return None
+        value = str(ref.path)
+        if value.startswith(("http://", "https://", "data:image/")):
+            return None
+        path = Path(value).expanduser()
+        if path.exists() and path.is_file():
+            return path
+        return None
 
     async def _upload_reference_image(self, client: httpx.AsyncClient, path: Path) -> dict[str, Any]:
         if not path.exists() or not path.is_file():

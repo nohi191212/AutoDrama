@@ -72,7 +72,14 @@ def fake_storyboard_episode(episode_key: str = "episode_001", *, shot_count: int
 
 
 def write_fake_storyboard_episode(workflow: Any, project_dir: Path, episode_key: str, *, shot_count: int = 2) -> None:
-    workflow._save_storyboard_episode(
-        project_dir,
-        fake_storyboard_episode(episode_key, shot_count=shot_count),
-    )
+    episode = fake_storyboard_episode(episode_key, shot_count=shot_count)
+    for shot in episode.shots:
+        asset_id = f"{shot.shot_id}_storyboard_panel"
+        output_path = workflow.layout.image_asset_path(project_dir, "storyboards", asset_id)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if not output_path.exists():
+            output_path.write_bytes(f"fake 12-panel storyboard sheet for {shot.shot_id}".encode("utf-8"))
+        shot.storyboard_panel_asset_id = asset_id
+        shot.storyboard_panel_asset_path = workflow.layout.project_relative(project_dir, output_path)
+        shot.source_storyboard_asset_path = shot.storyboard_panel_asset_path
+    workflow._save_storyboard_episode(project_dir, episode)

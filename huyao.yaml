@@ -83,7 +83,7 @@ nodes:
       temperature: 0.4
       response_format: json_object
   roleboard_generation:
-    model: toapi:gpt-image-2
+    model: toapi:gpt-image-2-high
     params:
       size: "16:9"
       resolution: 4K
@@ -95,19 +95,14 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
+      console_stream: false
   # Image binding used internally by pregen node storyboard_generation for the 12-panel storyboard sheet.
   storyboard_sheet_generation:
-    model: toapi:gpt-image-2
+    model: toapi:gpt-image-2-high
     params:
       resolution: 2K
       n: 1
       response_format: url
-  storyboard_bbox_detection:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: high
-      temperature: 0.1
-      response_format: json_object
   prop_extract:
     model: rightcode:gpt-5.5
     params:
@@ -193,10 +188,9 @@ nodes:
     params:
       aspect_ratio: "9:16"
       mode: pro
-      sound: "off"
+      sound: "on"
       watermark: false
-      max_reference_images: 2
-      max_reference_elements: 3
+      max_reference_images: 3
       shot_video_generation_concurrency: 5
   shot_dialogue_audio_generation:
     model: volcengine:seed-tts-2.0
@@ -293,7 +287,8 @@ generation:
     光影干净，背景简洁，无人物、无手持、无文字、水印或logo。重点表现尺寸比例、
     材质磨损、危险气息（如血迹、锈迹）以及系统激活时的能量发光状态。
   layout_design_style_prompt: >
-    场景图保持国漫CG/3D动画无人物空场景质感，空间结构清晰，前中后景层次明确，适配9:16短剧构图。
+    场景图保持国漫CG/3D动画无人物场景三视图设定板质感，空间结构清晰，顶视平面、正向主视和侧向/45度透视必须统一为同一个空间。
+    三视图用于后续9:16短剧取景参考，需要清楚展示入口、墙面、地面、天花、固定装置、角色站位区域、摄影机可站位区域和关键道具摆放区域。
     重点突出“沉浸式惊悚密室”与“全息重构”的氛围感，强化环境光影对比（如幽暗冷色调环境与红灯笼等诡异暖光源的碰撞）。
     材质需体现出现代废墟、古老遗迹与幻象交叠的视觉差，光源、阴影和空气粒子（如灰尘、悬浮光点）关系稳定可复用。
     不出现人物、背影、手、剪影、字幕、水印、文字标识或无关logo。
@@ -497,7 +492,7 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # Seedance video refs: use storyboard panels, roleboards, key vision, scene/prop refs,
+      # Seedance video refs: use storyboard panels, scene refs, roleboards, optional key vision/prop refs,
       # role/dialogue audio, and optional previous generated shot videos.
       # Previous generated shot videos are disabled by default to avoid quality drift across long shot chains.
       # Role/dialogue audio anchors are still allowed for the only speaking role.
@@ -595,8 +590,7 @@ providers:
       video_reference_mode: subject_storyboard_key_vision
       subject_reference_type: video_refer
       subject_video_duration_seconds: 5
-      max_reference_images: 2
-      max_reference_elements: 3
+      max_reference_images: 3
       poll_interval_seconds: 10
       max_polls: 120
 

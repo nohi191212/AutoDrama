@@ -17,10 +17,7 @@ from autodrama.core.schemas import (  # noqa: E402
     Layout,
     Role,
     RoleAppearance,
-    StoryboardBBox,
     StoryboardEpisodeOutput,
-    StoryboardPanelCropItem,
-    StoryboardPanelCropOutput,
     StoryboardShot,
 )
 from autodrama.providers.router import ProviderRouter  # noqa: E402
@@ -104,54 +101,42 @@ def main() -> int:
         duration_seconds=6,
         role_ids=["role_linz"],
         role_appearance_ids=["role_linz_base"],
+        storyboard_panel_asset_id="episode_001_shot_001_storyboard_panel",
+        storyboard_panel_asset_path="assets/images/storyboards/panels/episode_001_shot_001_storyboard_panel.png",
+        per_second_content="0-2秒 Lin Zhou stands by the projection screen; 2-6秒 he reveals the switched contract.",
         video_prompt="Lin Zhou stands by the projection screen and reveals the switched contract.",
     )
     episode = StoryboardEpisodeOutput(episode_key="episode_001", shots=[shot])
 
     router = ProviderRouter(settings)
     workflow = GenerationWorkflow(repo=repo, router=router)
-    crop_output_path = workflow.layout.node_output_path(project_dir, "storyboard_panel_crop")
-    crop_output_path.parent.mkdir(parents=True, exist_ok=True)
-    crop_output_path.write_text(
-        StoryboardPanelCropOutput(
-            cropped_panels=[
-                StoryboardPanelCropItem(
-                    episode_key="episode_001",
-                    shot_id="episode_001_shot_001",
-                    shot_index=1,
-                    source_storyboard_asset_path="assets/images/storyboards/episode_001.png",
-                    asset_id="episode_001_shot_001_storyboard_panel",
-                    asset_path="assets/images/storyboards/panels/episode_001_shot_001_storyboard_panel.png",
-                    bbox_source="bbox_1000",
-                    bbox_1000=StoryboardBBox(x_min=0, y_min=0, x_max=1000, y_max=1000),
-                )
-            ]
-        ).model_dump_json(indent=2),
-        encoding="utf-8",
-    )
 
     provider = router.video("shot")
     refs = workflow._shot_video_refs(project_dir, state, shot, provider=provider, episode=episode)
     image_asset_types = [ref.metadata.get("asset_type") for ref in refs if ref.type == "image"]
     require(
-        image_asset_types == ["storyboard_panel", "roleboard", "key_vision"],
+        image_asset_types == ["storyboard_panel", "layout", "roleboard"],
         f"Unexpected image ref order: {image_asset_types}",
     )
 
     plan = workflow._shot_video_reference_plan(refs, provider=provider)
     require(
-        plan["present_static_anchors"] == ["storyboard_panel", "roleboard", "key_vision"],
+        plan["present_static_anchors"] == ["storyboard_panel", "layout", "roleboard"],
         json.dumps(plan, ensure_ascii=False, indent=2),
     )
     require(plan["missing_static_anchors"] == [], json.dumps(plan, ensure_ascii=False, indent=2))
 
     prompt = workflow._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
     for phrase in (
-        "静态三锚点策略",
-        "故事板单格=图片1",
-        "角色身份板=图片2",
-        "主视觉原图=图片3",
+        "视频输入锚点策略",
+        "12宫格故事板=图片1",
+        "场景三视图/场景图=图片2",
+        "人物三视图/角色身份板=图片3",
         "三者职责不可互相覆盖",
+        "蓝色箭头=摄影机运动",
+        "紫色标记=情绪/声音/叙事强调",
+        "最终视频禁止生成任何箭头",
+        "0-2秒 Lin Zhou stands by the projection screen",
     ):
         require(phrase in prompt, prompt)
 

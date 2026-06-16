@@ -84,14 +84,6 @@ def write_config(path: Path, *, bad_param: bool = False) -> None:
                     "n": 1,
                 },
             },
-            "storyboard_bbox_detection": {
-                "model": "rightcode:gpt-5.5",
-                "params": {
-                    "reasoning_effort": "high",
-                    "temperature": 0.1,
-                    "response_format": "json_object",
-                },
-            },
             "roleboard_generation": {
                 "model": "toapi:gpt-image-2",
                 "params": {
@@ -160,14 +152,6 @@ def main() -> int:
     if getattr(text_provider, "use_response_format", None) is not True:
         raise AssertionError("Node params did not enable RightCode JSON response format")
 
-    bbox_provider = router.text("storyboard", node_name="storyboard_bbox_detection")
-    if getattr(bbox_provider, "model", None) != "gpt-5.5":
-        raise AssertionError(f"Unexpected bbox detection model: {getattr(bbox_provider, 'model', None)}")
-    if getattr(bbox_provider, "reasoning_effort", None) != "high":
-        raise AssertionError("BBox detection params did not update RightCode reasoning_effort")
-    if getattr(bbox_provider, "use_response_format", None) is not True:
-        raise AssertionError("BBox detection params did not enable RightCode JSON response format")
-
     storyboard_sheet_provider = router.image("storyboard", node_name="storyboard_sheet_generation")
     storyboard_sheet_payload = storyboard_sheet_provider._provider.build_payload(
         "test 12-panel storyboard",
@@ -219,8 +203,6 @@ def main() -> int:
         raise AssertionError("config.yaml.example did not load storyboard prompt node model settings")
     if "storyboard_sheet_generation" not in example_settings.nodes:
         raise AssertionError("config.yaml.example did not load storyboard sheet image node model settings")
-    if "storyboard_bbox_detection" not in example_settings.nodes:
-        raise AssertionError("config.yaml.example did not load storyboard bbox detection node model settings")
 
     print("model_catalog_node_binding_smoke=ok")
     print(f"config_path={config_path}")

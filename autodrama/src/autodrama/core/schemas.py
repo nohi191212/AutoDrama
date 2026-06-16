@@ -224,6 +224,33 @@ class ScriptNovelExtractOutput(BaseModel):
     novel_extract: dict[str, str]
 
 
+class MinuteSegment(BaseModel):
+    minute_id: str
+    episode_key: str
+    index: int
+    start_second: float
+    end_second: float
+    title: str
+    summary: str
+    visual_events: list[str] = Field(default_factory=list)
+    role_names: list[str] = Field(default_factory=list)
+    prop_names: list[str] = Field(default_factory=list)
+    layout_names: list[str] = Field(default_factory=list)
+    source_start_text: str | None = None
+    source_end_text: str | None = None
+    source_coverage_note: str | None = None
+
+
+class MinuteSegmentEpisode(BaseModel):
+    episode_key: str
+    target_duration_seconds: int
+    segments: list[MinuteSegment]
+
+
+class MinuteSegmentOutput(BaseModel):
+    episodes: list[MinuteSegmentEpisode]
+
+
 class DirectorShotBeat(BaseModel):
     beat_index: int
     title: str
@@ -394,44 +421,18 @@ class RoleboardPromptOutput(BaseModel):
     prompts: list[RoleboardPromptItem]
 
 
-class StoryboardPromptPanel(BaseModel):
-    index: int
-    title: str
-    shot_size: str
-    camera_position: str
-    composition: str
-    action: str
-    emotion: str
-    camera_movement: str
-    sound_effects: str
-    transition: str | None = None
-    content: str | None = None
-    scene_description: str | None = None
-    lighting: str | None = None
-    focal_length: str | None = None
-    duration_seconds: float | None = None
-    dialogue: list[str] = Field(default_factory=list)
-    role_names: list[str] = Field(default_factory=list)
+class StoryboardPromptShot(BaseModel):
+    shot_id: str
+    duration_seconds: float
     role_ids: list[str] = Field(default_factory=list)
-    role_appearance_ids: list[str] = Field(default_factory=list)
-    role_audio_ids: list[str] = Field(default_factory=list)
-    prop_names: list[str] = Field(default_factory=list)
+    layout_ids: list[str] = Field(default_factory=list)
     prop_ids: list[str] = Field(default_factory=list)
-    layout_name: str | None = None
-    layout_id: str | None = None
-    source_start_text: str | None = None
-    source_end_text: str | None = None
-    source_coverage_note: str | None = None
-    video_prompt: str | None = None
+    video_prompt: str
 
 
 class StoryboardPromptEpisode(BaseModel):
     episode_key: str
-    aspect_ratio: str
-    grid: str = "3x4"
-    story_summary: str | None = None
-    panels: list[StoryboardPromptPanel]
-    image_prompt: str
+    shots: list[StoryboardPromptShot]
 
 
 class StoryboardPromptOutput(BaseModel):
@@ -440,8 +441,13 @@ class StoryboardPromptOutput(BaseModel):
 
 class StoryboardSheetGenerationItem(BaseModel):
     episode_key: str
+    shot_id: str
     asset_id: str
     prompt: str
+    duration_seconds: float | None = None
+    panel_count: int = 12
+    grid: str = "4x3"
+    panel_aspect_ratio: str = "16:9"
     asset_path: str | None = None
     asset_url: str | None = None
     provider: str
@@ -453,55 +459,6 @@ class StoryboardSheetGenerationItem(BaseModel):
 
 class StoryboardSheetGenerationOutput(BaseModel):
     generated_storyboards: list[StoryboardSheetGenerationItem]
-
-
-class StoryboardBBox(BaseModel):
-    x_min: int = Field(ge=0, le=1000)
-    y_min: int = Field(ge=0, le=1000)
-    x_max: int = Field(ge=0, le=1000)
-    y_max: int = Field(ge=0, le=1000)
-
-
-class StoryboardPanelBBoxItem(BaseModel):
-    shot_index: int
-    shot_id: str | None = None
-    bbox_1000: StoryboardBBox
-    content_bbox_1000: StoryboardBBox | None = None
-    visible_label: str | None = None
-    label_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    bbox_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    shot_match_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    match_reason: str = ""
-    crop_notes: str | None = None
-
-
-class StoryboardBBoxEpisode(BaseModel):
-    episode_key: str
-    source_width_basis: int = 1000
-    source_height_basis: int = 1000
-    panel_count: int = 12
-    panels: list[StoryboardPanelBBoxItem]
-    warnings: list[str] = Field(default_factory=list)
-
-
-class StoryboardBBoxDetectionOutput(BaseModel):
-    episodes: list[StoryboardBBoxEpisode]
-
-
-class StoryboardPanelCropItem(BaseModel):
-    episode_key: str
-    shot_index: int
-    shot_id: str
-    source_storyboard_asset_path: str
-    bbox_source: Literal["content_bbox_1000", "bbox_1000"]
-    bbox_1000: StoryboardBBox
-    asset_id: str
-    asset_path: str
-    warnings: list[str] = Field(default_factory=list)
-
-
-class StoryboardPanelCropOutput(BaseModel):
-    cropped_panels: list[StoryboardPanelCropItem]
 
 
 class PropExtractItem(BaseModel):
@@ -649,6 +606,8 @@ class StoryboardShot(BaseModel):
     index: int
     layout_id: str
     title: str
+    minute_id: str | None = None
+    segment_index: int | None = None
     source_coverage: StoryboardSourceCoverage | None = None
     content: str | None = None
     scene_description: str | None = None
@@ -670,9 +629,9 @@ class StoryboardShot(BaseModel):
     storyboard_panel_asset_id: str | None = None
     storyboard_panel_asset_path: str | None = None
     source_storyboard_asset_path: str | None = None
-    storyboard_panel_bbox_source: Literal["content_bbox_1000", "bbox_1000"] | None = None
-    storyboard_panel_bbox_1000: StoryboardBBox | None = None
+    per_second_content: str | None = None
     video_prompt: str
+    video_generation_prompt: str | None = None
     dialogue_audio_assets: list[ShotDialogueAudioAsset] = Field(default_factory=list)
     shot_bgm_assets: list[ShotBGMAsset] = Field(default_factory=list)
     video_asset_id: str | None = None
@@ -734,6 +693,15 @@ class ShotVideoGenerationItem(BaseModel):
 
 class ShotVideoGenerationOutput(BaseModel):
     generated_videos: list[ShotVideoGenerationItem]
+
+
+class ShotVideoPromptCondenseOutput(BaseModel):
+    prompt: str
+
+
+class ShotVideoStoryboardContentOutput(BaseModel):
+    content_table: str
+    source_note: str | None = None
 
 
 class RoleSubjectVideoGenerationItem(BaseModel):

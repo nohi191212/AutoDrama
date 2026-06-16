@@ -102,12 +102,6 @@ nodes:
       resolution: 2K
       n: 1
       response_format: url
-  storyboard_bbox_detection:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: high
-      temperature: 0.1
-      response_format: json_object
   prop_extract:
     model: rightcode:gpt-5.5
     params:
@@ -173,9 +167,10 @@ nodes:
       generate_audio: false
       return_last_frame: true
       shot_video_generation_concurrency: 5
-  # Optional Kling subject branch. Switch these bindings plus routing.video.shot to kling
-  # to generate role subject videos, create Kling subject elements, and use
-  # storyboard panel + key vision + element_list for shot video generation.
+  # Optional Kling branch. Switch these bindings plus routing.video.shot to kling.
+  # role_subject_element_generation may still create/cache Kling subject elements,
+  # but shot_video_generation uses storyboard panel + layout image + roleboard image;
+  # it must not pass element refs or element_list.
   # role_subject_video_generation:
   #   model: kling:kling-v3-omni
   #   params:
@@ -197,7 +192,7 @@ nodes:
   #   params:
   #     aspect_ratio: "9:16"
   #     mode: pro
-  #     sound: "off"
+  #     sound: "on"
   #     watermark: false
   # shot_video_generation:
   #   model: kling:kling-v3-omni
@@ -206,8 +201,7 @@ nodes:
   #     mode: pro
   #     sound: "off"
   #     watermark: false
-  #     max_reference_images: 2
-  #     max_reference_elements: 3
+  #     max_reference_images: 3
   #     shot_video_generation_concurrency: 5
   shot_dialogue_audio_generation:
     model: volcengine:seed-tts-2.0
@@ -303,8 +297,9 @@ generation:
     光影干净，背景简洁，无人物、无手持、无文字、水印或logo。重点表现尺寸比例、
     材质、磨损、能量状态和一眼可识别的结构细节。
   layout_design_style_prompt: >
-    场景图保持国漫CG/动画电影无人物空场景质感，空间结构清晰，前中后景层次明确；
-    材质、光源、阴影、空气粒子和色彩关系稳定可复用，适配16:9短剧构图。
+    场景图保持国漫CG/动画电影无人物场景三视图设定板质感，空间结构清晰；
+    顶视平面、正向主视和侧向/45度透视必须统一为同一个空间，用于后续短剧取景参考。
+    材质、光源、阴影、空气粒子和色彩关系稳定可复用，适配16:9横向资产设定板和9:16短剧镜头取景。
     不出现人物、背影、手、剪影、字幕、水印、文字标识或无关logo。
 
 postgen:
@@ -507,15 +502,15 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # Seedance video refs: prioritize storyboard panels, roleboards, and key vision
-      # as the default three static image anchors. Scene/prop refs are still collected
+      # Seedance video refs: prioritize storyboard panels, layout images, and roleboards
+      # as the default three static image anchors. Key vision and prop refs are still collected
       # and can enter the payload when max_reference_images is raised.
       # Role/dialogue audio and optional previous generated shot videos may also be used.
       # Previous generated shot videos are disabled by default to avoid quality drift across long shot chains.
       video_reference_mode: full
       previous_video_preroll_seconds: 0
-      # Reserve the default image slots for shot storyboard panel + roleboard + key vision.
-      # Raise this to 4+ if the video model should also receive layout/prop images.
+      # Reserve the default image slots for shot storyboard panel + layout image + roleboard image.
+      # Raise this to 4+ if the video model should also receive key-vision/prop images.
       max_reference_images: 3
       max_reference_audio: 1
       max_reference_audio_duration_seconds: 15.2
@@ -607,8 +602,7 @@ providers:
       video_reference_mode: subject_storyboard_key_vision
       subject_reference_type: video_refer
       subject_video_duration_seconds: 5
-      max_reference_images: 2
-      max_reference_elements: 3
+      max_reference_images: 3
       poll_interval_seconds: 10
       max_polls: 120
 

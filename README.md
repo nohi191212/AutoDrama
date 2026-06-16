@@ -130,7 +130,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - 全局 BGM: `minimax`
 - 镜头视频: `volcengine`
 
-所有图片生成默认通过 ToAPI GPT-Image-2：主视觉原图、角色身份板、12 宫格故事板、道具图和场景图都会本地保存图片文件，并尽量保存 provider 返回的图片 URL。`shot_video_generation` 的普通参考素材优先使用当前镜头故事板单格、角色身份板、主视觉、场景图/道具图、角色/对白音频；默认 3 个图片参考槽会优先保留给故事板单格、角色身份板和主视觉，若需要同时传场景图或道具图，可把视频 provider 的 `max_reference_images` 提高到 4 或以上。需要承接上一镜时可使用上一 shot 尾帧 first-frame 或上一 shot 视频参考。视频 prompt 会按实际传入素材编号说明职责：故事板单格锁定构图/动作/机位，角色身份板锁定人物外观，主视觉锁定世界观/色调/质感，场景图锁定空间，上一镜头锁定硬切后的逻辑连贯性；只有视频 provider 实际接收音频参考时，prompt 才会出现音频参考说明。
+所有图片生成默认通过 ToAPI GPT-Image-2：主视觉原图、角色身份板、12 宫格故事板、道具图和场景图都会本地保存图片文件，并尽量保存 provider 返回的图片 URL。`shot_video_generation` 的普通视频输入优先使用当前镜头故事板单格、当前场景三视图/场景图、镜头内人物三视图/角色身份板，以及 `shots/<episode_key>.json` 里的逐秒内容 `per_second_content`（旧项目缺少该字段时回退到 `video_prompt`）。默认 3 个图片参考槽会优先保留给故事板单格、场景图和角色身份板；主视觉只作为额外可用的风格参考，不再挤占默认三锚点。需要承接上一镜时可使用上一 shot 尾帧 first-frame 或上一 shot 视频参考。视频 prompt 会按实际传入素材编号说明职责：故事板单格锁定构图/动作/机位，场景三视图/场景图锁定空间结构、材质和光照，人物三视图/角色身份板锁定人物外观，上一镜头锁定硬切后的逻辑连贯性；只有视频 provider 实际接收音频参考时，prompt 才会出现音频参考说明。故事板图片生成用的 `image_prompt` 只用于 pregen 的故事板 sheet，不作为 `shot_video_generation` 的剧情输入。
 
 本地验证或演示可以使用 `--fake`，不会调用真实外部服务。
 
@@ -304,7 +304,7 @@ shot_video_generation
 dynamic_asset_solidification
 ```
 
-`generation` 阶段不再生成逐镜头 storyboard JSON 或单独参考图资产。运行 `run\start.cmd --generation ...` 时进入动态流程；不带 `--generation` 时进入 pregen 流程。`shot_dialogue_audio_generation` 先读取 `shots/<episode_key>.json` 中的 `dialogue`，用 `role_voice_select` 绑定的官方 `voice_type` 生成逐镜头对白音频并写回 `dialogue_audio_assets`。`shot_video_generation` 随后读取同一个 shot 清单，并可使用 pregen 故事板单格、角色身份板、主视觉原图、场景图/道具图、已生成对白音频和上一 shot 视频/尾帧作为参考素材；如果某镜头配置为严格承接上一镜头尾帧，则只传上一镜头尾帧作为 first-frame 参考。对白文本仍必须存在于 `video_prompt`，音频参考只作为支持该能力的视频模型的增强输入。
+`generation` 阶段不再生成逐镜头 storyboard JSON 或单独参考图资产。运行 `run\start.cmd --generation ...` 时进入动态流程；不带 `--generation` 时进入 pregen 流程。`shot_dialogue_audio_generation` 先读取 `shots/<episode_key>.json` 中的 `dialogue`，用 `role_voice_select` 绑定的官方 `voice_type` 生成逐镜头对白音频并写回 `dialogue_audio_assets`。`shot_video_generation` 随后读取同一个 shot 清单，并以故事板单格、当前场景三视图/场景图、包含的人物三视图/角色身份板、分镜逐秒内容作为核心输入；人物输入必须是 roleboard 图片，不是 Kling subject element 或其它 element 引用。可附加已生成对白音频和上一 shot 视频/尾帧作为增强素材。如果某镜头配置为严格承接上一镜头尾帧，则只传上一镜头尾帧作为 first-frame 参考。对白文本仍必须存在于 `video_prompt`/`per_second_content`，音频参考只作为支持该能力的视频模型的增强输入。
 
 ### 5. 一次性运行预生成和动态资产
 

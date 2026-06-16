@@ -27,10 +27,6 @@ def main() -> None:
             "storyboard_sheet_generation" in settings.nodes,
             f"{config_path} missing nodes.storyboard_sheet_generation",
         )
-        require(
-            "storyboard_bbox_detection" in settings.nodes,
-            f"{config_path} missing nodes.storyboard_bbox_detection",
-        )
         require("role_voice_select" in settings.nodes, f"{config_path} missing nodes.role_voice_select")
         require("role_voice_select_audio_judge" in settings.nodes, f"{config_path} missing audio judge node")
         require("role" in settings.routing.get("image", {}), f"{config_path} missing image.role route")

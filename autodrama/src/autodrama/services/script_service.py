@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from autodrama.core.schemas import (
+    MinuteSegmentOutput,
     ScriptDetailExpandOutput,
     ProjectState,
     ScriptNovelExtractBatchOutput,
@@ -126,6 +127,53 @@ class ScriptService:
                 "required_mapping_field": "novel_extract",
                 "expected_keys": batch_episode_keys,
                 "batch_episode_keys": batch_episode_keys,
+            },
+        )
+
+    async def minute_segment(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        novel_full: dict[str, str],
+        novel_extract: dict[str, str],
+        director_prep: str | None = None,
+    ) -> MinuteSegmentOutput:
+        episode_duration_seconds = self.episode_duration_seconds(state)
+        episode_keys = list(novel_full)
+        prompt = self.prompts.render(
+            "minute_segment",
+            title=state.title,
+            raw_script=state.raw_script,
+            novel_full=self.format_json(novel_full),
+            novel_extract=self.format_json(novel_extract),
+            director_prep=director_prep or "（暂无导演前期。）",
+            episode_keys=", ".join(episode_keys),
+            episode_duration_seconds=episode_duration_seconds,
+        )
+        print(
+            "\n".join(
+                [
+                    "",
+                    "=" * 100,
+                    "MINUTE_SEGMENT INPUT PROMPT",
+                    "-" * 100,
+                    prompt,
+                    "=" * 100,
+                ]
+            ),
+            flush=True,
+        )
+        return await provider.generate_json(
+            prompt,
+            MinuteSegmentOutput,
+            temperature=0.35,
+            metadata={
+                "node_name": "minute_segment",
+                "project_id": state.project_id,
+                "expected_keys": episode_keys,
+                "episode_duration_seconds": episode_duration_seconds,
+                "segment_seconds": 60,
             },
         )
 

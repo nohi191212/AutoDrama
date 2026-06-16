@@ -49,7 +49,11 @@ async def main_async() -> int:
     shot_path = project_dir / "shots" / "episode_001.json"
     require(shot_path.exists(), f"Shot manifest missing: {shot_path}")
     episode = StoryboardEpisodeOutput.model_validate_json(shot_path.read_text(encoding="utf-8"))
-    require(len(episode.shots) == 12, f"Expected 12 shots, got {len(episode.shots)}")
+    expected_shot_count = 2
+    require(
+        len(episode.shots) == expected_shot_count,
+        f"Expected {expected_shot_count} shots, got {len(episode.shots)}",
+    )
 
     dialogue_body = "这份合同被换过，时间线就在这里"
     dialogue_shots = [shot for shot in episode.shots if shot.dialogue]

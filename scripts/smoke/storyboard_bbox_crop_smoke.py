@@ -54,9 +54,11 @@ async def main_async() -> int:
 
     bbox_payload = json.loads(bbox_path.read_text(encoding="utf-8"))
     crop_payload = json.loads(crop_path.read_text(encoding="utf-8"))
+    expected_panel_count = 2
     require(len(bbox_payload.get("episodes", [])) == 1, bbox_payload)
-    require(len(bbox_payload["episodes"][0].get("panels", [])) == 12, bbox_payload)
-    require(len(crop_payload.get("cropped_panels", [])) == 12, crop_payload)
+    require(bbox_payload["episodes"][0].get("panel_count") == expected_panel_count, bbox_payload)
+    require(len(bbox_payload["episodes"][0].get("panels", [])) == expected_panel_count, bbox_payload)
+    require(len(crop_payload.get("cropped_panels", [])) == expected_panel_count, crop_payload)
 
     for item in crop_payload["cropped_panels"]:
         panel_path = project_dir / item["asset_path"]
