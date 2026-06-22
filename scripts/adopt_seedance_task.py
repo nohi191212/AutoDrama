@@ -71,13 +71,16 @@ async def main_async() -> int:
     state = repo.load_state(project_dir)
     router = ProviderRouter(settings)
     workflow = GenerationWorkflow(repo=repo, router=router)
-    provider = router.video("shot")
+    provider = router.video("shot", node_name="shot_video_generation")
 
     resolved_episode_key = episode_key(args.episode)
     episode = workflow._load_storyboard_episode(project_dir, resolved_episode_key)
     shot = find_shot(episode, args.shot)
     asset_id = normalize_id(f"{shot.shot_id}", "video")
-    prompt = workflow._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
+    prompt = str(shot.final_video_prompt or "").strip()
+    if not prompt:
+        raise ValueError(f"{shot.shot_id} missing final_video_prompt; rerun shot_manifest_generation")
+    shot_video_inputs = workflow._shot_video_inputs(project_dir, shot, provider=provider)
     task_key = workflow._shot_video_task_key(episode.episode_key, shot.shot_id)
     planned_asset_path = workflow._project_relative(
         project_dir,
@@ -100,6 +103,7 @@ async def main_async() -> int:
     )
     item["adopted_at"] = now_iso()
     item["task_id"] = args.task_id
+    item["shot_video_inputs"] = shot_video_inputs
 
     success_statuses = workflow._video_success_statuses(provider)
     asset_path = None

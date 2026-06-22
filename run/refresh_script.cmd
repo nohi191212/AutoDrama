@@ -193,10 +193,7 @@ if not "%RUN_STORYBOARD%"=="" (
   "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only storyboard_generation %EPISODE_ARGS% %PROVIDER_ARGS%
   set "EXIT_CODE=!ERRORLEVEL!"
   if not "!EXIT_CODE!"=="0" goto fail
-  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only storyboard_bbox_detection %EPISODE_ARGS% %PROVIDER_ARGS%
-  set "EXIT_CODE=!ERRORLEVEL!"
-  if not "!EXIT_CODE!"=="0" goto fail
-  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only storyboard_panel_crop %EPISODE_ARGS% %PROVIDER_ARGS%
+  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only shot_manifest_generation %EPISODE_ARGS% %PROVIDER_ARGS%
   set "EXIT_CODE=!ERRORLEVEL!"
   if not "!EXIT_CODE!"=="0" goto fail
 )

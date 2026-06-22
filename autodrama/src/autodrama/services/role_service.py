@@ -29,22 +29,13 @@ class RoleService:
         return str(state.metadata.get("roleboard_style_prompt") or "").strip()
 
     @classmethod
-    def minute_segments_context(cls, state: ProjectState, episode_keys: list[str] | None = None) -> str:
-        payload = state.metadata.get("minute_segments")
+    def clip_segments_context(cls, state: ProjectState, episode_keys: list[str] | None = None) -> str:
+        payload = state.metadata.get("clip_segments")
         if not isinstance(payload, dict) or not payload:
-            return "（暂无分钟片段；请以完整小说正文为准。）"
+            return "（暂无 clip 片段；请以完整小说正文为准。）"
         if episode_keys:
             selected = {str(key) for key in episode_keys}
-            episodes = payload.get("episodes")
-            if isinstance(episodes, list):
-                payload = {
-                    **payload,
-                    "episodes": [
-                        item
-                        for item in episodes
-                        if isinstance(item, dict) and str(item.get("episode_key")) in selected
-                    ],
-                }
+            payload = {key: value for key, value in payload.items() if str(key) in selected}
         return cls.format_json(payload)
 
     @staticmethod
@@ -71,7 +62,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
-            minute_segments=self.minute_segments_context(state, list(novel_full)),
+            clip_segments=self.clip_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             existing_roles=self.format_json(existing_roles),
             episode_keys=", ".join(novel_full),
@@ -102,7 +93,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
-            minute_segments=self.minute_segments_context(state, list(novel_full)),
+            clip_segments=self.clip_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             existing_primary_roles=self.format_json(existing_primary_roles),
             episode_keys=", ".join(novel_full),
@@ -134,7 +125,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
-            minute_segments=self.minute_segments_context(state, list(novel_full)),
+            clip_segments=self.clip_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(existing_functional_roles),
@@ -193,7 +184,7 @@ class RoleService:
             "role_duplicate_audit",
             title=state.title,
             novel_full=self.format_json(novel_full),
-            minute_segments=self.minute_segments_context(state, list(novel_full)),
+            clip_segments=self.clip_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             role_index=self.format_json(role_index),
         )
@@ -223,7 +214,7 @@ class RoleService:
             title=state.title,
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
-            minute_segments=self.minute_segments_context(state, list(novel_full)),
+            clip_segments=self.clip_segments_context(state, list(novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(functional_roles),
@@ -258,7 +249,7 @@ class RoleService:
             role_extract_item=self.format_json(role_item.model_dump(mode="json")),
             role_novel_extract=self.format_json(role_novel_extract),
             role_novel_full=self.format_json(role_novel_full),
-            minute_segments=self.minute_segments_context(state, list(role_novel_full)),
+            clip_segments=self.clip_segments_context(state, list(role_novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(role_novel_full)),
             role_index=self.format_json(role_index),
             key_vision_asset=self.format_json(key_vision_asset or {}),

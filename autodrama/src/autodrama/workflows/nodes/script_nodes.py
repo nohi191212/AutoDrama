@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from autodrama.core.schemas import MinuteSegmentOutput, ProjectState, ScriptNovelExtractOutput, ScriptNovelOutput
+from autodrama.core.schemas import ClipSegmentNodeOutput, ClipSegmentOutput, ProjectState, ScriptNovelExtractOutput, ScriptNovelOutput
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
@@ -16,7 +16,7 @@ SCRIPT_NODE_NAMES = [
     "script_outline",
     "script_novel",
     "script_novel_extract",
-    "minute_segment",
+    "clip_segment",
 ]
 
 SCRIPT_NOVEL_EXTRACT_BATCH_SIZE = 5
@@ -26,6 +26,7 @@ class ScriptNodeBase:
     def __init__(
         self,
         *,
+        workflow: Any | None = None,
         repo: ProjectRepository,
         layout: ProjectLayout,
         router: Any,
@@ -34,6 +35,7 @@ class ScriptNodeBase:
         logger: Any,
         force_getter: Callable[[], bool] | None = None,
     ) -> None:
+        self.workflow = workflow
         self.repo = repo
         self.layout = layout
         self.router = router
@@ -44,6 +46,14 @@ class ScriptNodeBase:
 
     def expected_episode_keys(self, state: ProjectState) -> list[str]:
         return self.script_service.episode_keys(self.script_service.episode_count(state))
+
+    def target_episode_keys(self, state: ProjectState) -> list[str]:
+        getter = getattr(self.workflow, "_active_episode_keys_in_order", None)
+        if callable(getter):
+            active_episode_keys = list(getter(state))
+            if active_episode_keys:
+                return active_episode_keys
+        return self.expected_episode_keys(state)
 
     def validate_episode_keys(self, label: str, payload: dict[str, object], state: ProjectState) -> None:
         expected_keys = self.expected_episode_keys(state)
@@ -363,8 +373,10 @@ class ScriptNovelExtractNode(ScriptNodeBase):
         return state
 
 
-class MinuteSegmentNode(ScriptNodeBase):
-    name = "minute_segment"
+class ClipSegmentNode(ScriptNodeBase):
+    name = "clip_segment"
+    MIN_CLIP_SECONDS = 12
+    MAX_CLIP_SECONDS = 15
 
     @staticmethod
     def _dedupe_texts(values: list[str]) -> list[str]:
@@ -381,70 +393,69 @@ class MinuteSegmentNode(ScriptNodeBase):
             cleaned.append(text)
         return cleaned
 
-    def validate_minute_segments(self, output: MinuteSegmentOutput, state: ProjectState) -> MinuteSegmentOutput:
-        expected_keys = self.expected_episode_keys(state)
-        expected = set(expected_keys)
-        by_episode = {episode.episode_key: episode for episode in output.episodes}
-        actual = set(by_episode)
-        if actual != expected:
-            raise ValueError(
-                "minute_segment.episodes must contain exactly "
-                f"{', '.join(expected_keys)}; got {', '.join(sorted(actual)) or '-'}"
-            )
-
+    def validate_clip_segments(
+        self,
+        output: ClipSegmentOutput,
+        state: ProjectState,
+        *,
+        episode_key: str,
+    ) -> dict[str, object]:
         target_duration = self.script_service.episode_duration_seconds(state)
-        ordered_episodes = []
-        for episode_key in expected_keys:
-            episode = by_episode[episode_key]
-            episode.episode_key = episode_key
-            episode.target_duration_seconds = int(episode.target_duration_seconds or target_duration)
-            if episode.target_duration_seconds != target_duration:
-                raise ValueError(
-                    f"minute_segment target_duration_seconds for {episode_key} must be {target_duration}; "
-                    f"got {episode.target_duration_seconds}"
-                )
-            if not episode.segments:
-                raise ValueError(f"minute_segment must return at least one segment for {episode_key}")
-            ordered_segments = sorted(episode.segments, key=lambda item: int(item.index))
-            expected_indexes = list(range(1, len(ordered_segments) + 1))
-            actual_indexes = [int(item.index) for item in ordered_segments]
-            if actual_indexes != expected_indexes:
-                raise ValueError(
-                    f"minute_segment segment indexes for {episode_key} must be 1-{len(ordered_segments)}; "
-                    f"got {actual_indexes}"
-                )
-            for segment in ordered_segments:
-                segment.episode_key = episode_key
-                segment.minute_id = str(segment.minute_id or "").strip() or f"{episode_key}_minute_{segment.index:03d}"
-                segment.title = " ".join(str(segment.title or "").split()).strip() or f"分钟片段{segment.index:03d}"
-                segment.summary = " ".join(str(segment.summary or "").split()).strip()
-                if not segment.summary:
-                    raise ValueError(f"minute_segment summary is empty for {segment.minute_id}")
-                segment.start_second = max(0.0, float(segment.start_second))
-                segment.end_second = max(segment.start_second + 1.0, float(segment.end_second))
-                if segment.end_second > target_duration:
-                    segment.end_second = float(target_duration)
-                if segment.start_second >= segment.end_second:
-                    raise ValueError(
-                        f"minute_segment has invalid time range for {segment.minute_id}: "
-                        f"{segment.start_second}-{segment.end_second}"
-                    )
-                segment.visual_events = self._dedupe_texts(segment.visual_events)
-                segment.role_names = self._dedupe_texts(segment.role_names)
-                segment.prop_names = self._dedupe_texts(segment.prop_names)
-                segment.layout_names = self._dedupe_texts(segment.layout_names)
-            episode.segments = ordered_segments
-            ordered_episodes.append(episode)
-        return MinuteSegmentOutput(episodes=ordered_episodes)
+        min_clip_count = max(1, int((target_duration + self.MAX_CLIP_SECONDS - 1) // self.MAX_CLIP_SECONDS))
+        max_clip_count = max(min_clip_count, int((target_duration + self.MIN_CLIP_SECONDS - 1) // self.MIN_CLIP_SECONDS))
+        clips = dict(output.root)
+        if not clips:
+            raise ValueError(f"clip_segment must return at least one clip for {episode_key}")
+        ordered_keys = sorted(clips, key=lambda value: int(value) if str(value).isdigit() else 999999)
+        expected_clip_keys = [str(index) for index in range(1, len(ordered_keys) + 1)]
+        if ordered_keys != expected_clip_keys:
+            raise ValueError(f"clip_segment clip keys for {episode_key} must be 1-{len(ordered_keys)}; got {ordered_keys}")
+        if not min_clip_count <= len(ordered_keys) <= max_clip_count:
+            raise ValueError(
+                f"clip_segment clip count for {episode_key} should be {min_clip_count}-{max_clip_count} "
+                f"for {target_duration}s at 12-15s per clip; got {len(ordered_keys)}"
+            )
+        ordered_clips: dict[str, object] = {}
+        for key in ordered_keys:
+            clip = clips[key]
+            clip.text = " ".join(str(clip.text or "").split()).strip()
+            if not clip.text:
+                raise ValueError(f"clip_segment text is empty for {episode_key} clip {key}")
+            clip.role_names = self._dedupe_texts(clip.role_names)
+            clip.prop_names = self._dedupe_texts(clip.prop_names)
+            clip.layout_names = self._dedupe_texts(clip.layout_names)
+            ordered_clips[key] = clip
+        return ordered_clips
+
+    def merge_clip_segment_outputs(
+        self,
+        *,
+        project_dir: Path,
+        generated_output: ClipSegmentNodeOutput,
+        target_episode_keys: list[str],
+        all_episode_keys: list[str],
+    ) -> ClipSegmentNodeOutput:
+        existing_path = self.layout.node_output_path(project_dir, self.name)
+        by_episode: dict[str, dict[str, object]] = {}
+        if existing_path.exists():
+            try:
+                existing = ClipSegmentNodeOutput.model_validate_json(existing_path.read_text(encoding="utf-8"))
+                by_episode.update(dict(existing.root))
+            except Exception as exc:
+                self.logger.warning("clip_segment ignored invalid existing output %s: %s", existing_path, exc)
+        by_episode.update(dict(generated_output.root))
+        ordered_keys = all_episode_keys if not set(target_episode_keys).difference(all_episode_keys) else target_episode_keys
+        return ClipSegmentNodeOutput({episode_key: by_episode[episode_key] for episode_key in ordered_keys if episode_key in by_episode})
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("script", node_name=self.name)
         self.logger.info(
-            "node=minute_segment provider=%s model=%s",
+            "node=clip_segment provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        episode_keys = self.expected_episode_keys(state)
+        episode_keys = self.target_episode_keys(state)
+        all_episode_keys = self.expected_episode_keys(state)
         self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
         self.validate_episode_keys("script_novel_extract.novel_extract", state.script.novel_extract, state)
         novel_full = self.script_contents.load_contents(
@@ -459,22 +470,32 @@ class MinuteSegmentNode(ScriptNodeBase):
             episode_keys,
             label="script_novel_extract.novel_extract",
         )
-        output = await self.script_service.minute_segment(
-            state,
-            provider,
-            novel_full=novel_full,
-            novel_extract=novel_extract,
-            director_prep=DirectorService.director_prep_context(state, episode_keys=episode_keys),
+        generated: dict[str, dict[str, object]] = {}
+        for episode_key in episode_keys:
+            output = await self.script_service.clip_segment(
+                state,
+                provider,
+                episode_key=episode_key,
+                novel_full=novel_full.get(episode_key, ""),
+                novel_extract=novel_extract.get(episode_key, ""),
+                director_prep=DirectorService.director_prep_context(state, episode_keys=[episode_key]),
+            )
+            generated[episode_key] = self.validate_clip_segments(output, state, episode_key=episode_key)
+            state.budget.used_text_calls += 1
+        output = ClipSegmentNodeOutput(generated)
+        merged = self.merge_clip_segment_outputs(
+            project_dir=project_dir,
+            generated_output=output,
+            target_episode_keys=episode_keys,
+            all_episode_keys=all_episode_keys,
         )
-        output = self.validate_minute_segments(output, state)
-        self.repo.save_node_output(project_dir, self.name, output)
-        state.metadata["minute_segments"] = output.model_dump(mode="json")
-        state.metadata["minute_segment_path"] = self.layout.project_relative(
+        self.repo.save_node_output(project_dir, self.name, merged)
+        state.metadata["clip_segments"] = merged.model_dump(mode="json")
+        state.metadata["clip_segment_path"] = self.layout.project_relative(
             project_dir,
             self.layout.node_output_path(project_dir, self.name),
         )
-        state.metadata["minute_segment_episode_keys"] = episode_keys
-        state.budget.used_text_calls += 1
+        state.metadata["clip_segment_episode_keys"] = list(merged.root)
         return state
 
 
@@ -487,6 +508,7 @@ def build_script_node_runners(workflow: Any) -> dict[str, ScriptNodeBase]:
         return bool(getattr(workflow, "_force_pregen", False))
 
     deps = {
+        "workflow": workflow,
         "repo": workflow.repo,
         "layout": workflow.layout,
         "router": workflow.router,
@@ -499,7 +521,7 @@ def build_script_node_runners(workflow: Any) -> dict[str, ScriptNodeBase]:
         ScriptOutlineNode.name: ScriptOutlineNode(**deps),
         ScriptNovelNode.name: ScriptNovelNode(**deps),
         ScriptNovelExtractNode.name: ScriptNovelExtractNode(**deps),
-        MinuteSegmentNode.name: MinuteSegmentNode(**deps),
+        ClipSegmentNode.name: ClipSegmentNode(**deps),
     }
 
 
@@ -517,7 +539,7 @@ def build_script_nodes(workflow: Any, after_novel_nodes: list[WorkflowNode] | No
 __all__ = [
     "SCRIPT_NODE_NAMES",
     "SCRIPT_NOVEL_EXTRACT_BATCH_SIZE",
-    "MinuteSegmentNode",
+    "ClipSegmentNode",
     "ScriptNovelExtractNode",
     "ScriptNovelNode",
     "ScriptOutlineNode",

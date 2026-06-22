@@ -166,10 +166,14 @@ nodes:
       resolution: 720p
       generate_audio: false
       return_last_frame: true
+      prompt_template: shot_video/volcengine
+      negative_rules:
+        - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示参考图版式或三视图布局。
+        - 不要把 12 宫格故事板画成最终成片，不要生成故事板线稿风格。
       shot_video_generation_concurrency: 5
   # Optional Kling branch. Switch these bindings plus routing.video.shot to kling.
   # role_subject_element_generation may still create/cache Kling subject elements,
-  # but shot_video_generation uses storyboard panel + layout image + roleboard image;
+  # but shot_video_generation uses the fixed shot_video_inputs from shot_manifest_generation;
   # it must not pass element refs or element_list.
   # role_subject_video_generation:
   #   model: kling:kling-v3-omni
@@ -201,6 +205,10 @@ nodes:
   #     mode: pro
   #     sound: "off"
   #     watermark: false
+  #     prompt_template: shot_video/kling
+  #     negative_rules:
+  #       - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示参考图版式或三视图布局。
+  #       - 不要使用 subject element，不要生成参考图拼版、三视图布局、宫格或面板编号。
   #     max_reference_images: 3
   #     shot_video_generation_concurrency: 5
   shot_dialogue_audio_generation:
@@ -502,15 +510,13 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # Seedance video refs: prioritize storyboard panels, layout images, and roleboards
-      # as the default three static image anchors. Key vision and prop refs are still collected
-      # and can enter the payload when max_reference_images is raised.
-      # Role/dialogue audio and optional previous generated shot videos may also be used.
-      # Previous generated shot videos are disabled by default to avoid quality drift across long shot chains.
+      # Seedance video refs are prepared by shot_manifest_generation as fixed shot_video_inputs.
+      # shot_video_generation only submits storyboard sheet, roleboard(s), layout(s), and prop(s) from the shot manifest.
+      # Previous generated videos, last frames, audio refs, and key vision are not part of the fixed shot video contract.
       video_reference_mode: full
       previous_video_preroll_seconds: 0
-      # Reserve the default image slots for shot storyboard panel + layout image + roleboard image.
-      # Raise this to 4+ if the video model should also receive key-vision/prop images.
+      # Reserve image slots for storyboard sheet first, then roleboard(s), layout(s), and prop(s).
+      # Raise this when a shot needs multiple roleboard/layout/prop images.
       max_reference_images: 3
       max_reference_audio: 1
       max_reference_audio_duration_seconds: 15.2

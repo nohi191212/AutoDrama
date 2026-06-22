@@ -70,7 +70,7 @@ from autodrama.workflows.selection import select_episode_keys
 PREGEN_NODES = PREGEN_NODE_NAMES
 PREGEN_ONLY_NODES = AVAILABLE_PREGEN_NODE_NAMES
 EPISODE_SCOPED_PREGEN_ONLY_NODES = {
-    "minute_segment",
+    "clip_segment",
     "roleboard_prompt",
     "roleboard_generation",
     "role_subject_video_generation",
@@ -579,7 +579,7 @@ class PregenWorkflow:
         selected_role_names = self._select_role_names(role_names) if role_names else None
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
-                "--episodes is only supported for pregen --only minute_segment, roleboard_prompt, roleboard_generation, "
+                "--episodes is only supported for pregen --only clip_segment, roleboard_prompt, roleboard_generation, "
                 "role_subject_video_generation, role_subject_element_generation, storyboard_prompt, "
                 "storyboard_generation, shot_manifest_generation, "
                 "role_voice_select, prop_design, prop_generation, or layout_image_generation."
@@ -1371,7 +1371,7 @@ class PregenWorkflow:
         def image_priority(ref) -> tuple[int, str]:
             asset_type = cls._shot_video_ref_asset_type(ref)
             priority = {
-                "storyboard_panel": 0,
+                "storyboard": 0,
                 "layout": 1,
                 "roleboard": 2,
                 "key_vision": 3,
@@ -1736,24 +1736,25 @@ class PregenWorkflow:
             },
         )
 
-    def _storyboard_panel_ref(
+    def _storyboard_ref(
         self,
         project_dir: Path,
         shot: StoryboardShot,
     ):
         from autodrama.providers.base import AssetRef
 
-        existing = self.layout.existing_project_file(project_dir, shot.storyboard_panel_asset_path)
+        asset_path = shot.storyboard_asset_path or shot.source_storyboard_asset_path
+        existing = self.layout.existing_project_file(project_dir, asset_path)
         if not existing:
             return None
         episode_key = str(shot.shot_id or "").rsplit("_shot_", 1)[0]
         return AssetRef(
-            id=shot.storyboard_panel_asset_id or f"{shot.shot_id}_storyboard_panel",
+            id=shot.storyboard_asset_id or f"{shot.shot_id}_storyboard",
             type="image",
             path=str(project_dir / existing),
             url=None,
             metadata={
-                "asset_type": "storyboard_panel",
+                "asset_type": "storyboard",
                 "reference_source": "storyboard_generation",
                 "reference_role": "composition_action_camera",
                 "episode_key": episode_key,
@@ -1916,9 +1917,9 @@ class PregenWorkflow:
                 )
             )
             return refs
-        storyboard_panel_ref = self._storyboard_panel_ref(project_dir, shot)
-        if storyboard_panel_ref is not None:
-            refs.append(storyboard_panel_ref)
+        storyboard_ref = self._storyboard_ref(project_dir, shot)
+        if storyboard_ref is not None:
+            refs.append(storyboard_ref)
         refs.extend(self._shot_roleboard_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
         if self._video_reference_mode_uses_layout_roleboard_refs(reference_mode):
             refs.extend(

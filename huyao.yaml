@@ -190,6 +190,9 @@ nodes:
       mode: pro
       sound: "on"
       watermark: false
+      prompt_template: shot_video/kling
+      negative_rules:
+        - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示场景三视图、人物三视图。
       max_reference_images: 3
       shot_video_generation_concurrency: 5
   shot_dialogue_audio_generation:
@@ -492,13 +495,12 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # Seedance video refs: use storyboard panels, scene refs, roleboards, optional key vision/prop refs,
-      # role/dialogue audio, and optional previous generated shot videos.
-      # Previous generated shot videos are disabled by default to avoid quality drift across long shot chains.
-      # Role/dialogue audio anchors are still allowed for the only speaking role.
+      # Seedance video refs are prepared by shot_manifest_generation as fixed shot_video_inputs.
+      # shot_video_generation only submits storyboard sheet, roleboard(s), layout(s), and prop(s) from the shot manifest.
+      # Previous generated videos, last frames, audio refs, and key vision are not part of the fixed shot video contract.
       video_reference_mode: full
       previous_video_preroll_seconds: 0
-      # max_reference_* values are still kept for other video_reference_mode experiments.
+      # max_reference_* values are kept as provider limits; fixed inputs are never silently truncated.
       max_reference_images: 4
       max_reference_audio: 1
       max_reference_audio_duration_seconds: 15.2

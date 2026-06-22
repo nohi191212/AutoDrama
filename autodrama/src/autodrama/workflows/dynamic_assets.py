@@ -544,9 +544,6 @@ class DynamicAssetNodeMixin:
         semaphore = asyncio.Semaphore(concurrency)
         registry_lock = asyncio.Lock()
         episode_lock = asyncio.Lock()
-        reference_mode = self._video_reference_mode(provider)
-        waits_for_previous_video = self._video_reference_mode_uses_previous_scene_video(reference_mode)
-
         async def task_snapshot(task_key: str) -> dict[str, Any] | None:
             async with registry_lock:
                 task = find_generation_task(registry, task_key)
@@ -630,16 +627,23 @@ class DynamicAssetNodeMixin:
             if not force_generation and existing_status in success_statuses and self._path_exists(project_dir, saved_asset_path):
                 recorded_prompt = str(
                     (existing_task or {}).get("prompt")
-                    or shot.video_generation_prompt
-                    or self._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
+                    or shot.final_video_prompt
                 )
-                shot.video_generation_prompt = recorded_prompt
+                if not recorded_prompt:
+                    raise ProviderError(f"{shot.shot_id} missing final_video_prompt; rerun shot_manifest_generation")
+                shot.final_video_prompt = recorded_prompt
+                shot_video_inputs = self._shot_video_inputs(project_dir, shot, provider=provider)
+                video_refs = self._asset_refs_from_shot_video_inputs(project_dir, shot_video_inputs)
                 self._write_generation_prompt_log(
                     project_dir,
                     episode_key=episode.episode_key,
                     shot=shot,
                     node_name="shot_video_generation",
                     prompt=recorded_prompt,
+                    sections=[
+                        ("shot_video_inputs", shot_video_inputs),
+                        ("reference_assets", self._asset_refs_for_prompt_log(video_refs)),
+                    ],
                     metadata={
                         "provider": getattr(provider, "name", "unknown"),
                         "model": getattr(provider, "model", "-"),
@@ -716,10 +720,13 @@ class DynamicAssetNodeMixin:
                 last_logged_status = existing_status
                 prompt = str(
                     existing_task.get("prompt")
-                    or shot.video_generation_prompt
-                    or self._shot_video_prompt(state, episode, shot, provider=provider, project_dir=project_dir)
+                    or shot.final_video_prompt
                 )
-                shot.video_generation_prompt = prompt
+                if not prompt:
+                    raise ProviderError(f"{shot.shot_id} missing final_video_prompt; rerun shot_manifest_generation")
+                shot.final_video_prompt = prompt
+                shot_video_inputs = self._shot_video_inputs(project_dir, shot, provider=provider)
+                video_refs = self._asset_refs_from_shot_video_inputs(project_dir, shot_video_inputs)
                 async with episode_lock:
                     self._save_storyboard_episode(project_dir, episode)
                 self._write_generation_prompt_log(
@@ -728,6 +735,10 @@ class DynamicAssetNodeMixin:
                     shot=shot,
                     node_name="shot_video_generation",
                     prompt=prompt,
+                    sections=[
+                        ("shot_video_inputs", shot_video_inputs),
+                        ("reference_assets", self._asset_refs_for_prompt_log(video_refs)),
+                    ],
                     metadata={
                         "provider": getattr(provider, "name", "unknown"),
                         "model": getattr(provider, "model", "-"),
@@ -746,17 +757,6 @@ class DynamicAssetNodeMixin:
                     extra={"episode_key": episode.episode_key, "shot_id": shot.shot_id},
                 )
             else:
-                if not self._shot_video_inheritance_ready(project_dir, episode, shot):
-                    message = self._shot_video_inheritance_blocked_message(project_dir, episode, shot)
-                    get_logger().error("%s", message)
-                    self._log_generation_shot_failed(
-                        episode.episode_key,
-                        shot,
-                        "shot_video_generation",
-                        ProviderError(message),
-                    )
-                    raise ProviderError(message)
-
                 if existing_task and existing_status in failure_statuses:
                     get_logger().info(
                         "%s previous video task %s ended with status=%s; submitting a new task",
@@ -783,17 +783,12 @@ class DynamicAssetNodeMixin:
                     )
 
                 try:
-                    prompt = await self._shot_video_prompt_async(
-                        state,
-                        episode,
-                        shot,
-                        provider=provider,
-                        project_dir=project_dir,
-                    )
-                    video_refs = self._shot_video_refs(project_dir, state, shot, provider=provider, episode=episode)
-                    video_refs = self._shot_video_refs_for_provider(video_refs, provider=provider)
-                    reference_plan = self._shot_video_reference_plan(video_refs, provider=provider)
-                    shot.video_generation_prompt = prompt
+                    prompt = str(shot.final_video_prompt or "").strip()
+                    if not prompt:
+                        raise ProviderError(f"{shot.shot_id} missing final_video_prompt; rerun shot_manifest_generation")
+                    shot_video_inputs = self._shot_video_inputs(project_dir, shot, provider=provider)
+                    video_refs = self._asset_refs_from_shot_video_inputs(project_dir, shot_video_inputs)
+                    shot.final_video_prompt = prompt
                     async with episode_lock:
                         self._save_storyboard_episode(project_dir, episode)
                     self._write_generation_prompt_log(
@@ -803,7 +798,7 @@ class DynamicAssetNodeMixin:
                         node_name="shot_video_generation",
                         prompt=prompt,
                         sections=[
-                            ("reference_plan", reference_plan),
+                            ("shot_video_inputs", shot_video_inputs),
                             ("reference_assets", self._asset_refs_for_prompt_log(video_refs)),
                         ],
                         metadata={
@@ -824,7 +819,7 @@ class DynamicAssetNodeMixin:
                             "episode_key": episode.episode_key,
                             "shot_id": shot.shot_id,
                             "asset_id": asset_id,
-                            "reference_plan": reference_plan,
+                            "shot_video_inputs": shot_video_inputs,
                         },
                     )
                 except Exception as exc:
@@ -1027,19 +1022,15 @@ class DynamicAssetNodeMixin:
 
         tasks: list[asyncio.Task[ShotVideoGenerationItem]] = []
         tasks_by_shot_id: dict[str, asyncio.Task[ShotVideoGenerationItem]] = {}
-        previous_active_task: asyncio.Task[ShotVideoGenerationItem] | None = None
         for shot in shots:
             previous_task: asyncio.Task[ShotVideoGenerationItem] | None = None
-            if waits_for_previous_video:
-                previous_task = previous_active_task
-            elif shot.start_frame_source == "previous_shot_last_frame":
+            if shot.start_frame_source == "previous_shot_last_frame":
                 previous_shot = self._previous_shot(episode, shot)
                 if previous_shot is not None:
                     previous_task = tasks_by_shot_id.get(previous_shot.shot_id)
             task = asyncio.create_task(run_shot(shot, previous_task))
             tasks.append(task)
             tasks_by_shot_id[shot.shot_id] = task
-            previous_active_task = task
 
         try:
             generated = list(await asyncio.gather(*tasks))
@@ -1110,15 +1101,14 @@ class DynamicAssetNodeMixin:
                         )
                     )
                 if shot.video_asset_id:
-                    video_generation_prompt = shot.video_generation_prompt or self._shot_video_prompt(
-                        state,
-                        episode,
-                        shot,
-                        provider=video_provider,
-                        project_dir=project_dir,
+                    final_video_prompt = str(shot.final_video_prompt or "").strip()
+                    prompt_log_sections.append(("shot_video_generation_final_prompt_snapshot", final_video_prompt))
+                    prompt_log_sections.append(
+                        (
+                            "shot_video_inputs",
+                            [item.model_dump(mode="json") for item in shot.shot_video_inputs],
+                        )
                     )
-                    prompt_log_sections.append(("shot_video_generation_prompt_snapshot", video_generation_prompt))
-                    per_second_content = shot.per_second_content or shot.video_prompt
                     shot.solidified_asset_ids.append(shot.video_asset_id)
                     solidified.append(
                         DynamicAssetSolidificationItem(
@@ -1129,11 +1119,10 @@ class DynamicAssetNodeMixin:
                             asset_path=shot.video_asset_path,
                             source_node="shot_video_generation",
                             metadata={
-                                "prompt": video_generation_prompt,
-                                "per_second_content": per_second_content,
+                                "prompt": final_video_prompt,
                                 "source_prompt": shot.video_prompt,
-                                "source_per_second_content": shot.per_second_content or shot.video_prompt,
-                                "generation_prompt": video_generation_prompt,
+                                "final_video_prompt": final_video_prompt,
+                                "shot_video_inputs": [item.model_dump(mode="json") for item in shot.shot_video_inputs],
                                 "provider": shot.video_provider,
                                 "model": shot.video_model,
                                 "task_id": shot.video_task_id,

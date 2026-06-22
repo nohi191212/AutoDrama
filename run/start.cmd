@@ -134,11 +134,10 @@ echo   workflow: pregen
 echo   role_voice_select
 echo.
 echo Notes:
-echo   pregen writes roleboards, 12-panel storyboard sheets, GPT bbox crops, shot manifests, and selected role voice_type bindings through role_voice_select.
+echo   pregen writes roleboards, 12-panel storyboard sheets, shot manifests, and selected role voice_type bindings through role_voice_select.
 echo   prop/layout/BGM nodes are deferred from the default pregen chain and can be run with --only.
 echo   pregen visual/audio chain is roleboard_prompt, roleboard_generation, storyboard_prompt,
-echo   storyboard_generation, storyboard_bbox_detection, storyboard_panel_crop,
-echo   shot_manifest_generation, then role_voice_select.
+echo   storyboard_generation, shot_manifest_generation, then role_voice_select.
 echo   pregen --roles is supported with --only role_voice_select.
 echo   generation starts with shot_dialogue_audio_generation, then shot_video_generation and solidification.
 echo   postgen collects generated shot videos, asks for an edit plan, validates it, and composes final episode video.

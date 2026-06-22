@@ -8,13 +8,13 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from autodrama.core.ids import normalize_id
+from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
-    MinuteSegmentEpisode,
-    MinuteSegmentOutput,
+    ClipSegmentNodeOutput,
     ProjectState,
     ShotManifestGenerationEpisodeItem,
     ShotManifestGenerationOutput,
+    ShotVideoInput,
     StoryboardEpisodeOutput,
     StoryboardPromptEpisode,
     StoryboardPromptOutput,
@@ -135,17 +135,14 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
     def shot_count_for_episode(episode: StoryboardPromptEpisode) -> int:
         return len(episode.shots)
 
-    def load_minute_segment_output(self, project_dir: Path) -> MinuteSegmentOutput:
-        path = self.layout.node_output_path(project_dir, "minute_segment")
+    def load_clip_segment_output(self, project_dir: Path) -> ClipSegmentNodeOutput:
+        path = self.layout.node_output_path(project_dir, "clip_segment")
         if not path.exists():
-            raise FileNotFoundError("minute_segment output is missing; run pregen through minute_segment first")
-        return MinuteSegmentOutput.model_validate_json(path.read_text(encoding="utf-8"))
+            raise FileNotFoundError("clip_segment output is missing; run pregen through clip_segment first")
+        return ClipSegmentNodeOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
-    def minute_segments_by_episode(self, project_dir: Path) -> dict[str, MinuteSegmentEpisode]:
-        return {
-            episode.episode_key: episode
-            for episode in self.load_minute_segment_output(project_dir).episodes
-        }
+    def clip_segments_by_episode(self, project_dir: Path) -> dict[str, object]:
+        return dict(self.load_clip_segment_output(project_dir).root)
 
     def episode_story_context(self, project_dir: Path, state: ProjectState, episode_keys: list[str]) -> dict[str, str]:
         refs = state.script.novel_extract
@@ -225,8 +222,8 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
         return StoryboardSheetGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
     @staticmethod
-    def storyboard_panel_asset_id(shot_id: str) -> str:
-        return f"{str(shot_id).strip()}_storyboard_panel"
+    def storyboard_asset_id(shot_id: str) -> str:
+        return f"{str(shot_id).strip()}_storyboard"
 
     @staticmethod
     def shot_id_for_episode_index(episode_key: str, index: int) -> str:
@@ -492,7 +489,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             roleboard_context=self._format_json(self.roleboard_context(project_dir, state)),
             layout_context=self._format_json(self.layout_context(state)),
             prop_context=self._format_json(self.prop_context(state)),
-            minute_segments=self._format_json(self.minute_segments_by_episode(project_dir)),
+            clip_segments=self._format_json(self.clip_segments_by_episode(project_dir)),
         )
         output = await provider.generate_json(
             prompt,
@@ -641,7 +638,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
         skipped_existing = 0
         for episode in target_storyboards:
             for shot in episode.shots:
-                asset_id = self.storyboard_panel_asset_id(shot.shot_id)
+                asset_id = self.storyboard_asset_id(shot.shot_id)
                 existing_item = existing_by_shot.get(shot.shot_id)
                 output_path = self.layout.image_asset_path(project_dir, "storyboards", asset_id)
                 existing_file_path = self.layout.existing_project_file(project_dir, output_path)
@@ -744,7 +741,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
         max_refs: int,
         supports_refs: bool,
     ) -> StoryboardSheetGenerationItem:
-        asset_id = self.storyboard_panel_asset_id(shot.shot_id)
+        asset_id = self.storyboard_asset_id(shot.shot_id)
         output_path = self.layout.image_asset_path(project_dir, "storyboards", asset_id)
         refs = self.storyboard_reference_refs(project_dir, state, shot, limit=max_refs) if supports_refs else []
         image_prompt = self.storyboard_image_prompt(episode.episode_key, shot)
@@ -761,7 +758,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
                 "episode_key": episode.episode_key,
                 "shot_id": shot.shot_id,
                 "asset_id": asset_id,
-                "asset_type": "storyboard_panel",
+                "asset_type": "storyboard",
                 "duration_seconds": shot.duration_seconds,
                 "panel_count": self.STORYBOARD_PANEL_COUNT,
                 "grid": self.storyboard_grid(),
@@ -770,7 +767,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
                 "provider_binding_node": STORYBOARD_IMAGE_PROVIDER_NODE_NAME,
             },
             context={
-                "asset_type": "storyboard_panel",
+                "asset_type": "storyboard",
                 "episode_key": episode.episode_key,
                 "shot_id": shot.shot_id,
                 "duration_seconds": shot.duration_seconds,
@@ -990,17 +987,291 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
             )
         return prompt, warnings
 
-    def _per_second_content_for_shot(self, video_prompt: str) -> str | None:
-        prompt = sanitize_video_prompt_text(video_prompt)
-        if any(marker in prompt for marker in ("0-", "0 至", "0到", "第0秒", "第 0 秒")):
-            return prompt
-        return None
+    def _shot_video_model_params(self, provider: object) -> dict[str, Any]:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        if isinstance(params, dict) and params:
+            return dict(params)
+        node_settings = self.repo.settings.nodes.get("shot_video_generation")
+        if node_settings is None:
+            return {}
+        return dict(node_settings.params)
+
+    def _shot_video_template_candidates(self, provider: object) -> list[str]:
+        params = self._shot_video_model_params(provider)
+        configured = str(params.get("prompt_template") or params.get("shot_video_prompt_template") or "").strip()
+        if configured:
+            return [configured.removesuffix(".md")]
+        provider_name = slugify(str(getattr(provider, "name", "") or ""), fallback="provider").lower()
+        model_name = slugify(str(getattr(provider, "model", "") or ""), fallback="model").lower()
+        return [
+            f"shot_video/{provider_name}_{model_name}",
+            f"shot_video/{provider_name}",
+            "shot_video/default",
+        ]
+
+    def _render_shot_video_prompt_template(
+        self,
+        *,
+        provider: object,
+        episode_key: str,
+        shot_id: str,
+        duration_seconds: float,
+        video_prompt: str,
+        shot_video_inputs: list[ShotVideoInput],
+    ) -> tuple[str, str]:
+        prompts = getattr(self.workflow, "prompts", None)
+        if prompts is None:
+            raise ValueError("shot_manifest_generation requires workflow prompt store to render final_video_prompt")
+        params = self._shot_video_model_params(provider)
+        negative_rules = params.get("negative_rules") or []
+        if isinstance(negative_rules, str):
+            negative_rules = [negative_rules]
+        if not isinstance(negative_rules, list):
+            negative_rules = []
+        clean_negative_rules = [self._clean_text(rule) for rule in negative_rules if self._clean_text(rule)]
+        if not clean_negative_rules:
+            binding = getattr(provider, "model_binding", None)
+            model_id = getattr(binding, "model_id", None)
+            node_settings = self.repo.settings.nodes.get("shot_video_generation")
+            if not model_id and node_settings is not None:
+                model_id = node_settings.model
+            model_label = str(model_id or getattr(provider, "model", "unknown"))
+            raise ValueError(
+                "shot_manifest_generation requires model-bound "
+                f"nodes.shot_video_generation.params.negative_rules for {model_label}; "
+                "put provider/model-specific negative rules under the same shot_video_generation node config."
+            )
+        negative_rules_text = "\n".join(f"- {rule}" for rule in clean_negative_rules)
+
+        input_rows = [
+            {
+                "slot": item.slot,
+                "asset_type": item.asset_type,
+                "label": item.label,
+                "asset_id": item.asset_id,
+                "asset_path": item.asset_path,
+                "asset_url": item.asset_url,
+                "required": item.required,
+                "metadata": item.metadata,
+            }
+            for item in shot_video_inputs
+        ]
+        slots_by_type: dict[str, list[str]] = {}
+        for item in shot_video_inputs:
+            slots_by_type.setdefault(str(item.asset_type), []).append(item.slot)
+
+        last_error: Exception | None = None
+        for template_name in self._shot_video_template_candidates(provider):
+            try:
+                return (
+                    prompts.render(
+                        template_name,
+                        episode_key=episode_key,
+                        shot_id=shot_id,
+                        duration_seconds=duration_seconds,
+                        video_prompt=video_prompt,
+                        shot_video_inputs_json=json.dumps(input_rows, ensure_ascii=False, indent=2),
+                        storyboard_input_slot=", ".join(slots_by_type.get("storyboard", [])) or "无",
+                        roleboard_input_slots=", ".join(slots_by_type.get("roleboard", [])) or "无",
+                        layout_input_slots=", ".join(slots_by_type.get("layout", [])) or "无",
+                        prop_input_slots=", ".join(slots_by_type.get("prop", [])) or "无",
+                        negative_rules=negative_rules_text,
+                        provider_name=getattr(provider, "name", "unknown"),
+                        model_name=getattr(provider, "model", "-"),
+                    ).strip(),
+                    template_name,
+                )
+            except FileNotFoundError as exc:
+                last_error = exc
+                continue
+        if last_error is not None:
+            raise last_error
+        raise FileNotFoundError("No shot video prompt template candidates were available")
+
+    @staticmethod
+    def _append_shot_video_input(
+        inputs: list[ShotVideoInput],
+        *,
+        asset_type: str,
+        asset_id: str | None,
+        asset_path: str | None,
+        asset_url: str | None,
+        source_node: str,
+        label: str,
+        required: bool = True,
+        **metadata: Any,
+    ) -> None:
+        order = len(inputs) + 1
+        inputs.append(
+            ShotVideoInput(
+                slot=f"image_{order}",
+                asset_type=asset_type,
+                asset_id=asset_id,
+                asset_path=asset_path,
+                asset_url=asset_url,
+                source_node=source_node,
+                label=label,
+                required=required,
+                order=order,
+                role_id=metadata.get("role_id"),
+                role_name=metadata.get("role_name"),
+                appearance_id=metadata.get("appearance_id"),
+                appearance_name=metadata.get("appearance_name"),
+                layout_id=metadata.get("layout_id"),
+                layout_name=metadata.get("layout_name"),
+                prop_id=metadata.get("prop_id"),
+                prop_name=metadata.get("prop_name"),
+                metadata={key: value for key, value in metadata.items() if value not in (None, "", [])},
+            )
+        )
+
+    def _shot_video_inputs_for_shot(
+        self,
+        *,
+        state: ProjectState,
+        storyboard_sheet: StoryboardSheetGenerationItem,
+        role_ids: list[str],
+        role_appearance_ids: list[str],
+        layout_ids: list[str],
+        prop_ids: list[str],
+    ) -> tuple[list[ShotVideoInput], list[str]]:
+        inputs: list[ShotVideoInput] = []
+        warnings: list[str] = []
+        self._append_shot_video_input(
+            inputs,
+            asset_type="storyboard",
+            asset_id=storyboard_sheet.asset_id,
+            asset_path=storyboard_sheet.asset_path,
+            asset_url=storyboard_sheet.asset_url,
+            source_node="storyboard_generation",
+            label="当前 shot 的 12 宫格故事板整图",
+            required=True,
+            shot_id=storyboard_sheet.shot_id,
+        )
+
+        explicit_appearance_ids = {str(value).strip() for value in role_appearance_ids if str(value).strip()}
+        for role_id in role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                warnings.append(f"missing role for shot video input: {role_id}")
+                self._append_shot_video_input(
+                    inputs,
+                    asset_type="roleboard",
+                    asset_id=None,
+                    asset_path=None,
+                    asset_url=None,
+                    source_node="roleboard_generation",
+                    label=f"missing roleboard {role_id}",
+                    role_id=role_id,
+                )
+                continue
+            appearances = [
+                appearance
+                for appearance in role.appearances.values()
+                if appearance.id in explicit_appearance_ids or appearance.name in explicit_appearance_ids
+            ]
+            if not appearances:
+                base = role.appearances.get("base") or next(iter(role.appearances.values()), None)
+                appearances = [base] if base is not None else []
+            if not appearances:
+                warnings.append(f"{role_id}: role has no appearance for shot video input")
+                self._append_shot_video_input(
+                    inputs,
+                    asset_type="roleboard",
+                    asset_id=None,
+                    asset_path=None,
+                    asset_url=None,
+                    source_node="roleboard_generation",
+                    label=f"{role.name} roleboard missing",
+                    role_id=role.id,
+                    role_name=role.name,
+                )
+                continue
+            for appearance in appearances:
+                asset_path = appearance.asset_path or appearance.design_image_asset_path
+                asset_url = appearance.asset_url or appearance.design_image_asset_url
+                if not (asset_path or asset_url):
+                    warnings.append(f"{role_id}/{appearance.id}: roleboard image is missing")
+                self._append_shot_video_input(
+                    inputs,
+                    asset_type="roleboard",
+                    asset_id=appearance.asset_id or appearance.design_image_asset_id or appearance.id,
+                    asset_path=asset_path,
+                    asset_url=asset_url,
+                    source_node="roleboard_generation",
+                    label=f"{role.name} {appearance.name} 人物三视图/角色身份板",
+                    role_id=role.id,
+                    role_name=role.name,
+                    appearance_id=appearance.id,
+                    appearance_name=appearance.name,
+                )
+
+        for layout_id in layout_ids:
+            layout = state.layouts.get(layout_id)
+            if layout is None:
+                warnings.append(f"missing layout for shot video input: {layout_id}")
+                self._append_shot_video_input(
+                    inputs,
+                    asset_type="layout",
+                    asset_id=None,
+                    asset_path=None,
+                    asset_url=None,
+                    source_node="layout_image_generation",
+                    label=f"missing layout {layout_id}",
+                    layout_id=layout_id,
+                )
+                continue
+            if not (layout.asset_path or layout.asset_url):
+                warnings.append(f"{layout_id}: layout image is missing")
+            self._append_shot_video_input(
+                inputs,
+                asset_type="layout",
+                asset_id=layout.asset_id or layout.id,
+                asset_path=layout.asset_path,
+                asset_url=layout.asset_url,
+                source_node="layout_image_generation",
+                label=f"{layout.name} 场景三视图",
+                layout_id=layout.id,
+                layout_name=layout.name,
+            )
+
+        for prop_id in prop_ids:
+            prop = state.props.get(prop_id)
+            if prop is None:
+                warnings.append(f"missing prop for shot video input: {prop_id}")
+                self._append_shot_video_input(
+                    inputs,
+                    asset_type="prop",
+                    asset_id=None,
+                    asset_path=None,
+                    asset_url=None,
+                    source_node="prop_generation",
+                    label=f"missing prop {prop_id}",
+                    prop_id=prop_id,
+                    required=False,
+                )
+                continue
+            if not (prop.asset_path or prop.asset_url):
+                warnings.append(f"{prop_id}: prop image is missing")
+            self._append_shot_video_input(
+                inputs,
+                asset_type="prop",
+                asset_id=prop.asset_id or prop.id,
+                asset_path=prop.asset_path,
+                asset_url=prop.asset_url,
+                source_node="prop_generation",
+                label=f"{prop.name} 道具三视图/道具参考图",
+                prop_id=prop.id,
+                prop_name=prop.name,
+                required=False,
+            )
+        return inputs, warnings
 
     @staticmethod
     def _preserve_dynamic_fields(new_shot: StoryboardShot, existing: StoryboardShot | None) -> None:
         if existing is None:
             return
-        new_shot.video_generation_prompt = existing.video_generation_prompt
         new_shot.dialogue_audio_assets = list(existing.dialogue_audio_assets)
         new_shot.shot_bgm_assets = list(existing.shot_bgm_assets)
         new_shot.video_asset_id = existing.video_asset_id
@@ -1031,6 +1302,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         existing_by_index = {shot.index: shot for shot in (existing_episode.shots if existing_episode else [])}
         episode_warnings: list[str] = []
         shots: list[StoryboardShot] = []
+        video_provider = self.router.video("shot", node_name="shot_video_generation")
 
         for shot_index, shot_prompt in enumerate(storyboard.shots, start=1):
             shot_id = self._clean_text(shot_prompt.shot_id)
@@ -1049,28 +1321,57 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 text=prompt_text,
                 fallback_prefix="prop",
             )
-            layout_id = self._layout_id_for_shot(
-                state=state,
-                shot_prompt=shot_prompt,
+            layout_ids = self._resolve_ids(
+                explicit_ids=list(shot_prompt.layout_ids or []),
+                names=[],
                 lookup=layout_lookup,
                 text=prompt_text,
-                episode_key=storyboard.episode_key,
+                fallback_prefix="layout",
             )
+            if not layout_ids:
+                layout_ids = [
+                    self._layout_id_for_shot(
+                        state=state,
+                        shot_prompt=shot_prompt,
+                        lookup=layout_lookup,
+                        text=prompt_text,
+                        episode_key=storyboard.episode_key,
+                    )
+                ]
+            layout_id = layout_ids[0] if layout_ids else normalize_id("layout", storyboard.episode_key)
             role_appearance_ids = self._first_appearance_ids(state, role_ids)
             role_audio_ids: list[str] = []
             dialogue: list[str] = []
             video_prompt, prompt_warnings = self._video_prompt_for_shot(shot_prompt)
-            per_second_content = self._per_second_content_for_shot(video_prompt)
             episode_warnings.extend(f"{shot_id}: {warning}" for warning in prompt_warnings)
             storyboard_sheet = storyboard_sheets.get(shot_id)
             if storyboard_sheet is None:
                 raise ValueError(f"shot_manifest_generation missing storyboard_generation image for {shot_id}")
-            if len(shot_prompt.layout_ids) > 1:
-                episode_warnings.append(f"{shot_id}: multiple layout_ids provided; using {layout_id} as primary layout_id")
+            shot_video_inputs, input_warnings = self._shot_video_inputs_for_shot(
+                state=state,
+                storyboard_sheet=storyboard_sheet,
+                role_ids=role_ids,
+                role_appearance_ids=role_appearance_ids,
+                layout_ids=layout_ids,
+                prop_ids=prop_ids,
+            )
+            episode_warnings.extend(f"{shot_id}: {warning}" for warning in input_warnings)
+            final_video_prompt, prompt_template = self._render_shot_video_prompt_template(
+                provider=video_provider,
+                episode_key=storyboard.episode_key,
+                shot_id=shot_id,
+                duration_seconds=float(shot_prompt.duration_seconds),
+                video_prompt=video_prompt,
+                shot_video_inputs=shot_video_inputs,
+            )
+            for item in shot_video_inputs:
+                item.metadata.setdefault("final_video_prompt_template", prompt_template)
+                item.metadata.setdefault("video_model", getattr(video_provider, "model", "-"))
             shot = StoryboardShot(
                 shot_id=shot_id,
                 index=shot_index,
                 layout_id=layout_id,
+                layout_ids=layout_ids,
                 title=f"镜头{shot_index:03d}",
                 content=video_prompt,
                 duration_seconds=float(shot_prompt.duration_seconds),
@@ -1082,11 +1383,12 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 role_appearance_ids=role_appearance_ids,
                 role_audio_ids=role_audio_ids,
                 prop_ids=prop_ids,
-                storyboard_panel_asset_id=storyboard_sheet.asset_id,
-                storyboard_panel_asset_path=storyboard_sheet.asset_path,
+                storyboard_asset_id=storyboard_sheet.asset_id,
+                storyboard_asset_path=storyboard_sheet.asset_path,
                 source_storyboard_asset_path=storyboard_sheet.asset_path,
-                per_second_content=per_second_content,
                 video_prompt=video_prompt,
+                final_video_prompt=final_video_prompt,
+                shot_video_inputs=shot_video_inputs,
             )
             existing = existing_by_id.get(shot.shot_id) or existing_by_index.get(shot.index)
             self._preserve_dynamic_fields(shot, existing)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, RootModel
 
 ScriptContentRef = str | Literal[False]
 
@@ -224,31 +224,21 @@ class ScriptNovelExtractOutput(BaseModel):
     novel_extract: dict[str, str]
 
 
-class MinuteSegment(BaseModel):
-    minute_id: str
-    episode_key: str
-    index: int
-    start_second: float
-    end_second: float
-    title: str
-    summary: str
-    visual_events: list[str] = Field(default_factory=list)
+class ClipSegment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
     role_names: list[str] = Field(default_factory=list)
     prop_names: list[str] = Field(default_factory=list)
     layout_names: list[str] = Field(default_factory=list)
-    source_start_text: str | None = None
-    source_end_text: str | None = None
-    source_coverage_note: str | None = None
 
 
-class MinuteSegmentEpisode(BaseModel):
-    episode_key: str
-    target_duration_seconds: int
-    segments: list[MinuteSegment]
+class ClipSegmentOutput(RootModel[dict[str, ClipSegment]]):
+    pass
 
 
-class MinuteSegmentOutput(BaseModel):
-    episodes: list[MinuteSegmentEpisode]
+class ClipSegmentNodeOutput(RootModel[dict[str, dict[str, ClipSegment]]]):
+    pass
 
 
 class DirectorShotBeat(BaseModel):
@@ -601,12 +591,34 @@ class StoryboardSourceCoverage(BaseModel):
     note: str
 
 
+class ShotVideoInput(BaseModel):
+    slot: str
+    type: Literal["image"] = "image"
+    asset_type: Literal["storyboard", "roleboard", "layout", "prop"] | str
+    asset_id: str | None = None
+    asset_path: str | None = None
+    asset_url: str | None = None
+    source_node: str
+    label: str | None = None
+    role_id: str | None = None
+    role_name: str | None = None
+    appearance_id: str | None = None
+    appearance_name: str | None = None
+    layout_id: str | None = None
+    layout_name: str | None = None
+    prop_id: str | None = None
+    prop_name: str | None = None
+    required: bool = True
+    order: int
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class StoryboardShot(BaseModel):
     shot_id: str
     index: int
-    layout_id: str
+    layout_id: str | None = None
+    layout_ids: list[str] = Field(default_factory=list)
     title: str
-    minute_id: str | None = None
     segment_index: int | None = None
     source_coverage: StoryboardSourceCoverage | None = None
     content: str | None = None
@@ -626,12 +638,12 @@ class StoryboardShot(BaseModel):
     role_appearance_ids: list[str] = Field(default_factory=list)
     role_audio_ids: list[str] = Field(default_factory=list)
     prop_ids: list[str] = Field(default_factory=list)
-    storyboard_panel_asset_id: str | None = None
-    storyboard_panel_asset_path: str | None = None
+    storyboard_asset_id: str | None = None
+    storyboard_asset_path: str | None = None
     source_storyboard_asset_path: str | None = None
-    per_second_content: str | None = None
     video_prompt: str
-    video_generation_prompt: str | None = None
+    final_video_prompt: str | None = None
+    shot_video_inputs: list[ShotVideoInput] = Field(default_factory=list)
     dialogue_audio_assets: list[ShotDialogueAudioAsset] = Field(default_factory=list)
     shot_bgm_assets: list[ShotBGMAsset] = Field(default_factory=list)
     video_asset_id: str | None = None
@@ -693,15 +705,6 @@ class ShotVideoGenerationItem(BaseModel):
 
 class ShotVideoGenerationOutput(BaseModel):
     generated_videos: list[ShotVideoGenerationItem]
-
-
-class ShotVideoPromptCondenseOutput(BaseModel):
-    prompt: str
-
-
-class ShotVideoStoryboardContentOutput(BaseModel):
-    content_table: str
-    source_note: str | None = None
 
 
 class RoleSubjectVideoGenerationItem(BaseModel):

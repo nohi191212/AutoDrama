@@ -123,7 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--episode",
         dest="episodes",
         help=(
-            "Supported with pregen --only roleboard_prompt, roleboard_generation, "
+            "Supported with pregen --only clip_segment, roleboard_prompt, roleboard_generation, "
             "role_subject_video_generation, role_subject_element_generation, storyboard_prompt, "
             "storyboard_generation, shot_manifest_generation, "
             "role_voice_select, "

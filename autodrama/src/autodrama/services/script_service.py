@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from autodrama.core.schemas import (
-    MinuteSegmentOutput,
+    ClipSegmentOutput,
     ScriptDetailExpandOutput,
     ProjectState,
     ScriptNovelExtractBatchOutput,
@@ -130,25 +130,25 @@ class ScriptService:
             },
         )
 
-    async def minute_segment(
+    async def clip_segment(
         self,
         state: ProjectState,
         provider: TextLLM,
         *,
-        novel_full: dict[str, str],
-        novel_extract: dict[str, str],
+        episode_key: str,
+        novel_full: str,
+        novel_extract: str,
         director_prep: str | None = None,
-    ) -> MinuteSegmentOutput:
+    ) -> ClipSegmentOutput:
         episode_duration_seconds = self.episode_duration_seconds(state)
-        episode_keys = list(novel_full)
         prompt = self.prompts.render(
-            "minute_segment",
+            "clip_segment",
             title=state.title,
             raw_script=state.raw_script,
-            novel_full=self.format_json(novel_full),
-            novel_extract=self.format_json(novel_extract),
+            episode_key=episode_key,
+            novel_full=novel_full,
+            novel_extract=novel_extract,
             director_prep=director_prep or "（暂无导演前期。）",
-            episode_keys=", ".join(episode_keys),
             episode_duration_seconds=episode_duration_seconds,
         )
         print(
@@ -156,7 +156,7 @@ class ScriptService:
                 [
                     "",
                     "=" * 100,
-                    "MINUTE_SEGMENT INPUT PROMPT",
+                    "CLIP_SEGMENT INPUT PROMPT",
                     "-" * 100,
                     prompt,
                     "=" * 100,
@@ -166,14 +166,14 @@ class ScriptService:
         )
         return await provider.generate_json(
             prompt,
-            MinuteSegmentOutput,
+            ClipSegmentOutput,
             temperature=0.35,
             metadata={
-                "node_name": "minute_segment",
+                "node_name": "clip_segment",
                 "project_id": state.project_id,
-                "expected_keys": episode_keys,
+                "episode_key": episode_key,
                 "episode_duration_seconds": episode_duration_seconds,
-                "segment_seconds": 60,
+                "segment_seconds": 15,
             },
         )
 

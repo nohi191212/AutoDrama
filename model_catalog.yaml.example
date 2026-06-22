@@ -235,6 +235,10 @@ models:
         type: boolean
       watermark:
         type: boolean
+      prompt_template:
+        type: string
+      negative_rules:
+        type: array
       max_reference_images:
         type: integer
         min: 0
@@ -298,6 +302,10 @@ models:
         enum: ["on", "off"]
       watermark:
         type: boolean
+      prompt_template:
+        type: string
+      negative_rules:
+        type: array
       max_reference_images:
         type: integer
         min: 0

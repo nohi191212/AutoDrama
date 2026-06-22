@@ -11,12 +11,12 @@ from pydantic import BaseModel
 from autodrama.core.schemas import (
     AmbientEntityOutput,
     BGMDesignOutput,
+    ClipSegmentOutput,
     DirectorPrepOutput,
     KeyVisionPromptOutput,
     LayoutDedupeReviewOutput,
     LayoutDesignOutput,
     LayoutExtractOutput,
-    MinuteSegmentOutput,
     PropDesignOutput,
     PropExtractOutput,
     RoleDuplicateAuditReviewOutput,
@@ -31,7 +31,6 @@ from autodrama.core.schemas import (
     ScriptOutlineOutput,
     StoryboardEpisodeOutput,
     StoryboardPromptOutput,
-    ShotVideoPromptCondenseOutput,
 )
 from autodrama.core.voice_catalog import (
     VoiceCatalogProfile,
@@ -119,22 +118,7 @@ class FakeTextProvider:
             episode_keys = [str(key) for key in expected_keys]
             episode_count = len(episode_keys)
 
-        if schema is ShotVideoPromptCondenseOutput or node_name == "shot_video_prompt_condense":
-            try:
-                materials = json.loads(prompt).get("镜头材料", {})
-            except Exception:
-                materials = {}
-            body = " ".join(str(materials.get("body") or "角色完成当前镜头动作。").split())
-            dialogue_core = " ".join(str(materials.get("dialogue_core") or "").split())
-            sound = " ".join(str(materials.get("sound_design") or "").split())
-            pieces = [body[:72].rstrip("，。；、,; ")]
-            if dialogue_core:
-                pieces.append(dialogue_core[:46].rstrip("，。；、,; "))
-            if sound:
-                pieces.append("声音：" + sound[:28].rstrip("，。；、,; "))
-            pieces.append("侧角拍摄，无字幕logo水印。")
-            data = {"prompt": " ".join(piece for piece in pieces if piece).strip()}
-        elif schema is ScriptOutlineOutput or node_name == "script_outline":
+        if schema is ScriptOutlineOutput or node_name == "script_outline":
             data = {
                 "logline": "落魄青年在雨夜发现被调包的合同，决定当众反击。",
                 "outline": "林舟被赵启陷害丢掉晋升机会，苏晚提醒他查看旧邮件。林舟逐步发现合同被调包的证据，并在会议上反击。",
@@ -287,46 +271,22 @@ class FakeTextProvider:
                     for index, key in enumerate(batch_keys, start=1)
                 }
             }
-        elif schema is MinuteSegmentOutput or node_name == "minute_segment":
-            expected_keys = metadata.get("expected_keys") or episode_keys
-            segment_seconds = int(metadata.get("segment_seconds") or 60)
+        elif schema is ClipSegmentOutput or node_name == "clip_segment":
+            segment_seconds = int(metadata.get("segment_seconds") or 15)
             duration = int(metadata.get("episode_duration_seconds") or episode_duration_seconds or 30)
-            storyboard_episode_keys = [str(key) for key in expected_keys]
+            episode_key = str(metadata.get("episode_key") or episode_keys[0])
             data = {
-                "episodes": [
-                    {
-                        "episode_key": key,
-                        "target_duration_seconds": duration,
-                        "segments": [
-                            {
-                                "minute_id": f"{key}_minute_{index:03d}",
-                                "episode_key": key,
-                                "index": index,
-                                "start_second": (index - 1) * segment_seconds,
-                                "end_second": min(index * segment_seconds, duration),
-                                "title": "合同证据推进" if index == 1 else "公开反击推进",
-                                "summary": (
-                                    "林舟在雨夜办公室发现合同关键页异常，苏晚递来旧邮件截图，证据链逐步清晰。"
-                                    if index == 1
-                                    else "林舟带着合同和邮件截图进入会议室，赵启的压迫被证据反向逼退。"
-                                ),
-                                "visual_events": [
-                                    "林舟检查合同关键页",
-                                    "邮件截图显示附件时间",
-                                    "赵启在会议室压力下后撤",
-                                ],
-                                "role_names": ["林舟", "苏晚"] if index == 1 else ["林舟", "赵启"],
-                                "prop_names": ["被调包的合同", "邮件截图"],
-                                "layout_names": ["雨夜办公室"] if index == 1 else ["会议室"],
-                                "source_start_text": f"{key}，雨夜办公室的灯只剩下一排。",
-                                "source_end_text": "林舟第一次决定不再退让。",
-                                "source_coverage_note": "fake provider minute segment fixture",
-                            }
-                            for index in range(1, max(1, (duration + segment_seconds - 1) // segment_seconds) + 1)
-                        ],
-                    }
-                    for key in storyboard_episode_keys
-                ]
+                str(index): {
+                    "text": (
+                        f"{episode_key} 林舟在雨夜办公室发现合同关键页异常，苏晚递来旧邮件截图，证据链逐步清晰。"
+                        if index == 1
+                        else f"{episode_key} 林舟带着合同和邮件截图进入会议室，赵启的压迫被证据反向逼退。"
+                    ),
+                    "role_names": ["林舟", "苏晚"] if index == 1 else ["林舟", "赵启"],
+                    "prop_names": ["被调包的合同", "邮件截图"],
+                    "layout_names": ["雨夜办公室"] if index == 1 else ["会议室"],
+                }
+                for index in range(1, max(1, (duration + segment_seconds - 1) // segment_seconds) + 1)
             }
         elif schema is RoleExtractOutput or node_name in {
             "role_extract",
