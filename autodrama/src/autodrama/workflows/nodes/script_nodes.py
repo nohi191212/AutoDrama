@@ -375,8 +375,10 @@ class ScriptNovelExtractNode(ScriptNodeBase):
 
 class ClipSegmentNode(ScriptNodeBase):
     name = "clip_segment"
-    MIN_CLIP_SECONDS = 12
+    MIN_CLIP_SECONDS = 8
     MAX_CLIP_SECONDS = 15
+    SHORT_TEXT_WARNING_CHARS = 20
+    LONG_TEXT_WARNING_CHARS = 900
 
     @staticmethod
     def _dedupe_texts(values: list[str]) -> list[str]:
@@ -401,8 +403,11 @@ class ClipSegmentNode(ScriptNodeBase):
         episode_key: str,
     ) -> dict[str, object]:
         target_duration = self.script_service.episode_duration_seconds(state)
-        min_clip_count = max(1, int((target_duration + self.MAX_CLIP_SECONDS - 1) // self.MAX_CLIP_SECONDS))
-        max_clip_count = max(min_clip_count, int((target_duration + self.MIN_CLIP_SECONDS - 1) // self.MIN_CLIP_SECONDS))
+        suggested_max_clip_count = max(
+            1,
+            int((target_duration + self.MIN_CLIP_SECONDS - 1) // self.MIN_CLIP_SECONDS),
+        )
+        logger = getattr(self, "logger", None)
         clips = dict(output.root)
         if not clips:
             raise ValueError(f"clip_segment must return at least one clip for {episode_key}")
@@ -410,10 +415,14 @@ class ClipSegmentNode(ScriptNodeBase):
         expected_clip_keys = [str(index) for index in range(1, len(ordered_keys) + 1)]
         if ordered_keys != expected_clip_keys:
             raise ValueError(f"clip_segment clip keys for {episode_key} must be 1-{len(ordered_keys)}; got {ordered_keys}")
-        if not min_clip_count <= len(ordered_keys) <= max_clip_count:
-            raise ValueError(
-                f"clip_segment clip count for {episode_key} should be {min_clip_count}-{max_clip_count} "
-                f"for {target_duration}s at 12-15s per clip; got {len(ordered_keys)}"
+        if len(ordered_keys) > suggested_max_clip_count * 2 and logger is not None:
+            logger.warning(
+                "clip_segment returned many clips for %s: got %d for %ss reference duration at %d-%ds guidance",
+                episode_key,
+                len(ordered_keys),
+                target_duration,
+                self.MIN_CLIP_SECONDS,
+                self.MAX_CLIP_SECONDS,
             )
         ordered_clips: dict[str, object] = {}
         for key in ordered_keys:
@@ -421,6 +430,20 @@ class ClipSegmentNode(ScriptNodeBase):
             clip.text = " ".join(str(clip.text or "").split()).strip()
             if not clip.text:
                 raise ValueError(f"clip_segment text is empty for {episode_key} clip {key}")
+            if len(clip.text) < self.SHORT_TEXT_WARNING_CHARS and logger is not None:
+                logger.warning(
+                    "clip_segment text is short for %s clip %s: %d chars",
+                    episode_key,
+                    key,
+                    len(clip.text),
+                )
+            if len(clip.text) > self.LONG_TEXT_WARNING_CHARS and logger is not None:
+                logger.warning(
+                    "clip_segment text is long for %s clip %s: %d chars",
+                    episode_key,
+                    key,
+                    len(clip.text),
+                )
             clip.role_names = self._dedupe_texts(clip.role_names)
             clip.prop_names = self._dedupe_texts(clip.prop_names)
             clip.layout_names = self._dedupe_texts(clip.layout_names)
@@ -467,18 +490,18 @@ class ClipSegmentNode(ScriptNodeBase):
         novel_extract = self.script_contents.load_contents(
             project_dir,
             state.script.novel_extract,
-            episode_keys,
+            all_episode_keys,
             label="script_novel_extract.novel_extract",
         )
+        novel_extract_all_episodes = self.script_service.format_json(novel_extract)
         generated: dict[str, dict[str, object]] = {}
         for episode_key in episode_keys:
             output = await self.script_service.clip_segment(
                 state,
                 provider,
                 episode_key=episode_key,
-                novel_full=novel_full.get(episode_key, ""),
-                novel_extract=novel_extract.get(episode_key, ""),
-                director_prep=DirectorService.director_prep_context(state, episode_keys=[episode_key]),
+                novel_full_this_episode=novel_full.get(episode_key, ""),
+                novel_extract_all_episodes=novel_extract_all_episodes,
             )
             generated[episode_key] = self.validate_clip_segments(output, state, episode_key=episode_key)
             state.budget.used_text_calls += 1

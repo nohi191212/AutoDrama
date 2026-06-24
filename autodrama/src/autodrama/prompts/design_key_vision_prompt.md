@@ -32,7 +32,7 @@ JSON schema：
 # prompt 内容要求
 
 - `prompt` 必须是一条完整、可直接发送给图像生成模型的中文图像 prompt。
-- 必须吸收“全局视觉风格”，并结合导演前期中的 `story_core`、`worldview`、`visual_tone`、`character_locks`、`scene_locks` 和关键 episode 节拍。
+- 必须吸收“全局视觉风格”，并结合导演前期中的 `story_core`、`worldview` 和 `visual_tone`。
 - 画面应表现短剧最核心的戏剧冲突与视觉记忆点，可以采用单张主视觉海报式构图，但不要写成多张图、分镜组图或三视图。
 - 明确主体、人物关系、关键道具或空间、构图、镜头感、光线、色彩、材质、情绪氛围和画幅适配。
 - 不要新增导演前期没有支撑的关键角色、关键道具、结局反转或世界规则。

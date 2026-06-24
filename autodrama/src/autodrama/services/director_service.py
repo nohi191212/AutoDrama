@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 from typing import Any
 
 from autodrama.core.schemas import DirectorPrepOutput, KeyVisionPromptOutput, ProjectState
@@ -36,20 +35,12 @@ class DirectorService:
         *,
         episode_keys: list[str] | None = None,
     ) -> str:
+        del episode_keys
         payload = state.metadata.get("director_prep")
         if not isinstance(payload, dict) or not payload:
             return cls._fallback_context()
-        data = deepcopy(payload)
-        if episode_keys:
-            selected = {str(key) for key in episode_keys}
-            episodes = data.get("episodes")
-            if isinstance(episodes, list):
-                data["episodes"] = [
-                    item
-                    for item in episodes
-                    if isinstance(item, dict) and str(item.get("episode_key")) in selected
-                ]
-        return cls.format_json(data)
+        output = DirectorPrepOutput.model_validate(payload)
+        return cls.format_json(output.model_dump(mode="json"))
 
     @staticmethod
     def visual_style_prompt(state: ProjectState) -> str:
@@ -71,7 +62,6 @@ class DirectorService:
             episode_keys=", ".join(episode_keys),
             episode_count=self._episode_count(state),
             episode_duration_seconds=self._episode_duration_seconds(state),
-            target_shot_beats=12,
         )
         return await provider.generate_json(
             prompt,
@@ -81,7 +71,6 @@ class DirectorService:
                 "node_name": "director_prep",
                 "project_id": state.project_id,
                 "expected_keys": episode_keys,
-                "target_shot_beats": 12,
             },
         )
 

@@ -51,8 +51,9 @@ def parse_role_names(value: str | None) -> list[str] | None:
 
 def build_parser() -> argparse.ArgumentParser:
     pregen_only_choices = [*PREGEN_ONLY_NODES]
-    if "prop_image_generation" not in pregen_only_choices:
-        pregen_only_choices.append("prop_image_generation")
+    for legacy_choice in ("prop_design", "prop_generation", "prop_image_generation"):
+        if legacy_choice not in pregen_only_choices:
+            pregen_only_choices.append(legacy_choice)
 
     parser = argparse.ArgumentParser(prog="autodrama")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -125,10 +126,10 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Supported with pregen --only clip_segment, roleboard_prompt, roleboard_generation, "
             "role_subject_video_generation, role_subject_element_generation, storyboard_prompt, "
-            "storyboard_generation, shot_manifest_generation, "
+            "storyboard_generation, storyboard_keyframe_generation, shot_manifest_generation, "
             "role_voice_select, "
-            "prop_design, prop_generation, or layout_image_generation "
-            "(legacy alias: prop_image_generation). "
+            "prop_prompt, prop_image_generation, or layout_image_generation "
+            "(legacy aliases: prop_design, prop_generation). "
             "Prop/layout episode-scoped nodes are deferred from the default pregen chain."
         ),
     )

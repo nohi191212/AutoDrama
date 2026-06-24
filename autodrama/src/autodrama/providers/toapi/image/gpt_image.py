@@ -168,7 +168,7 @@ class ToAPIImageProvider:
             return self.settings.models.get("storyboard")
         if node_name == "roleboard_generation":
             return self.settings.models.get("roleboard")
-        if node_name == "prop_generation":
+        if node_name in {"prop_generation", "prop_image_generation"}:
             return self.settings.models.get("prop")
         if node_name == "layout_image_generation":
             return self.settings.models.get("layout")
@@ -185,7 +185,7 @@ class ToAPIImageProvider:
                 self.settings.options.get("roleboard_size")
                 or "16:9"
             )
-        if node_name == "prop_generation":
+        if node_name in {"prop_generation", "prop_image_generation"}:
             return self.settings.options.get("prop_size") or "1:1"
         if node_name == "layout_image_generation":
             return self.settings.options.get("layout_size") or "16:9"
@@ -199,7 +199,7 @@ class ToAPIImageProvider:
             return self.settings.options.get("storyboard_resolution")
         if node_name == "roleboard_generation":
             return self.settings.options.get("roleboard_resolution")
-        if node_name == "prop_generation":
+        if node_name in {"prop_generation", "prop_image_generation"}:
             return self.settings.options.get("prop_resolution")
         if node_name == "layout_image_generation":
             return self.settings.options.get("layout_resolution")

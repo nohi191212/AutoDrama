@@ -23,7 +23,12 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-autodrama = ["prompts/*.md", "providers/volcengine/audio/*.json"]
+autodrama = [
+  "prompts/*.md",
+  "prompts/roleboard_prompt/*.md",
+  "prompts/shot_video/*.md",
+  "providers/volcengine/audio/*.json",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

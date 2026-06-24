@@ -5,12 +5,14 @@ import json
 from autodrama.core.schemas import (
     BGMDesignOutput,
     LayoutDedupeReviewOutput,
-    LayoutDesignOutput,
     LayoutExtractOutput,
+    LayoutPromptOutput,
     ProjectState,
+    PropDedupeOutput,
     PropDesignOutput,
     PropExtractItem,
     PropExtractOutput,
+    PropPromptOutput,
 )
 from autodrama.providers.base import TextLLM
 from autodrama.services.director_service import DirectorService
@@ -30,8 +32,13 @@ class AssetService:
         return str(state.metadata.get("prop_design_style_prompt") or "").strip()
 
     @staticmethod
-    def layout_design_style_prompt(state: ProjectState) -> str:
-        return str(state.metadata.get("layout_design_style_prompt") or "").strip()
+    def visual_tone(state: ProjectState) -> str:
+        director_prep = state.metadata.get("director_prep")
+        if isinstance(director_prep, dict):
+            visual_tone = str(director_prep.get("visual_tone") or "").strip()
+            if visual_tone:
+                return visual_tone
+        return str(state.metadata.get("visual_tone") or "").strip()
 
     @classmethod
     def clip_segments_context(cls, state: ProjectState, episode_keys: list[str] | None = None) -> str:
@@ -48,17 +55,13 @@ class AssetService:
         state: ProjectState,
         provider: TextLLM,
         *,
-        novel_full: dict[str, str],
+        novel_full_all_episodes: dict[str, str],
+        generated_prop_intro: dict[str, str] | None = None,
     ) -> PropExtractOutput:
         prompt = self.prompts.render(
             "prop_extract",
-            title=state.title,
-            raw_script=state.raw_script,
-            novel_full=self.format_json(novel_full),
-            clip_segments=self.clip_segments_context(state, list(novel_full)),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
-            episode_keys=", ".join(novel_full),
-            roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
+            novel_full_all_episodes=self.format_json(novel_full_all_episodes),
+            generated_prop_intro=self.format_json(generated_prop_intro or {}),
         )
         return await provider.generate_json(
             prompt,
@@ -67,8 +70,46 @@ class AssetService:
             metadata={
                 "node_name": "prop_extract",
                 "project_id": state.project_id,
-                "expected_keys": list(novel_full),
+                "expected_keys": list(novel_full_all_episodes),
             },
+        )
+
+    async def prop_dedupe(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        generated_prop_intro: dict[str, str],
+    ) -> PropDedupeOutput:
+        prompt = self.prompts.render(
+            "prop_dedupe",
+            generated_prop_intro=self.format_json(generated_prop_intro),
+        )
+        return await provider.generate_json(
+            prompt,
+            PropDedupeOutput,
+            temperature=0.3,
+            metadata={"node_name": "prop_dedupe", "project_id": state.project_id},
+        )
+
+    async def prop_prompt(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        generated_prop_intro: dict[str, str],
+        prompt_template: str = "prop_prompt",
+    ) -> PropPromptOutput:
+        prompt = self.prompts.render(
+            prompt_template,
+            generated_prop_intro=self.format_json(generated_prop_intro),
+            visual_tone=self.visual_tone(state) or "（暂无导演 visual_tone，请只依据道具一句话介绍输出中性、可复用的道具提示词。）",
+        )
+        return await provider.generate_json(
+            prompt,
+            PropPromptOutput,
+            temperature=0.6,
+            metadata={"node_name": "prop_prompt", "project_id": state.project_id},
         )
 
     async def prop_design(
@@ -81,30 +122,25 @@ class AssetService:
         all_prop_extracts: list[dict[str, object]],
         existing_prop_designs: list[dict[str, object]],
     ) -> PropDesignOutput:
-        prompt = self.prompts.render(
-            "prop_design",
-            title=state.title,
-            raw_script=state.raw_script,
-            prop_extract_item=self.format_json(prop_item.model_dump(mode="json")),
-            prop_novel_full=self.format_json(prop_novel_full),
-            clip_segments=self.clip_segments_context(state, list(prop_novel_full)),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(prop_novel_full)),
-            all_prop_extracts=self.format_json(all_prop_extracts),
-            existing_prop_designs=self.format_json(existing_prop_designs),
-            roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
-            prop_design_style_prompt=self.prop_design_style_prompt(state),
+        del prop_novel_full, all_prop_extracts, existing_prop_designs
+        prompt_output = await self.prop_prompt(
+            state,
+            provider,
+            generated_prop_intro={prop_item.name: str(prop_item.brief or "").strip()},
+            prompt_template="prop_prompt",
         )
-        return await provider.generate_json(
-            prompt,
-            PropDesignOutput,
-            temperature=0.6,
-            metadata={
-                "node_name": "prop_design",
-                "project_id": state.project_id,
-                "prop_name": prop_item.name,
-                "prop_status": prop_item.status,
-                "episode_keys": list(prop_novel_full),
-            },
+        return PropDesignOutput(
+            props=[
+                {
+                    "name": prop_item.name,
+                    "desc": str(prop_item.brief or "").strip(),
+                    "prompt": prompt,
+                    "status": prop_item.status,
+                    "episode_keys": prop_item.episode_keys,
+                }
+                for name, prompt in prompt_output.prop_prompts.items()
+                if name == prop_item.name
+            ]
         )
 
     async def layout_extract(
@@ -112,18 +148,13 @@ class AssetService:
         state: ProjectState,
         provider: TextLLM,
         *,
-        novel_full: dict[str, str],
+        novel_full_all_episodes: dict[str, str],
+        generated_layout_intro: dict[str, str] | None = None,
     ) -> LayoutExtractOutput:
         prompt = self.prompts.render(
             "layout_extract",
-            title=state.title,
-            raw_script=state.raw_script,
-            novel_full=self.format_json(novel_full),
-            clip_segments=self.clip_segments_context(state, list(novel_full)),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
-            episode_keys=", ".join(novel_full),
-            roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
-            props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),
+            novel_full_all_episodes=self.format_json(novel_full_all_episodes),
+            generated_layout_intro=self.format_json(generated_layout_intro or {}),
         )
         return await provider.generate_json(
             prompt,
@@ -132,41 +163,40 @@ class AssetService:
             metadata={
                 "node_name": "layout_extract",
                 "project_id": state.project_id,
-                "expected_keys": list(novel_full),
+                "expected_keys": list(novel_full_all_episodes),
             },
         )
 
-    async def layout_design(
+    async def layout_prompt(
         self,
         state: ProjectState,
         provider: TextLLM,
         *,
-        layout_extracts: list[dict[str, object]],
-        episode_stories: dict[str, str],
-    ) -> LayoutDesignOutput:
+        generated_layout_intro: dict[str, str],
+        prompt_template: str = "layout_prompt",
+    ) -> LayoutPromptOutput:
         prompt = self.prompts.render(
-            "layout_design",
-            title=state.title,
-            layout_extracts=self.format_json(layout_extracts),
-            episode_stories=self.format_json(episode_stories),
-            clip_segments=self.clip_segments_context(state, list(episode_stories)),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(episode_stories)),
-            roles=self.format_json({role_id: role.model_dump(mode="json") for role_id, role in state.roles.items()}),
-            props=self.format_json({prop_id: prop.model_dump(mode="json") for prop_id, prop in state.props.items()}),
-            layout_design_style_prompt=self.layout_design_style_prompt(state),
+            prompt_template,
+            generated_layout_intro=self.format_json(generated_layout_intro),
+            visual_tone=self.visual_tone(state) or "（暂无导演 visual_tone，请只依据场景一句话介绍输出中性、可复用的场景提示词。）",
         )
         return await provider.generate_json(
             prompt,
-            LayoutDesignOutput,
+            LayoutPromptOutput,
             temperature=0.6,
-            metadata={"node_name": "layout_design", "project_id": state.project_id},
+            metadata={"node_name": "layout_prompt", "project_id": state.project_id},
         )
 
-    async def layout_dedupe_review(self, state: ProjectState, provider: TextLLM) -> LayoutDedupeReviewOutput:
+    async def layout_dedupe_review(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        generated_layout_intro: dict[str, str],
+    ) -> LayoutDedupeReviewOutput:
         prompt = self.prompts.render(
             "layout_dedupe_review",
-            title=state.title,
-            layouts=self.format_json({layout_id: layout.model_dump(mode="json") for layout_id, layout in state.layouts.items()}),
+            generated_layout_intro=self.format_json(generated_layout_intro),
         )
         return await provider.generate_json(
             prompt,

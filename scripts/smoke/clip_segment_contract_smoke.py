@@ -45,15 +45,23 @@ def main() -> None:
     prompt = PromptStore().render(
         "clip_segment",
         title="测试项目",
-        raw_script="林舟关掉屏幕，苏晚递来邮件截图。",
         episode_key="episode_001",
         episode_duration_seconds=30,
-        novel_full='{"episode_001": "林舟关掉屏幕，苏晚递来邮件截图。"}',
-        novel_extract='{"episode_001": "林舟发现证据。"}',
-        director_prep="{}",
+        min_clip_seconds=8,
+        max_clip_seconds=15,
+        duration_reference_note="episode_duration_seconds 只用于节奏参考，不用于硬性计算 clip 数量。",
+        novel_full_this_episode="林舟关掉屏幕，苏晚递来邮件截图。",
+        novel_extract_all_episodes='{"episode_001": "林舟发现证据。", "episode_002": "苏晚追查证据来源。"}',
     )
-    if "Timing Standards" not in prompt or "12-15 秒" not in prompt:
+    if "Timing Standards" not in prompt or "8-15 秒" not in prompt:
         raise AssertionError("clip_segment prompt is missing timing requirements")
+    if "不要为了满足总秒数机械计算 clip 数量" not in prompt:
+        raise AssertionError("clip_segment prompt should treat episode duration as reference only")
+    if "该集完整正文" not in prompt or "全剧集摘要" not in prompt:
+        raise AssertionError("clip_segment prompt is missing revised input labels")
+    for removed_text in ("单集目标时长", "原始故事", "\n完整正文：", "分集摘要", "导演前期约束", "Required JSON schema"):
+        if removed_text in prompt:
+            raise AssertionError(f"clip_segment prompt still contains removed text: {removed_text}")
 
     output = ClipSegmentOutput(
         {

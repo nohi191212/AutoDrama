@@ -6,223 +6,6 @@ app:
 apikeys_file: ./apikeys.yaml
 model_catalog_file: ./model_catalog.yaml.example
 
-# Node-level model bindings. If a node is omitted here, AutoDrama falls back to the legacy routing section.
-# Params are validated against model_catalog_file when the config is loaded.
-nodes:
-  script_outline:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-  script_novel:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.7
-      response_format: json_object
-  script_novel_extract:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.3
-      response_format: json_object
-  director_prep:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-  design_key_vision_prompt:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.45
-      response_format: json_object
-  design_key_vision_image:
-    model: toapi:gpt-image-2
-    params:
-      size: "9:16"
-      resolution: 4K
-      n: 1
-      response_format: url
-  role_extract_primary:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.3
-      response_format: json_object
-  role_extract_functional:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.3
-      response_format: json_object
-  role_episode_key_audit:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.2
-      response_format: json_object
-  role_duplicate_audit:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.2
-      response_format: json_object
-  ambient_entity_extract:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.3
-      response_format: json_object
-  roleboard_prompt:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-  roleboard_generation:
-    model: toapi:gpt-image-2-high
-    params:
-      size: "16:9"
-      resolution: 4K
-      n: 1
-      response_format: url
-  storyboard_prompt:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-      console_stream: false
-  # Image binding used internally by pregen node storyboard_generation for the 12-panel storyboard sheet.
-  storyboard_sheet_generation:
-    model: toapi:gpt-image-2-high
-    params:
-      resolution: 2K
-      n: 1
-      response_format: url
-  prop_extract:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.3
-      response_format: json_object
-  prop_design:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-  prop_generation:
-    model: toapi:gpt-image-2
-    params:
-      size: "1:1"
-      resolution: 2K
-      n: 1
-      response_format: url
-  layout_extract:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.3
-      response_format: json_object
-  layout_design:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-  layout_dedupe_review:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.2
-      response_format: json_object
-  layout_image_generation:
-    model: toapi:gpt-image-2
-    params:
-      size: "9:16"
-      resolution: 4K
-      n: 1
-      response_format: url
-  bgm_design:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-  bgm_generation:
-    model: minimax:music-2.6
-    params:
-      format: mp3
-      sample_rate: 44100
-      output_format: url
-      is_instrumental: true
-  role_subject_video_generation:
-    model: kling:kling-v3-omni
-    params:
-      aspect_ratio: "9:16"
-      mode: pro
-      sound: "on"
-      watermark: false
-      max_reference_images: 2
-      max_reference_elements: 3
-      role_subject_video_generation_concurrency: 5
-  role_subject_video_intro_text:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: low
-      temperature: 0.5
-      response_format: json_object
-  role_subject_element_generation:
-    model: kling:kling-v3-omni
-    params:
-      aspect_ratio: "9:16"
-      mode: pro
-      sound: "off"
-      watermark: false
-  shot_video_generation:
-    model: kling:kling-v3-omni
-    params:
-      aspect_ratio: "9:16"
-      mode: pro
-      sound: "on"
-      watermark: false
-      prompt_template: shot_video/kling
-      negative_rules:
-        - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示场景三视图、人物三视图。
-      max_reference_images: 3
-      shot_video_generation_concurrency: 5
-  shot_dialogue_audio_generation:
-    model: volcengine:seed-tts-2.0
-    params:
-      sample_rate: 24000
-      response_format: mp3
-      max_generated_audio_duration_seconds: 10
-  role_voice_select:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: low
-      temperature: 0.2
-      response_format: json_object
-  role_voice_select_audio_judge:
-    model: aliyun_omni:qwen3.5-omni-plus
-    params:
-      temperature: 0.2
-  image_prompt_safety_rewrite:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: low
-      temperature: 0.2
-      response_format: json_object
-  postgen_edit_plan_generation:
-    model: google:gemini-3.5-flash
-    params:
-      temperature: 0.2
-      response_format: json_object
-
 project:
   # Stable ID is recommended because resume relies on it.
   id: huyao
@@ -304,6 +87,245 @@ postgen:
   burn_subtitles: true
   edit_plan_mode: llm
   keep_tmp_cuts: true
+
+# Node-level model bindings. If a node is omitted here, AutoDrama falls back to the legacy routing section.
+# Params are validated against model_catalog_file when the config is loaded.
+nodes:
+  script_outline:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  script_novel:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.7
+      response_format: json_object
+  script_novel_extract:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  director_prep:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  design_key_vision_prompt:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.45
+      response_format: json_object
+  design_key_vision_image:
+    model: toapi:gpt-image-2
+    params:
+      size: "9:16"
+      resolution: 4K
+      n: 1
+      response_format: url
+  role_extract_primary:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  role_extract_functional:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  role_episode_key_audit:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
+  role_duplicate_audit:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
+  ambient_entity_extract:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  roleboard_prompt:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  roleboard_generation:
+    model: toapi:gpt-image-2-high
+    params:
+      roleboard_prompt_template: roleboard_prompt/toapi_gpt_image_2_high
+      roleboard_generation_concurrency: 3
+      size: "16:9"
+      resolution: 4K
+      n: 1
+      response_format: url
+  storyboard_prompt:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+      console_stream: false
+  # Image binding used internally by pregen node storyboard_generation for the 12-panel storyboard sheet.
+  storyboard_sheet_generation:
+    model: toapi:gpt-image-2-high
+    params:
+      resolution: 2K
+      n: 1
+      response_format: url
+  storyboard_keyframe_generation:
+    model: toapi:gpt-image-2-high
+    params:
+      prompt_template: toapi_gpt_image_2
+      size: "9:16"
+      resolution: 2K
+      n: 1
+      response_format: url
+      concurrency: 4
+      output_dir: assets/storyboard_keyframes
+  prop_extract:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  prop_dedupe:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
+      max_iterations: 8
+  prop_prompt:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  prop_image_generation:
+    model: toapi:gpt-image-2
+    params:
+      size: "1:1"
+      resolution: 2K
+      n: 1
+      response_format: url
+      prop_image_generation_concurrency: 3
+  layout_extract:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  layout_prompt:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  layout_dedupe_review:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
+      max_iterations: 8
+  layout_image_generation:
+    model: toapi:gpt-image-2
+    params:
+      size: "16:9"
+      resolution: 4K
+      n: 1
+      response_format: url
+      concurrency: 3
+  bgm_design:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  bgm_generation:
+    model: minimax:music-2.6
+    params:
+      format: mp3
+      sample_rate: 44100
+      output_format: url
+      is_instrumental: true
+  role_subject_video_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: "9:16"
+      mode: pro
+      sound: "on"
+      watermark: false
+      max_reference_images: 2
+      max_reference_elements: 3
+      role_subject_video_generation_concurrency: 5
+  role_subject_video_intro_text:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: low
+      temperature: 0.5
+      response_format: json_object
+  role_subject_element_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: "9:16"
+      mode: pro
+      sound: "off"
+      watermark: false
+  shot_video_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: "9:16"
+      mode: pro
+      sound: "on"
+      watermark: false
+      prompt_template: shot_video/kling
+      negative_rules:
+        - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示场景三视图、人物三视图。
+      max_reference_images: 3
+      shot_video_generation_concurrency: 5
+  shot_dialogue_audio_generation:
+    model: volcengine:seed-tts-2.0
+    params:
+      sample_rate: 24000
+      response_format: mp3
+      max_generated_audio_duration_seconds: 10
+  role_voice_select:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: low
+      temperature: 0.2
+      response_format: json_object
+  role_voice_select_audio_judge:
+    model: aliyun_omni:qwen3.5-omni-plus
+    params:
+      temperature: 0.2
+  image_prompt_safety_rewrite:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: low
+      temperature: 0.2
+      response_format: json_object
+  postgen_edit_plan_generation:
+    model: google:gemini-3.5-flash
+    params:
+      temperature: 0.2
+      response_format: json_object
 
 providers:
   aliyun:
@@ -389,6 +411,7 @@ providers:
       key_vision_resolution: 4K
       prop_size: "1:1"
       prop_resolution: 2K
+      prop_image_generation_concurrency: 3
       layout_size: "9:16"
       layout_resolution: 4K
       response_format: url
@@ -496,8 +519,8 @@ providers:
       video_ratio: "9:16"
       video_resolution: 720p
       # Seedance video refs are prepared by shot_manifest_generation as fixed shot_video_inputs.
-      # shot_video_generation only submits storyboard sheet, roleboard(s), layout(s), and prop(s) from the shot manifest.
-      # Previous generated videos, last frames, audio refs, and key vision are not part of the fixed shot video contract.
+      # shot_video_generation submits clip_start_frame, clip_end_frame, storyboard, then roleboard/layout/prop refs.
+      # Previous generated videos, audio refs, and key vision are not part of the fixed shot video contract.
       video_reference_mode: full
       previous_video_preroll_seconds: 0
       # max_reference_* values are kept as provider limits; fixed inputs are never silently truncated.

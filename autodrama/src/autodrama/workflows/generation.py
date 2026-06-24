@@ -58,7 +58,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         normalized: list[dict[str, object]] = []
         missing_required: list[dict[str, object]] = []
         order_errors: list[str] = []
-        expected_order = {"storyboard": 0, "roleboard": 1, "layout": 2, "prop": 3}
+        expected_order = {
+            "clip_start_frame": 0,
+            "clip_end_frame": 1,
+            "storyboard": 2,
+            "roleboard": 3,
+            "layout": 4,
+            "prop": 5,
+        }
         last_order = -1
         for expected_index, item in enumerate(items, start=1):
             asset_type = str(item.asset_type or "")
@@ -68,8 +75,12 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             if rank < last_order:
                 order_errors.append(f"{item.slot}: {asset_type} appears after a later input type")
             last_order = max(last_order, rank)
-            if expected_index == 1 and asset_type != "storyboard":
-                order_errors.append("image_1 must be storyboard")
+            if expected_index == 1 and asset_type != "clip_start_frame":
+                order_errors.append("image_1 must be clip_start_frame")
+            if expected_index == 2 and asset_type != "clip_end_frame":
+                order_errors.append("image_2 must be clip_end_frame")
+            if expected_index == 3 and asset_type != "storyboard":
+                order_errors.append("image_3 must be storyboard")
             path_exists = bool(item.asset_path and self._path_exists(project_dir, item.asset_path))
             has_url = bool(str(item.asset_url or "").strip())
             row = {
@@ -98,10 +109,22 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             limits = getattr(spec, "limits", {}) if spec is not None else {}
             if isinstance(limits, dict) and limits.get("max_reference_images") is not None:
                 max_images = min(max_images, int(limits.get("max_reference_images") or max_images))
+        omitted_inputs: list[dict[str, object]] = []
         if len(normalized) > max_images:
-            order_errors.append(
-                f"{shot.shot_id} requires {len(normalized)} image refs, provider supports max_reference_images={max_images}"
-            )
+            if max_images < 3:
+                order_errors.append(
+                    f"{shot.shot_id} requires at least 3 image refs for start/end/storyboard, "
+                    f"provider supports max_reference_images={max_images}"
+                )
+            else:
+                omitted_inputs = normalized[max_images:]
+                normalized = normalized[:max_images]
+                included_slots = {str(row.get("slot") or "") for row in normalized}
+                missing_required = [
+                    row
+                    for row in missing_required
+                    if str(row.get("slot") or "") in included_slots
+                ]
         if missing_required or order_errors:
             raise ValueError(
                 "shot_video_generation input validation failed: "
@@ -115,15 +138,19 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     default=str,
                 )
             )
+        clip_id = str(shot.shot_id or "")
+        episode_key = clip_id.rsplit("_clip_", 1)[0] if "_clip_" in clip_id else clip_id.rsplit("_shot_", 1)[0]
         return {
-            "contract": "fixed_storyboard_roleboard_layout_prop_v1",
+            "contract": "fixed_clip_start_end_storyboard_roleboard_layout_prop_v1",
             "final_video_prompt_source": "shot_manifest_generation",
-            "episode_key": str(shot.shot_id or "").rsplit("_shot_", 1)[0],
+            "episode_key": episode_key,
             "shot_id": shot.shot_id,
+            "clip_id": shot.clip_id,
             "limits": {
                 "max_reference_images": max_images,
             },
             "inputs": normalized,
+            "omitted_inputs": omitted_inputs,
         }
 
     @staticmethod

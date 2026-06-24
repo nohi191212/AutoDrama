@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -7,14 +8,18 @@ from autodrama.core.errors import ProviderBadResponseError
 from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
     Layout,
-    LayoutDesignItem,
+    LayoutDedupeReviewOutput,
     LayoutExtractItem,
     LayoutExtractOutput,
+    LayoutPromptOutput,
     ProjectState,
     Prop,
+    PropDedupeOutput,
     PropDesignItem,
     PropDesignOutput,
     PropExtractItem,
+    PropExtractOutput,
+    PropPromptOutput,
     Role,
     RoleAppearance,
     SafeImagePromptRewriteOutput,
@@ -35,11 +40,12 @@ from autodrama.workflows.runner import WorkflowNode
 STATIC_ASSET_NODE_NAMES = [
     "roleboard_generation",
     "prop_extract",
-    "prop_design",
-    "prop_generation",
+    "prop_dedupe",
+    "prop_prompt",
+    "prop_image_generation",
     "layout_extract",
-    "layout_design",
     "layout_dedupe_review",
+    "layout_prompt",
     "layout_image_generation",
 ]
 
@@ -407,63 +413,274 @@ class StaticAssetNodeBase:
         return cls.prop_asset_id(item.name, item.status)
 
     @classmethod
-    def layout_extract_key(cls, item: LayoutExtractItem | LayoutDesignItem) -> str:
+    def layout_extract_key(cls, item: LayoutExtractItem) -> str:
         return normalize_id("layout", item.name)
 
     def load_layout_extract_output(self, project_dir: Path) -> LayoutExtractOutput:
         path = self.layout.node_output_path(project_dir, "layout_extract")
         if not path.exists():
             raise FileNotFoundError(
-                "layout_extract output is missing; run pregen --only layout_extract before layout_design"
+                "layout_extract output is missing; run pregen --only layout_extract before layout_dedupe_review"
             )
         return LayoutExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
-    def layout_episode_keys(
-        self,
-        name: str,
-        episode_keys: list[str],
-        state: ProjectState,
-        *,
-        label: str,
-    ) -> list[str]:
-        expected_keys = self.expected_episode_keys(state)
-        expected = set(expected_keys)
-        cleaned = self.dedupe_texts(episode_keys)
-        invalid = [episode_key for episode_key in cleaned if episode_key not in expected]
-        if invalid:
-            raise ValueError(
-                f"{label} generated invalid episode_keys for {name}: "
-                f"{', '.join(invalid)}; expected one of {', '.join(expected_keys)}"
+    def load_layout_dedupe_output(self, project_dir: Path) -> LayoutDedupeReviewOutput:
+        path = self.layout.node_output_path(project_dir, "layout_dedupe_review")
+        if not path.exists():
+            raise FileNotFoundError(
+                "layout_dedupe_review output is missing; run pregen --only layout_dedupe_review before layout_prompt"
             )
-        if not cleaned:
-            raise ValueError(f"{label} must include episode_keys for {name}")
-        selected = set(cleaned)
-        return [episode_key for episode_key in expected_keys if episode_key in selected]
+        return LayoutDedupeReviewOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
-    def layouts_from_design_items(
+    @staticmethod
+    def normalize_generated_layout_intro(value: dict[str, object] | None) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for raw_name, raw_intro in (value or {}).items():
+            name = str(raw_name or "").strip()
+            intro = str(raw_intro or "").strip()
+            if not name or not intro:
+                continue
+            result[name] = intro
+        return result
+
+    @classmethod
+    def canonical_layout_intro(cls, value: dict[str, object] | None) -> str:
+        import json
+
+        normalized = cls.normalize_generated_layout_intro(value)
+        return json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def current_generated_layout_intro(self, state: ProjectState) -> dict[str, str]:
+        return {
+            layout.name: layout.desc
+            for layout in state.layouts.values()
+            if str(layout.name or "").strip() and str(layout.desc or "").strip()
+        }
+
+    def existing_generated_layout_intro(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
+        for node_name in ("layout_dedupe_review", "layout_extract"):
+            path = self.layout.node_output_path(project_dir, node_name)
+            if not path.exists():
+                continue
+            try:
+                if node_name == "layout_dedupe_review":
+                    output = LayoutDedupeReviewOutput.model_validate_json(path.read_text(encoding="utf-8"))
+                else:
+                    output = LayoutExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                self.logger.warning("%s ignored invalid existing %s output %s: %s", self.__class__.__name__, node_name, path, exc)
+                continue
+            intro = self.normalize_generated_layout_intro(output.generated_layout_intro)
+            if intro:
+                return intro
+        return self.current_generated_layout_intro(state)
+
+    def layouts_from_intro_and_prompts(
         self,
-        items: list[LayoutDesignItem],
+        generated_layout_intro: dict[str, str],
+        layout_prompts: dict[str, str] | None,
         state: ProjectState,
         *,
-        label: str,
+        existing_layouts: dict[str, Layout] | None = None,
     ) -> dict[str, Layout]:
+        expected_episode_keys = self.expected_episode_keys(state)
+        existing_layouts = existing_layouts or {}
         layouts: dict[str, Layout] = {}
-        for item in items:
-            item.name = str(item.name or "").strip()
-            if not item.name:
-                raise ValueError(f"{label} returned a layout with empty name")
-            item.episode_keys = self.layout_episode_keys(item.name, item.episode_keys, state, label=label)
-            layout_id = normalize_id("layout", item.name)
+        prompts = self.normalize_generated_layout_intro(layout_prompts or {})
+        for name, intro in self.normalize_generated_layout_intro(generated_layout_intro).items():
+            layout_id = normalize_id("layout", name)
             if layout_id in layouts:
-                raise ValueError(f"{label} returned duplicated layout: {item.name}")
+                raise ValueError(f"generated_layout_intro returned duplicated layout id for {name}")
+            existing = existing_layouts.get(layout_id)
+            prompt = prompts.get(name) or (existing.prompt if existing else "")
             layouts[layout_id] = Layout(
                 id=layout_id,
-                name=item.name,
-                desc=item.desc,
-                prompt=item.prompt,
-                episode_keys=item.episode_keys,
+                name=name,
+                desc=intro,
+                prompt=prompt,
+                episode_keys=list(expected_episode_keys),
+                asset_id=existing.asset_id if existing else None,
+                asset_path=existing.asset_path if existing else None,
+                asset_url=existing.asset_url if existing else None,
+                provider=existing.provider if existing else None,
+                model=existing.model if existing else None,
+                request_id=existing.request_id if existing else None,
+                usage=dict(existing.usage) if existing else {},
             )
         return layouts
+
+    def layout_prompt_output_to_state(
+        self,
+        generated_layout_intro: dict[str, str],
+        output: LayoutPromptOutput,
+        state: ProjectState,
+    ) -> dict[str, Layout]:
+        missing_prompts = [
+            name
+            for name in self.normalize_generated_layout_intro(generated_layout_intro)
+            if not str(output.layout_prompts.get(name) or "").strip()
+        ]
+        if missing_prompts:
+            raise ValueError(f"layout_prompt missing prompt(s): {', '.join(missing_prompts)}")
+        return self.layouts_from_intro_and_prompts(
+            generated_layout_intro,
+            output.layout_prompts,
+            state,
+            existing_layouts=state.layouts,
+        )
+
+    @staticmethod
+    def normalize_generated_prop_intro(value: dict[str, object] | None) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for raw_name, raw_intro in (value or {}).items():
+            name = str(raw_name or "").strip()
+            intro = str(raw_intro or "").strip()
+            if not name or not intro:
+                continue
+            result[name] = intro
+        return result
+
+    @classmethod
+    def canonical_prop_intro(cls, value: dict[str, object] | None) -> str:
+        import json
+
+        normalized = cls.normalize_generated_prop_intro(value)
+        return json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def current_generated_prop_intro(self, state: ProjectState) -> dict[str, str]:
+        return {
+            prop.name: prop.desc
+            for prop in state.props.values()
+            if not prop.owner_role_id and str(prop.name or "").strip() and str(prop.desc or "").strip()
+        }
+
+    def existing_generated_prop_intro(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
+        for node_name in ("prop_dedupe", "prop_extract"):
+            path = self.layout.node_output_path(project_dir, node_name)
+            if not path.exists():
+                continue
+            try:
+                if node_name == "prop_dedupe":
+                    output = PropDedupeOutput.model_validate_json(path.read_text(encoding="utf-8"))
+                else:
+                    output = PropExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                self.logger.warning("%s ignored invalid existing %s output %s: %s", self.__class__.__name__, node_name, path, exc)
+                continue
+            intro = self.normalize_generated_prop_intro(output.generated_prop_intro)
+            if intro:
+                return intro
+        return self.current_generated_prop_intro(state)
+
+    def load_prop_extract_output(self, project_dir: Path) -> PropExtractOutput:
+        path = self.layout.node_output_path(project_dir, "prop_extract")
+        if not path.exists():
+            raise FileNotFoundError(
+                "prop_extract output is missing; run pregen --only prop_extract before prop_dedupe"
+            )
+        return PropExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def load_prop_dedupe_output(self, project_dir: Path) -> PropDedupeOutput:
+        path = self.layout.node_output_path(project_dir, "prop_dedupe")
+        if not path.exists():
+            raise FileNotFoundError(
+                "prop_dedupe output is missing; run pregen --only prop_dedupe before prop_prompt"
+            )
+        return PropDedupeOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _state_base_name(name: str) -> str | None:
+        value = str(name or "").strip()
+        if "_" not in value:
+            return None
+        base, _state_name = value.rsplit("_", 1)
+        base = base.strip()
+        return base or None
+
+    @classmethod
+    def prop_intro_status(cls, name: str, all_names: set[str]) -> str:
+        base_name = cls._state_base_name(name)
+        if not base_name or base_name not in all_names:
+            return "normal"
+        _base, state_name = str(name).rsplit("_", 1)
+        return cls.prop_status_key(state_name)
+
+    def props_from_intro_and_prompts(
+        self,
+        project_dir: Path,
+        generated_prop_intro: dict[str, str],
+        prop_prompts: dict[str, str] | None,
+        state: ProjectState,
+        *,
+        existing_props: dict[str, Prop] | None = None,
+        save_records: bool = False,
+    ) -> dict[str, Prop]:
+        expected_episode_keys = self.expected_episode_keys(state)
+        existing_props = existing_props or {}
+        prompts = self.normalize_generated_prop_intro(prop_prompts or {})
+        intro = self.normalize_generated_prop_intro(generated_prop_intro)
+        all_names = set(intro)
+        props: dict[str, Prop] = {}
+        for name, desc in intro.items():
+            status = self.prop_intro_status(name, all_names)
+            prop_id = self.prop_asset_id(name, status)
+            if prop_id in props:
+                raise ValueError(f"generated_prop_intro returned duplicated prop id for {name}")
+            existing = existing_props.get(prop_id)
+            prompt = prompts.get(name) or (existing.prompt if existing else None)
+            prop = Prop(
+                id=prop_id,
+                name=name,
+                desc=desc,
+                prompt=prompt,
+                status=status,
+                episode_keys=list(expected_episode_keys),
+                source="prop_prompt" if prompt else "prop_dedupe",
+                design_path=existing.design_path if existing else None,
+                asset_id=existing.asset_id if existing else None,
+                asset_path=existing.asset_path if existing else None,
+                asset_url=existing.asset_url if existing else None,
+                provider=existing.provider if existing else None,
+                model=existing.model if existing else None,
+                request_id=existing.request_id if existing else None,
+                usage=dict(existing.usage) if existing else {},
+            )
+            if save_records and prompt:
+                prop.source = "prop_prompt"
+                prop.design_path = self.save_prop_design_record(
+                    project_dir,
+                    prop,
+                    prompt=prompt,
+                    node_name="prop_prompt",
+                    extra_payload={
+                        "source_prop_dedupe_path": "assets/json/nodes/prop_dedupe.json",
+                    },
+                )
+            props[prop_id] = prop
+        return props
+
+    def prop_prompt_output_to_state(
+        self,
+        project_dir: Path,
+        generated_prop_intro: dict[str, str],
+        output: PropPromptOutput,
+        state: ProjectState,
+    ) -> dict[str, Prop]:
+        missing_prompts = [
+            name
+            for name in self.normalize_generated_prop_intro(generated_prop_intro)
+            if not str(output.prop_prompts.get(name) or "").strip()
+        ]
+        if missing_prompts:
+            raise ValueError(f"prop_prompt missing prompt(s): {', '.join(missing_prompts)}")
+        return self.props_from_intro_and_prompts(
+            project_dir,
+            generated_prop_intro,
+            output.prop_prompts,
+            state,
+            existing_props=state.props,
+            save_records=True,
+        )
 
     def select_prop_design_item(self, output: PropDesignOutput, extract_item: PropExtractItem) -> PropDesignItem:
         if not output.props:
@@ -671,6 +888,8 @@ class StaticAssetNodeBase:
 class RoleAppearanceGenerationBase(StaticAssetNodeBase):
     ROLEBOARD_STYLE_PROMPT_HEADER = "统一角色身份板风格要求（优先级高于角色身份板 prompt 中的画面风格）"
     STYLE_REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+    DEFAULT_ROLEBOARD_GENERATION_CONCURRENCY = 1
+    MAX_ROLEBOARD_GENERATION_CONCURRENCY = 5
 
     def roleboard_style_reference_refs(self) -> list[AssetRef]:
         ref_dir = self.repo.settings.generation.roleboard_style_reference_dir
@@ -897,6 +1116,147 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             self.layout.image_asset_path(project_dir, "roles", self.roleboard_asset_id(appearance)),
         )
 
+    @classmethod
+    def roleboard_generation_concurrency(cls, provider: object) -> int:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        value: object = None
+        for source in (params, options):
+            if not isinstance(source, dict):
+                continue
+            for name in (
+                "roleboard_generation_concurrency",
+                "roleboard_image_generation_concurrency",
+                "image_generation_concurrency",
+                "max_concurrent_images",
+                "concurrency",
+            ):
+                if name in source:
+                    value = source[name]
+                    break
+            if value is not None:
+                break
+        if value is None:
+            for name in (
+                "roleboard_generation_concurrency",
+                "roleboard_image_generation_concurrency",
+                "image_generation_concurrency",
+                "max_concurrent_images",
+                "concurrency",
+            ):
+                value = getattr(provider, name, None)
+                if value is not None:
+                    break
+        if value is None:
+            value = cls.DEFAULT_ROLEBOARD_GENERATION_CONCURRENCY
+        try:
+            resolved = int(value)
+        except (TypeError, ValueError):
+            resolved = cls.DEFAULT_ROLEBOARD_GENERATION_CONCURRENCY
+        return max(1, min(cls.MAX_ROLEBOARD_GENERATION_CONCURRENCY, resolved))
+
+    async def generate_roleboard_asset(
+        self,
+        *,
+        provider,
+        project_dir: Path,
+        state: ProjectState,
+        role: Role,
+        appearance: RoleAppearance,
+        node_name: str,
+        style_refs: list[AssetRef],
+        reuse_existing_assets: bool,
+    ) -> StaticAssetGenerationItem:
+        asset_id = self.roleboard_asset_id(appearance)
+        key_vision_ref = self.key_vision_reference_ref(project_dir, state, reference_for=asset_id)
+        refs = [*style_refs, key_vision_ref]
+        prompt = self.roleboard_prompt_for_generation(
+            role=role,
+            appearance=appearance,
+            style_reference_count=len(style_refs),
+            key_vision_reference_index=len(style_refs) + 1,
+        )
+        output_path = self.layout.image_asset_path(project_dir, "roles", asset_id)
+        existing_path = self.existing_roleboard_path(project_dir, appearance)
+        if reuse_existing_assets and existing_path is not None:
+            asset_path = existing_path
+            asset_url = appearance.asset_url or appearance.design_image_asset_url
+            provider_name = str(appearance.provider or getattr(provider, "name", "unknown"))
+            model = str(appearance.model or getattr(provider, "model", ""))
+            request_id = appearance.request_id
+            usage = appearance.usage
+            raw_response = {"resumed_from_existing_file": True}
+            self.logger.info("%s already exists, reused from %s", asset_id, asset_path)
+        else:
+            self.logger.info(
+                "%s generating roleboard image for %s/%s",
+                asset_id,
+                role.name,
+                appearance.name,
+            )
+            result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
+                provider=provider,
+                state=state,
+                node_name=node_name,
+                asset_id=asset_id,
+                prompt=prompt,
+                refs=refs,
+                metadata={
+                    "node_name": node_name,
+                    "project_id": state.project_id,
+                    "role_id": role.id,
+                    "appearance_id": appearance.id,
+                    "asset_id": asset_id,
+                    "asset_type": "roleboard",
+                    "style_reference_count": len(style_refs),
+                    "key_vision_reference_index": len(style_refs) + 1,
+                },
+                context={
+                    "asset_type": "roleboard",
+                    "role_id": role.id,
+                    "role_name": role.name,
+                    "appearance_id": appearance.id,
+                    "appearance_name": appearance.name,
+                },
+            )
+            asset_path = await self.media_store.write_first_generated_image(project_dir, output_path, result)
+            asset_url = self.first_image_url(result)
+            provider_name = result.provider
+            model = result.model
+            request_id = result.request_id
+            usage = result.usage
+            raw_response = result.raw_response
+            self.logger.info("%s generated successfully, saved in %s", asset_id, asset_path)
+
+        appearance.prompt = appearance.roleboard_prompt or appearance.prompt
+        appearance.asset_id = asset_id
+        appearance.asset_path = asset_path
+        appearance.asset_url = asset_url
+        appearance.design_image_asset_id = asset_id
+        appearance.design_image_asset_path = asset_path
+        appearance.design_image_asset_url = asset_url
+        appearance.design_image_generation_status = "generated"
+        appearance.provider = provider_name
+        appearance.model = model
+        appearance.request_id = request_id
+        appearance.usage = usage
+        return StaticAssetGenerationItem(
+            asset_id=asset_id,
+            asset_type="roleboard",
+            owner_id=role.id,
+            name=f"{role.name}/{appearance.name}/roleboard",
+            prompt=prompt,
+            asset_path=asset_path,
+            asset_url=asset_url,
+            provider=provider_name,
+            model=model,
+            request_id=request_id,
+            usage=usage,
+            raw_response=raw_response,
+        )
+
     async def generate_roleboard_assets(
         self,
         *,
@@ -919,96 +1279,38 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         if not getattr(provider, "supports_reference_images", False):
             raise ValueError(f"{node_name} requires an image provider that supports reference images")
 
-        for role, appearance in appearances:
-            asset_id = self.roleboard_asset_id(appearance)
-            key_vision_ref = self.key_vision_reference_ref(project_dir, state, reference_for=asset_id)
-            refs = [*style_refs, key_vision_ref]
-            prompt = self.roleboard_prompt_for_generation(
-                role=role,
-                appearance=appearance,
-                style_reference_count=len(style_refs),
-                key_vision_reference_index=len(style_refs) + 1,
-            )
-            output_path = self.layout.image_asset_path(project_dir, "roles", asset_id)
-            existing_path = self.existing_roleboard_path(project_dir, appearance)
-            if reuse_existing_assets and existing_path is not None:
-                asset_path = existing_path
-                asset_url = appearance.asset_url or appearance.design_image_asset_url
-                provider_name = str(appearance.provider or getattr(provider, "name", "unknown"))
-                model = str(appearance.model or getattr(provider, "model", ""))
-                request_id = appearance.request_id
-                usage = appearance.usage
-                raw_response = {"resumed_from_existing_file": True}
-                self.logger.info("%s already exists, reused from %s", asset_id, asset_path)
-            else:
-                self.logger.info(
-                    "%s generating roleboard image for %s/%s",
-                    asset_id,
-                    role.name,
-                    appearance.name,
-                )
-                result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
-                    provider=provider,
-                    state=state,
-                    node_name=node_name,
-                    asset_id=asset_id,
-                    prompt=prompt,
-                    refs=refs,
-                    metadata={
-                        "node_name": node_name,
-                        "project_id": state.project_id,
-                        "role_id": role.id,
-                        "appearance_id": appearance.id,
-                        "asset_id": asset_id,
-                        "asset_type": "roleboard",
-                        "style_reference_count": len(style_refs),
-                        "key_vision_reference_index": len(style_refs) + 1,
-                    },
-                    context={
-                        "asset_type": "roleboard",
-                        "role_id": role.id,
-                        "role_name": role.name,
-                        "appearance_id": appearance.id,
-                        "appearance_name": appearance.name,
-                    },
-                )
-                asset_path = await self.media_store.write_first_generated_image(project_dir, output_path, result)
-                asset_url = self.first_image_url(result)
-                provider_name = result.provider
-                model = result.model
-                request_id = result.request_id
-                usage = result.usage
-                raw_response = result.raw_response
-                self.logger.info("%s generated successfully, saved in %s", asset_id, asset_path)
+        concurrency = self.roleboard_generation_concurrency(provider)
+        self.logger.info(
+            "%s total_images=%d concurrency=%d",
+            node_name,
+            len(appearances),
+            concurrency,
+        )
+        semaphore = asyncio.Semaphore(concurrency)
 
-            appearance.prompt = appearance.roleboard_prompt or appearance.prompt
-            appearance.asset_id = asset_id
-            appearance.asset_path = asset_path
-            appearance.asset_url = asset_url
-            appearance.design_image_asset_id = asset_id
-            appearance.design_image_asset_path = asset_path
-            appearance.design_image_asset_url = asset_url
-            appearance.design_image_generation_status = "generated"
-            appearance.provider = provider_name
-            appearance.model = model
-            appearance.request_id = request_id
-            appearance.usage = usage
-            item = StaticAssetGenerationItem(
-                asset_id=asset_id,
-                asset_type="roleboard",
-                owner_id=role.id,
-                name=f"{role.name}/{appearance.name}/roleboard",
-                prompt=prompt,
-                asset_path=asset_path,
-                asset_url=asset_url,
-                provider=provider_name,
-                model=model,
-                request_id=request_id,
-                usage=usage,
-                raw_response=raw_response,
-            )
-            generated.append(item)
-            generated_by_asset_id[asset_id] = item
+        async def generate_one(role: Role, appearance: RoleAppearance) -> StaticAssetGenerationItem:
+            async with semaphore:
+                return await self.generate_roleboard_asset(
+                    provider=provider,
+                    project_dir=project_dir,
+                    state=state,
+                    role=role,
+                    appearance=appearance,
+                    node_name=node_name,
+                    style_refs=style_refs,
+                    reuse_existing_assets=reuse_existing_assets,
+                )
+
+        tasks = [asyncio.create_task(generate_one(role, appearance)) for role, appearance in appearances]
+        try:
+            generated = list(await asyncio.gather(*tasks)) if tasks else []
+        except Exception:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        for item in generated:
+            generated_by_asset_id[item.asset_id] = item
         return generated
 
 
@@ -1072,201 +1374,265 @@ class PropExtractNode(StaticAssetNodeBase):
         )
         episode_keys = self.expected_episode_keys(state)
         self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        generated_prop_intro = self.existing_generated_prop_intro(project_dir, state)
         output = await self.asset_service.prop_extract(
             state,
             provider,
-            novel_full=self.novel_full_contents(project_dir, state, episode_keys),
+            novel_full_all_episodes=self.novel_full_contents(project_dir, state, episode_keys),
+            generated_prop_intro=generated_prop_intro,
         )
-
-        expected = set(episode_keys)
-        seen_keys: set[str] = set()
-        for item in output.props:
-            item.name = str(item.name or "").strip()
-            if not item.name:
-                raise ValueError("prop_extract returned a prop with empty name")
-            item.status = self.prop_status_key(item.status)
-            item.episode_keys = self.dedupe_texts(item.episode_keys)
-            item.source_chapters = self.dedupe_texts(item.source_chapters)
-            item.appearance_notes = self.dedupe_texts(item.appearance_notes)
-            invalid_episode_keys = sorted(set(item.episode_keys).difference(expected))
-            if invalid_episode_keys:
-                raise ValueError(
-                    f"prop_extract episode_keys for {item.name} must use existing keys; "
-                    f"got {', '.join(invalid_episode_keys)}"
-                )
-            if not item.episode_keys:
-                raise ValueError(f"prop_extract must include episode_keys for {item.name}")
-            key = self.prop_extract_key(item)
-            if key in seen_keys:
-                raise ValueError(f"prop_extract returned duplicated prop/status: {item.name} ({item.status})")
-            seen_keys.add(key)
-            self.prop_designs.save_extract_item(project_dir, item)
-
+        output.generated_prop_intro = self.normalize_generated_prop_intro(output.generated_prop_intro)
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, self.name, output)
         return state
 
 
-class PropDesignNode(StaticAssetNodeBase):
-    name = "prop_design"
+class PropDedupeNode(StaticAssetNodeBase):
+    name = "prop_dedupe"
+    MAX_CONVERGENCE_ITERATIONS = 8
+
+    @staticmethod
+    def _max_iterations(provider: Any) -> int:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        try:
+            return max(2, int(params.get("max_iterations") or PropDedupeNode.MAX_CONVERGENCE_ITERATIONS))
+        except (TypeError, ValueError):
+            return PropDedupeNode.MAX_CONVERGENCE_ITERATIONS
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("prop", node_name=self.name)
+        extract_provider = self.router.text("prop", node_name=PropExtractNode.name)
         self.logger.info(
-            "node=prop_design provider=%s model=%s",
+            "node=prop_dedupe provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        extract_output = self.prop_designs.load_extract_output(project_dir)
+        extract_output = self.load_prop_extract_output(project_dir)
+        current_intro = self.normalize_generated_prop_intro(extract_output.generated_prop_intro)
+        previous_review_intro: dict[str, str] | None = None
+        final_output: PropDedupeOutput | None = None
+        novel_full_all_episodes = self.novel_full_contents(project_dir, state, self.expected_episode_keys(state))
+        max_iterations = self._max_iterations(provider)
 
-        active_episode_keys = self.active_episode_keys(state)
-        target_extract_items = self.target_prop_extract_items(extract_output.props, state, active_episode_keys)
-        if active_episode_keys:
-            self.logger.info(
-                "prop_design episode-scoped rerun episodes=%s target_props=%s",
-                ",".join(active_episode_keys),
-                ",".join(item.name for item in target_extract_items) or "-",
+        for iteration in range(1, max_iterations + 1):
+            output = await self.asset_service.prop_dedupe(
+                state,
+                provider,
+                generated_prop_intro=current_intro,
             )
-            if not target_extract_items:
-                self.logger.warning(
-                    "prop_design found no props appearing in selected episodes: %s",
-                    ",".join(active_episode_keys),
-                )
+            output.generated_prop_intro = self.normalize_generated_prop_intro(output.generated_prop_intro)
+            state.budget.used_text_calls += 1
+            final_output = output
+            self.logger.info(
+                "node=prop_dedupe iteration=%d props=%d",
+                iteration,
+                len(output.generated_prop_intro),
+            )
 
-        existing_props = dict(state.props)
+            if (
+                previous_review_intro is not None
+                and self.canonical_prop_intro(previous_review_intro)
+                == self.canonical_prop_intro(output.generated_prop_intro)
+            ):
+                output.merge_notes.append(f"prop_extract/prop_dedupe converged after {iteration} dedupe pass(es).")
+                break
+
+            previous_review_intro = dict(output.generated_prop_intro)
+            if iteration >= max_iterations:
+                output.merge_notes.append(
+                    f"prop_extract/prop_dedupe reached max_iterations={max_iterations}; using latest dedupe output."
+                )
+                self.logger.warning(
+                    "node=prop_dedupe reached max_iterations=%d without exact convergence",
+                    max_iterations,
+                )
+                break
+
+            extract_output = await self.asset_service.prop_extract(
+                state,
+                extract_provider,
+                novel_full_all_episodes=novel_full_all_episodes,
+                generated_prop_intro=output.generated_prop_intro,
+            )
+            extract_output.generated_prop_intro = self.normalize_generated_prop_intro(extract_output.generated_prop_intro)
+            state.budget.used_text_calls += 1
+            self.repo.save_node_output(project_dir, PropExtractNode.name, extract_output)
+            current_intro = extract_output.generated_prop_intro
+
+        if final_output is None:
+            raise ValueError("prop_dedupe produced no output")
         owner_role_props = {
             prop_id: prop
             for prop_id, prop in state.props.items()
             if prop.owner_role_id
         }
-        for prop in owner_role_props.values():
-            if not prop.design_path and prop.prompt:
-                prop.design_path = self.save_prop_design_record(
-                    project_dir,
-                    prop,
-                    prompt=prop.prompt,
-                    node_name=prop.source or self.name,
-                )
-        state.props = dict(owner_role_props)
-
-        force_pregen = bool(getattr(self.workflow, "_force_pregen", False))
-        designed_by_key: dict[str, PropDesignItem] = {}
-        existing_output = self.prop_designs.load_existing_output(project_dir)
-        should_keep_existing = existing_output is not None and (not force_pregen or bool(active_episode_keys))
-        if existing_output is not None and should_keep_existing:
-            for existing_item in existing_output.props:
-                try:
-                    existing_item.episode_keys = self.prop_episode_keys(
-                        existing_item.name,
-                        existing_item.episode_keys,
-                        state,
-                        label="prop_design",
-                    )
-                except ValueError:
-                    continue
-                key = self.prop_extract_key(existing_item)
-                designed_by_key[key] = existing_item
-                self.apply_prop_design_item(project_dir, state, existing_item, existing_props=existing_props)
-
-        all_prop_extracts = [item.model_dump(mode="json") for item in extract_output.props]
-        for extract_item in target_extract_items:
-            key = self.prop_extract_key(extract_item)
-            if key in designed_by_key and not force_pregen:
-                self.logger.info("prop_design %s already exists, skipped", extract_item.name)
-                continue
-
-            episode_keys = self.prop_episode_keys(
-                extract_item.name,
-                extract_item.episode_keys,
-                state,
-                label="prop_extract",
-            )
-            prop_novel_full = self.novel_full_contents(project_dir, state, episode_keys)
-            self.logger.info(
-                "prop_design generating %s status=%s episodes=%s chapters=%s",
-                extract_item.name,
-                extract_item.status,
-                ",".join(episode_keys),
-                ",".join(extract_item.source_chapters) or "-",
-            )
-            output = await self.asset_service.prop_design(
-                state,
-                provider,
-                prop_item=extract_item,
-                prop_novel_full=prop_novel_full,
-                all_prop_extracts=all_prop_extracts,
-                existing_prop_designs=[
-                    item.model_dump(mode="json")
-                    for item in self.ordered_prop_design_items(extract_output.props, designed_by_key)
-                ],
-            )
-            item = self.merge_prop_extract_into_design(
-                self.select_prop_design_item(output, extract_item),
-                extract_item,
-            )
-            item.episode_keys = self.prop_episode_keys(item.name, item.episode_keys, state, label="prop_design")
-            self.apply_prop_design_item(project_dir, state, item, existing_props=existing_props)
-            designed_by_key[key] = item
-            state.budget.used_text_calls += 1
-            self.repo.save_node_output(
+        state.props = {
+            **owner_role_props,
+            **self.props_from_intro_and_prompts(
                 project_dir,
-                self.name,
-                PropDesignOutput(props=self.ordered_prop_design_items(extract_output.props, designed_by_key)),
-            )
-            self.repo.save_state(project_dir, state)
-
-        final_items = self.ordered_prop_design_items(extract_output.props, designed_by_key)
-        state.metadata["prop_design_generation_mode"] = "per_prop_recursive"
-        state.metadata["prop_design_active_episode_keys"] = active_episode_keys
-        state.metadata["prop_design_target_prop_names"] = [item.name for item in target_extract_items]
-        state.metadata["prop_design_designed_prop_names"] = [item.name for item in final_items]
-        self.repo.save_node_output(project_dir, self.name, PropDesignOutput(props=final_items))
+                final_output.generated_prop_intro,
+                {},
+                state,
+                existing_props=state.props,
+            ),
+        }
+        self.repo.save_node_output(project_dir, self.name, final_output)
         return state
 
 
-class PropGenerationNode(StaticAssetNodeBase):
-    name = "prop_generation"
+class PropPromptNode(StaticAssetNodeBase):
+    name = "prop_prompt"
+
+    def _text_provider(self):
+        node_name = self.name
+        if node_name not in self.repo.settings.nodes and "prop_design" in self.repo.settings.nodes:
+            node_name = "prop_design"
+        return self.router.text("prop", node_name=node_name)
+
+    def _prop_prompt_template_name(self) -> str:
+        node_settings = self.repo.settings.nodes.get(self.name) or self.repo.settings.nodes.get("prop_design")
+        params = getattr(node_settings, "params", {}) if node_settings is not None else {}
+        explicit = str(params.get("prompt_template") or "").strip()
+        if explicit:
+            return explicit
+
+        try:
+            image_provider = self.router.image("prop", node_name=PropImageGenerationNode.name)
+            provider_key = slugify(str(getattr(image_provider, "name", "") or "")).lower()
+            model_key = slugify(str(getattr(image_provider, "model", "") or "")).lower()
+        except Exception:
+            provider_key = ""
+            model_key = ""
+
+        candidates = [
+            f"prop_prompt_{provider_key}_{model_key}",
+            f"prop_prompt_{model_key}",
+            f"prop_prompt_{provider_key}",
+            "prop_prompt",
+        ]
+        prompt_dir = self.asset_service.prompts.prompt_dir
+        for candidate in candidates:
+            if candidate and (prompt_dir / f"{candidate}.md").exists():
+                return candidate
+        return "prop_prompt"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.image("prop", node_name=self.name)
+        provider = self._text_provider()
+        prompt_template = self._prop_prompt_template_name()
         self.logger.info(
-            "node=prop_generation provider=%s model=%s",
+            "node=prop_prompt provider=%s model=%s prompt_template=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
+            prompt_template,
         )
-        generated: list[StaticAssetGenerationItem] = []
-        active_episode_keys = self.active_episode_keys(state)
-        all_props = self.ordered_props_for_generation(list(state.props.values()))
-        props = [
-            prop
-            for prop in all_props
-            if self.prop_matches_active_episode_keys(prop, active_episode_keys)
-        ]
-        normal_props_by_base = self.normal_props_by_variant_base(all_props)
-        if active_episode_keys:
-            self.logger.info(
-                "node=prop_generation episode-scoped rerun episodes=%s target_images=%d",
-                ",".join(active_episode_keys),
-                len(props),
-            )
-        self.logger.info("node=prop_generation total_images=%d", len(props))
-        generated_by_asset_id: dict[str, StaticAssetGenerationItem] = {}
-        if active_episode_keys:
-            path = self.layout.node_output_path(project_dir, self.name)
-            if path.exists():
+        dedupe_output = self.load_prop_dedupe_output(project_dir)
+        generated_prop_intro = self.normalize_generated_prop_intro(dedupe_output.generated_prop_intro)
+        if not generated_prop_intro:
+            raise ValueError("prop_prompt requires non-empty generated_prop_intro from prop_dedupe")
+        output = await self.asset_service.prop_prompt(
+            state,
+            provider,
+            generated_prop_intro=generated_prop_intro,
+            prompt_template=prompt_template,
+        )
+        output.prop_prompts = self.normalize_generated_prop_intro(output.prop_prompts)
+        owner_role_props = {
+            prop_id: prop
+            for prop_id, prop in state.props.items()
+            if prop.owner_role_id
+        }
+        state.props = {
+            **owner_role_props,
+            **self.prop_prompt_output_to_state(project_dir, generated_prop_intro, output, state),
+        }
+        state.budget.used_text_calls += 1
+        self.repo.save_node_output(project_dir, self.name, output)
+        return state
+
+
+class PropDesignNode(PropPromptNode):
+    name = "prop_design"
+
+
+class PropImageGenerationNode(StaticAssetNodeBase):
+    name = "prop_image_generation"
+
+    @classmethod
+    def _is_state_prop(cls, prop: Prop, props_by_name: dict[str, Prop]) -> bool:
+        base_name = cls._state_base_name(prop.name)
+        return bool(base_name and base_name in props_by_name)
+
+    @classmethod
+    def _ordered_prop_batches(cls, props: list[Prop], props_by_name: dict[str, Prop]) -> list[list[Prop]]:
+        base_props = [prop for prop in props if not cls._is_state_prop(prop, props_by_name)]
+        state_props = [prop for prop in props if cls._is_state_prop(prop, props_by_name)]
+        return [batch for batch in (base_props, state_props) if batch]
+
+    @staticmethod
+    def _generation_concurrency(provider: Any) -> int:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        for source in (params, options):
+            for key in ("concurrency", "prop_image_generation_concurrency", "image_generation_concurrency"):
                 try:
-                    existing_output = StaticAssetGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
-                    generated_by_asset_id = {
-                        item.asset_id: item
-                        for item in existing_output.generated_assets
-                    }
-                except Exception as exc:
-                    self.logger.warning("prop_generation ignored invalid existing node output %s: %s", path, exc)
-        for prop in props:
-            prompt = self.prop_prompt_for_generation(project_dir, prop)
-            refs = None
-            if getattr(provider, "supports_reference_images", False):
-                refs = self.prop_reference_refs(project_dir, prop, normal_props_by_base)
+                    value = int(source.get(key) or 0)
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                if value > 0:
+                    return max(1, value)
+        return 1
+
+    def _prop_reference_refs(
+        self,
+        project_dir: Path,
+        prop: Prop,
+        props_by_name: dict[str, Prop],
+    ) -> list[AssetRef]:
+        base_name = self._state_base_name(prop.name)
+        if not base_name:
+            return []
+        base_prop = props_by_name.get(base_name)
+        if base_prop is None:
+            return []
+        path = base_prop.asset_path
+        if path:
+            path = self.layout.absolute_project_path(project_dir, path)
+        if not (path or base_prop.asset_url):
+            return []
+        return [
+            AssetRef(
+                id=base_prop.asset_id or base_prop.id,
+                type="image",
+                path=path,
+                url=base_prop.asset_url,
+                metadata={
+                    "asset_type": "prop",
+                    "reference_for": prop.id,
+                    "reference_role": "base_prop_for_state",
+                    "prop_id": base_prop.id,
+                    "prop_name": base_prop.name,
+                },
+            )
+        ]
+
+    async def _generate_one_prop(
+        self,
+        *,
+        provider: Any,
+        project_dir: Path,
+        state: ProjectState,
+        prop: Prop,
+        props_by_name: dict[str, Prop],
+        semaphore: asyncio.Semaphore,
+    ) -> StaticAssetGenerationItem:
+        prompt = self.prop_prompt_for_generation(project_dir, prop)
+        refs = []
+        if getattr(provider, "supports_reference_images", False):
+            refs = self._prop_reference_refs(project_dir, prop, props_by_name)
+        async with semaphore:
             result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
                 provider=provider,
                 state=state,
@@ -1287,6 +1653,7 @@ class PropGenerationNode(StaticAssetNodeBase):
                     "prop_status": prop.status,
                     "owner_role_id": prop.owner_role_id,
                     "owner_role_name": prop.owner_role_name,
+                    "reference_prop_ids": [ref.id for ref in refs if ref.id],
                 },
             )
             asset_path = await self.media_store.write_first_generated_image(
@@ -1294,34 +1661,88 @@ class PropGenerationNode(StaticAssetNodeBase):
                 self.layout.image_asset_path(project_dir, "props", prop.id),
                 result,
             )
-            asset_url = self.first_image_url(result)
-            prop.prompt = prompt
-            prop.asset_id = prop.id
-            prop.asset_path = asset_path
-            prop.asset_url = asset_url
-            prop.provider = result.provider
-            prop.model = result.model
-            prop.request_id = result.request_id
-            prop.usage = result.usage
-            self.update_prop_design_image_result(project_dir, prop, result, asset_path)
-            generated.append(
-                StaticAssetGenerationItem(
-                    asset_id=prop.id,
-                    asset_type="prop",
-                    owner_id=prop.id,
-                    name=prop.name,
-                    prompt=prompt,
-                    asset_path=asset_path,
-                    asset_url=asset_url,
-                    provider=result.provider,
-                    model=result.model,
-                    request_id=result.request_id,
-                    usage=result.usage,
-                    raw_response=result.raw_response,
-                )
+        asset_url = self.first_image_url(result)
+        prop.prompt = prompt
+        prop.asset_id = prop.id
+        prop.asset_path = asset_path
+        prop.asset_url = asset_url
+        prop.provider = result.provider
+        prop.model = result.model
+        prop.request_id = result.request_id
+        prop.usage = result.usage
+        self.update_prop_design_image_result(project_dir, prop, result, asset_path)
+        item = StaticAssetGenerationItem(
+            asset_id=prop.id,
+            asset_type="prop",
+            owner_id=prop.id,
+            name=prop.name,
+            prompt=prompt,
+            asset_path=asset_path,
+            asset_url=asset_url,
+            provider=result.provider,
+            model=result.model,
+            request_id=result.request_id,
+            usage=result.usage,
+            raw_response=result.raw_response,
+        )
+        self.logger.info("%s generated successfully, saved in %s", prop.id, asset_path)
+        return item
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.image("prop", node_name=self.name)
+        self.logger.info(
+            "node=prop_image_generation provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        generated: list[StaticAssetGenerationItem] = []
+        active_episode_keys = self.active_episode_keys(state)
+        all_props = self.ordered_props_for_generation(list(state.props.values()))
+        props = [
+            prop
+            for prop in all_props
+            if self.prop_matches_active_episode_keys(prop, active_episode_keys)
+        ]
+        if active_episode_keys:
+            self.logger.info(
+                "node=prop_image_generation episode-scoped rerun episodes=%s target_images=%d",
+                ",".join(active_episode_keys),
+                len(props),
             )
-            generated_by_asset_id[prop.id] = generated[-1]
-            self.logger.info("%s generated successfully, saved in %s", prop.id, asset_path)
+        self.logger.info("node=prop_image_generation total_images=%d", len(props))
+        generated_by_asset_id: dict[str, StaticAssetGenerationItem] = {}
+        if active_episode_keys:
+            path = self.layout.node_output_path(project_dir, self.name)
+            if path.exists():
+                try:
+                    existing_output = StaticAssetGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
+                    generated_by_asset_id = {
+                        item.asset_id: item
+                        for item in existing_output.generated_assets
+                    }
+                except Exception as exc:
+                    self.logger.warning("prop_image_generation ignored invalid existing node output %s: %s", path, exc)
+        concurrency = self._generation_concurrency(provider)
+        self.logger.info("node=prop_image_generation concurrency=%d", concurrency)
+        semaphore = asyncio.Semaphore(concurrency)
+        props_by_name = {prop.name: prop for prop in all_props}
+        for batch in self._ordered_prop_batches(props, props_by_name):
+            batch_items = await asyncio.gather(
+                *[
+                    self._generate_one_prop(
+                        provider=provider,
+                        project_dir=project_dir,
+                        state=state,
+                        prop=prop,
+                        props_by_name=props_by_name,
+                        semaphore=semaphore,
+                    )
+                    for prop in batch
+                ]
+            )
+            for item in batch_items:
+                generated.append(item)
+                generated_by_asset_id[item.asset_id] = item
         if active_episode_keys and generated_by_asset_id:
             ordered_generated = [
                 generated_by_asset_id[prop.id]
@@ -1338,6 +1759,10 @@ class PropGenerationNode(StaticAssetNodeBase):
         return state
 
 
+class PropGenerationNode(PropImageGenerationNode):
+    name = "prop_generation"
+
+
 class LayoutExtractNode(StaticAssetNodeBase):
     name = "layout_extract"
 
@@ -1350,57 +1775,14 @@ class LayoutExtractNode(StaticAssetNodeBase):
         )
         episode_keys = self.expected_episode_keys(state)
         self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
+        generated_layout_intro = self.existing_generated_layout_intro(project_dir, state)
         output = await self.asset_service.layout_extract(
             state,
             provider,
-            novel_full=self.novel_full_contents(project_dir, state, episode_keys),
+            novel_full_all_episodes=self.novel_full_contents(project_dir, state, episode_keys),
+            generated_layout_intro=generated_layout_intro,
         )
-
-        expected = set(episode_keys)
-        seen_keys: set[str] = set()
-        for item in output.layouts:
-            item.name = str(item.name or "").strip()
-            if not item.name:
-                raise ValueError("layout_extract returned a layout with empty name")
-            item.episode_keys = self.dedupe_texts(item.episode_keys)
-            item.source_chapters = self.dedupe_texts(item.source_chapters)
-            item.appearance_notes = self.dedupe_texts(item.appearance_notes)
-            invalid_episode_keys = sorted(set(item.episode_keys).difference(expected))
-            if invalid_episode_keys:
-                raise ValueError(
-                    f"layout_extract episode_keys for {item.name} must use existing keys; "
-                    f"got {', '.join(invalid_episode_keys)}"
-                )
-            if not item.episode_keys:
-                raise ValueError(f"layout_extract must include episode_keys for {item.name}")
-            key = self.layout_extract_key(item)
-            if key in seen_keys:
-                raise ValueError(f"layout_extract returned duplicated layout: {item.name}")
-            seen_keys.add(key)
-
-        state.budget.used_text_calls += 1
-        self.repo.save_node_output(project_dir, self.name, output)
-        return state
-
-
-class LayoutDesignNode(StaticAssetNodeBase):
-    name = "layout_design"
-
-    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("layout", node_name=self.name)
-        self.logger.info(
-            "node=layout_design provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        extract_output = self.load_layout_extract_output(project_dir)
-        output = await self.asset_service.layout_design(
-            state,
-            provider,
-            layout_extracts=[item.model_dump(mode="json") for item in extract_output.layouts],
-            episode_stories=self.episode_stories(project_dir, state),
-        )
-        state.layouts = self.layouts_from_design_items(output.layouts, state, label="layout_design")
+        output.generated_layout_intro = self.normalize_generated_layout_intro(output.generated_layout_intro)
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, self.name, output)
         return state
@@ -1408,16 +1790,147 @@ class LayoutDesignNode(StaticAssetNodeBase):
 
 class LayoutDedupeReviewNode(StaticAssetNodeBase):
     name = "layout_dedupe_review"
+    MAX_CONVERGENCE_ITERATIONS = 8
+
+    @staticmethod
+    def _max_iterations(provider: Any) -> int:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        try:
+            return max(2, int(params.get("max_iterations") or LayoutDedupeReviewNode.MAX_CONVERGENCE_ITERATIONS))
+        except (TypeError, ValueError):
+            return LayoutDedupeReviewNode.MAX_CONVERGENCE_ITERATIONS
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("layout", node_name=self.name)
+        extract_provider = self.router.text("layout", node_name=LayoutExtractNode.name)
         self.logger.info(
             "node=layout_dedupe_review provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.asset_service.layout_dedupe_review(state, provider)
-        state.layouts = self.layouts_from_design_items(output.layouts, state, label="layout_dedupe_review")
+        extract_output = self.load_layout_extract_output(project_dir)
+        current_intro = self.normalize_generated_layout_intro(extract_output.generated_layout_intro)
+        previous_review_intro: dict[str, str] | None = None
+        final_output: LayoutDedupeReviewOutput | None = None
+        novel_full_all_episodes = self.novel_full_contents(project_dir, state, self.expected_episode_keys(state))
+        max_iterations = self._max_iterations(provider)
+
+        for iteration in range(1, max_iterations + 1):
+            output = await self.asset_service.layout_dedupe_review(
+                state,
+                provider,
+                generated_layout_intro=current_intro,
+            )
+            output.generated_layout_intro = self.normalize_generated_layout_intro(output.generated_layout_intro)
+            state.budget.used_text_calls += 1
+            final_output = output
+            self.logger.info(
+                "node=layout_dedupe_review iteration=%d layouts=%d",
+                iteration,
+                len(output.generated_layout_intro),
+            )
+
+            if (
+                previous_review_intro is not None
+                and self.canonical_layout_intro(previous_review_intro)
+                == self.canonical_layout_intro(output.generated_layout_intro)
+            ):
+                output.merge_notes.append(f"layout_extract/layout_dedupe_review converged after {iteration} dedupe pass(es).")
+                break
+
+            previous_review_intro = dict(output.generated_layout_intro)
+            if iteration >= max_iterations:
+                output.merge_notes.append(
+                    f"layout_extract/layout_dedupe_review reached max_iterations={max_iterations}; using latest dedupe output."
+                )
+                self.logger.warning(
+                    "node=layout_dedupe_review reached max_iterations=%d without exact convergence",
+                    max_iterations,
+                )
+                break
+
+            extract_output = await self.asset_service.layout_extract(
+                state,
+                extract_provider,
+                novel_full_all_episodes=novel_full_all_episodes,
+                generated_layout_intro=output.generated_layout_intro,
+            )
+            extract_output.generated_layout_intro = self.normalize_generated_layout_intro(extract_output.generated_layout_intro)
+            state.budget.used_text_calls += 1
+            self.repo.save_node_output(project_dir, LayoutExtractNode.name, extract_output)
+            current_intro = extract_output.generated_layout_intro
+
+        if final_output is None:
+            raise ValueError("layout_dedupe_review produced no output")
+        state.layouts = self.layouts_from_intro_and_prompts(
+            final_output.generated_layout_intro,
+            {},
+            state,
+            existing_layouts=state.layouts,
+        )
+        self.repo.save_node_output(project_dir, self.name, final_output)
+        return state
+
+
+class LayoutPromptNode(StaticAssetNodeBase):
+    name = "layout_prompt"
+
+    def _text_provider(self):
+        return self.router.text("layout", node_name=self.name)
+
+    def _layout_prompt_template_name(self) -> str:
+        node_settings = self.repo.settings.nodes.get(self.name)
+        params = getattr(node_settings, "params", {}) if node_settings is not None else {}
+        explicit = str(params.get("prompt_template") or "").strip()
+        if explicit:
+            return explicit
+
+        try:
+            image_provider = self.router.image("layout", node_name=LayoutImageGenerationNode.name)
+            provider_key = slugify(str(getattr(image_provider, "name", "") or "")).lower()
+            model_key = slugify(str(getattr(image_provider, "model", "") or "")).lower()
+        except Exception:
+            provider_key = ""
+            model_key = ""
+
+        candidates = [
+            f"layout_prompt_{provider_key}_{model_key}",
+            f"layout_prompt_{provider_key}_seedream" if "seedream" in model_key else "",
+            f"layout_prompt_{provider_key}_gpt_image_2" if "gpt_image" in model_key else "",
+            f"layout_prompt_{model_key}",
+            "layout_prompt_seedream" if "seedream" in model_key else "",
+            "layout_prompt_gpt_image_2" if "gpt_image" in model_key else "",
+            f"layout_prompt_{provider_key}",
+            "layout_prompt",
+        ]
+        prompt_dir = self.asset_service.prompts.prompt_dir
+        for candidate in candidates:
+            if candidate and (prompt_dir / f"{candidate}.md").exists():
+                return candidate
+        return "layout_prompt"
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self._text_provider()
+        prompt_template = self._layout_prompt_template_name()
+        self.logger.info(
+            "node=layout_prompt provider=%s model=%s prompt_template=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+            prompt_template,
+        )
+        dedupe_output = self.load_layout_dedupe_output(project_dir)
+        generated_layout_intro = self.normalize_generated_layout_intro(dedupe_output.generated_layout_intro)
+        if not generated_layout_intro:
+            raise ValueError("layout_prompt requires non-empty generated_layout_intro from layout_dedupe_review")
+        output = await self.asset_service.layout_prompt(
+            state,
+            provider,
+            generated_layout_intro=generated_layout_intro,
+            prompt_template=prompt_template,
+        )
+        output.layout_prompts = self.normalize_generated_layout_intro(output.layout_prompts)
+        state.layouts = self.layout_prompt_output_to_state(generated_layout_intro, output, state)
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, self.name, output)
         return state
@@ -1427,24 +1940,148 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
     name = "layout_image_generation"
 
     @staticmethod
-    def _three_view_layout_prompt(layout: Layout) -> str:
-        prompt = str(layout.prompt or "").strip()
-        marker = "无人物场景三视图设定板"
-        if marker in prompt and ("顶视" in prompt or "平面" in prompt) and ("侧向" in prompt or "45" in prompt):
-            return prompt
+    def _state_base_name(layout_name: str) -> str | None:
+        name = str(layout_name or "").strip()
+        if "_" not in name:
+            return None
+        base, _status = name.rsplit("_", 1)
+        base = base.strip()
+        return base or None
 
-        prefix = (
-            "请生成一张横向16:9无人物场景三视图设定板，画面分成三个并列视图："
-            "左侧为顶视平面/空间动线图，中间为正向主视/入口朝向立面图，右侧为侧向或45度透视图。"
-            "三个视图必须表现同一个空间、同一套固定结构、同一光源方向和同一材质设定，不能变成三个不同场景。"
-            "顶视平面图要交代入口、窗/墙/柱/地面边界、主要家具或固定装置、角色可站位区域、摄影机可站位区域、"
-            "剧情关键道具可摆放位置和行动动线；正向主视要交代空间高度、前中后景层次、背景锚点、主光源、"
-            "墙面/天花/地面关系和稳定构图；侧向或45度透视要交代空间纵深、遮挡关系、可绕行路径、"
-            "道具与人物站位的前后关系、材质厚度、反射/阴影和空气粒子状态。"
-            "允许少量不可读的小标签或分区标题，但不要出现人物、背影、手、剪影、剧情文字、字幕、水印、logo、项目名、文件名或ID。"
+    @classmethod
+    def _is_state_layout(cls, layout: Layout, layouts_by_name: dict[str, Layout]) -> bool:
+        base_name = cls._state_base_name(layout.name)
+        return bool(base_name and base_name in layouts_by_name)
+
+    @classmethod
+    def _layout_generation_stages(
+        cls,
+        layouts: list[Layout],
+        layouts_by_name: dict[str, Layout],
+    ) -> list[tuple[str, list[Layout]]]:
+        base_layouts = [layout for layout in layouts if not cls._is_state_layout(layout, layouts_by_name)]
+        variant_layouts = [layout for layout in layouts if cls._is_state_layout(layout, layouts_by_name)]
+        stages = [
+            ("base", base_layouts),
+            ("variant", variant_layouts),
+        ]
+        return [(stage_name, stage_layouts) for stage_name, stage_layouts in stages if stage_layouts]
+
+    @classmethod
+    def _ordered_layout_batches(cls, layouts: list[Layout], layouts_by_name: dict[str, Layout]) -> list[list[Layout]]:
+        return [stage_layouts for _stage_name, stage_layouts in cls._layout_generation_stages(layouts, layouts_by_name)]
+
+    @staticmethod
+    def _generation_concurrency(provider: Any) -> int:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        for key in ("concurrency", "layout_image_generation_concurrency", "image_generation_concurrency"):
+            try:
+                value = int(params.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return max(1, value)
+        return 1
+
+    def _layout_reference_refs(
+        self,
+        project_dir: Path,
+        layout: Layout,
+        layouts_by_name: dict[str, Layout],
+    ) -> list[AssetRef]:
+        base_name = self._state_base_name(layout.name)
+        if not base_name:
+            return []
+        base_layout = layouts_by_name.get(base_name)
+        if base_layout is None:
+            return []
+        path = base_layout.asset_path
+        if path:
+            path = self.layout.absolute_project_path(project_dir, path)
+        if not (path or base_layout.asset_url):
+            return []
+        return [
+            AssetRef(
+                id=base_layout.asset_id or base_layout.id,
+                type="image",
+                path=path,
+                url=base_layout.asset_url,
+                metadata={
+                    "asset_type": "layout",
+                    "reference_for": layout.id,
+                    "reference_role": "base_layout_for_state",
+                    "layout_id": base_layout.id,
+                    "layout_name": base_layout.name,
+                },
+            )
+        ]
+
+    async def _generate_one_layout(
+        self,
+        *,
+        provider: Any,
+        project_dir: Path,
+        state: ProjectState,
+        layout: Layout,
+        layouts_by_name: dict[str, Layout],
+        semaphore: asyncio.Semaphore,
+    ) -> StaticAssetGenerationItem:
+        prompt = str(layout.prompt or "").strip()
+        if not prompt:
+            raise ValueError(f"layout_prompt is empty for {layout.id}; run pregen --only layout_prompt first")
+        refs = self._layout_reference_refs(project_dir, layout, layouts_by_name)
+        async with semaphore:
+            result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
+                provider=provider,
+                state=state,
+                node_name=self.name,
+                asset_id=layout.id,
+                prompt=prompt,
+                refs=refs,
+                metadata={
+                    "node_name": self.name,
+                    "project_id": state.project_id,
+                    "layout_id": layout.id,
+                    "asset_id": layout.id,
+                },
+                context={
+                    "asset_type": "layout",
+                    "layout_id": layout.id,
+                    "layout_name": layout.name,
+                    "reference_layout_ids": [ref.id for ref in refs if ref.id],
+                },
+            )
+            asset_path = await self.media_store.write_first_generated_image(
+                project_dir,
+                self.layout.image_asset_path(project_dir, "layouts", layout.id),
+                result,
+            )
+        asset_url = self.first_image_url(result)
+        layout.prompt = prompt
+        layout.asset_id = layout.id
+        layout.asset_path = asset_path
+        layout.asset_url = asset_url
+        layout.provider = result.provider
+        layout.model = result.model
+        layout.request_id = result.request_id
+        layout.usage = result.usage
+        item = StaticAssetGenerationItem(
+            asset_id=layout.id,
+            asset_type="layout",
+            owner_id=layout.id,
+            name=layout.name,
+            prompt=layout.prompt,
+            asset_path=asset_path,
+            asset_url=asset_url,
+            provider=result.provider,
+            model=result.model,
+            request_id=result.request_id,
+            usage=result.usage,
+            raw_response=result.raw_response,
         )
-        identity = f"场景名称：{layout.name}。场景说明：{layout.desc}。"
-        return f"{prefix}\n\n{identity}\n\n原始场景设定：{prompt}"
+        self.logger.info("%s generated successfully, saved in %s", layout.id, asset_path)
+        return item
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("layout", node_name=self.name)
@@ -1480,58 +2117,32 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
                     }
                 except Exception as exc:
                     self.logger.warning("layout_image_generation ignored invalid existing node output %s: %s", path, exc)
-        for layout in layouts:
-            prompt = self._three_view_layout_prompt(layout)
-            result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
-                provider=provider,
-                state=state,
-                node_name=self.name,
-                asset_id=layout.id,
-                prompt=prompt,
-                metadata={
-                    "node_name": self.name,
-                    "project_id": state.project_id,
-                    "layout_id": layout.id,
-                    "asset_id": layout.id,
-                },
-                context={
-                    "asset_type": "layout",
-                    "layout_id": layout.id,
-                    "layout_name": layout.name,
-                },
+        concurrency = self._generation_concurrency(provider)
+        self.logger.info("node=layout_image_generation concurrency=%d", concurrency)
+        semaphore = asyncio.Semaphore(concurrency)
+        layouts_by_name = {layout.name: layout for layout in all_layouts}
+        for stage_name, batch in self._layout_generation_stages(layouts, layouts_by_name):
+            self.logger.info(
+                "node=layout_image_generation stage=%s target_images=%d",
+                stage_name,
+                len(batch),
             )
-            asset_path = await self.media_store.write_first_generated_image(
-                project_dir,
-                self.layout.image_asset_path(project_dir, "layouts", layout.id),
-                result,
+            batch_items = await asyncio.gather(
+                *[
+                    self._generate_one_layout(
+                        provider=provider,
+                        project_dir=project_dir,
+                        state=state,
+                        layout=layout,
+                        layouts_by_name=layouts_by_name,
+                        semaphore=semaphore,
+                    )
+                    for layout in batch
+                ]
             )
-            asset_url = self.first_image_url(result)
-            layout.prompt = prompt
-            layout.asset_id = layout.id
-            layout.asset_path = asset_path
-            layout.asset_url = asset_url
-            layout.provider = result.provider
-            layout.model = result.model
-            layout.request_id = result.request_id
-            layout.usage = result.usage
-            generated.append(
-                StaticAssetGenerationItem(
-                    asset_id=layout.id,
-                    asset_type="layout",
-                    owner_id=layout.id,
-                    name=layout.name,
-                    prompt=layout.prompt,
-                    asset_path=asset_path,
-                    asset_url=asset_url,
-                    provider=result.provider,
-                    model=result.model,
-                    request_id=result.request_id,
-                    usage=result.usage,
-                    raw_response=result.raw_response,
-                )
-            )
-            self.logger.info("%s generated successfully, saved in %s", layout.id, asset_path)
-            generated_by_asset_id[layout.id] = generated[-1]
+            for item in batch_items:
+                generated.append(item)
+                generated_by_asset_id[item.asset_id] = item
         if active_episode_keys and generated_by_asset_id:
             ordered_generated = [
                 generated_by_asset_id[layout.id]
@@ -1570,11 +2181,14 @@ def build_static_asset_node_runners(workflow: Any) -> dict[str, StaticAssetNodeB
     return {
         RoleboardGenerationNode.name: RoleboardGenerationNode(**deps),
         PropExtractNode.name: PropExtractNode(**deps),
+        PropDedupeNode.name: PropDedupeNode(**deps),
+        PropPromptNode.name: PropPromptNode(**deps),
+        PropImageGenerationNode.name: PropImageGenerationNode(**deps),
         PropDesignNode.name: PropDesignNode(**deps),
         PropGenerationNode.name: PropGenerationNode(**deps),
         LayoutExtractNode.name: LayoutExtractNode(**deps),
-        LayoutDesignNode.name: LayoutDesignNode(**deps),
         LayoutDedupeReviewNode.name: LayoutDedupeReviewNode(**deps),
+        LayoutPromptNode.name: LayoutPromptNode(**deps),
         LayoutImageGenerationNode.name: LayoutImageGenerationNode(**deps),
     }
 
@@ -1590,11 +2204,14 @@ def build_static_asset_nodes(workflow: Any) -> list[WorkflowNode]:
 __all__ = [
     "STATIC_ASSET_NODE_NAMES",
     "LayoutDedupeReviewNode",
-    "LayoutDesignNode",
     "LayoutExtractNode",
     "LayoutImageGenerationNode",
+    "LayoutPromptNode",
+    "PropDedupeNode",
     "PropDesignNode",
     "PropExtractNode",
+    "PropImageGenerationNode",
+    "PropPromptNode",
     "PropGenerationNode",
     "RoleboardGenerationNode",
     "StaticAssetNodeBase",

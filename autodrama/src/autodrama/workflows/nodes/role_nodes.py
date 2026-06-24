@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from autodrama.core.ids import normalize_id
+from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
     AmbientEntityOutput,
     ProjectState,
@@ -1183,6 +1183,73 @@ class RoleboardPromptNode(RoleNodeBase):
             "name": state.metadata.get("key_vision_name"),
         }
 
+    def _node_params(self, node_name: str) -> dict[str, Any]:
+        node_settings = self.repo.settings.nodes.get(node_name)
+        if node_settings is None:
+            return {}
+        return dict(node_settings.params)
+
+    def _roleboard_image_binding_context(self) -> dict[str, str]:
+        try:
+            provider = self.router.image("role", node_name="roleboard_generation")
+        except Exception as exc:
+            self.logger.warning("roleboard_prompt could not inspect roleboard_generation provider: %s", exc)
+            return {"provider_name": "", "model_name": "", "model_id": ""}
+        binding = getattr(provider, "model_binding", None)
+        model_name = str(getattr(provider, "model", "") or "")
+        purpose_model = None
+        purpose_model_resolver = getattr(provider, "_purpose_model", None)
+        if callable(purpose_model_resolver):
+            try:
+                purpose_model = purpose_model_resolver({"node_name": "roleboard_generation"})
+            except Exception:
+                purpose_model = None
+        if purpose_model:
+            model_name = str(purpose_model)
+        return {
+            "provider_name": str(getattr(provider, "name", "") or ""),
+            "model_name": model_name,
+            "model_id": str(getattr(binding, "model_id", "") or ""),
+        }
+
+    def _roleboard_prompt_template_candidates(self, image_context: dict[str, str]) -> list[str]:
+        params = self._node_params("roleboard_generation")
+        configured = str(
+            params.get("roleboard_prompt_template")
+            or params.get("prompt_template")
+            or ""
+        ).strip()
+        if configured:
+            return [configured.removesuffix(".md")]
+
+        provider_name = slugify(image_context.get("provider_name", ""), fallback="provider").lower()
+        model_name = slugify(image_context.get("model_name", ""), fallback="model").lower()
+        model_id = str(image_context.get("model_id", "") or "")
+        model_id_slug = slugify(model_id.replace(":", "_"), fallback="model").lower()
+        candidates = [
+            f"roleboard_prompt/{provider_name}_{model_name}",
+            f"roleboard_prompt/{model_id_slug}",
+            f"roleboard_prompt/{provider_name}",
+            "roleboard_prompt/default",
+            "roleboard_prompt",
+        ]
+        result: list[str] = []
+        for candidate in candidates:
+            if candidate not in result:
+                result.append(candidate)
+        return result
+
+    def _resolve_roleboard_prompt_template(self, image_context: dict[str, str]) -> str:
+        last_error: FileNotFoundError | None = None
+        for template_name in self._roleboard_prompt_template_candidates(image_context):
+            path = self.workflow.prompts.prompt_dir / f"{template_name}.md"
+            if path.exists():
+                return template_name
+            last_error = FileNotFoundError(f"Prompt template not found: {path}")
+        if last_error is not None:
+            raise last_error
+        raise FileNotFoundError("No roleboard prompt template candidates were available")
+
     def _prompt_item_from_model_output(
         self,
         extract_item: RoleExtractItem,
@@ -1335,6 +1402,14 @@ class RoleboardPromptNode(RoleNodeBase):
         role_index = self._role_index_items(extract_output.roles)
         role_novel_extract: dict[str, str] | None = None
         key_vision_asset = self._key_vision_asset_for_prompt(state)
+        roleboard_image_context = self._roleboard_image_binding_context()
+        prompt_template = self._resolve_roleboard_prompt_template(roleboard_image_context)
+        self.logger.info(
+            "roleboard_prompt template=%s image_provider=%s image_model=%s",
+            prompt_template,
+            roleboard_image_context.get("provider_name") or "-",
+            roleboard_image_context.get("model_name") or "-",
+        )
         for extract_item in target_extract_roles:
             role_key = self.workflow._role_name_key(extract_item.name)
             if role_key in prompt_by_key and not force_pregen:
@@ -1359,6 +1434,9 @@ class RoleboardPromptNode(RoleNodeBase):
                 role_novel_full=role_novel_full,
                 role_index=role_index,
                 key_vision_asset=key_vision_asset,
+                prompt_template=prompt_template,
+                roleboard_image_provider=roleboard_image_context.get("provider_name"),
+                roleboard_image_model=roleboard_image_context.get("model_name"),
             )
             item = self._prompt_item_from_model_output(extract_item, output, state)
             prompt_path = self.roleboard_prompts.item_relative_path_for_name(project_dir, item.role_name)

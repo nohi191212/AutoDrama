@@ -119,12 +119,6 @@ class DirectorPrepNode(DirectorNodeBase):
             provider,
             novel_full=novel_full,
         )
-        output_keys = [item.episode_key for item in output.episodes]
-        if set(output_keys) != set(episode_keys):
-            raise ValueError(
-                "director_prep.episodes must contain exactly "
-                f"{', '.join(episode_keys)}; got {', '.join(sorted(output_keys)) or '-'}"
-            )
         path = self.repo.save_node_output(project_dir, self.name, output)
         state.metadata["director_prep"] = output.model_dump(mode="json", exclude_none=True)
         state.metadata["director_prep_path"] = self.layout.project_relative(project_dir, path)

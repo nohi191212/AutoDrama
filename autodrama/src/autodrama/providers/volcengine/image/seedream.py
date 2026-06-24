@@ -133,7 +133,7 @@ class VolcengineSeedreamImageProvider:
                 self.settings.options.get("seedream_roleboard_size")
                 or self.settings.options.get("roleboard_size")
             )
-        if node_name == "prop_generation":
+        if node_name in {"prop_generation", "prop_image_generation"}:
             return self.settings.options.get("seedream_prop_size") or self.settings.options.get("prop_size")
         if node_name == "layout_image_generation":
             return self.settings.options.get("seedream_layout_size") or self.settings.options.get("layout_size")

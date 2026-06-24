@@ -136,20 +136,26 @@ class ScriptService:
         provider: TextLLM,
         *,
         episode_key: str,
-        novel_full: str,
-        novel_extract: str,
-        director_prep: str | None = None,
+        novel_full_this_episode: str,
+        novel_extract_all_episodes: str,
     ) -> ClipSegmentOutput:
         episode_duration_seconds = self.episode_duration_seconds(state)
+        min_clip_seconds = 8
+        max_clip_seconds = 15
+        duration_reference_note = (
+            "episode_duration_seconds 只用于帮助判断文本节奏和信息密度，"
+            "不要据此机械计算或强行满足 clip 数量。"
+        )
         prompt = self.prompts.render(
             "clip_segment",
             title=state.title,
-            raw_script=state.raw_script,
             episode_key=episode_key,
-            novel_full=novel_full,
-            novel_extract=novel_extract,
-            director_prep=director_prep or "（暂无导演前期。）",
             episode_duration_seconds=episode_duration_seconds,
+            min_clip_seconds=min_clip_seconds,
+            max_clip_seconds=max_clip_seconds,
+            duration_reference_note=duration_reference_note,
+            novel_full_this_episode=novel_full_this_episode,
+            novel_extract_all_episodes=novel_extract_all_episodes,
         )
         print(
             "\n".join(
@@ -173,7 +179,9 @@ class ScriptService:
                 "project_id": state.project_id,
                 "episode_key": episode_key,
                 "episode_duration_seconds": episode_duration_seconds,
-                "segment_seconds": 15,
+                "min_clip_seconds": min_clip_seconds,
+                "max_clip_seconds": max_clip_seconds,
+                "segment_seconds": max_clip_seconds,
             },
         )
 

@@ -13,7 +13,12 @@ from autodrama.core.schemas import StoryboardShot
 from autodrama.workflows.nodes import AVAILABLE_PREGEN_NODE_NAMES, PREGEN_NODE_NAMES, STORYBOARD_ASSET_NODE_NAMES
 
 
-EXPECTED_STORYBOARD_NODES = ["storyboard_prompt", "storyboard_generation", "shot_manifest_generation"]
+EXPECTED_STORYBOARD_NODES = [
+    "storyboard_prompt",
+    "storyboard_generation",
+    "storyboard_keyframe_generation",
+    "shot_manifest_generation",
+]
 
 
 def main() -> None:
@@ -24,7 +29,7 @@ def main() -> None:
             raise AssertionError(f"storyboard node is not available through pregen: {node_name}")
 
     payload = {
-        "shot_id": "episode_001_shot_001",
+        "clip_id": "episode_001_clip_001",
         "index": 1,
         "layout_id": "layout_office",
         "title": "test",
@@ -34,12 +39,16 @@ def main() -> None:
         "storyboard_asset_path": "assets/images/storyboards/storyboard.png",
     }
     shot = StoryboardShot.model_validate(payload)
+    if shot.clip_id != "episode_001_clip_001" or shot.shot_id != "episode_001_clip_001":
+        raise AssertionError("clip id compatibility failed")
     if shot.storyboard_asset_id != "storyboard_id":
         raise AssertionError("storyboard asset id was not loaded")
     if shot.storyboard_asset_path != "assets/images/storyboards/storyboard.png":
         raise AssertionError("storyboard asset path was not loaded")
 
     dumped = shot.model_dump()
+    if "clip_id" not in dumped or "shot_id" in dumped:
+        raise AssertionError("storyboard clips should serialize clip_id, not shot_id")
     if "storyboard_asset_id" not in dumped or "storyboard_asset_path" not in dumped:
         raise AssertionError("storyboard asset fields were not serialized")
 

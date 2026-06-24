@@ -15,10 +15,12 @@ from autodrama.core.schemas import (
     DirectorPrepOutput,
     KeyVisionPromptOutput,
     LayoutDedupeReviewOutput,
-    LayoutDesignOutput,
     LayoutExtractOutput,
+    LayoutPromptOutput,
+    PropDedupeOutput,
     PropDesignOutput,
     PropExtractOutput,
+    PropPromptOutput,
     RoleDuplicateAuditReviewOutput,
     RoleEpisodeKeyAuditReviewOutput,
     RoleExtractOutput,
@@ -158,95 +160,10 @@ class FakeTextProvider:
                 ),
             }
         elif schema is DirectorPrepOutput or node_name == "director_prep":
-            expected_keys = metadata.get("expected_keys") or episode_keys
-            director_episode_keys = [str(key) for key in expected_keys]
             data = {
                 "story_core": "林舟在被合同调包陷害后，从隐忍调查转向公开反击。",
                 "worldview": "现代职场悬疑短剧，证据链、会议权力关系和雨夜空间氛围推动戏剧张力。",
                 "visual_tone": "克制写实的短剧摄影，冷白办公光、雨夜反射、低饱和色彩和稳定推进镜头。",
-                "immutable_rules": [
-                    "合同关键页被调包是核心证据，不得改成其他案件。",
-                    "林舟的反击建立在邮件截图和合同细节上，不是凭空爆发。",
-                ],
-                "character_locks": [
-                    {
-                        "name": "林舟",
-                        "identity": "被陷害的职场青年，调查合同调包并准备反击。",
-                        "arc": "从沉默观察到冷静确认证据。",
-                        "visual_invariants": ["短发", "深灰职场衬衫", "疲惫但克制的眼神"],
-                        "performance_invariants": ["语气压低", "动作克制", "先观察再行动"],
-                        "must_not_change": ["不能变成冲动鲁莽的复仇者"],
-                    },
-                    {
-                        "name": "苏晚",
-                        "identity": "提供旧邮件截图的协助者。",
-                        "arc": "以理性证据帮助林舟稳住局面。",
-                        "visual_invariants": ["清冷理性", "数据分析气质"],
-                        "performance_invariants": ["递交证据时简洁果断"],
-                        "must_not_change": ["不能替代林舟完成正面反击"],
-                    },
-                ],
-                "scene_locks": [
-                    {
-                        "name": "雨夜办公室",
-                        "description": "林舟发现合同异常和邮件证据的深夜办公空间。",
-                        "spatial_facts": ["办公桌承载合同和电脑屏幕", "窗外有雨痕和城市霓虹反射"],
-                        "lighting_mood": "冷白顶灯和电脑冷蓝光压低环境。",
-                        "must_not_change": ["不要改成白天明亮空间"],
-                    },
-                    {
-                        "name": "会议室",
-                        "description": "后续公开对峙和证据展示空间。",
-                        "spatial_facts": ["长会议桌", "投影屏", "玻璃墙雨痕"],
-                        "lighting_mood": "投影冷光与窗外蓝色雨光形成压迫感。",
-                        "must_not_change": ["不要移除投影屏和会议桌"],
-                    },
-                ],
-                "episodes": [
-                    {
-                        "episode_key": key,
-                        "story_function": "建立合同调包疑点，并让林舟完成从忍耐到准备反击的情绪转向。",
-                        "emotional_curve": ["疲惫压抑", "发现异常", "证据确认", "决定反击"],
-                        "shot_beats": [
-                            {
-                                "beat_index": 1,
-                                "title": "雨夜办公室建立",
-                                "source_anchor": f"{key}，雨夜办公室的灯只剩下一排。",
-                                "dramatic_intent": "建立压抑空间和调查氛围。",
-                                "what_to_shoot": "林舟独自在雨夜办公室检查合同。",
-                                "camera_language": "低位近景，缓慢推近合同和人物侧脸。",
-                                "emotion": "疲惫压抑",
-                                "must_keep": ["雨夜办公室", "合同在桌上"],
-                                "must_not_change": ["不要提前进入会议室"],
-                            },
-                            {
-                                "beat_index": 2,
-                                "title": "合同异常确认",
-                                "source_anchor": "发现关键页纸张颜色比其他页浅了半分，装订孔也错开了一线。",
-                                "dramatic_intent": "揭示案件核心证据。",
-                                "what_to_shoot": "合同色差和装订孔错位被林舟发现。",
-                                "camera_language": "合同特写到林舟眼神反应。",
-                                "emotion": "警觉确认",
-                                "must_keep": ["纸张色差", "装订孔错位"],
-                                "must_not_change": ["不要把证据改成口头传闻"],
-                            },
-                            {
-                                "beat_index": 3,
-                                "title": "决定不再退让",
-                                "source_anchor": "第一次决定不再退让。",
-                                "dramatic_intent": "完成本集情绪转折。",
-                                "what_to_shoot": "林舟拍下证据并抬眼看向屏幕。",
-                                "camera_language": "稳定近景停在半侧脸和证据同框。",
-                                "emotion": "克制反击",
-                                "must_keep": ["拍下证据", "雨声压低环境"],
-                                "must_not_change": ["不要写成外放怒吼"],
-                            },
-                        ],
-                        "must_keep": ["合同调包", "旧邮件截图", "林舟冷静确认证据"],
-                        "must_not_change": ["不要新增无关案件", "不要删除苏晚提供证据的功能"],
-                    }
-                    for key in director_episode_keys
-                ],
             }
         elif schema is KeyVisionPromptOutput or node_name == "design_key_vision_prompt":
             data = {
@@ -368,43 +285,64 @@ class FakeTextProvider:
         elif schema is StoryboardPromptOutput or node_name == "storyboard_prompt":
             expected_keys = metadata.get("expected_keys") or episode_keys
             storyboard_episode_keys = [str(key) for key in expected_keys]
-            shot_count = int(metadata.get("shot_count") or 2)
+            expected_clip_counts = metadata.get("expected_clip_counts")
+            if not isinstance(expected_clip_counts, dict):
+                expected_clip_counts = {}
+            fallback_clip_count = int(metadata.get("shot_count") or metadata.get("clip_count") or 2)
+
+            def fake_panel_plan(index: int) -> dict[str, str]:
+                return {
+                    f"P{panel_index:02d}": (
+                        f"P{panel_index:02d}（Camera Shot {1 if panel_index <= 4 else 2}）："
+                        f"clip {index} 的关键动作阶段；"
+                        + ("P04 与 P05 之间画醒目的红色斜杠 cut mark。" if panel_index == 4 else "")
+                    )
+                    for panel_index in range(1, 13)
+                }
+
+            def fake_video_prompt(index: int) -> str:
+                return (
+                    "内部 Camera Shots："
+                    "Camera Shot 1（0-5秒）：雨夜办公室冷白顶灯下，50mm 斜侧近景贴着桌面建立合同，"
+                    "林舟以半侧脸低头检查合同页码，雨声和空调低频压住空间。"
+                    "Camera Shot 2（5-10秒）：轨道车轻微横移，林舟把邮件截图推向桌面中央，"
+                    "说：“这份合同被换过，时间线就在这里。”他说话时口型清晰匹配台词。"
+                    "十二宫格面板规划 P01-P12："
+                    + " ".join(fake_panel_plan(index).values())
+                    + "画面不出现字幕、对白气泡、可读文字、水印、logo、片段编号或无关商标。"
+                )
+
             data = {
                 "storyboards": [
                     {
                         "episode_key": key,
-                        "shots": [
+                        "clips": [
                             {
-                                "shot_id": f"{key}_shot_{index:03d}",
-                                "duration_seconds": 15.0 if index % 2 else 12.0,
+                                "clip_id": f"{key}_clip_{index:03d}",
+                                "clip_title": f"Clip {index:03d}",
+                                "clip_duration_hint": "10s",
+                                "clip_text": f"{key} fake clip {index} text",
+                                "duration_seconds": 10.0 if index % 2 else 12.0,
                                 "role_ids": ["role_林舟", "role_赵启"] if index == 2 else ["role_林舟"],
                                 "layout_ids": ["layout_会议室"] if index == 2 else ["layout_雨夜办公室"],
                                 "prop_ids": ["prop_邮件截图"] if index == 2 else ["prop_被调包的合同"],
-                                "video_prompt": (
-                                    "0-1秒：会议室冷光下，35mm 中广角低机位沿会议桌边缘滑入；"
-                                    "1-2秒：被调包的合同和邮件截图在前景掠过；"
-                                    "2-3秒：林舟站在投影屏左侧，以三分之二侧脸看向赵启；"
-                                    "3-4秒：赵启坐在右侧阴影里前倾，手指扣紧扶手；"
-                                    "4-5秒：轨道车轻微横移，林舟把邮件截图推向桌面中央；"
-                                    "5-7秒：林舟说：“这份合同被换过，时间线就在这里。”他说话时口型清晰匹配这句台词；"
-                                    "7-9秒：镜头压近赵启半侧脸，他的视线避开林舟；"
-                                    "9-11秒：合同纸张色差和附件时间在桌面同框；"
-                                    "11-12秒：赵启身体慢慢后撤，会议室低频环境声和纸张摩擦声变清晰。"
-                                    "画面不出现字幕、对白气泡、可读文字、水印、logo、片段编号或无关商标。"
-                                    if index == 2
-                                    else "0-1秒：雨夜办公室冷白顶灯下，50mm 斜侧近景贴着桌面建立合同；"
-                                    "1-2秒：林舟以半侧脸低头检查合同页码；"
-                                    "2-3秒：手指掀开关键页，浅色纸张进入焦点；"
-                                    "3-4秒：镜头缓慢推近错位装订孔；"
-                                    "4-5秒：雨声和空调低频压住空间；"
-                                    "5-7秒：电脑屏幕边缘的邮件附件时间变亮；"
-                                    "7-9秒：林舟停住动作，视线从合同移到屏幕旁侧；"
-                                    "9-11秒：合同色差、错位装订孔和邮件时间在同一视线方向里连成证据；"
-                                    "11-15秒：林舟抬眼但不看镜头，表情从疲惫变成克制警觉，纸张摩擦声收尾。"
-                                    "画面不出现字幕、对白气泡、可读文字、水印、logo、片段编号或无关商标。"
-                                ),
+                                "camera_shots": [
+                                    {
+                                        "camera_shot_id": "Camera Shot 1",
+                                        "time_range": "0-5秒",
+                                        "description": "林舟在雨夜办公室检查合同，镜头连续推进。",
+                                    },
+                                    {
+                                        "camera_shot_id": "Camera Shot 2",
+                                        "time_range": "5-10秒",
+                                        "description": "邮件截图被推到桌面中央，证据被揭示。",
+                                    },
+                                ],
+                                "panel_plan": fake_panel_plan(index),
+                                "video_prompt": fake_video_prompt(index),
+                                "negative_prompt": "无字幕、无水印、无logo、无分格最终画面。",
                             }
-                            for index in range(1, shot_count + 1)
+                            for index in range(1, int(expected_clip_counts.get(key, fallback_clip_count)) + 1)
                         ],
                     }
                     for key in storyboard_episode_keys
@@ -441,24 +379,29 @@ class FakeTextProvider:
             }
         elif schema is PropExtractOutput or node_name == "prop_extract":
             data = {
-                "props": [
-                    {
-                        "name": "被调包的合同",
-                        "status": "normal",
-                        "episode_keys": episode_keys,
-                        "source_chapters": ["第1章-第2章"],
-                        "brief": "林舟发现合同关键页异常的核心证据道具。",
-                        "appearance_notes": ["A4商务合同", "关键页纸张颜色略浅", "页码和边缘纹理不一致"],
-                    },
-                    {
-                        "name": "邮件截图",
-                        "status": "normal",
-                        "episode_keys": episode_keys,
-                        "source_chapters": ["第1章-第2章"],
-                        "brief": "苏晚提供的旧邮件附件时间线证据。",
-                        "appearance_notes": ["电脑或手机屏幕截图", "附件时间线", "冷蓝屏幕光"],
-                    },
-                ]
+                "generated_prop_intro": {
+                    "被调包的合同": "林舟发现合同关键页异常的核心证据道具，A4商务合同中关键页纸张颜色略浅。",
+                    "被调包的合同_破损": "相比原合同，边角被撕裂并带有明显折痕和污渍。",
+                    "邮件截图": "苏晚提供的旧邮件附件时间线证据，以屏幕截图形式在镜头中展示。",
+                },
+                "notes": ["fake provider prop extract fixture"],
+            }
+        elif schema is PropDedupeOutput or node_name == "prop_dedupe":
+            data = {
+                "generated_prop_intro": {
+                    "被调包的合同": "林舟发现合同关键页异常的核心证据道具，A4商务合同中关键页纸张颜色略浅。",
+                    "被调包的合同_破损": "相比原合同，边角被撕裂并带有明显折痕和污渍。",
+                    "邮件截图": "苏晚提供的旧邮件附件时间线证据，以屏幕截图形式在镜头中展示。",
+                },
+                "merge_notes": ["fake provider prop dedupe fixture"],
+            }
+        elif schema is PropPromptOutput or node_name == "prop_prompt":
+            data = {
+                "prop_prompts": {
+                    "被调包的合同": "真人电影质感，无人物道具参考图，A4商务合同平放在深色办公桌上，关键页纸张颜色略浅，页码和纸张边缘纹理差异清楚，冷白台灯从左上照射，背景干净虚化，无可读大段文字、无水印。",
+                    "被调包的合同_破损": "基于参考图保持合同页数、装订位置、纸张材质和关键页色差不变，只将边角改为撕裂破损状态，增加折痕、灰尘和轻微污渍，无人物、无手持、无水印。",
+                    "邮件截图": "真人电影质感，无人物道具参考图，电脑屏幕或手机屏幕上的旧邮件截图特写，附件时间线和界面布局可见但不生成可读小字，冷蓝屏幕光和桌面反射自然，背景干净。",
+                }
             }
         elif schema is PropDesignOutput or node_name == "prop_design":
             prop_name = str(metadata.get("prop_name") or "").strip()
@@ -486,56 +429,25 @@ class FakeTextProvider:
                 data["props"] = selected_props or data["props"][:1]
         elif schema is LayoutExtractOutput or node_name == "layout_extract":
             data = {
-                "layouts": [
-                    {
-                        "name": "雨夜办公室",
-                        "episode_keys": episode_keys,
-                        "source_chapters": ["第1章-第2章"],
-                        "brief": "林舟发现合同异常并与苏晚核对证据的悬疑调查空间。",
-                        "appearance_notes": ["深夜办公区", "窗外雨光", "冷白灯", "办公桌与电脑"],
-                    },
-                    {
-                        "name": "会议室",
-                        "episode_keys": episode_keys,
-                        "source_chapters": ["第1章-第2章"],
-                        "brief": "林舟公开投屏证据并反击赵启的对峙空间。",
-                        "appearance_notes": ["玻璃会议室", "长桌", "投影屏", "冷色顶灯"],
-                    },
-                ]
+                "generated_layout_intro": {
+                    "雨夜办公室": "林舟发现合同异常并与苏晚核对证据的深夜悬疑调查空间，冷白灯和窗外雨光交织。",
+                    "会议室": "林舟公开投屏证据并反击赵启的玻璃会议室对峙空间，长桌、投影屏和冷色顶灯稳定可复用。",
+                },
+                "notes": ["fake provider layout extract fixture"],
             }
-        elif schema is LayoutDesignOutput or node_name == "layout_design":
+        elif schema is LayoutPromptOutput or node_name == "layout_prompt":
             data = {
-                "layouts": [
-                    {
-                        "name": "雨夜办公室",
-                        "desc": "深夜办公区，冷白灯和窗外雨光交织，桌面散落合同和电脑，适合悬疑调查氛围。",
-                        "prompt": "真人电影质感，深夜现代办公室，窗外雨夜，冷白灯，桌面散落合同和打开的电脑，空间真实，电影镜头，空场景，无人物。",
-                        "episode_keys": episode_keys,
-                    },
-                    {
-                        "name": "会议室",
-                        "desc": "玻璃会议室，长桌、投影屏和冷色顶灯，适合公开对峙和证据投屏。",
-                        "prompt": "真人电影质感，现代公司玻璃会议室，长桌，投影屏，冷色顶灯，空间真实，电影镜头，空场景，无人物。",
-                        "episode_keys": episode_keys,
-                    },
-                ]
+                "layout_prompts": {
+                    "雨夜办公室": "深夜现代办公室空场景，冷白办公灯与窗外雨光交织，桌面散落合同和打开的电脑，玻璃窗有雨痕反射，入口、工位通道和可取景区域清晰，无人物、无可读文字、无水印。",
+                    "会议室": "现代公司玻璃会议室空场景，长桌、投影屏、玻璃墙和冷色顶灯构成公开对峙空间，桌面可放合同证据，入口、座椅通道和投屏背景清晰，无人物、无可读文字、无水印。",
+                }
             }
         elif schema is LayoutDedupeReviewOutput or node_name == "layout_dedupe_review":
             data = {
-                "layouts": [
-                    {
-                        "name": "雨夜办公室",
-                        "desc": "深夜办公区，冷白灯和窗外雨光交织，桌面散落合同和电脑，适合悬疑调查氛围。",
-                        "prompt": "真人电影质感，深夜现代办公室，窗外雨夜，冷白灯，桌面散落合同和打开的电脑，空间真实，电影镜头，空场景，无人物。",
-                        "episode_keys": episode_keys,
-                    },
-                    {
-                        "name": "会议室",
-                        "desc": "玻璃会议室，长桌、投影屏和冷色顶灯，适合公开对峙和证据投屏。",
-                        "prompt": "真人电影质感，现代公司玻璃会议室，长桌，投影屏，冷色顶灯，空间真实，电影镜头，空场景，无人物。",
-                        "episode_keys": episode_keys,
-                    },
-                ],
+                "generated_layout_intro": {
+                    "雨夜办公室": "林舟发现合同异常并与苏晚核对证据的深夜悬疑调查空间，冷白灯和窗外雨光交织。",
+                    "会议室": "林舟公开投屏证据并反击赵启的玻璃会议室对峙空间，长桌、投影屏和冷色顶灯稳定可复用。",
+                },
                 "merge_notes": ["未发现需要合并的重复场景。"],
             }
         elif schema is BGMDesignOutput or node_name == "bgm_design":

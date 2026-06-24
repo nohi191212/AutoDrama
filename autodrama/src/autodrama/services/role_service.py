@@ -28,6 +28,28 @@ class RoleService:
     def roleboard_style_prompt(state: ProjectState) -> str:
         return str(state.metadata.get("roleboard_style_prompt") or "").strip()
 
+    @staticmethod
+    def visual_tone(state: ProjectState) -> str:
+        director_prep = state.metadata.get("director_prep")
+        if isinstance(director_prep, dict):
+            visual_tone = str(director_prep.get("visual_tone") or "").strip()
+            if visual_tone:
+                return visual_tone
+        return str(state.metadata.get("visual_tone") or "").strip()
+
+    @classmethod
+    def role_character_intro(cls, role_item: RoleExtractItem) -> str:
+        payload = {
+            "name": role_item.name,
+            "aliases": role_item.aliases,
+            "role_tier": role_item.role_tier,
+            "brief": role_item.brief or "",
+            "appearance_notes": role_item.appearance_notes,
+            "has_dialogue": role_item.has_dialogue,
+            "visual_reuse_required": role_item.visual_reuse_required,
+        }
+        return cls.format_json(payload)
+
     @classmethod
     def clip_segments_context(cls, state: ProjectState, episode_keys: list[str] | None = None) -> str:
         payload = state.metadata.get("clip_segments")
@@ -243,18 +265,28 @@ class RoleService:
         role_novel_full: dict[str, str],
         role_index: list[dict[str, object]],
         key_vision_asset: dict[str, object] | None = None,
+        prompt_template: str = "roleboard_prompt",
+        roleboard_image_provider: str | None = None,
+        roleboard_image_model: str | None = None,
     ) -> RoleboardPromptModelOutput:
         prompt = self.prompts.render(
-            "roleboard_prompt",
+            prompt_template,
             role_extract_item=self.format_json(role_item.model_dump(mode="json")),
+            character_intro=self.role_character_intro(role_item),
             role_novel_extract=self.format_json(role_novel_extract),
             role_novel_full=self.format_json(role_novel_full),
             clip_segments=self.clip_segments_context(state, list(role_novel_full)),
             director_prep=DirectorService.director_prep_context(state, episode_keys=list(role_novel_full)),
+            visual_tone=(
+                self.visual_tone(state)
+                or "（暂无 director_prep.visual_tone，请只依据人物介绍生成中性、可复用的角色身份板提示词。）"
+            ),
             role_index=self.format_json(role_index),
             key_vision_asset=self.format_json(key_vision_asset or {}),
             roleboard_style_prompt=self.roleboard_style_prompt(state),
             roleboard_view_requirement=self.roleboard_view_requirement(),
+            roleboard_image_provider=roleboard_image_provider or "",
+            roleboard_image_model=roleboard_image_model or "",
         )
         return await provider.generate_json(
             prompt,
@@ -266,5 +298,8 @@ class RoleService:
                 "role_name": role_item.name,
                 "episode_keys": list(role_novel_full),
                 "key_vision_asset": key_vision_asset or {},
+                "roleboard_prompt_template": prompt_template,
+                "roleboard_image_provider": roleboard_image_provider,
+                "roleboard_image_model": roleboard_image_model,
             },
         )

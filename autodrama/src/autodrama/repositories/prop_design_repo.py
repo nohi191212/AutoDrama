@@ -62,7 +62,10 @@ class PropDesignRepository:
             if isinstance(loaded, dict):
                 payload = loaded
 
-        is_design_payload = payload.get("node_name") == "prop_design" or payload.get("source") == "prop_design"
+        is_design_payload = payload.get("node_name") in {"prop_design", "prop_prompt"} or payload.get("source") in {
+            "prop_design",
+            "prop_prompt",
+        }
         if is_design_payload:
             payload.update(
                 {
@@ -104,7 +107,10 @@ class PropDesignRepository:
                     payload = json.loads(path.read_text(encoding="utf-8"))
                     if not isinstance(payload, dict):
                         continue
-                    if payload.get("node_name") != "prop_design" and payload.get("source") != "prop_design":
+                    if payload.get("node_name") not in {"prop_design", "prop_prompt"} and payload.get("source") not in {
+                        "prop_design",
+                        "prop_prompt",
+                    }:
                         continue
                     prop_items.append(self.load_design_item(path))
                 except Exception as exc:

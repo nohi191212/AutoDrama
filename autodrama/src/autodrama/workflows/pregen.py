@@ -77,16 +77,21 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "role_subject_element_generation",
     "storyboard_prompt",
     "storyboard_generation",
+    "storyboard_keyframe_generation",
     "shot_manifest_generation",
     "role_voice_select",
-    "prop_design",
-    "prop_generation",
+    "prop_prompt",
+    "prop_image_generation",
     "layout_image_generation",
 }
 ROLE_SCOPED_PREGEN_ONLY_NODES = {
     "role_voice_select",
 }
-PREGEN_ONLY_ALIASES = {"prop_image_generation": "prop_generation"}
+PREGEN_ONLY_ALIASES = {
+    "prop_design": "prop_prompt",
+    "prop_generation": "prop_image_generation",
+    "prop_image_generation": "prop_image_generation",
+}
 
 
 class PregenWorkflow:
@@ -581,8 +586,8 @@ class PregenWorkflow:
             raise ValueError(
                 "--episodes is only supported for pregen --only clip_segment, roleboard_prompt, roleboard_generation, "
                 "role_subject_video_generation, role_subject_element_generation, storyboard_prompt, "
-                "storyboard_generation, shot_manifest_generation, "
-                "role_voice_select, prop_design, prop_generation, or layout_image_generation."
+                "storyboard_generation, storyboard_keyframe_generation, shot_manifest_generation, "
+                "role_voice_select, prop_prompt, prop_image_generation, or layout_image_generation."
             )
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError("--roles is only supported for pregen --only role_voice_select.")
@@ -2209,7 +2214,7 @@ class PregenWorkflow:
         return await self._static_asset_node_runner("prop_extract").run(project_dir, state)
 
     async def _run_prop_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("prop_design").run(project_dir, state)
+        return await self._run_prop_prompt(project_dir, state)
 
     @staticmethod
     def _prop_status_key(value: object) -> str:
@@ -2307,19 +2312,25 @@ class PregenWorkflow:
         ]
 
     async def _run_prop_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("prop_generation").run(project_dir, state)
+        return await self._run_prop_image_generation(project_dir, state)
 
     async def _run_prop_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._run_prop_generation(project_dir, state)
+        return await self._static_asset_node_runner("prop_image_generation").run(project_dir, state)
+
+    async def _run_prop_dedupe(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("prop_dedupe").run(project_dir, state)
+
+    async def _run_prop_prompt(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("prop_prompt").run(project_dir, state)
 
     async def _run_layout_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("layout_extract").run(project_dir, state)
 
-    async def _run_layout_design(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("layout_design").run(project_dir, state)
-
     async def _run_layout_dedupe_review(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("layout_dedupe_review").run(project_dir, state)
+
+    async def _run_layout_prompt(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("layout_prompt").run(project_dir, state)
 
     async def _run_layout_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("layout_image_generation").run(project_dir, state)

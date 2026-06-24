@@ -85,6 +85,8 @@ nodes:
   roleboard_generation:
     model: toapi:gpt-image-2
     params:
+      roleboard_prompt_template: roleboard_prompt/toapi_gpt_image_2
+      roleboard_generation_concurrency: 3
       size: "16:9"
       resolution: 4K
       n: 1
@@ -102,32 +104,50 @@ nodes:
       resolution: 2K
       n: 1
       response_format: url
+  storyboard_keyframe_generation:
+    model: toapi:gpt-image-2
+    params:
+      prompt_template: toapi_gpt_image_2
+      size: "9:16"
+      resolution: 2K
+      n: 1
+      response_format: url
+      concurrency: 4
+      output_dir: assets/storyboard_keyframes
   prop_extract:
     model: rightcode:gpt-5.5
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
-  prop_design:
+  prop_dedupe:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
+      max_iterations: 8
+  prop_prompt:
     model: rightcode:gpt-5.5
     params:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
-  prop_generation:
+  prop_image_generation:
     model: toapi:gpt-image-2
     params:
       size: "1:1"
       resolution: 2K
       n: 1
       response_format: url
+      prop_image_generation_concurrency: 3
   layout_extract:
     model: rightcode:gpt-5.5
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
-  layout_design:
+  layout_prompt:
     model: rightcode:gpt-5.5
     params:
       reasoning_effort: xhigh
@@ -139,6 +159,7 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
+      max_iterations: 8
   layout_image_generation:
     model: toapi:gpt-image-2
     params:
@@ -146,6 +167,7 @@ nodes:
       resolution: 4K
       n: 1
       response_format: url
+      concurrency: 3
   bgm_design:
     model: rightcode:gpt-5.5
     params:
@@ -174,6 +196,7 @@ nodes:
   # Optional Kling branch. Switch these bindings plus routing.video.shot to kling.
   # role_subject_element_generation may still create/cache Kling subject elements,
   # but shot_video_generation uses the fixed shot_video_inputs from shot_manifest_generation;
+  # image_1/image_2/image_3 are clip_start_frame, clip_end_frame, and storyboard.
   # it must not pass element refs or element_list.
   # role_subject_video_generation:
   #   model: kling:kling-v3-omni
@@ -404,6 +427,7 @@ providers:
       key_vision_resolution: 4K
       prop_size: "1:1"
       prop_resolution: 2K
+      prop_image_generation_concurrency: 3
       layout_size: "9:16"
       layout_resolution: 4K
       response_format: url
@@ -511,11 +535,11 @@ providers:
       video_ratio: "9:16"
       video_resolution: 720p
       # Seedance video refs are prepared by shot_manifest_generation as fixed shot_video_inputs.
-      # shot_video_generation only submits storyboard sheet, roleboard(s), layout(s), and prop(s) from the shot manifest.
-      # Previous generated videos, last frames, audio refs, and key vision are not part of the fixed shot video contract.
+      # shot_video_generation submits clip_start_frame, clip_end_frame, storyboard, then roleboard/layout/prop refs.
+      # Previous generated videos, audio refs, and key vision are not part of the fixed shot video contract.
       video_reference_mode: full
       previous_video_preroll_seconds: 0
-      # Reserve image slots for storyboard sheet first, then roleboard(s), layout(s), and prop(s).
+      # Reserve image slots for clip_start_frame, clip_end_frame, storyboard first, then roleboard(s), layout(s), and prop(s).
       # Raise this when a shot needs multiple roleboard/layout/prop images.
       max_reference_images: 3
       max_reference_audio: 1

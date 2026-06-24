@@ -119,6 +119,7 @@ class ProjectLayout:
             project_dir / "assets" / "images" / "roles",
             project_dir / "assets" / "images" / "key_visions",
             project_dir / "assets" / "images" / "storyboards",
+            project_dir / "assets" / "images" / "storyboard_keyframes",
             project_dir / "assets" / "images" / "props",
             project_dir / "assets" / "images" / "layouts",
             project_dir / "assets" / "audios" / "bgms",

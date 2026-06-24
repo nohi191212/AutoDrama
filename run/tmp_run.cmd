@@ -1,0 +1,5 @@
+run\start.cmd --config huyao.yaml --project huyao --only clip_segment --episodes 1 --force
+run\start.cmd --config huyao.yaml --project huyao --only storyboard_prompt --episodes 1 --force
+run\start.cmd --config huyao.yaml --project huyao --only storyboard_generation --episodes 1 --force
+run\start.cmd --config huyao.yaml --project huyao --only shot_manifest_generation --episodes 1 --force
+run\start.cmd --generation --config huyao.yaml --project huyao --only shot_video_generation --episodes 1 --force
