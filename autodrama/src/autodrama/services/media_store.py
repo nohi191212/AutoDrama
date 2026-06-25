@@ -1,15 +1,34 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 
 
 class MediaStore:
+    DEFAULT_DOWNLOAD_ATTEMPTS = 5
+    RETRYABLE_DOWNLOAD_STATUS_CODES = {
+        408,
+        409,
+        425,
+        429,
+        500,
+        502,
+        503,
+        504,
+        520,
+        521,
+        522,
+        523,
+        524,
+    }
+
     def __init__(self, layout: ProjectLayout, *, timeout_seconds: int) -> None:
         self.layout = layout
         self.timeout_seconds = timeout_seconds
@@ -24,11 +43,43 @@ class MediaStore:
         return data
 
     async def _download(self, url: str, *, label: str) -> bytes:
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.get(url)
-        if response.status_code >= 400:
-            raise RuntimeError(f"Failed to download generated {label} HTTP {response.status_code}: {response.text[:500]}")
-        return response.content
+        last_error: Exception | None = None
+        delay_seconds = 1.0
+        attempts = self.DEFAULT_DOWNLOAD_ATTEMPTS
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
+            for attempt in range(1, attempts + 1):
+                try:
+                    response = await client.get(url)
+                    if response.status_code < 400:
+                        return response.content
+                    message = (
+                        f"Failed to download generated {label} HTTP {response.status_code}: "
+                        f"{response.text[:500]}"
+                    )
+                    if response.status_code not in self.RETRYABLE_DOWNLOAD_STATUS_CODES:
+                        raise RuntimeError(message)
+                    last_error = RuntimeError(message)
+                except httpx.HTTPError as exc:
+                    last_error = exc
+
+                if attempt >= attempts:
+                    break
+                get_logger().warning(
+                    "media download attempt %d/%d failed for %s: %s; retrying in %.1fs",
+                    attempt,
+                    attempts,
+                    label,
+                    last_error.__class__.__name__ if last_error else "unknown",
+                    delay_seconds,
+                )
+                await asyncio.sleep(delay_seconds)
+                delay_seconds = min(10.0, delay_seconds * 2)
+
+        if last_error is not None:
+            raise RuntimeError(
+                f"Failed to download generated {label} after {attempts} attempt(s): {last_error}"
+            ) from last_error
+        raise RuntimeError(f"Failed to download generated {label}: no response received")
 
     async def write_first_generated_image(self, project_dir: Path, output_path: Path, result: Any) -> str:
         output_path.parent.mkdir(parents=True, exist_ok=True)

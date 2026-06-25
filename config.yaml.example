@@ -40,7 +40,7 @@ nodes:
       temperature: 0.45
       response_format: json_object
   design_key_vision_image:
-    model: toapi:gpt-image-2
+    model: aibox:gpt-image-2
     params:
       size: "9:16"
       resolution: 4K
@@ -83,7 +83,7 @@ nodes:
       temperature: 0.4
       response_format: json_object
   roleboard_generation:
-    model: toapi:gpt-image-2
+    model: aibox:gpt-image-2
     params:
       roleboard_prompt_template: roleboard_prompt/toapi_gpt_image_2
       roleboard_generation_concurrency: 3
@@ -99,13 +99,14 @@ nodes:
       response_format: json_object
   # Image binding used internally by pregen node storyboard_generation for the 12-panel storyboard sheet.
   storyboard_sheet_generation:
-    model: toapi:gpt-image-2
+    model: aibox:gpt-image-2
     params:
+      storyboard_generation_concurrency: 2
       resolution: 2K
       n: 1
       response_format: url
   storyboard_keyframe_generation:
-    model: toapi:gpt-image-2
+    model: aibox:gpt-image-2
     params:
       prompt_template: toapi_gpt_image_2
       size: "9:16"
@@ -134,7 +135,7 @@ nodes:
       temperature: 0.4
       response_format: json_object
   prop_image_generation:
-    model: toapi:gpt-image-2
+    model: aibox:gpt-image-2
     params:
       size: "1:1"
       resolution: 2K
@@ -161,7 +162,7 @@ nodes:
       response_format: json_object
       max_iterations: 8
   layout_image_generation:
-    model: toapi:gpt-image-2
+    model: aibox:gpt-image-2
     params:
       size: "9:16"
       resolution: 4K
@@ -409,6 +410,39 @@ providers:
       key_vision_quality: high
       n: 1
 
+  aibox:
+    base_url: https://api.lk888.ai
+    api_key_env: AIBOX_API_KEY
+    models:
+      image: gpt-image-2
+      key_vision: gpt-image-2
+      roleboard: gpt-image-2
+      storyboard: gpt-image-2
+      prop: gpt-image-2
+      layout: gpt-image-2
+    options:
+      size: auto
+      quality: auto
+      response_format: url
+      n: 1
+      key_vision_size: "9:16"
+      key_vision_resolution: 4K
+      roleboard_size: "16:9"
+      roleboard_resolution: 4K
+      storyboard_size: "16:9"
+      storyboard_resolution: 2K
+      prop_size: "1:1"
+      prop_resolution: 2K
+      layout_size: "9:16"
+      layout_resolution: 4K
+      max_reference_images: 10
+      aibox_request_timeout_seconds: 60
+      aibox_max_attempts: 3
+      aibox_retry_initial_delay_seconds: 2
+      aibox_retry_max_delay_seconds: 30
+      poll_interval_seconds: 4
+      max_wait_seconds: 900
+
   toapi:
     base_url: https://toapis.com
     api_key_env: TOAPI_API_KEY
@@ -650,11 +684,11 @@ routing:
     bgm_plan: rightcode
   image:
     # Reusable global assets and pregen storyboard sheets.
-    role: toapi
-    key_vision: toapi
-    storyboard: toapi
-    prop: toapi
-    layout: toapi
+    role: aibox
+    key_vision: aibox
+    storyboard: aibox
+    prop: aibox
+    layout: aibox
   video:
     shot: volcengine
     upscale: volcengine

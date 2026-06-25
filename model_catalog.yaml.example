@@ -45,6 +45,26 @@ models:
         type: boolean
       prompt_template:
         type: string
+      storyboard_prompt_concurrency:
+        type: integer
+        min: 1
+        max: 8
+      storyboard_prompt_batch_concurrency:
+        type: integer
+        min: 1
+        max: 8
+      text_generation_concurrency:
+        type: integer
+        min: 1
+        max: 8
+      max_concurrent_text_calls:
+        type: integer
+        min: 1
+        max: 8
+      concurrency:
+        type: integer
+        min: 1
+        max: 8
       max_iterations:
         type: integer
         min: 2
@@ -128,6 +148,118 @@ models:
         min: 2
         max: 20
 
+  aibox:gpt-image-2:
+    provider: aibox
+    family: gpt-image
+    capability: image
+    input_modalities: [text, image]
+    output_modalities: [image]
+    limits:
+      max_reference_images: 10
+      max_images: 4
+    params_schema:
+      size:
+        type: string
+        enum:
+          - auto
+          - "1:1"
+          - "1:2"
+          - "2:1"
+          - "2:3"
+          - "3:2"
+          - "3:4"
+          - "4:3"
+          - "9:16"
+          - "16:9"
+          - "1024x1024"
+          - "1024x1536"
+          - "1536x1024"
+          - "960x1280"
+          - "1280x960"
+          - "1088x1920"
+          - "1920x1088"
+          - "2048x2048"
+          - "2048x3072"
+          - "3072x2048"
+          - "1920x2560"
+          - "2560x1920"
+          - "1440x2560"
+          - "2560x1440"
+          - "2880x2880"
+          - "2304x3456"
+          - "3456x2304"
+          - "2400x3200"
+          - "3200x2400"
+          - "2160x3840"
+          - "3840x2160"
+      resolution:
+        type: string
+        enum: [1K, 2K, 4K]
+      quality:
+        type: string
+        enum: [auto, high, medium, low]
+      n:
+        type: integer
+        min: 1
+        max: 4
+      response_format:
+        type: string
+        enum: [url, b64_json]
+      max_reference_images:
+        type: integer
+        min: 0
+        max: 16
+      concurrency:
+        type: integer
+        min: 1
+        max: 10
+      storyboard_keyframe_generation_concurrency:
+        type: integer
+        min: 1
+        max: 10
+      storyboard_keyframe_concurrency:
+        type: integer
+        min: 1
+        max: 10
+      output_dir:
+        type: string
+      layout_image_generation_concurrency:
+        type: integer
+        min: 1
+        max: 10
+      prop_image_generation_concurrency:
+        type: integer
+        min: 1
+        max: 10
+      roleboard_prompt_template:
+        type: string
+      prompt_template:
+        type: string
+      roleboard_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      roleboard_image_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      storyboard_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      storyboard_sheet_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      image_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      max_concurrent_images:
+        type: integer
+        min: 1
+        max: 5
+
   toapi:gpt-image-2:
     provider: toapi
     family: gpt-image
@@ -186,6 +318,14 @@ models:
         min: 1
         max: 5
       roleboard_image_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      storyboard_generation_concurrency:
+        type: integer
+        min: 1
+        max: 5
+      storyboard_sheet_generation_concurrency:
         type: integer
         min: 1
         max: 5

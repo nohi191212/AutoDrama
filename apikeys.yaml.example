@@ -7,6 +7,9 @@ ALIYUN_API_KEY: ""
 # RightCode image generation
 RIGHTCODE_API_KEY: ""
 
+# AI Box GPT Image 2 channel
+AIBOX_API_KEY: ""
+
 # DeepSeek text generation
 DEEPSEEK_API_KEY: ""
 

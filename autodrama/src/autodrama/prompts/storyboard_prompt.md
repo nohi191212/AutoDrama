@@ -73,7 +73,7 @@ Clip 片段：
 
 - 每个输出对象是 `clip`，不是 shot。每个 clip 必须严格对应本批输入 `clip_segments` 中同一集、同一顺序的一个片段。
 - 本次只输出当前批次中的 clip；不要输出未出现在本批 `clip_segments` 里的其他 clip。
-- 每集输出 clip 数必须等于上方“本批输入 clip 数”，不要根据 episode 秒数或整集总 clip 数重新推导目标 clip 数。
+- 每集输出 clip 数最多等于上方“本批输入 clip 数”，优先覆盖本批全部 clip；如果响应长度不足，宁可输出已完成的合法 clip 子集，不要为了凑数输出半截 JSON、重复 clip 或未出现在本批 `clip_segments` 中的 clip。缺失 clip 会由代码以更小批次重试生成。
 - `duration_seconds` 是当前 clip 的生成时长建议，通常 8-15 秒；episode 总时长只作为节奏参考，不是 clip 数量硬约束。
 - `clip_id` 必须按输入 `clip_segments` 的原始数字 key 生成：key `1` 对应 `<episode_key>_clip_001`，key `9` 对应 `<episode_key>_clip_009`。不要因为本批从中间开始就重新从 `clip_001` 编号。不要输出 `shot_id`。
 - 按输入 clip 片段顺序推进剧情。`clip_text` 必须保留或贴近对应输入 clip 的原文内容，`video_prompt` 必须能看出来自哪个原始 clip 的剧情推进。

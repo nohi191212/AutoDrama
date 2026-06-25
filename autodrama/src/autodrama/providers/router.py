@@ -4,6 +4,7 @@ from typing import Any
 
 from autodrama.config import Settings
 from autodrama.core.model_catalog import ModelBinding, ModelCapability
+from autodrama.providers.aibox.image.gpt_image import AiboxImageProvider
 from autodrama.providers.aliyun.audio.qwen_tts import QwenVoiceDesignProvider
 from autodrama.providers.aliyun.image.wanxiang import WanxiangImageProvider
 from autodrama.providers.aliyun.music.fun_music import BailianMusicProvider
@@ -306,6 +307,14 @@ class ProviderRouter:
             {"toapi", "toapis"},
             lambda provider_name, **_: ToAPIImageProvider(
                 self._settings_for("toapi" if provider_name == "toapis" else provider_name),
+                self.settings.runtime,
+            ),
+        )
+        self.registry.register(
+            "image",
+            {"aibox", "ai_box"},
+            lambda provider_name, **_: AiboxImageProvider(
+                self._settings_for("aibox" if provider_name == "ai_box" else provider_name),
                 self.settings.runtime,
             ),
         )

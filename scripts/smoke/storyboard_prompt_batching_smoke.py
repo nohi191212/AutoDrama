@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,7 +23,9 @@ from autodrama.core.schemas import (
     StoryboardPromptOutput,
 )
 from autodrama.repositories.project_layout import ProjectLayout
+from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.repositories.script_content_repo import ScriptContentRepository
+from autodrama.services.script_service import ScriptService
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.nodes.storyboard_asset_nodes import StoryboardPromptNode
 
@@ -48,6 +52,122 @@ def _clip_payload(episode_key: str, index: int) -> dict[str, object]:
         ),
         "negative_prompt": "禁止字幕、水印、logo。",
     }
+
+
+class _SmokeLogger:
+    def info(self, *_args: object, **_kwargs: object) -> None:
+        return
+
+    def warning(self, *_args: object, **_kwargs: object) -> None:
+        return
+
+
+class _SmokeWorkflow:
+    def __init__(self) -> None:
+        self.prompts = PromptStore()
+        self._active_episode_keys = {"episode_002"}
+
+    def _hydrate_roles_from_design_files(self, _project_dir: Path, _state: ProjectState) -> None:
+        return
+
+
+class _FakeStoryboardPromptProvider:
+    name = "fake"
+    model = "storyboard"
+
+    def __init__(self) -> None:
+        self.model_binding = SimpleNamespace(params={"storyboard_prompt_concurrency": 2})
+        self.settings = SimpleNamespace(options={})
+        self.active_calls = 0
+        self.max_active_calls = 0
+        self.calls: list[dict[str, object]] = []
+
+    async def generate_json(
+        self,
+        _prompt: str,
+        _schema: type[StoryboardPromptOutput],
+        *,
+        temperature: float = 0.7,
+        metadata: dict[str, object] | None = None,
+        refs: list[object] | None = None,
+    ) -> StoryboardPromptOutput:
+        metadata = metadata or {}
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        batch_index = int(metadata["clip_batch_index"])
+        batch_keys = [int(str(value)) for value in metadata["clip_batch_keys"]]  # type: ignore[index]
+        self.calls.append(
+            {
+                "batch_index": batch_index,
+                "batch_keys": batch_keys,
+                "ref_count": len(refs or []),
+                "temperature": temperature,
+            }
+        )
+        returned_keys = batch_keys[:1] if batch_index == 1 and len(batch_keys) > 1 else batch_keys
+        try:
+            await asyncio.sleep(0.03 * (4 - batch_index))
+            return StoryboardPromptOutput.model_validate(
+                {
+                    "storyboards": [
+                        {
+                            "episode_key": str(metadata["episode_key"]),
+                            "clips": [_clip_payload(str(metadata["episode_key"]), index) for index in returned_keys],
+                        }
+                    ]
+                }
+            )
+        finally:
+            self.active_calls -= 1
+
+
+async def _run_parallel_generation_smoke(
+    *,
+    settings: Settings,
+    layout: ProjectLayout,
+    tmp_project: Path,
+    state: ProjectState,
+    clips: dict[str, ClipSegment],
+) -> None:
+    provider = _FakeStoryboardPromptProvider()
+    node = object.__new__(StoryboardPromptNode)
+    node.workflow = _SmokeWorkflow()
+    node.repo = ProjectRepository(settings)
+    node.layout = layout
+    node.router = SimpleNamespace(text=lambda _purpose, node_name=None: provider)
+    node.script_service = ScriptService(PromptStore())
+    node.script_contents = ScriptContentRepository.__new__(ScriptContentRepository)
+    node.script_contents.layout = layout
+    node.logger = _SmokeLogger()
+    node.clip_segments_by_episode = lambda _project_dir: {"episode_002": clips}
+
+    if node.batch_generation_concurrency(provider) != 2:
+        raise AssertionError("storyboard_prompt should read configured batch concurrency")
+
+    state.metadata["episode_count"] = 3
+    state.budget.used_text_calls = 0
+    await node.run(tmp_project, state)
+
+    if provider.max_active_calls < 2:
+        raise AssertionError("storyboard_prompt batches should run concurrently")
+    if len(provider.calls) != 10:
+        raise AssertionError(f"expected 3 initial calls and 7 retry calls, got {len(provider.calls)}")
+    single_clip_calls = [call for call in provider.calls if len(call["batch_keys"]) == 1]
+    if len(single_clip_calls) != 8:
+        raise AssertionError(f"expected 8 single-clip calls including the final initial batch, got {len(single_clip_calls)}")
+    if any(call["ref_count"] != 2 for call in provider.calls):
+        raise AssertionError("each storyboard_prompt batch should receive roleboard and layout refs")
+    if state.budget.used_text_calls != 10:
+        raise AssertionError(f"expected 10 text calls, got {state.budget.used_text_calls}")
+
+    saved = StoryboardPromptOutput.model_validate_json(
+        layout.node_output_path(tmp_project, "storyboard_prompt").read_text(encoding="utf-8")
+    )
+    episode = next(item for item in saved.storyboards if item.episode_key == "episode_002")
+    actual_ids = [clip.clip_id for clip in episode.clips]
+    expected_ids = [f"episode_002_clip_{index:03d}" for index in range(1, 18)]
+    if actual_ids != expected_ids:
+        raise AssertionError("parallel storyboard_prompt output should be merged in original clip order")
 
 
 def main() -> None:
@@ -192,6 +312,16 @@ def main() -> None:
     )
     if re.search(r"\{\{[A-Za-z_][A-Za-z0-9_]*\}\}", rendered):
         raise AssertionError("storyboard_prompt render left unresolved template variables")
+
+    asyncio.run(
+        _run_parallel_generation_smoke(
+            settings=settings,
+            layout=layout,
+            tmp_project=tmp_project,
+            state=state,
+            clips=clips,
+        )
+    )
 
     marker = ROOT / ".tmp" / "storyboard_prompt_batching_smoke.ok"
     marker.write_text("ok\n", encoding="utf-8")

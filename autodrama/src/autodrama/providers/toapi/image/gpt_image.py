@@ -246,13 +246,12 @@ class ToAPIImageProvider:
             if ref.type != "image":
                 continue
 
-            local_path = self._local_ref_path(ref)
-            if local_path is not None:
+            if url := self._ref_url(ref):
+                images.append(url)
+            elif local_path := self._local_ref_path(ref):
                 uploaded_item = await self._upload_reference_image(client, local_path)
                 images.append(str(uploaded_item["url"]))
                 uploaded.append(uploaded_item)
-            elif url := self._ref_url(ref):
-                images.append(url)
             elif ref.path:
                 uploaded_item = await self._upload_reference_image(client, Path(ref.path))
                 images.append(str(uploaded_item["url"]))
@@ -568,6 +567,17 @@ class ToAPIImageProvider:
                 size=size,
                 metadata=metadata,
                 reference_images=reference_images,
+            )
+            get_logger().info(
+                "ToAPI image request node=%s asset=%s model=%s size=%s resolution=%s refs=%d uploaded_refs=%d prompt_chars=%d",
+                metadata.get("node_name") or "-",
+                metadata.get("asset_id") or "-",
+                payload.get("model") or "-",
+                payload.get("size") or "-",
+                payload.get("resolution") or "-",
+                len(reference_images),
+                len(uploaded_refs),
+                len(prompt),
             )
             create_response = await client.post(
                 self.generation_endpoint,

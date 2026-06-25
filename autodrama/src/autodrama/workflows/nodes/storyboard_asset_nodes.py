@@ -333,6 +333,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
         *,
         expected_episode_keys: list[str],
         expected_clip_segments: dict[str, dict[str, object]],
+        require_complete: bool = True,
     ) -> StoryboardPromptOutput:
         expected = set(expected_episode_keys)
         seen: set[str] = set()
@@ -350,28 +351,38 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
             seen.add(episode.episode_key)
             source_clips = expected_clip_segments.get(episode.episode_key) or {}
             ordered_source_keys = self._sorted_clip_segment_keys(source_clips)
-            if len(episode.clips) != len(ordered_source_keys):
+            expected_by_id: dict[str, tuple[str, int]] = {}
+            for offset, source_key in enumerate(ordered_source_keys):
+                try:
+                    expected_index = int(str(source_key).strip())
+                except ValueError:
+                    expected_index = offset + 1
+                expected_by_id[self.clip_id_for_episode_index(episode.episode_key, expected_index)] = (
+                    source_key,
+                    expected_index,
+                )
+            if require_complete and len(episode.clips) != len(ordered_source_keys):
                 raise ValueError(
                     f"storyboard_prompt must return {len(ordered_source_keys)} clips for {episode.episode_key}; "
                     f"got {len(episode.clips)}"
                 )
             validated_clips: list[StoryboardPromptClip] = []
-            for offset, clip in enumerate(episode.clips):
-                source_key = ordered_source_keys[offset]
-                try:
-                    expected_index = int(str(source_key).strip())
-                except ValueError:
-                    expected_index = offset + 1
-                expected_clip_id = self.clip_id_for_episode_index(episode.episode_key, expected_index)
-                clip.clip_id = self._normalize_clip_id(clip.clip_id, episode.episode_key, expected_index)
-                if clip.clip_id != expected_clip_id:
+            returned_clip_ids: set[str] = set()
+            for clip in episode.clips:
+                candidate_clip_id = str(clip.clip_id or "").strip().replace("_shot_", "_clip_")
+                expected_item = expected_by_id.get(candidate_clip_id)
+                if expected_item is None:
                     raise ValueError(
-                        f"storyboard_prompt clip_id mismatch for {episode.episode_key} index={expected_index}: "
-                        f"expected {expected_clip_id}, got {clip.clip_id or '-'}"
+                        f"storyboard_prompt returned clip_id outside requested batch for {episode.episode_key}: "
+                        f"got {clip.clip_id or '-'}; expected one of {', '.join(expected_by_id) or '-'}"
                     )
+                source_key, expected_index = expected_item
+                expected_clip_id = self.clip_id_for_episode_index(episode.episode_key, expected_index)
+                clip.clip_id = expected_clip_id
                 if clip.clip_id in seen_clips:
                     raise ValueError(f"storyboard_prompt returned duplicate clip_id: {clip.clip_id}")
                 seen_clips.add(clip.clip_id)
+                returned_clip_ids.add(clip.clip_id)
                 try:
                     clip.duration_seconds = float(clip.duration_seconds)
                 except (TypeError, ValueError) as exc:
@@ -417,11 +428,20 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                         camera_shot_count,
                     )
                 validated_clips.append(clip)
+            if require_complete:
+                missing_clip_ids = sorted(set(expected_by_id).difference(returned_clip_ids))
+                if missing_clip_ids:
+                    raise ValueError(
+                        f"storyboard_prompt missing clip(s) for {episode.episode_key}: "
+                        f"{', '.join(missing_clip_ids)}"
+                    )
             episode.clips = validated_clips
             cleaned.append(episode)
         missing = [episode_key for episode_key in expected_episode_keys if episode_key not in seen]
-        if missing:
+        if missing and require_complete:
             raise ValueError(f"storyboard_prompt missing episode(s): {', '.join(missing)}")
+        for episode_key in missing:
+            cleaned.append(StoryboardPromptEpisode(episode_key=episode_key, clips=[]))
         return StoryboardPromptOutput(
             storyboards=[
                 next(episode for episode in cleaned if episode.episode_key == episode_key)
@@ -587,10 +607,53 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
 class StoryboardPromptNode(StoryboardAssetNodeBase):
     name = "storyboard_prompt"
     MAX_CLIPS_PER_BATCH = 8
+    DEFAULT_BATCH_CONCURRENCY = 3
+    MAX_BATCH_CONCURRENCY = 8
 
     @staticmethod
     def _match_key(value: object) -> str:
         return re.sub(r"\s+", "", str(value or "").strip()).casefold()
+
+    @classmethod
+    def batch_generation_concurrency(cls, provider: object) -> int:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        value: object = None
+        for source in (params, options):
+            if not isinstance(source, dict):
+                continue
+            for name in (
+                "storyboard_prompt_concurrency",
+                "storyboard_prompt_batch_concurrency",
+                "text_generation_concurrency",
+                "max_concurrent_text_calls",
+                "concurrency",
+            ):
+                if name in source:
+                    value = source[name]
+                    break
+            if value is not None:
+                break
+        if value is None:
+            for name in (
+                "storyboard_prompt_concurrency",
+                "storyboard_prompt_batch_concurrency",
+                "text_generation_concurrency",
+                "max_concurrent_text_calls",
+                "concurrency",
+            ):
+                value = getattr(provider, name, None)
+                if value is not None:
+                    break
+        if value is None:
+            value = cls.DEFAULT_BATCH_CONCURRENCY
+        try:
+            resolved = int(value)
+        except (TypeError, ValueError):
+            resolved = cls.DEFAULT_BATCH_CONCURRENCY
+        return max(1, min(cls.MAX_BATCH_CONCURRENCY, resolved))
 
     @staticmethod
     def _append_unique(values: list[str], value: object) -> None:
@@ -875,6 +938,99 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             )
         return refs, context
 
+    async def _generate_storyboard_prompt_batch(
+        self,
+        *,
+        provider: object,
+        project_dir: Path,
+        state: ProjectState,
+        episode_key: str,
+        all_episode_keys: list[str],
+        final_aspect_ratio: str,
+        total_clip_count_by_episode: dict[str, int],
+        batch_index: int,
+        batch_total: int,
+        batch_clips: dict[str, object],
+    ) -> tuple[str, int, list[StoryboardPromptClip]]:
+        batch_keys = self._sorted_clip_segment_keys(batch_clips)
+        batch_clip_count_by_episode = {episode_key: len(batch_clips)}
+        role_ids = self._role_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
+        layout_ids = self._layout_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
+        prop_ids = self._prop_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
+        refs, reference_image_context = self._storyboard_prompt_reference_refs(
+            project_dir,
+            state,
+            role_ids=role_ids,
+            layout_ids=layout_ids,
+        )
+        first_key = batch_keys[0] if batch_keys else "-"
+        last_key = batch_keys[-1] if batch_keys else "-"
+        self.logger.info(
+            "node=storyboard_prompt episode=%s batch=%d/%d clips=%s-%s refs=%d",
+            episode_key,
+            batch_index,
+            batch_total,
+            first_key,
+            last_key,
+            len(refs),
+        )
+        prompt = self.workflow.prompts.render(
+            "storyboard_prompt",
+            title=state.title,
+            episode_keys=episode_key,
+            clip_batch=(
+                f"{episode_key} clip_segment keys {first_key}-{last_key}; "
+                f"batch {batch_index}/{batch_total}; max {self.MAX_CLIPS_PER_BATCH} clips per call"
+            ),
+            clip_count=self._format_json(batch_clip_count_by_episode),
+            shot_count=self._format_json(batch_clip_count_by_episode),
+            clip_count_by_episode=self._format_json(batch_clip_count_by_episode),
+            total_clip_count_by_episode=self._format_json(total_clip_count_by_episode),
+            final_aspect_ratio=final_aspect_ratio,
+            storyboard_panel_count=self.STORYBOARD_PANEL_COUNT,
+            storyboard_grid=self.storyboard_grid(),
+            storyboard_panel_aspect_ratio=self.storyboard_panel_aspect_ratio(),
+            raw_script=state.raw_script,
+            novel_extract=self._format_json(self.episode_story_context(project_dir, state, [episode_key])),
+            novel_full=self._format_json(
+                self._episode_window_full_context(project_dir, state, episode_key, all_episode_keys)
+            ),
+            director_prep=DirectorService.director_prep_context(state, episode_keys=[episode_key]),
+            roleboard_context=self._format_json(self._roleboard_context_for_ids(project_dir, state, role_ids)),
+            layout_context=self._format_json(self._layout_context_for_ids(state, layout_ids)),
+            prop_context=self._format_json(self._prop_context_for_ids(state, prop_ids)),
+            reference_image_context=self._format_json(reference_image_context),
+            clip_segments=self._format_json({episode_key: batch_clips}),
+        )
+        batch_output = await provider.generate_json(
+            prompt,
+            StoryboardPromptOutput,
+            temperature=0.45,
+            metadata={
+                "node_name": self.name,
+                "project_id": state.project_id,
+                "episode_key": episode_key,
+                "expected_keys": [episode_key],
+                "expected_clip_counts": batch_clip_count_by_episode,
+                "total_clip_counts": total_clip_count_by_episode,
+                "clip_batch_index": batch_index,
+                "clip_batch_total": batch_total,
+                "clip_batch_keys": batch_keys,
+                "storyboard_panel_count": self.STORYBOARD_PANEL_COUNT,
+                "storyboard_grid": self.storyboard_grid(),
+                "storyboard_panel_aspect_ratio": self.storyboard_panel_aspect_ratio(),
+            },
+            refs=refs,
+        )
+        state.budget.used_text_calls += 1
+        batch_output = self.validate_storyboard_prompt_output(
+            batch_output,
+            expected_episode_keys=[episode_key],
+            expected_clip_segments={episode_key: batch_clips},
+            require_complete=False,
+        )
+        return episode_key, batch_index, batch_output.storyboards[0].clips
+
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("storyboard", node_name=self.name)
         self.logger.info(
@@ -893,93 +1049,135 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             for episode_key, clips in expected_clip_segments.items()
         }
 
+        batch_specs: list[tuple[str, int, int, dict[str, object]]] = []
+        for episode_key in target_episode_keys:
+            source_clips = expected_clip_segments[episode_key]
+            batches = self._clip_segment_batches(source_clips)
+            for batch_index, batch_clips in enumerate(batches, start=1):
+                batch_specs.append((episode_key, batch_index, len(batches), batch_clips))
+
+        concurrency = self.batch_generation_concurrency(provider)
+        self.logger.info(
+            "node=storyboard_prompt batches=%d concurrency=%d",
+            len(batch_specs),
+            concurrency,
+        )
+        print(
+            f"[autodrama] storyboard_prompt batches={len(batch_specs)} concurrency={concurrency}",
+            flush=True,
+        )
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def generate_one(
+            episode_key: str,
+            batch_index: int,
+            batch_total: int,
+            batch_clips: dict[str, object],
+        ) -> tuple[str, int, list[StoryboardPromptClip]]:
+            async with semaphore:
+                return await self._generate_storyboard_prompt_batch(
+                    provider=provider,
+                    project_dir=project_dir,
+                    state=state,
+                    episode_key=episode_key,
+                    all_episode_keys=all_episode_keys,
+                    final_aspect_ratio=final_aspect_ratio,
+                    total_clip_count_by_episode=total_clip_count_by_episode,
+                    batch_index=batch_index,
+                    batch_total=batch_total,
+                    batch_clips=batch_clips,
+                )
+
+        tasks = [asyncio.create_task(generate_one(*spec)) for spec in batch_specs]
+        try:
+            batch_results = list(await asyncio.gather(*tasks)) if tasks else []
+        except Exception:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        clips_by_episode_batch = {
+            (episode_key, batch_index): clips
+            for episode_key, batch_index, clips in batch_results
+        }
+        generated_by_clip_id: dict[str, dict[str, StoryboardPromptClip]] = {
+            episode_key: {}
+            for episode_key in target_episode_keys
+        }
+        for episode_key in target_episode_keys:
+            batch_count = len(self._clip_segment_batches(expected_clip_segments[episode_key]))
+            for batch_index in range(1, batch_count + 1):
+                for clip in clips_by_episode_batch[(episode_key, batch_index)]:
+                    generated_by_clip_id[episode_key][clip.clip_id] = clip
+
+        missing_batch_specs: list[tuple[str, int, int, dict[str, object]]] = []
+        retry_batch_index = 0
+        for episode_key in target_episode_keys:
+            source_clips = expected_clip_segments[episode_key]
+            for source_key in self._sorted_clip_segment_keys(source_clips):
+                try:
+                    expected_index = int(str(source_key).strip())
+                except ValueError:
+                    expected_index = retry_batch_index + 1
+                expected_clip_id = self.clip_id_for_episode_index(episode_key, expected_index)
+                if expected_clip_id in generated_by_clip_id[episode_key]:
+                    continue
+                retry_batch_index += 1
+                missing_batch_specs.append((episode_key, retry_batch_index, 0, {source_key: source_clips[source_key]}))
+
+        if missing_batch_specs:
+            retry_total = len(missing_batch_specs)
+            missing_labels = [
+                self.clip_id_for_episode_index(
+                    episode_key,
+                    int(str(next(iter(batch_clips))).strip()) if str(next(iter(batch_clips))).strip().isdigit() else index,
+                )
+                for index, (episode_key, _batch_index, _batch_total, batch_clips) in enumerate(
+                    missing_batch_specs,
+                    start=1,
+                )
+            ]
+            self.logger.warning(
+                "node=storyboard_prompt retrying missing clips as single-clip batches: %s",
+                ", ".join(missing_labels),
+            )
+            print(
+                "[autodrama] storyboard_prompt retry missing clips as single-clip batches: "
+                + ", ".join(missing_labels),
+                flush=True,
+            )
+            retry_specs = [
+                (episode_key, batch_index, retry_total, batch_clips)
+                for episode_key, batch_index, _batch_total, batch_clips in missing_batch_specs
+            ]
+            retry_tasks = [asyncio.create_task(generate_one(*spec)) for spec in retry_specs]
+            try:
+                retry_results = list(await asyncio.gather(*retry_tasks)) if retry_tasks else []
+            except Exception:
+                for task in retry_tasks:
+                    task.cancel()
+                await asyncio.gather(*retry_tasks, return_exceptions=True)
+                raise
+            for episode_key, _batch_index, clips in retry_results:
+                for clip in clips:
+                    generated_by_clip_id[episode_key][clip.clip_id] = clip
+
         generated_by_episode: dict[str, list[StoryboardPromptClip]] = {
             episode_key: []
             for episode_key in target_episode_keys
         }
         for episode_key in target_episode_keys:
             source_clips = expected_clip_segments[episode_key]
-            batches = self._clip_segment_batches(source_clips)
-            for batch_index, batch_clips in enumerate(batches, start=1):
-                batch_keys = self._sorted_clip_segment_keys(batch_clips)
-                batch_clip_count_by_episode = {episode_key: len(batch_clips)}
-                role_ids = self._role_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
-                layout_ids = self._layout_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
-                prop_ids = self._prop_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
-                refs, reference_image_context = self._storyboard_prompt_reference_refs(
-                    project_dir,
-                    state,
-                    role_ids=role_ids,
-                    layout_ids=layout_ids,
-                )
-                first_key = batch_keys[0] if batch_keys else "-"
-                last_key = batch_keys[-1] if batch_keys else "-"
-                self.logger.info(
-                    "node=storyboard_prompt episode=%s batch=%d/%d clips=%s-%s refs=%d",
-                    episode_key,
-                    batch_index,
-                    len(batches),
-                    first_key,
-                    last_key,
-                    len(refs),
-                )
-                prompt = self.workflow.prompts.render(
-                    "storyboard_prompt",
-                    title=state.title,
-                    episode_keys=episode_key,
-                    clip_batch=(
-                        f"{episode_key} clip_segment keys {first_key}-{last_key}; "
-                        f"batch {batch_index}/{len(batches)}; max {self.MAX_CLIPS_PER_BATCH} clips per call"
-                    ),
-                    clip_count=self._format_json(batch_clip_count_by_episode),
-                    shot_count=self._format_json(batch_clip_count_by_episode),
-                    clip_count_by_episode=self._format_json(batch_clip_count_by_episode),
-                    total_clip_count_by_episode=self._format_json(total_clip_count_by_episode),
-                    final_aspect_ratio=final_aspect_ratio,
-                    storyboard_panel_count=self.STORYBOARD_PANEL_COUNT,
-                    storyboard_grid=self.storyboard_grid(),
-                    storyboard_panel_aspect_ratio=self.storyboard_panel_aspect_ratio(),
-                    raw_script=state.raw_script,
-                    novel_extract=self._format_json(self.episode_story_context(project_dir, state, [episode_key])),
-                    novel_full=self._format_json(
-                        self._episode_window_full_context(project_dir, state, episode_key, all_episode_keys)
-                    ),
-                    director_prep=DirectorService.director_prep_context(state, episode_keys=[episode_key]),
-                    roleboard_context=self._format_json(
-                        self._roleboard_context_for_ids(project_dir, state, role_ids)
-                    ),
-                    layout_context=self._format_json(self._layout_context_for_ids(state, layout_ids)),
-                    prop_context=self._format_json(self._prop_context_for_ids(state, prop_ids)),
-                    reference_image_context=self._format_json(reference_image_context),
-                    clip_segments=self._format_json({episode_key: batch_clips}),
-                )
-                batch_output = await provider.generate_json(
-                    prompt,
-                    StoryboardPromptOutput,
-                    temperature=0.45,
-                    metadata={
-                        "node_name": self.name,
-                        "project_id": state.project_id,
-                        "episode_key": episode_key,
-                        "expected_keys": [episode_key],
-                        "expected_clip_counts": batch_clip_count_by_episode,
-                        "total_clip_counts": total_clip_count_by_episode,
-                        "clip_batch_index": batch_index,
-                        "clip_batch_total": len(batches),
-                        "clip_batch_keys": batch_keys,
-                        "storyboard_panel_count": self.STORYBOARD_PANEL_COUNT,
-                        "storyboard_grid": self.storyboard_grid(),
-                        "storyboard_panel_aspect_ratio": self.storyboard_panel_aspect_ratio(),
-                    },
-                    refs=refs,
-                )
-                state.budget.used_text_calls += 1
-                batch_output = self.validate_storyboard_prompt_output(
-                    batch_output,
-                    expected_episode_keys=[episode_key],
-                    expected_clip_segments={episode_key: batch_clips},
-                )
-                generated_by_episode[episode_key].extend(batch_output.storyboards[0].clips)
+            for offset, source_key in enumerate(self._sorted_clip_segment_keys(source_clips)):
+                try:
+                    expected_index = int(str(source_key).strip())
+                except ValueError:
+                    expected_index = offset + 1
+                expected_clip_id = self.clip_id_for_episode_index(episode_key, expected_index)
+                clip = generated_by_clip_id[episode_key].get(expected_clip_id)
+                if clip is not None:
+                    generated_by_episode[episode_key].append(clip)
 
         output = StoryboardPromptOutput(
             storyboards=[
