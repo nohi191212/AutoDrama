@@ -19,9 +19,9 @@ from autodrama.core.schemas import (
     ScriptNovelExtractOutput,
     ScriptNovelOutput,
     ScriptOutlineOutput,
-    ShotManifestGenerationOutput,
+    ClipManifestGenerationOutput,
     ShotDialogueAudioGenerationOutput,
-    ShotVideoGenerationOutput,
+    ClipVideoGenerationOutput,
     StaticAssetGenerationOutput,
     StoryboardKeyframeGenerationOutput,
 )
@@ -47,9 +47,9 @@ __all__ = [
     "ScriptNovelExtractOutput",
     "ScriptNovelOutput",
     "ScriptOutlineOutput",
-    "ShotManifestGenerationOutput",
+    "ClipManifestGenerationOutput",
     "ShotDialogueAudioGenerationOutput",
-    "ShotVideoGenerationOutput",
+    "ClipVideoGenerationOutput",
     "StaticAssetGenerationOutput",
     "StoryboardKeyframeGenerationOutput",
 ]

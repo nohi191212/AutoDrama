@@ -665,6 +665,8 @@ class AiboxImageProvider:
                 "bad gateway",
                 "service unavailable",
                 "gateway timeout",
+                "no available compatible account",
+                "没有可用的兼容账号",
                 "did not complete after",
                 "non-json response",
                 "json response is not an object",

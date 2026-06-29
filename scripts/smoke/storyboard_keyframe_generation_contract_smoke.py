@@ -16,7 +16,7 @@ from autodrama.core.schemas import (
     StoryboardSheetGenerationItem,
 )
 from autodrama.workflows.nodes.storyboard_asset_nodes import (
-    ShotManifestGenerationNode,
+    ClipManifestGenerationNode,
     StoryboardKeyframeGenerationNode,
 )
 
@@ -44,26 +44,26 @@ def main() -> None:
             _keyframe("episode_001_clip_002", "end", "P12"),
         ]
     )
-    by_key = ShotManifestGenerationNode._keyframes_by_clip_role(output)
+    by_key = ClipManifestGenerationNode._keyframes_by_clip_role(output)
     if ("episode_001", "episode_001_clip_001", "start") not in by_key:
         raise AssertionError("first clip start frame is missing")
     if ("episode_001", "episode_001_clip_002", "start") in by_key:
         raise AssertionError("non-first clip should not generate its own start frame")
-    previous_end = ShotManifestGenerationNode._require_keyframe(
+    previous_end = ClipManifestGenerationNode._require_keyframe(
         by_key,
         episode_key="episode_001",
         clip_id="episode_001_clip_001",
         frame_role="end",
     )
-    current_end = ShotManifestGenerationNode._require_keyframe(
+    current_end = ClipManifestGenerationNode._require_keyframe(
         by_key,
         episode_key="episode_001",
         clip_id="episode_001_clip_002",
         frame_role="end",
     )
 
-    node = ShotManifestGenerationNode.__new__(ShotManifestGenerationNode)
-    inputs, warnings = node._shot_video_inputs_for_shot(
+    node = ClipManifestGenerationNode.__new__(ClipManifestGenerationNode)
+    inputs, warnings = node._clip_video_inputs_for_shot(
         state=SimpleNamespace(roles={}, layouts={}, props={}),
         start_frame=previous_end,
         end_frame=current_end,

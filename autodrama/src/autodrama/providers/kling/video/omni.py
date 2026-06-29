@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
-import hmac
 import json
 from pathlib import Path
-import time
 from typing import Any
 
 import httpx
@@ -88,34 +85,15 @@ class KlingOmniVideoProvider:
             return self._url(f"{path.rstrip('/')}/{task_id}")
         return self._url(f"{default_path.rstrip('/')}/{task_id}")
 
-    @staticmethod
-    def _b64url(data: bytes) -> str:
-        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-    @classmethod
-    def _jwt_token(cls, access_key: str, secret_key: str) -> str:
-        headers = {"alg": "HS256", "typ": "JWT"}
-        now = int(time.time())
-        payload = {
-            "iss": access_key,
-            "exp": now + 1800,
-            "nbf": now - 5,
-        }
-        header_text = cls._b64url(json.dumps(headers, separators=(",", ":")).encode("utf-8"))
-        payload_text = cls._b64url(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
-        signing_input = f"{header_text}.{payload_text}".encode("ascii")
-        signature = hmac.new(secret_key.encode("utf-8"), signing_input, hashlib.sha256).digest()
-        return f"{header_text}.{payload_text}.{cls._b64url(signature)}"
-
     def _headers(self) -> dict[str, str]:
-        access_key = self.settings.secret("access_key_env")
-        secret_key = self.settings.secret("secret_key_env")
-        if not access_key or not secret_key:
+        api_key = self.settings.secret("api_key_env")
+        if not api_key:
             raise ProviderAuthError(
-                "Missing Kling credentials. Set providers.kling.access_key_env and providers.kling.secret_key_env."
+                "Missing Kling API key. Set providers.kling.api_key_env to KLING_API_KEY "
+                "and add KLING_API_KEY to apikeys.yaml."
             )
         return {
-            "Authorization": f"Bearer {self._jwt_token(access_key, secret_key)}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 

@@ -71,7 +71,7 @@ async def main_async() -> int:
     state = repo.load_state(project_dir)
     router = ProviderRouter(settings)
     workflow = GenerationWorkflow(repo=repo, router=router)
-    provider = router.video("shot", node_name="shot_video_generation")
+    provider = router.video("shot", node_name="clip_video_generation")
 
     resolved_episode_key = episode_key(args.episode)
     episode = workflow._load_storyboard_episode(project_dir, resolved_episode_key)
@@ -79,9 +79,9 @@ async def main_async() -> int:
     asset_id = normalize_id(f"{shot.shot_id}", "video")
     prompt = str(shot.final_video_prompt or "").strip()
     if not prompt:
-        raise ValueError(f"{shot.shot_id} missing final_video_prompt; rerun shot_manifest_generation")
-    shot_video_inputs = workflow._shot_video_inputs(project_dir, shot, provider=provider)
-    task_key = workflow._shot_video_task_key(episode.episode_key, shot.shot_id)
+        raise ValueError(f"{shot.shot_id} missing final_video_prompt; rerun clip_manifest_generation")
+    clip_video_inputs = workflow._clip_video_inputs(project_dir, shot, provider=provider)
+    task_key = workflow._clip_video_task_key(episode.episode_key, shot.shot_id)
     planned_asset_path = workflow._project_relative(
         project_dir,
         workflow._video_asset_path(project_dir, "shots", asset_id),
@@ -90,7 +90,7 @@ async def main_async() -> int:
     result = await provider.query_video_task(args.task_id)
     status = (result.task_status or "").strip().lower()
     registry = load_generation_tasks(project_dir, project_id=state.project_id)
-    item = workflow._shot_video_task_item(
+    item = workflow._clip_video_task_item(
         task_key=task_key,
         state=state,
         episode_key=episode.episode_key,
@@ -103,7 +103,7 @@ async def main_async() -> int:
     )
     item["adopted_at"] = now_iso()
     item["task_id"] = args.task_id
-    item["shot_video_inputs"] = shot_video_inputs
+    item["clip_video_inputs"] = clip_video_inputs
 
     success_statuses = workflow._video_success_statuses(provider)
     asset_path = None
@@ -123,7 +123,7 @@ async def main_async() -> int:
 
     upsert_generation_task(registry, item)
     save_generation_tasks(repo, project_dir, registry)
-    workflow._apply_shot_video_result(
+    workflow._apply_clip_video_result(
         shot,
         asset_id=asset_id,
         result=result,

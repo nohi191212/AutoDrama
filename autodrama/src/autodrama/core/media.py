@@ -3,7 +3,7 @@ from autodrama.core.schemas import (
     ShotBGMAsset,
     ShotDialogueAudioAsset,
     ShotDialogueAudioGenerationItem,
-    ShotVideoGenerationItem,
+    ClipVideoGenerationItem,
     StaticAssetGenerationItem,
 )
 
@@ -12,6 +12,6 @@ __all__ = [
     "ShotBGMAsset",
     "ShotDialogueAudioAsset",
     "ShotDialogueAudioGenerationItem",
-    "ShotVideoGenerationItem",
+    "ClipVideoGenerationItem",
     "StaticAssetGenerationItem",
 ]

@@ -98,10 +98,10 @@ echo   run\generate.cmd [--config FILE] [--project ID_OR_DIR] [--episodes LIST] 
 echo.
 echo What it runs:
 echo   No --shots:
-echo     generation shot_dialogue_audio_generation -^> shot_video_generation -^> dynamic_asset_solidification
+echo     generation shot_dialogue_audio_generation -^> clip_video_generation -^> dynamic_asset_solidification
 echo.
 echo   With --shots:
-echo     generation shot_dialogue_audio_generation -^> shot_video_generation -^> dynamic_asset_solidification scoped to selected shots.
+echo     generation shot_dialogue_audio_generation -^> clip_video_generation -^> dynamic_asset_solidification scoped to selected shots.
 echo.
 echo Examples:
 echo   run\generate.cmd --project xcj-2 --episode 1 --shots 1-3

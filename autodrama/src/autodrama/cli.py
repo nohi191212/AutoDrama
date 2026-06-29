@@ -19,6 +19,7 @@ from autodrama.workflows.generation import DEFAULT_GENERATION_NODES, GENERATION_
 from autodrama.workflows.pregen import PREGEN_NODES, PREGEN_ONLY_NODES, PregenWorkflow
 from autodrama.workflows.postgen import POSTGEN_NODES, PostgenWorkflow
 from autodrama.workflows.selection import (
+    parse_clip_selectors as parse_clip_selectors_value,
     parse_episode_keys as parse_episode_keys_value,
     parse_shot_selectors as parse_shot_selectors_value,
 )
@@ -40,6 +41,10 @@ def parse_episode_keys(value: str | None) -> list[str] | None:
 
 def parse_shot_selectors(value: str | None) -> list[str] | None:
     return parse_shot_selectors_value(value)
+
+
+def parse_clip_selectors(value: str | None) -> list[str] | None:
+    return parse_clip_selectors_value(value)
 
 
 def parse_role_names(value: str | None) -> list[str] | None:
@@ -126,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Supported with pregen --only clip_segment, roleboard_prompt, roleboard_generation, "
             "role_subject_video_generation, role_subject_element_generation, storyboard_prompt, "
-            "storyboard_generation, storyboard_keyframe_generation, shot_manifest_generation, "
+            "storyboard_generation, storyboard_keyframe_generation, clip_manifest_generation, "
             "role_voice_select, "
             "prop_prompt, prop_image_generation, or layout_image_generation "
             "(legacy aliases: prop_design, prop_generation). "
@@ -140,6 +145,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Comma-separated role names or role ids to regenerate with pregen --only role_voice_select, "
             "for example 九韶 or role_jiushao."
+        ),
+    )
+    pregen_parser.add_argument(
+        "--clips",
+        "--clip",
+        dest="clips",
+        help=(
+            "Comma-separated clip indexes or ids to regenerate with pregen --only storyboard_keyframe_generation. "
+            "Supports ranges such as 2,5-7 or ids such as episode_001_clip_005."
         ),
     )
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
@@ -166,7 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--shots",
         help=(
             "Comma-separated shot indexes or ids to generate inside selected episodes. "
-            "Supported by shot_video_generation and dynamic_asset_solidification, "
+            "Supported by clip_video_generation and dynamic_asset_solidification, "
             "for example 1-3 or episode_001_shot_1."
         ),
     )
@@ -694,6 +708,7 @@ async def cmd_run_pregen(args: argparse.Namespace) -> int:
         only=args.only,
         episode_keys=parse_episode_keys(args.episodes),
         role_names=parse_role_names(args.roles),
+        clip_selectors=parse_clip_selectors(args.clips),
     )
     get_logger().info(
         "run summary project_id=%s current_node=%s role_count=%d project_dir=%s",
@@ -710,6 +725,7 @@ async def cmd_run_pregen(args: argparse.Namespace) -> int:
                 "completed_nodes": state.completed_nodes,
                 "role_count": len(state.roles),
                 "project_dir": str(project_dir),
+                "clips": args.clips or None,
             },
             ensure_ascii=False,
             indent=2,

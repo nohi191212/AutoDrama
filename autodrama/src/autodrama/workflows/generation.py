@@ -10,7 +10,7 @@ from autodrama.core.schemas import (
     DynamicAssetSolidificationOutput,
     ProjectState,
     ShotDialogueAudioGenerationOutput,
-    ShotVideoGenerationOutput,
+    ClipVideoGenerationOutput,
     StoryboardEpisodeOutput,
     StoryboardShot,
 )
@@ -47,14 +47,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         self.dynamic_assets = DynamicAssetRepository(self.repo, self.layout)
         self.generation_episode_nodes = build_generation_episode_nodes(self)
 
-    def _shot_video_inputs(
+    def _clip_video_inputs(
         self,
         project_dir: Path,
         shot: StoryboardShot,
         *,
         provider=None,
     ) -> dict[str, object]:
-        items = sorted(list(shot.shot_video_inputs or []), key=lambda item: int(item.order or 0))
+        items = sorted(list(shot.clip_video_inputs or []), key=lambda item: int(item.order or 0))
         normalized: list[dict[str, object]] = []
         missing_required: list[dict[str, object]] = []
         order_errors: list[str] = []
@@ -127,7 +127,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 ]
         if missing_required or order_errors:
             raise ValueError(
-                "shot_video_generation input validation failed: "
+                "clip_video_generation input validation failed: "
                 + json.dumps(
                     {
                         "shot_id": shot.shot_id,
@@ -142,7 +142,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         episode_key = clip_id.rsplit("_clip_", 1)[0] if "_clip_" in clip_id else clip_id.rsplit("_shot_", 1)[0]
         return {
             "contract": "fixed_clip_start_end_storyboard_roleboard_layout_prop_v1",
-            "final_video_prompt_source": "shot_manifest_generation",
+            "final_video_prompt_source": "clip_manifest_generation",
             "episode_key": episode_key,
             "shot_id": shot.shot_id,
             "clip_id": shot.clip_id,
@@ -154,11 +154,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         }
 
     @staticmethod
-    def _asset_refs_from_shot_video_inputs(project_dir: Path, shot_video_inputs: dict[str, object]) -> list:
+    def _asset_refs_from_clip_video_inputs(project_dir: Path, clip_video_inputs: dict[str, object]) -> list:
         from autodrama.providers.base import AssetRef
 
         refs: list[AssetRef] = []
-        rows = shot_video_inputs.get("inputs") if isinstance(shot_video_inputs, dict) else []
+        rows = clip_video_inputs.get("inputs") if isinstance(clip_video_inputs, dict) else []
         if not isinstance(rows, list):
             return refs
         for row in rows:
@@ -200,8 +200,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 generated_dialogue_audios=[],
                 skipped_dialogue_lines=[],
             )
-        if "shot_video_generation" in target_nodes:
-            outputs["shot_video_generation"] = ShotVideoGenerationOutput(generated_videos=[])
+        if "clip_video_generation" in target_nodes:
+            outputs["clip_video_generation"] = ClipVideoGenerationOutput(generated_videos=[])
         if "dynamic_asset_solidification" in target_nodes:
             outputs["dynamic_asset_solidification"] = DynamicAssetSolidificationOutput(solidified_assets=[])
         return outputs
@@ -217,9 +217,9 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 raise TypeError("shot_dialogue_audio_generation output type mismatch")
             current.generated_dialogue_audios.extend(output.generated_dialogue_audios)
             current.skipped_dialogue_lines.extend(output.skipped_dialogue_lines)
-        elif node_name == "shot_video_generation":
-            if not isinstance(current, ShotVideoGenerationOutput) or not isinstance(output, ShotVideoGenerationOutput):
-                raise TypeError("shot_video_generation output type mismatch")
+        elif node_name == "clip_video_generation":
+            if not isinstance(current, ClipVideoGenerationOutput) or not isinstance(output, ClipVideoGenerationOutput):
+                raise TypeError("clip_video_generation output type mismatch")
             current.generated_videos.extend(output.generated_videos)
         elif node_name == "dynamic_asset_solidification":
             if not isinstance(current, DynamicAssetSolidificationOutput) or not isinstance(
@@ -247,7 +247,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             for item in output.generated_dialogue_audios:
                 if item.episode_key == episode_key and item.shot_id == shot.shot_id and item.asset.asset_path:
                     return item.asset.asset_path
-        if node_name == "shot_video_generation" and isinstance(output, ShotVideoGenerationOutput):
+        if node_name == "clip_video_generation" and isinstance(output, ClipVideoGenerationOutput):
             for item in output.generated_videos:
                 if item.episode_key == episode_key and item.shot_id == shot.shot_id and item.asset_path:
                     return item.asset_path
@@ -361,7 +361,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
 
         registry = load_generation_tasks(project_dir, project_id=state.project_id)
         task_keys = {
-            self._shot_video_task_key(episode.episode_key, shot_id)
+            self._clip_video_task_key(episode.episode_key, shot_id)
             for shot_id in selected_shot_ids
         }
         tasks = registry.get("tasks", [])

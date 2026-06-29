@@ -103,7 +103,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 
 - `key_vision`: 项目主视觉原图，由 `design_key_vision_image` 生成，默认建议竖版比例，例如 `key_vision_size: "9:16"`。
 - `roleboard`: 角色身份板图，由 `roleboard_generation` 基于主视觉原图和角色身份板 prompt 生成，包含正面、侧面、背面、表情、动作和服装细节，并在边缘保留小号“角色：<角色名> | <形象名>”及可选视图标签，默认走支持参考图的图像 provider，建议 16:9 横幅比例，例如 `roleboard_size: "16:9"`。
-- `storyboard_sheet_generation`: pregen 内部用于 `storyboard_generation` 的图像绑定，按输入 clip 输出黑白线稿 12 宫格故事板整图到 `assets/images/storyboards/`。`storyboard_keyframe_generation` 会在每集首个 clip 生成 start/end 两张关键帧、后续 clip 只生成自己的 end 关键帧到 `assets/images/storyboard_keyframes/`。`shot_manifest_generation` 再把 clip 脚本、12 宫格故事板和首尾关键帧整理成 `shots/episode_XXX.json`，供 generation 阶段逐 clip 读取。generation 阶段不再提供同名 `storyboard_generation` 节点；保留的 `storyboard_generation` 仅指 pregen 的 12 宫格故事板图像节点。
+- `storyboard_sheet_generation`: pregen 内部用于 `storyboard_generation` 的图像绑定，按输入 clip 输出黑白线稿 12 宫格故事板整图到 `assets/images/storyboards/`。`storyboard_keyframe_generation` 会在每集首个 clip 生成 start/end 两张关键帧、后续 clip 只生成自己的 end 关键帧到 `assets/images/storyboard_keyframes/`。`clip_manifest_generation` 再把 clip 脚本、12 宫格故事板和首尾关键帧整理成 `shots/episode_XXX.json`，供 generation 阶段逐 clip 读取。generation 阶段不再提供同名 `storyboard_generation` 节点；保留的 `storyboard_generation` 仅指 pregen 的 12 宫格故事板图像节点。
 
 旧的分散式角色视觉链路已移除；当前角色视觉资产以 roleboard 身份板为准。
 
@@ -132,7 +132,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - 全局 BGM: `minimax`
 - 镜头视频: `volcengine`
 
-所有图片生成默认通过 ToAPI GPT-Image-2：主视觉原图、角色身份板、12 宫格故事板、storyboard 首尾关键帧、道具图和场景图都会本地保存图片文件，并尽量保存 provider 返回的图片 URL。`shot_manifest_generation` 会为每个 storyboard clip 准备固定 `shot_video_inputs` 和模型专属 `final_video_prompt`：`image_1` 是实际使用的 clip_start_frame，`image_2` 是 clip_end_frame，`image_3` 是当前 clip 的 12 宫格故事板整图，后面依次是一个或多个 roleboard、layout 和 prop。首个 clip 的 start/end 都来自自己；非首个 clip 的 start 来自上一 clip 的 end，并要求视频开头立刻 hard cut 到当前 clip 的 P01。`shot_video_generation` 不再渲染提示词或推断素材，只读取 `shots/<episode_key>.json` 里已经准备好的 `final_video_prompt + shot_video_inputs` 并提交给视频 provider。每个模型的负向规则通过 `nodes.shot_video_generation.params.negative_rules` 绑定到具体模型。
+所有图片生成默认通过 ToAPI GPT-Image-2：主视觉原图、角色身份板、12 宫格故事板、storyboard 首尾关键帧、道具图和场景图都会本地保存图片文件，并尽量保存 provider 返回的图片 URL。`clip_manifest_generation` 会为每个 storyboard clip 准备固定 `shot_video_inputs` 和模型专属 `final_video_prompt`：`image_1` 是实际使用的 clip_start_frame，`image_2` 是 clip_end_frame，`image_3` 是当前 clip 的 12 宫格故事板整图，后面依次是一个或多个 roleboard、layout 和 prop。首个 clip 的 start/end 都来自自己；非首个 clip 的 start 来自上一 clip 的 end，并要求视频开头立刻 hard cut 到当前 clip 的 P01。`clip_video_generation` 不再渲染提示词或推断素材，只读取 `shots/<episode_key>.json` 里已经准备好的 `final_video_prompt + shot_video_inputs` 并提交给视频 provider。每个模型的负向规则通过 `nodes.clip_video_generation.params.negative_rules` 绑定到具体模型。
 
 本地验证或演示可以使用 `--fake`，不会调用真实外部服务。
 
@@ -200,7 +200,7 @@ run\start.cmd --config config.yaml --project huyao --until script_novel_extract
 ```powershell
 run\start.cmd --config config.yaml --project huyao --only storyboard_generation --episodes 1
 run\start.cmd --config config.yaml --project huyao --only storyboard_keyframe_generation --episodes 1
-run\start.cmd --config config.yaml --project huyao --only shot_manifest_generation --episodes 1
+run\start.cmd --config config.yaml --project huyao --only clip_manifest_generation --episodes 1
 ```
 
 `import-script` 会写入 `assets/json/scripts/novel_full/episode_001.json`，并把 `script_outline`、`script_novel` 标记为已完成。后续普通预生成会跳过重写型脚本节点，先生成 `director_prep`，再从 `script_novel_extract` 继续：
@@ -254,7 +254,7 @@ roleboard_generation
 storyboard_prompt
 storyboard_generation
 storyboard_keyframe_generation
-shot_manifest_generation
+clip_manifest_generation
 role_voice_select
 ```
 
@@ -276,13 +276,13 @@ roleboard_generation
 storyboard_prompt
 storyboard_generation
 storyboard_keyframe_generation
-shot_manifest_generation
+clip_manifest_generation
 role_voice_select
 ```
 
 `roleboard_prompt` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并结合主视觉原图信息输出 prompt-only 的角色身份板提示词；代码负责生成 `role_id`、`appearance_id` 等内部 ID。`roleboard_prompt` 的模板按后续 `roleboard_generation` 绑定的生图 provider/model 自动选择，也可通过 `nodes.roleboard_generation.params.roleboard_prompt_template` 显式指定，便于为 GPT-Image、Seedream 等不同模型维护不同调性的角色板提示词。`roleboard_generation` 使用身份板提示词和 `design_key_vision_image` 产出的主视觉原图作为参考图，生成正面、侧面、背面、表情、动作、服装细节等角色身份板，并要求图片边缘带小号“角色：<角色名> | <形象名>”以及可选的“正面/侧面/背面/头部/表情/动作/服装细节/配饰细节”视图标签，方便后续把图片单独作为参考图时直接识别角色；除这些指定标签外仍禁止字幕、水印、logo、编号、ID、文件名、项目名、剧情台词或乱码文字。`roleboard_generation` 支持按 `nodes.roleboard_generation.params.roleboard_generation_concurrency` 并发生成多张角色板。`role_voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，参考角色身份板并按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；后续 `shot_dialogue_audio_generation` 会直接使用该 `voice_type` 生成逐镜头对白音频。功能角色如果 `has_dialogue=false` 不选择声音。
 
-`clip_segment` 在剧本正文和摘要之后运行，把每集文本切成建议 8-15 秒的 clip，并为每个 clip 提取 `role_names`、`prop_names`、`layout_names`；episode 时长只作为文本节奏参考，不再用来硬性校验 clip 数量。`storyboard_prompt` 在 `roleboard_generation` 之后运行，严格跟随 `clip_segment` 的 clip 数和顺序，把导演前期、完整正文、剧情摘要、clip 片段和角色身份板摘要整理成 storyboard clip；每个 clip 的 `video_prompt` 内部再拆 1-4 个真实 `Camera Shot`，推荐 2-4 个，并写出 P01-P12 十二宫格面板规划。P01-P12 是视觉节奏帧，不是 1 秒 1 格；真实切镜边界会要求在故事板宫格之间用醒目的红色斜杠标出。pregen 的 `storyboard_generation` 会为每个 storyboard clip 生成一张黑白线稿 12 宫格故事板整图，保存到 `assets/images/storyboards/`。`storyboard_keyframe_generation` 紧随其后，从每集首个 clip 的 P01/P12 生成 start/end 关键帧，并从后续 clip 的 P12 生成 end 关键帧。`shot_manifest_generation` 是本地整理节点，会把故事板 prompt、12 宫格故事板整图、首尾关键帧、角色/道具/场景 ID 和融合后的 `video_prompt` 写入 `shots/<episode_key>.json`，同时保留已有视频/音频动态资产字段。这里的 `storyboard_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
+`clip_segment` 在剧本正文和摘要之后运行，把每集文本切成建议 8-15 秒的 clip，并为每个 clip 提取 `role_names`、`prop_names`、`layout_names`；episode 时长只作为文本节奏参考，不再用来硬性校验 clip 数量。`storyboard_prompt` 在 `roleboard_generation` 之后运行，严格跟随 `clip_segment` 的 clip 数和顺序，把导演前期、完整正文、剧情摘要、clip 片段和角色身份板摘要整理成 storyboard clip；每个 clip 的 `video_prompt` 内部再拆 1-4 个真实 `Camera Shot`，推荐 2-4 个，并写出 P01-P12 十二宫格面板规划。P01-P12 是视觉节奏帧，不是 1 秒 1 格；真实切镜边界会要求在故事板宫格之间用醒目的红色斜杠标出。pregen 的 `storyboard_generation` 会为每个 storyboard clip 生成一张黑白线稿 12 宫格故事板整图，保存到 `assets/images/storyboards/`。`storyboard_keyframe_generation` 紧随其后，从每集首个 clip 的 P01/P12 生成 start/end 关键帧，并从后续 clip 的 P12 生成 end 关键帧。`clip_manifest_generation` 是本地整理节点，会把故事板 prompt、12 宫格故事板整图、首尾关键帧、角色/道具/场景 ID 和融合后的 `video_prompt` 写入 `shots/<episode_key>.json`，同时保留已有视频/音频动态资产字段。这里的 `storyboard_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
 
 `role_episode_key_audit` 在 `role_extract` 之后运行，会以 30 并发逐个检查角色 JSON 的 `episode_keys` 覆盖情况；如果发现遗漏，只向 `role_extract*`、已有 `roleboard_prompt`、角色 JSON 和 state 角色记录追加缺失的 `episode_keys/source_chapters`，不会删除或重排原有条目。
 
@@ -305,11 +305,11 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config
 
 ```text
 shot_dialogue_audio_generation
-shot_video_generation
+clip_video_generation
 dynamic_asset_solidification
 ```
 
-`generation` 阶段不再生成 storyboard JSON 或单独参考图资产。运行 `run\start.cmd --generation ...` 时进入动态流程；不带 `--generation` 时进入 pregen 流程。`shot_dialogue_audio_generation` 先读取 `shots/<episode_key>.json` 中的 `dialogue`，用 `role_voice_select` 绑定的官方 `voice_type` 生成对白音频并写回 `dialogue_audio_assets`。`shot_video_generation` 随后读取同一个 clip 清单中的 `final_video_prompt` 和 `shot_video_inputs`，只负责提交视频任务、轮询和落盘；`shot_video_inputs` 前三张固定是 `clip_start_frame`、`clip_end_frame`、`storyboard`，人物输入必须是 roleboard 图片，不是 Kling subject element 或其它 element 引用。对白文本、Camera Shot 段落、P01-P12 面板规划、首尾帧连续性和非首 clip hard cut 约束必须已经包含在 `video_prompt` 以及由 `shot_manifest_generation` 渲染出的 `final_video_prompt` 中。
+`generation` 阶段不再生成 storyboard JSON 或单独参考图资产。运行 `run\start.cmd --generation ...` 时进入动态流程；不带 `--generation` 时进入 pregen 流程。`shot_dialogue_audio_generation` 先读取 `shots/<episode_key>.json` 中的 `dialogue`，用 `role_voice_select` 绑定的官方 `voice_type` 生成对白音频并写回 `dialogue_audio_assets`。`clip_video_generation` 随后读取同一个 clip 清单中的 `final_video_prompt` 和 `shot_video_inputs`，只负责提交视频任务、轮询和落盘；`shot_video_inputs` 前三张固定是 `clip_start_frame`、`clip_end_frame`、`storyboard`，人物输入必须是 roleboard 图片，不是 Kling subject element 或其它 element 引用。对白文本、Camera Shot 段落、P01-P12 面板规划、首尾帧连续性和非首 clip hard cut 约束必须已经包含在 `video_prompt` 以及由 `clip_manifest_generation` 渲染出的 `final_video_prompt` 中。
 
 ### 5. 一次性运行预生成和动态资产
 
@@ -345,8 +345,8 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli inspect nodes --config 
 run\start.cmd --config config.yaml --project <project_id> --until roleboard_generation
 run\start.cmd --config config.yaml --project <project_id> --until storyboard_generation
 run\start.cmd --config config.yaml --project <project_id> --until storyboard_keyframe_generation
-run\start.cmd --config config.yaml --project <project_id> --until shot_manifest_generation
-run\start.cmd --generation --config config.yaml --project <project_id> --until shot_video_generation
+run\start.cmd --config config.yaml --project <project_id> --until clip_manifest_generation
+run\start.cmd --generation --config config.yaml --project <project_id> --until clip_video_generation
 ```
 
 只运行一个节点：
@@ -358,10 +358,10 @@ run\start.cmd --config config.yaml --project <project_id> --only clip_segment
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_prompt
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_generation
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_keyframe_generation
-run\start.cmd --config config.yaml --project <project_id> --only shot_manifest_generation
+run\start.cmd --config config.yaml --project <project_id> --only clip_manifest_generation
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_select
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_dialogue_audio_generation --episodes 1
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1
+run\start.cmd --generation --config config.yaml --project <project_id> --only clip_video_generation --episodes 1
 ```
 
 按剧集选择：
@@ -373,7 +373,7 @@ run\start.cmd --config config.yaml --project <project_id> --only roleboard_gener
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_prompt --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only storyboard_keyframe_generation --episodes 1 --force
-run\start.cmd --config config.yaml --project <project_id> --only shot_manifest_generation --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only clip_manifest_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_select --episodes 1 --force
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1,3
@@ -381,7 +381,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --episode
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
 
-`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `clip_segment`、`roleboard_prompt`、`roleboard_generation`、`storyboard_prompt`、`storyboard_generation`、`storyboard_keyframe_generation`、`shot_manifest_generation`、`role_voice_select`、`prop_prompt`、`prop_image_generation` 和 `layout_image_generation`。clip、角色、故事板、关键帧、道具和场景图相关节点会按各自的 `episode_keys` 或目标集过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。`prop_design`、`prop_generation` 是旧别名，会分别转到 `prop_prompt`、`prop_image_generation`。
+`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `clip_segment`、`roleboard_prompt`、`roleboard_generation`、`storyboard_prompt`、`storyboard_generation`、`storyboard_keyframe_generation`、`clip_manifest_generation`、`role_voice_select`、`prop_prompt`、`prop_image_generation` 和 `layout_image_generation`。clip、角色、故事板、关键帧、道具和场景图相关节点会按各自的 `episode_keys` 或目标集过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。`prop_design`、`prop_generation` 是旧别名，会分别转到 `prop_prompt`、`prop_image_generation`。
 
 全局音色 catalog 命令：
 
@@ -399,12 +399,12 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --con
 按镜头选择：
 
 ```powershell
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1 --shots 1-3
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes episode_001 --shots episode_001_shot_001
+run\start.cmd --generation --config config.yaml --project <project_id> --only clip_video_generation --episodes 1 --shots 1
+run\start.cmd --generation --config config.yaml --project <project_id> --only clip_video_generation --episodes 1 --shots 1-3
+run\start.cmd --generation --config config.yaml --project <project_id> --only clip_video_generation --episodes episode_001 --shots episode_001_shot_001
 ```
 
-`--shots` 只能用于支持镜头选择的动态节点，例如 `shot_dialogue_audio_generation`、`shot_video_generation` 和 `dynamic_asset_solidification`。
+`--shots` 只能用于支持镜头选择的动态节点，例如 `shot_dialogue_audio_generation`、`clip_video_generation` 和 `dynamic_asset_solidification`。
 
 ## 断点续跑
 
@@ -424,7 +424,7 @@ outputs/<project_id>/generation_checklist.json
 outputs/<project_id>/generation_tasks.json
 ```
 
-如果视频任务已提交但轮询超时，重新运行 `shot_video_generation` 可以根据任务记录继续查询或补写结果。
+如果视频任务已提交但轮询超时，重新运行 `clip_video_generation` 可以根据任务记录继续查询或补写结果。
 
 ## 输出文件
 
@@ -536,7 +536,7 @@ outputs/<project_id>/logs/
 然后重跑：
 
 ```powershell
-run\start.cmd --generation --config config.yaml --project <project_id> --only shot_video_generation --episodes 1
+run\start.cmd --generation --config config.yaml --project <project_id> --only clip_video_generation --episodes 1
 ```
 
 ## 开发约定

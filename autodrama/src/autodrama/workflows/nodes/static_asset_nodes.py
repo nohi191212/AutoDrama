@@ -100,6 +100,13 @@ class StaticAssetNodeBase:
                 "image_unsafe",
                 "appear to be unsafe",
                 "generated images appear to be unsafe",
+                "content policy",
+                "safety policy",
+                "policy violation",
+                "内容政策",
+                "安全策略",
+                "违反了我们的内容政策",
+                "可能违反",
             )
         )
 

@@ -17,7 +17,7 @@ EXPECTED_STORYBOARD_NODES = [
     "storyboard_prompt",
     "storyboard_generation",
     "storyboard_keyframe_generation",
-    "shot_manifest_generation",
+    "clip_manifest_generation",
 ]
 
 

@@ -14,6 +14,7 @@ class WorkflowRunContext:
     selected_episode_keys: list[str] | None = None
     selected_role_names: list[str] | None = None
     shot_selectors: set[str] = field(default_factory=set)
+    clip_selectors: set[str] = field(default_factory=set)
     burn_subtitles: bool = True
 
     def episode_selected(self, episode_key: str) -> bool:
@@ -26,3 +27,7 @@ class WorkflowRunContext:
     @property
     def has_shot_selectors(self) -> bool:
         return bool(self.shot_selectors)
+
+    @property
+    def has_clip_selectors(self) -> bool:
+        return bool(self.clip_selectors)

@@ -101,7 +101,8 @@ nodes:
   storyboard_sheet_generation:
     model: aibox:gpt-image-2
     params:
-      storyboard_generation_concurrency: 2
+      storyboard_generation_concurrency: 4
+      size: "1:1"
       resolution: 2K
       n: 1
       response_format: url
@@ -182,21 +183,21 @@ nodes:
       sample_rate: 44100
       output_format: url
       is_instrumental: true
-  shot_video_generation:
+  clip_video_generation:
     model: volcengine:doubao-seedance-2-0-260128
     params:
       ratio: "9:16"
       resolution: 720p
       generate_audio: false
       return_last_frame: true
-      prompt_template: shot_video/volcengine
+      prompt_template: clip_video/volcengine
       negative_rules:
         - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示参考图版式或三视图布局。
         - 不要把 12 宫格故事板画成最终成片，不要生成故事板线稿风格。
-      shot_video_generation_concurrency: 5
+      clip_video_generation_concurrency: 5
   # Optional Kling branch. Switch these bindings plus routing.video.shot to kling.
   # role_subject_element_generation may still create/cache Kling subject elements,
-  # but shot_video_generation uses the fixed shot_video_inputs from shot_manifest_generation;
+  # but clip_video_generation uses the fixed clip_video_inputs from clip_manifest_generation;
   # image_1/image_2/image_3 are clip_start_frame, clip_end_frame, and storyboard.
   # it must not pass element refs or element_list.
   # role_subject_video_generation:
@@ -222,19 +223,19 @@ nodes:
   #     mode: pro
   #     sound: "on"
   #     watermark: false
-  # shot_video_generation:
+  # clip_video_generation:
   #   model: kling:kling-v3-omni
   #   params:
   #     aspect_ratio: "9:16"
   #     mode: pro
   #     sound: "off"
   #     watermark: false
-  #     prompt_template: shot_video/kling
+  #     prompt_template: clip_video/kling
   #     negative_rules:
   #       - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示参考图版式或三视图布局。
   #       - 不要使用 subject element，不要生成参考图拼版、三视图布局、宫格或面板编号。
   #     max_reference_images: 3
-  #     shot_video_generation_concurrency: 5
+  #     clip_video_generation_concurrency: 5
   shot_dialogue_audio_generation:
     model: volcengine:seed-tts-2.0
     params:
@@ -429,7 +430,7 @@ providers:
       key_vision_resolution: 4K
       roleboard_size: "16:9"
       roleboard_resolution: 4K
-      storyboard_size: "16:9"
+      storyboard_size: "1:1"
       storyboard_resolution: 2K
       prop_size: "1:1"
       prop_resolution: 2K
@@ -568,8 +569,8 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # Seedance video refs are prepared by shot_manifest_generation as fixed shot_video_inputs.
-      # shot_video_generation submits clip_start_frame, clip_end_frame, storyboard, then roleboard/layout/prop refs.
+      # Seedance video refs are prepared by clip_manifest_generation as fixed clip_video_inputs.
+      # clip_video_generation submits clip_start_frame, clip_end_frame, storyboard, then roleboard/layout/prop refs.
       # Previous generated videos, audio refs, and key vision are not part of the fixed shot video contract.
       video_reference_mode: full
       previous_video_preroll_seconds: 0
@@ -652,8 +653,7 @@ providers:
 
   kling:
     base_url: https://api-beijing.klingai.com
-    access_key_env: KLING_ACCESS_KEY
-    secret_key_env: KLING_SECRET_KEY
+    api_key_env: KLING_API_KEY
     models:
       video: kling-v3-omni
       subject_element: advanced-custom-elements

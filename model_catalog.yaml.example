@@ -595,7 +595,7 @@ models:
       max_reference_video_total_duration_seconds:
         type: number
         min: 0
-      shot_video_generation_concurrency:
+      clip_video_generation_concurrency:
         type: integer
         min: 1
         max: 5
@@ -660,7 +660,7 @@ models:
         type: integer
         min: 1
         max: 5
-      shot_video_generation_concurrency:
+      clip_video_generation_concurrency:
         type: integer
         min: 1
         max: 5

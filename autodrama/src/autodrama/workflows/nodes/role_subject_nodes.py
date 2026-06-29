@@ -47,7 +47,7 @@ class RoleSubjectNodeBase:
                 return provider
         except Exception:
             provider = None
-        shot_provider = self.router.video("shot", node_name="shot_video_generation")
+        shot_provider = self.router.video("shot", node_name="clip_video_generation")
         if self._provider_supports_subject_elements(shot_provider):
             return shot_provider
         return provider

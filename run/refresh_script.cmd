@@ -124,7 +124,7 @@ echo   1. Import the mature script with --preserve-assets --detail-expand.
 echo   2. Refresh director_prep and script_novel_extract.
 echo.
 echo It preserves existing roles, props, layouts, images, audio, and videos.
-echo It does not run dynamic generation or shot_video_generation.
+echo It does not run dynamic generation or clip_video_generation.
 goto end
 
 :help_error
@@ -193,7 +193,7 @@ if not "%RUN_STORYBOARD%"=="" (
   "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only storyboard_generation %EPISODE_ARGS% %PROVIDER_ARGS%
   set "EXIT_CODE=!ERRORLEVEL!"
   if not "!EXIT_CODE!"=="0" goto fail
-  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only shot_manifest_generation %EPISODE_ARGS% %PROVIDER_ARGS%
+  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only clip_manifest_generation %EPISODE_ARGS% %PROVIDER_ARGS%
   set "EXIT_CODE=!ERRORLEVEL!"
   if not "!EXIT_CODE!"=="0" goto fail
 )

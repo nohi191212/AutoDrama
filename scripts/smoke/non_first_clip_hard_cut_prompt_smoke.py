@@ -11,14 +11,14 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from autodrama.config import load_settings
-from autodrama.core.schemas import ShotVideoInput
+from autodrama.core.schemas import ClipVideoInput
 from autodrama.utils.prompts import PromptStore
-from autodrama.workflows.nodes.storyboard_asset_nodes import ShotManifestGenerationNode
+from autodrama.workflows.nodes.storyboard_asset_nodes import ClipManifestGenerationNode
 
 
 def main() -> None:
     settings = load_settings(ROOT / "config.yaml.example")
-    node = ShotManifestGenerationNode(
+    node = ClipManifestGenerationNode(
         workflow=SimpleNamespace(prompts=PromptStore()),
         repo=SimpleNamespace(settings=settings),
         layout=None,
@@ -31,7 +31,7 @@ def main() -> None:
         logger=None,
     )
     inputs = [
-        ShotVideoInput(
+        ClipVideoInput(
             slot="image_1",
             asset_type="clip_start_frame",
             asset_id="episode_001_clip_001_end_frame",
@@ -40,7 +40,7 @@ def main() -> None:
             label="previous end",
             order=1,
         ),
-        ShotVideoInput(
+        ClipVideoInput(
             slot="image_2",
             asset_type="clip_end_frame",
             asset_id="episode_001_clip_002_end_frame",
@@ -49,7 +49,7 @@ def main() -> None:
             label="current end",
             order=2,
         ),
-        ShotVideoInput(
+        ClipVideoInput(
             slot="image_3",
             asset_type="storyboard",
             asset_id="episode_001_clip_002_storyboard",
@@ -59,7 +59,7 @@ def main() -> None:
             order=3,
         ),
     ]
-    prompt, template = node._render_shot_video_prompt_template(
+    prompt, template = node._render_clip_video_prompt_template(
         provider=SimpleNamespace(name="volcengine", model="doubao-seedance-2-0-260128"),
         episode_key="episode_001",
         shot_id="episode_001_clip_002",
@@ -68,12 +68,12 @@ def main() -> None:
             "Camera Shot 1（0-4秒）：从 P01 的门口反应切开始。"
             "十二宫格面板规划 P01 P02 P03 P04 P05 P06 P07 P08 P09 P10 P11 P12。"
         ),
-        shot_video_inputs=inputs,
+        clip_video_inputs=inputs,
         is_first_clip=False,
         start_frame_source_clip_id="episode_001_clip_001",
         end_frame_source_clip_id="episode_001_clip_002",
     )
-    if template != "shot_video/volcengine":
+    if template != "clip_video/volcengine":
         raise AssertionError(f"unexpected prompt template: {template}")
     required = ["上一条 clip", "必须从 image_1 开始", "立刻硬切", "P01", "不要把上一尾帧丝滑变形"]
     missing = [text for text in required if text not in prompt]

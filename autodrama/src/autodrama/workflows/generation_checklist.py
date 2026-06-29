@@ -13,7 +13,7 @@ EpisodeGenerationStatus = Literal["pending", "completed", "skipped", "failed", "
 
 DYNAMIC_STATUS_FIELDS = (
     "shot_dialogue_audio",
-    "shot_video",
+    "clip_video",
     "solidified",
 )
 
@@ -64,7 +64,7 @@ def _episode_status(project_dir: Path, episode_key: str) -> dict[str, EpisodeGen
     solidified_done = all(bool(shot.solidified_asset_ids) for shot in episode.shots)
     return {
         "shot_dialogue_audio": "completed" if dialogue_done else "pending",
-        "shot_video": "completed" if video_done else "pending",
+        "clip_video": "completed" if video_done else "pending",
         "solidified": "completed" if solidified_done else "pending",
     }
 
@@ -75,13 +75,13 @@ def _generated_counts(project_dir: Path, episode_key: str) -> dict[str, int]:
         return {
             "shots": 0,
             "shot_dialogue_audios": 0,
-            "shot_videos": 0,
+            "clip_videos": 0,
             "solidified_assets": 0,
         }
     return {
         "shots": len(episode.shots),
         "shot_dialogue_audios": sum(len(shot.dialogue_audio_assets) for shot in episode.shots),
-        "shot_videos": sum(1 for shot in episode.shots if shot.video_asset_path or shot.video_task_id),
+        "clip_videos": sum(1 for shot in episode.shots if shot.video_asset_path or shot.video_task_id),
         "solidified_assets": sum(len(shot.solidified_asset_ids) for shot in episode.shots),
     }
 
@@ -128,7 +128,7 @@ def update_checklist_from_state(
             node_status = "failed"
         elif episode_key in processed_episode_keys:
             node_status = "completed"
-        elif status["shot_dialogue_audio"] == "completed" and status["shot_video"] == "completed":
+        elif status["shot_dialogue_audio"] == "completed" and status["clip_video"] == "completed":
             node_status = "completed"
         elif previous.get("generation_status") == "skipped":
             node_status = "skipped"

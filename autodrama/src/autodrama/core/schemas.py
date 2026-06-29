@@ -426,7 +426,7 @@ class StoryboardSheetGenerationItem(BaseModel):
     duration_seconds: float | None = None
     panel_count: int = 12
     grid: str = "4x3"
-    panel_aspect_ratio: str = "16:9"
+    panel_aspect_ratio: str = "3:4"
     asset_path: str | None = None
     asset_url: str | None = None
     provider: str
@@ -752,7 +752,7 @@ class StoryboardSourceCoverage(BaseModel):
     note: str
 
 
-class ShotVideoInput(BaseModel):
+class ClipVideoInput(BaseModel):
     slot: str
     type: Literal["image"] = "image"
     asset_type: Literal["clip_start_frame", "clip_end_frame", "storyboard", "roleboard", "layout", "prop"] | str
@@ -806,7 +806,7 @@ class StoryboardClip(BaseModel):
     source_storyboard_asset_path: str | None = None
     video_prompt: str
     final_video_prompt: str | None = None
-    shot_video_inputs: list[ShotVideoInput] = Field(default_factory=list)
+    clip_video_inputs: list[ClipVideoInput] = Field(default_factory=list)
     start_frame_asset_id: str | None = None
     start_frame_asset_path: str | None = None
     start_frame_asset_url: str | None = None
@@ -857,7 +857,7 @@ class StoryboardEpisodeOutput(BaseModel):
         self.clips = value
 
 
-class ShotManifestGenerationEpisodeItem(BaseModel):
+class ClipManifestGenerationEpisodeItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     episode_key: str
@@ -882,8 +882,8 @@ class ShotManifestGenerationEpisodeItem(BaseModel):
         self.clip_path = value
 
 
-class ShotManifestGenerationOutput(BaseModel):
-    episodes: list[ShotManifestGenerationEpisodeItem]
+class ClipManifestGenerationOutput(BaseModel):
+    episodes: list[ClipManifestGenerationEpisodeItem]
 
 
 class ShotDialogueAudioGenerationItem(BaseModel):
@@ -897,7 +897,7 @@ class ShotDialogueAudioGenerationOutput(BaseModel):
     skipped_dialogue_lines: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ShotVideoGenerationItem(BaseModel):
+class ClipVideoGenerationItem(BaseModel):
     episode_key: str
     shot_id: str
     asset_id: str
@@ -914,8 +914,8 @@ class ShotVideoGenerationItem(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
-class ShotVideoGenerationOutput(BaseModel):
-    generated_videos: list[ShotVideoGenerationItem]
+class ClipVideoGenerationOutput(BaseModel):
+    generated_videos: list[ClipVideoGenerationItem]
 
 
 class RoleSubjectVideoGenerationItem(BaseModel):
@@ -970,7 +970,7 @@ class RoleSubjectElementGenerationOutput(BaseModel):
 
 class DynamicAssetSolidificationItem(BaseModel):
     asset_id: str
-    asset_type: Literal["shot_dialogue_audio", "shot_bgm", "shot_video"]
+    asset_type: Literal["shot_dialogue_audio", "shot_bgm", "clip_video"]
     episode_key: str
     shot_id: str
     asset_path: str | None = None

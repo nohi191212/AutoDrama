@@ -11,21 +11,21 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from autodrama.config import load_settings
-from autodrama.core.schemas import ShotVideoInput, StoryboardShot
+from autodrama.core.schemas import ClipVideoInput, StoryboardShot
 from autodrama.utils.prompts import PromptStore
-from autodrama.workflows.nodes.storyboard_asset_nodes import ShotManifestGenerationNode
+from autodrama.workflows.nodes.storyboard_asset_nodes import ClipManifestGenerationNode
 
 
 def main() -> None:
     settings = load_settings(ROOT / "config.yaml.example")
-    shot_video_params = settings.nodes["shot_video_generation"].params
-    if shot_video_params.get("prompt_template") != "shot_video/volcengine":
-        raise AssertionError("shot_video_generation prompt_template is not model-bound")
-    if not shot_video_params.get("negative_rules"):
-        raise AssertionError("shot_video_generation negative_rules is missing")
+    clip_video_params = settings.nodes["clip_video_generation"].params
+    if clip_video_params.get("prompt_template") != "clip_video/volcengine":
+        raise AssertionError("clip_video_generation prompt_template is not model-bound")
+    if not clip_video_params.get("negative_rules"):
+        raise AssertionError("clip_video_generation negative_rules is missing")
 
     inputs = [
-        ShotVideoInput(
+        ClipVideoInput(
             slot="image_1",
             asset_type="clip_start_frame",
             asset_id="episode_001_clip_001_start_frame",
@@ -34,7 +34,7 @@ def main() -> None:
             label="start frame",
             order=1,
         ),
-        ShotVideoInput(
+        ClipVideoInput(
             slot="image_2",
             asset_type="clip_end_frame",
             asset_id="episode_001_clip_001_end_frame",
@@ -43,7 +43,7 @@ def main() -> None:
             label="end frame",
             order=2,
         ),
-        ShotVideoInput(
+        ClipVideoInput(
             slot="image_3",
             asset_type="storyboard",
             asset_id="episode_001_clip_001_storyboard",
@@ -52,7 +52,7 @@ def main() -> None:
             label="storyboard",
             order=3,
         ),
-        ShotVideoInput(
+        ClipVideoInput(
             slot="image_4",
             asset_type="roleboard",
             asset_id="role_linzhou_base",
@@ -62,7 +62,7 @@ def main() -> None:
             role_id="role_linzhou",
             order=4,
         ),
-        ShotVideoInput(
+        ClipVideoInput(
             slot="image_5",
             asset_type="layout",
             asset_id="layout_office",
@@ -74,13 +74,13 @@ def main() -> None:
         ),
     ]
     final_prompt = PromptStore().render(
-        "shot_video/volcengine",
+        "clip_video/volcengine",
         episode_key="episode_001",
         clip_id="episode_001_clip_001",
         shot_id="episode_001_clip_001",
         duration_seconds=10,
         video_prompt="Camera Shot 1（0-4秒）：角色进入办公室。十二宫格面板规划 P01-P03 对应该镜头。",
-        shot_video_inputs_json="[{}]",
+        clip_video_inputs_json="[{}]",
         clip_start_frame_slot="image_1",
         clip_end_frame_slot="image_2",
         storyboard_input_slot="image_3",
@@ -105,7 +105,7 @@ def main() -> None:
         duration_seconds=10,
         video_prompt="Camera Shot 1（0-4秒）：角色进入办公室。十二宫格面板规划 P01-P03 对应该镜头。",
         final_video_prompt=final_prompt,
-        shot_video_inputs=inputs,
+        clip_video_inputs=inputs,
         start_frame_asset_id="episode_001_clip_001_start_frame",
         start_frame_source_clip_id="episode_001_clip_001",
         end_frame_asset_id="episode_001_clip_001_end_frame",
@@ -128,12 +128,12 @@ def main() -> None:
     if "per_second_content" in dumped:
         raise AssertionError("per_second_content should not be serialized")
     expected_order = ["clip_start_frame", "clip_end_frame", "storyboard"]
-    if [item.get("asset_type") for item in dumped.get("shot_video_inputs", [])[:3]] != expected_order:
+    if [item.get("asset_type") for item in dumped.get("clip_video_inputs", [])[:3]] != expected_order:
         raise AssertionError("shot video inputs must start with start frame, end frame, storyboard")
     if not dumped.get("final_video_prompt"):
         raise AssertionError("final_video_prompt is missing")
 
-    limiter_node = ShotManifestGenerationNode(
+    limiter_node = ClipManifestGenerationNode(
         workflow=SimpleNamespace(prompts=PromptStore()),
         repo=SimpleNamespace(settings=settings),
         layout=None,
@@ -145,7 +145,7 @@ def main() -> None:
         media_store=None,
         logger=None,
     )
-    limited_inputs, limit_warnings = limiter_node._limit_shot_video_inputs_for_provider(
+    limited_inputs, limit_warnings = limiter_node._limit_clip_video_inputs_for_provider(
         inputs=inputs,
         provider=SimpleNamespace(max_reference_images=3),
         clip_id="episode_001_clip_001",
@@ -156,10 +156,10 @@ def main() -> None:
         raise AssertionError("provider input limit warning should list omitted lower-priority refs")
 
     settings_without_negative_rules = load_settings(ROOT / "config.yaml.example")
-    params_without_negative_rules = dict(settings_without_negative_rules.nodes["shot_video_generation"].params)
+    params_without_negative_rules = dict(settings_without_negative_rules.nodes["clip_video_generation"].params)
     params_without_negative_rules.pop("negative_rules", None)
-    settings_without_negative_rules.nodes["shot_video_generation"].params = params_without_negative_rules
-    node = ShotManifestGenerationNode(
+    settings_without_negative_rules.nodes["clip_video_generation"].params = params_without_negative_rules
+    node = ClipManifestGenerationNode(
         workflow=SimpleNamespace(prompts=PromptStore()),
         repo=SimpleNamespace(settings=settings_without_negative_rules),
         layout=None,
@@ -172,27 +172,27 @@ def main() -> None:
         logger=None,
     )
     try:
-        node._render_shot_video_prompt_template(
+        node._render_clip_video_prompt_template(
             provider=SimpleNamespace(name="volcengine", model="doubao-seedance-2-0-260128"),
             episode_key="episode_001",
             shot_id="episode_001_clip_001",
             duration_seconds=10,
             video_prompt="Camera Shot 1（0-4秒）：角色进入办公室。",
-            shot_video_inputs=inputs,
+            clip_video_inputs=inputs,
             is_first_clip=False,
             start_frame_source_clip_id="episode_001_clip_000",
             end_frame_source_clip_id="episode_001_clip_001",
         )
     except ValueError as exc:
-        if "nodes.shot_video_generation.params.negative_rules" not in str(exc):
+        if "nodes.clip_video_generation.params.negative_rules" not in str(exc):
             raise AssertionError(f"negative_rules error message is unclear: {exc}") from exc
     else:
         raise AssertionError("missing negative_rules should fail instead of using a code fallback")
 
     tmp_dir = ROOT / ".tmp"
     tmp_dir.mkdir(exist_ok=True)
-    (tmp_dir / "shot_video_manifest_contract_smoke.ok").write_text("ok\n", encoding="utf-8")
-    print("shot_video_manifest_contract_smoke: ok")
+    (tmp_dir / "clip_video_manifest_contract_smoke.ok").write_text("ok\n", encoding="utf-8")
+    print("clip_video_manifest_contract_smoke: ok")
 
 
 if __name__ == "__main__":

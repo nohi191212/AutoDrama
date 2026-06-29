@@ -12,6 +12,7 @@ set "UNTIL=role_voice_select"
 set "ONLY="
 set "EPISODES="
 set "SHOTS="
+set "CLIPS="
 set "ROLES="
 set "FORCE="
 
@@ -105,6 +106,18 @@ if "%~1"=="--shots" (
   shift
   goto parse
 )
+if "%~1"=="--clips" (
+  set "CLIPS=%~2"
+  shift
+  shift
+  goto parse
+)
+if "%~1"=="--clip" (
+  set "CLIPS=%~2"
+  shift
+  shift
+  goto parse
+)
 if "%~1"=="--force" (
   set "FORCE=--force"
   shift
@@ -119,11 +132,12 @@ goto help_error
 :help
 echo Usage:
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
-echo   run\start.cmd [--only NODE] [--episodes 1,3] [--roles ROLE1,ROLE2] [--shots 1-3]
+echo   run\start.cmd [--only NODE] [--episodes 1,3] [--roles ROLE1,ROLE2] [--clips 1-3]
 echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force]
 echo   run\start.cmd --postgen [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-9] [--only NODE] [--fake] [--force]
 echo   --episode is accepted as an alias for --episodes.
 echo   --role is accepted as an alias for --roles.
+echo   --clip is accepted as an alias for --clips.
 echo   run\start.cmd --workflow pregen^|generation^|postgen [options]
 echo.
 echo This is the native Windows entry point. It uses runtime.python.windows
@@ -137,20 +151,22 @@ echo Notes:
 echo   pregen writes roleboards, 12-panel storyboard sheets, shot manifests, and selected role voice_type bindings through role_voice_select.
 echo   prop/layout/BGM nodes are deferred from the default pregen chain and can be run with --only.
 echo   pregen visual/audio chain is roleboard_prompt, roleboard_generation, storyboard_prompt,
-echo   storyboard_generation, shot_manifest_generation, then role_voice_select.
+echo   storyboard_generation, clip_manifest_generation, then role_voice_select.
 echo   pregen --roles is supported with --only role_voice_select.
-echo   generation starts with shot_dialogue_audio_generation, then shot_video_generation and solidification.
+echo   pregen --clips is supported with --only storyboard_keyframe_generation.
+echo   generation starts with shot_dialogue_audio_generation, then clip_video_generation and solidification.
 echo   postgen collects generated shot videos, asks for an edit plan, validates it, and composes final episode video.
 goto end
 
 :help_error
 echo Usage: 1>&2
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force] 1>&2
-echo   run\start.cmd [--only NODE] [--episodes 1,3] [--roles ROLE1,ROLE2] 1>&2
+echo   run\start.cmd [--only NODE] [--episodes 1,3] [--roles ROLE1,ROLE2] [--clips 1-3] 1>&2
 echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force] 1>&2
 echo   run\start.cmd --postgen [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-9] [--only NODE] [--fake] [--force] 1>&2
 echo   --episode is accepted as an alias for --episodes. 1>&2
 echo   --role is accepted as an alias for --roles. 1>&2
+echo   --clip is accepted as an alias for --clips. 1>&2
 exit /b 2
 
 :run
@@ -188,6 +204,7 @@ call :log "workflow: %WORKFLOW%"
 call :log "until: %UNTIL%"
 if not "%EPISODES%"=="" call :log "episodes: %EPISODES%"
 if not "%SHOTS%"=="" call :log "shots: %SHOTS%"
+if not "%CLIPS%"=="" call :log "clips: %CLIPS%"
 if not "%ROLES%"=="" call :log "roles: %ROLES%"
 if not "%ONLY%"=="" call :log "only: %ONLY%"
 
@@ -201,13 +218,16 @@ set "SHOT_ARGS="
 if /I "%WORKFLOW%"=="generation" if not "%SHOTS%"=="" set "SHOT_ARGS=--shots "%SHOTS%""
 if /I "%WORKFLOW%"=="postgen" if not "%SHOTS%"=="" set "SHOT_ARGS=--shots "%SHOTS%""
 
+set "CLIP_ARGS="
+if /I "%WORKFLOW%"=="pregen" if not "%CLIPS%"=="" set "CLIP_ARGS=--clips "%CLIPS%""
+
 set "ROLE_ARGS="
 if /I "%WORKFLOW%"=="pregen" if not "%ROLES%"=="" set "ROLE_ARGS=--roles "%ROLES%""
 
 set "ONLY_ARGS="
 if not "%ONLY%"=="" set "ONLY_ARGS=--only "%ONLY%""
 
-"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %ROLE_ARGS% %SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
+"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %ROLE_ARGS% %CLIP_ARGS% %SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
 set "EXIT_CODE=%ERRORLEVEL%"
 
 popd >nul

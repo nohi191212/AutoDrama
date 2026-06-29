@@ -61,6 +61,10 @@ def parse_shot_selectors(value: str | None) -> list[str] | None:
     return selectors or None
 
 
+def parse_clip_selectors(value: str | None) -> list[str] | None:
+    return parse_shot_selectors(value)
+
+
 def select_episode_keys(state: ProjectState, episode_keys: list[str] | None) -> list[str]:
     expected = expected_episode_keys(state)
     if not episode_keys:
@@ -88,6 +92,10 @@ def normalize_shot_selectors(selectors: list[str] | set[str] | None) -> set[str]
         for selector in selectors or []
         if str(selector).strip()
     }
+
+
+def normalize_clip_selectors(selectors: list[str] | set[str] | None) -> set[str]:
+    return normalize_shot_selectors(selectors)
 
 
 def shot_index_from_selector(selector: str) -> int | None:
@@ -140,6 +148,29 @@ def shot_matches_selectors(
         f"{episode.episode_key}_shot_{shot.index:03d}",
     }
     return bool(keys.intersection(selectors))
+
+
+def clip_matches_selectors(
+    episode_key: str,
+    clip_id: str,
+    clip_index: int,
+    selectors: list[str] | set[str] | None,
+) -> bool:
+    normalized_selectors = normalize_clip_selectors(selectors)
+    if not normalized_selectors:
+        return True
+    normalized_episode_key = str(episode_key or "").strip().lower().replace("-", "_")
+    normalized_clip_id = str(clip_id or "").strip().lower().replace("-", "_")
+    keys = {
+        normalized_clip_id,
+        str(clip_index),
+        f"{clip_index:03d}",
+        f"clip_{clip_index}",
+        f"clip_{clip_index:03d}",
+        f"{normalized_episode_key}_clip_{clip_index}",
+        f"{normalized_episode_key}_clip_{clip_index:03d}",
+    }
+    return bool(keys.intersection(normalized_selectors))
 
 
 def active_shots_for_episode(

@@ -9,13 +9,14 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from autodrama.core.errors import ProviderBadResponseError
 from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
     ClipSegmentNodeOutput,
     ProjectState,
-    ShotManifestGenerationEpisodeItem,
-    ShotManifestGenerationOutput,
-    ShotVideoInput,
+    ClipManifestGenerationEpisodeItem,
+    ClipManifestGenerationOutput,
+    ClipVideoInput,
     StoryboardEpisodeOutput,
     StoryboardKeyframeGenerationItem,
     StoryboardKeyframeGenerationOutput,
@@ -29,6 +30,7 @@ from autodrama.core.schemas import (
 from autodrama.providers.base import AssetRef
 from autodrama.services.director_service import DirectorService
 from autodrama.utils.video_prompts import sanitize_video_prompt_text
+from autodrama.workflows.selection import clip_matches_selectors, normalize_clip_selectors
 from autodrama.workflows.nodes.static_asset_nodes import StaticAssetNodeBase
 from autodrama.workflows.runner import WorkflowNode
 
@@ -36,7 +38,7 @@ STORYBOARD_ASSET_NODE_NAMES = [
     "storyboard_prompt",
     "storyboard_generation",
     "storyboard_keyframe_generation",
-    "shot_manifest_generation",
+    "clip_manifest_generation",
 ]
 STORYBOARD_IMAGE_PROVIDER_NODE_NAME = "storyboard_sheet_generation"
 
@@ -44,7 +46,7 @@ STORYBOARD_IMAGE_PROVIDER_NODE_NAME = "storyboard_sheet_generation"
 class StoryboardAssetNodeBase(StaticAssetNodeBase):
     STORYBOARD_PANEL_COUNT = 12
     STORYBOARD_GRID = "4x3"
-    STORYBOARD_PANEL_ASPECT_RATIO = "16:9"
+    STORYBOARD_PANEL_ASPECT_RATIO = "3:4"
     TARGET_CLIP_SECONDS = 15
     TARGET_SHOT_SECONDS = TARGET_CLIP_SECONDS
 
@@ -106,7 +108,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
 
     def final_aspect_ratio(self) -> str:
         for node_name, param_name in (
-            ("shot_video_generation", "ratio"),
+            ("clip_video_generation", "ratio"),
             ("storyboard_sheet_generation", "size"),
         ):
             node_settings = self.repo.settings.nodes.get(node_name)
@@ -127,7 +129,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
 
     @classmethod
     def storyboard_sheet_size(cls) -> str:
-        return "16:9"
+        return "1:1"
 
     def target_episode_keys(self, state: ProjectState) -> list[str]:
         return self.active_episode_keys(state) or self.expected_episode_keys(state)
@@ -587,15 +589,15 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                     f"为 {episode_key} 的 {clip.clip_id} 生成一张完整分镜故事板图。"
                     f"这个 storyboard clip 时长 {clip.duration_seconds:g} 秒，一张故事板覆盖整个 clip。"
                 ),
-                "固定要求：16:9 故事板表格，严格 4 列 x 3 行 = 12 个电影风格面板。每个宫格是当前 clip 的一个关键画面，不是一个独立 shot，也不是逐秒切片；多个宫格可以属于同一个内部 camera shot。",
+                "固定要求：1:1 方形故事板整图，严格 4 列 x 3 行 = 12 个电影风格面板。每个宫格是当前 clip 的一个关键画面，不是一个独立 shot，也不是逐秒切片；多个宫格可以属于同一个内部 camera shot。每个宫格上方是黑白故事板画面，下方必须留出一条清晰的文字说明带。",
                 "实际故事板绘图必须仅为黑白：粗糙的铅笔线条、最小细节、快速手势绘图能量、简单的解剖结构构建、强烈的轮廓可读性。保持艺术作品轻量、动态且未完成，像早期影视预演分镜，不要画成最终彩色成片。",
                 "必须严格按照下方 video_prompt 中的“十二宫格面板规划 P01-P12”绘制：每个面板都要对应一个明确的 P 编号内容，不能漏画、合并或重新编排。每个面板要清楚体现画面内容、人物动作、镜头关系、情绪节奏、声音/对白提示和所属 camera shot。",
                 "每个面板必须包含可见的动作、状态变化或镜头推进。避免重复、呆板或静态站立构图；同一 camera shot 内的连续面板要表现同一个镜头里的动作发展，不要画成频繁硬切。",
-                "切镜标记必须非常明显：在 video_prompt 标出的 camera shot 边界处，在前一个宫格结尾、后一个宫格开头或两个宫格之间的留白/分隔线上画一条醒目的红色斜杠 cut mark。红色斜杠只表示剪辑点，不能画在人物脸上、关键道具上或被误解成剧情物体；除 cut mark 和少量箭头标注外不要使用红色。",
+                "切镜标记必须非常明显：在 video_prompt 标出的 camera shot 边界处，把红色斜杠 cut mark 画在两个相邻宫格的正中间分隔线上，像一条跨越中线的清楚斜杠，不要画在某个宫格的右下角或角落里。如果边界是 P04-P05 或 P08-P09 这种跨行连续编号，不要把斜杠画到整图右侧边角；应画在两行之间的水平分隔线中央位置，并用小黑字标注“CUT P04-P05”或“CUT P08-P09”。红色斜杠只表示剪辑点，不能画在人物脸上、关键道具上或被误解成剧情物体；除 cut mark 和少量箭头标注外不要使用红色。",
                 "使用电影感摄影方式，包含但不限于：手持感、快速平移、环绕运动、俯拍、仰拍、侧面轮廓、侵略性特写、长焦压缩、极端负空间。镜头语言要服务剧情，不要平均分配，要根据 camera shot 和情绪重点变化。",
                 "环境保持简洁，只保留对剧情有帮助的关键场景元素。避免无关杂乱背景，重点突出人物、动作、空间关系、光线方向和氛围。",
-                "标注颜色系统：红色箭头=身体运动，蓝色箭头=摄影机运动，绿色标记=取景/构图笔记，橙色标记=灯光方向，紫色标记=情绪/声音/叙事强调，黑色文本=简短镜头笔记和面板标签。标注必须少量、清晰、服务制作，不要遮挡主体。",
-                "宫格之间有清晰分隔和留白，不得重叠、裁脸或压住人物肢体。允许很小的面板编号 01-12 和极短制作注释；不要生成字幕、对白气泡、水印、logo、文件名、项目名、资产 ID、二维码或大段可读文字。",
+                "标注颜色系统：红色箭头=身体运动，蓝色箭头=摄影机运动，绿色标记=取景/构图笔记，橙色标记=灯光方向，紫色标记=情绪/声音/叙事强调，黑色文本=简短镜头笔记和面板标签。每个宫格底部文字说明带必须额外写一行颜色图例文字，按本格实际使用的颜色逐项说明箭头作用，例如“红=角色动作，蓝=镜头运动，绿=构图，橙=灯光，紫=情绪/声音，黑=镜头注记”。标注必须少量、清晰、服务制作，不要遮挡主体。",
+                "宫格之间有清晰分隔和留白，不得重叠、裁脸或压住人物肢体。允许很小的面板编号 01-12 和极短制作注释；不要生成字幕、对白气泡、水印、logo、文件名、项目名、资产 ID、二维码或大段可读文字。整张图底部再留一条全局颜色图例说明带，重复说明各色箭头的含义，方便一眼识别。",
                 "输入参考图优先级：角色外观以传入的人物身份板/角色板为准；场景空间以传入的场景图/场景三视图为准；如有道具参考图，道具以传入的道具设计图为准。禁止使用主视觉图/key_vision 作为参考或构图依据。",
                 "storyboard_generation 的输入由当前 storyboard_prompt 的 clip.video_prompt、对应角色身份板图、对应场景图和本固定 12 宫格故事板模板组成；不要参考主视觉图，不要新增剧情事实、角色、场景或道具。",
                 "当前 clip 视频提示词：",
@@ -1385,13 +1387,15 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
                 )
 
         tasks = [asyncio.create_task(generate_one(episode, clip)) for episode, clip in pending]
-        try:
-            generated_items = list(await asyncio.gather(*tasks)) if tasks else []
-        except Exception:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
+        results = list(await asyncio.gather(*tasks, return_exceptions=True)) if tasks else []
+        generated_items: list[StoryboardSheetGenerationItem] = []
+        failures: list[tuple[StoryboardPromptClip, BaseException]] = []
+        for (_episode, clip), result in zip(pending, results, strict=False):
+            if isinstance(result, BaseException):
+                failures.append((clip, result))
+                self.logger.error("storyboard_generation failed clip=%s: %s", clip.clip_id, result)
+                continue
+            generated_items.append(result)
         for item in generated_items:
             generated_by_clip[item.clip_id] = item
 
@@ -1407,6 +1411,18 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
             self.name,
             StoryboardSheetGenerationOutput(generated_storyboards=ordered_items),
         )
+        if failures:
+            preview = "; ".join(f"{clip.clip_id}: {exc}" for clip, exc in failures[:5])
+            if len(failures) > 5:
+                preview = f"{preview}; ..."
+            raise ProviderBadResponseError(
+                "storyboard_generation failed for "
+                f"{len(failures)}/{len(pending)} pending storyboard image(s); "
+                f"saved {len(generated_items)} successful new image(s) and "
+                f"{len(ordered_items)} total storyboard record(s). "
+                "Rerun without --force to skip saved files and continue missing clips. "
+                f"Failures: {preview}"
+            )
         return state
 
     async def generate_storyboard_sheet(
@@ -1493,6 +1509,151 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
     @staticmethod
     def keyframe_asset_id(clip_id: str, frame_role: str) -> str:
         return f"{str(clip_id).strip()}_{str(frame_role).strip()}_frame"
+
+    def _active_clip_selectors(self) -> set[str]:
+        context = getattr(self.workflow, "_run_context", None)
+        if context is not None and getattr(context, "has_clip_selectors", False):
+            return normalize_clip_selectors(getattr(context, "clip_selectors", set()))
+        return normalize_clip_selectors(getattr(self.workflow, "_active_clip_selectors", set()))
+
+    def _clip_matches_active_selectors(
+        self,
+        *,
+        episode_key: str,
+        clip: StoryboardPromptClip,
+        clip_index: int,
+        selectors: set[str],
+    ) -> bool:
+        if not selectors:
+            return True
+        return clip_matches_selectors(episode_key, clip.clip_id, clip_index, selectors)
+
+    @staticmethod
+    def _dimension_pair_from_value(value: object) -> tuple[int, int] | None:
+        text = str(value or "").strip().lower().replace("×", "x")
+        if "x" not in text:
+            return None
+        left, right = text.split("x", 1)
+        try:
+            width = int(float(left.strip()))
+            height = int(float(right.strip()))
+        except ValueError:
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        return width, height
+
+    @staticmethod
+    def _ratio_pair_from_value(value: object) -> tuple[int, int] | None:
+        text = str(value or "").strip().lower().replace("×", "x")
+        if ":" in text:
+            left, right = text.split(":", 1)
+        elif "x" in text:
+            left, right = text.split("x", 1)
+        else:
+            return None
+        try:
+            width = int(float(left.strip()))
+            height = int(float(right.strip()))
+        except ValueError:
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        divisor = gcd(width, height)
+        return width // divisor, height // divisor
+
+    def _keyframe_target_dimensions(self, provider: object) -> tuple[int, int] | None:
+        params = self._keyframe_model_params(provider)
+        size = params.get("size") or params.get("image_size") or self.final_aspect_ratio()
+        resolution = params.get("resolution") or params.get("image_resolution")
+        normalizer = getattr(provider, "_normalize_size", None)
+        if callable(normalizer):
+            try:
+                normalized_size = normalizer(size, resolution)
+            except TypeError:
+                normalized_size = normalizer(size)
+            dimensions = self._dimension_pair_from_value(normalized_size)
+            if dimensions:
+                return dimensions
+        dimensions = self._dimension_pair_from_value(size)
+        if dimensions:
+            return dimensions
+        ratio = self._ratio_pair_from_value(size) or self._ratio_pair_from_value(self.final_aspect_ratio())
+        if not ratio:
+            return None
+        ratio_width, ratio_height = ratio
+        long_edge = 1920
+        if str(resolution or "").strip().lower() in {"4k", "high", "large"}:
+            long_edge = 3840
+        elif str(resolution or "").strip().lower() in {"1k", "low", "small"}:
+            long_edge = 1024
+        if ratio_height >= ratio_width:
+            height = long_edge
+            width = max(1, round(height * ratio_width / ratio_height))
+        else:
+            width = long_edge
+            height = max(1, round(width * ratio_height / ratio_width))
+        return width, height
+
+    def _normalize_keyframe_image_file(
+        self,
+        project_dir: Path,
+        asset_path: str | None,
+        *,
+        provider: object,
+    ) -> dict[str, Any]:
+        if not asset_path:
+            return {}
+        target_dimensions = self._keyframe_target_dimensions(provider)
+        if target_dimensions is None:
+            return {}
+        path = Path(asset_path)
+        if not path.is_absolute():
+            path = project_dir / path
+        if not path.exists():
+            return {}
+        try:
+            from PIL import Image
+        except ImportError:
+            self.logger.warning("Pillow is not installed; keyframe aspect normalization skipped for %s", asset_path)
+            return {}
+
+        target_width, target_height = target_dimensions
+        with Image.open(path) as opened:
+            image = opened.convert("RGB")
+            original_width, original_height = image.size
+            if original_width <= 0 or original_height <= 0:
+                return {}
+            original_ratio = original_width / original_height
+            target_ratio = target_width / target_height
+            ratio_delta = abs(original_ratio - target_ratio)
+            if image.size == target_dimensions or ratio_delta <= 0.005:
+                return {
+                    "keyframe_aspect_normalization": {
+                        "applied": False,
+                        "original_size": [original_width, original_height],
+                        "target_size": [target_width, target_height],
+                    }
+                }
+            if original_ratio > target_ratio:
+                crop_height = original_height
+                crop_width = max(1, round(crop_height * target_ratio))
+            else:
+                crop_width = original_width
+                crop_height = max(1, round(crop_width / target_ratio))
+            left = max(0, (original_width - crop_width) // 2)
+            top = max(0, (original_height - crop_height) // 2)
+            cropped = image.crop((left, top, left + crop_width, top + crop_height))
+            resized = cropped.resize(target_dimensions, Image.Resampling.LANCZOS)
+            resized.save(path)
+        return {
+            "keyframe_aspect_normalization": {
+                "applied": True,
+                "original_size": [original_width, original_height],
+                "crop_box": [left, top, left + crop_width, top + crop_height],
+                "target_size": [target_width, target_height],
+            }
+        }
 
     def load_existing_output(self, project_dir: Path) -> dict[tuple[str, str, str], StoryboardKeyframeGenerationItem]:
         return self._load_existing_output(project_dir)
@@ -1665,6 +1826,118 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             )
         ]
 
+    def _keyframe_reference_refs(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        clip: StoryboardPromptClip,
+        storyboard_sheet: StoryboardSheetGenerationItem,
+        *,
+        frame_role: str,
+        panel_ref: str,
+        limit: int,
+    ) -> list[AssetRef]:
+        refs: list[AssetRef] = []
+        if limit <= 0:
+            return refs
+
+        def append(ref: AssetRef) -> bool:
+            if len(refs) >= limit:
+                return False
+            refs.append(ref)
+            return len(refs) < limit
+
+        for ref in self._storyboard_ref(project_dir, storyboard_sheet, frame_role=frame_role, panel_ref=panel_ref):
+            if not append(ref):
+                return refs
+
+        for role_id in clip.role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
+            if appearance is None:
+                continue
+            asset_path = appearance.asset_path or appearance.design_image_asset_path
+            asset_url = appearance.asset_url or appearance.design_image_asset_url
+            existing = self.layout.existing_project_file(project_dir, asset_path)
+            if not existing and not asset_url:
+                continue
+            if not append(
+                AssetRef(
+                    id=appearance.asset_id or appearance.design_image_asset_id or appearance.id,
+                    type="image",
+                    path=str(project_dir / existing) if existing else None,
+                    url=asset_url,
+                    metadata={
+                        "asset_type": "roleboard",
+                        "role_id": role.id,
+                        "role_name": role.name,
+                        "appearance_id": appearance.id,
+                        "appearance_name": appearance.name,
+                        "reference_for": "storyboard_keyframe",
+                        "clip_id": clip.clip_id,
+                        "frame_role": frame_role,
+                        "panel_ref": panel_ref,
+                    },
+                )
+            ):
+                return refs
+
+        for layout_id in clip.layout_ids:
+            layout = state.layouts.get(layout_id)
+            if layout is None:
+                continue
+            existing = self.layout.existing_project_file(project_dir, layout.asset_path)
+            if not existing and not layout.asset_url:
+                continue
+            if not append(
+                AssetRef(
+                    id=layout.asset_id or layout.id,
+                    type="image",
+                    path=str(project_dir / existing) if existing else None,
+                    url=layout.asset_url,
+                    metadata={
+                        "asset_type": "layout",
+                        "layout_id": layout.id,
+                        "layout_name": layout.name,
+                        "reference_for": "storyboard_keyframe",
+                        "clip_id": clip.clip_id,
+                        "frame_role": frame_role,
+                        "panel_ref": panel_ref,
+                    },
+                )
+            ):
+                return refs
+
+        for prop_id in clip.prop_ids:
+            prop = state.props.get(prop_id)
+            if prop is None:
+                continue
+            existing = self.layout.existing_project_file(project_dir, prop.asset_path)
+            if not existing and not prop.asset_url:
+                continue
+            if not append(
+                AssetRef(
+                    id=prop.asset_id or prop.id,
+                    type="image",
+                    path=str(project_dir / existing) if existing else None,
+                    url=prop.asset_url,
+                    metadata={
+                        "asset_type": "prop",
+                        "prop_id": prop.id,
+                        "prop_name": prop.name,
+                        "reference_for": "storyboard_keyframe",
+                        "clip_id": clip.clip_id,
+                        "frame_role": frame_role,
+                        "panel_ref": panel_ref,
+                    },
+                )
+            ):
+                return refs
+
+        return refs
+
     def _resume_keyframe_from_existing_file(
         self,
         *,
@@ -1727,7 +2000,15 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             panel_ref=panel_ref,
         )
         refs = (
-            self._storyboard_ref(project_dir, storyboard_sheet, frame_role=frame_role, panel_ref=panel_ref)[:max_refs]
+            self._keyframe_reference_refs(
+                project_dir,
+                state,
+                clip,
+                storyboard_sheet,
+                frame_role=frame_role,
+                panel_ref=panel_ref,
+                limit=max_refs,
+            )
             if supports_refs and max_refs > 0
             else []
         )
@@ -1759,7 +2040,14 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             },
         )
         asset_path = await self.media_store.write_first_generated_image(project_dir, output_path, result)
+        normalization_metadata = self._normalize_keyframe_image_file(
+            project_dir,
+            asset_path,
+            provider=provider,
+        )
         asset_url = self.first_image_url(result)
+        raw_response = dict(result.raw_response or {})
+        raw_response.update(normalization_metadata)
         item = StoryboardKeyframeGenerationItem(
             episode_key=episode_key,
             clip_id=clip.clip_id,
@@ -1775,8 +2063,9 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             request={
                 "prompt_template": prompt_template,
                 "refs": [ref.model_dump(mode="json") for ref in refs],
+                **normalization_metadata,
             },
-            response=result.raw_response,
+            response=raw_response,
             usage=result.usage,
             request_id=result.request_id,
         )
@@ -1808,6 +2097,8 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
         max_refs = max(0, int(getattr(provider, "max_reference_images", 1) or 1))
         supports_refs = bool(max_refs and getattr(provider, "supports_reference_images", False))
         generated_by_key = dict(existing_by_key)
+        clip_selectors = self._active_clip_selectors()
+        selected_clip_count = 0
 
         pending: list[tuple[str, StoryboardPromptClip, StoryboardSheetGenerationItem, str, str]] = []
         skipped_existing = 0
@@ -1816,6 +2107,14 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             if episode is None:
                 raise ValueError(f"storyboard_keyframe_generation missing storyboard_prompt episode: {episode_key}")
             for clip_index, clip in enumerate(episode.clips, start=1):
+                if not self._clip_matches_active_selectors(
+                    episode_key=episode_key,
+                    clip=clip,
+                    clip_index=clip_index,
+                    selectors=clip_selectors,
+                ):
+                    continue
+                selected_clip_count += 1
                 storyboard_sheet = sheet_by_clip.get(clip.clip_id)
                 if storyboard_sheet is None:
                     raise ValueError(f"storyboard_keyframe_generation missing storyboard_generation image for {clip.clip_id}")
@@ -1878,11 +2177,18 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
                         continue
                     pending.append((episode_key, clip, storyboard_sheet, frame_role, panel_ref))
 
+        if clip_selectors and selected_clip_count <= 0:
+            raise ValueError(
+                "storyboard_keyframe_generation --clips matched no clips in selected episodes: "
+                f"{', '.join(sorted(clip_selectors))}"
+            )
+
         concurrency = self.generation_concurrency(provider)
         print(
             (
                 "[autodrama] storyboard_keyframe_generation "
-                f"concurrency={concurrency} pending={len(pending)} skipped_existing={skipped_existing}"
+                f"concurrency={concurrency} pending={len(pending)} skipped_existing={skipped_existing} "
+                f"selected_clips={selected_clip_count}"
             ),
             flush=True,
         )
@@ -1910,13 +2216,20 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
                 )
 
         tasks = [asyncio.create_task(generate_one(*item)) for item in pending]
-        try:
-            generated_items = list(await asyncio.gather(*tasks)) if tasks else []
-        except Exception:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
+        results = list(await asyncio.gather(*tasks, return_exceptions=True)) if tasks else []
+        generated_items: list[StoryboardKeyframeGenerationItem] = []
+        failures: list[tuple[str, str, str, BaseException]] = []
+        for (episode_key, clip, _storyboard_sheet, frame_role, _panel_ref), result in zip(pending, results, strict=False):
+            if isinstance(result, BaseException):
+                failures.append((episode_key, clip.clip_id, frame_role, result))
+                self.logger.error(
+                    "storyboard_keyframe_generation failed clip=%s frame_role=%s: %s",
+                    clip.clip_id,
+                    frame_role,
+                    result,
+                )
+                continue
+            generated_items.append(result)
         for item in generated_items:
             generated_by_key[(item.episode_key, item.clip_id, str(item.frame_role))] = item
 
@@ -1940,11 +2253,26 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             self.name,
             StoryboardKeyframeGenerationOutput(generated_keyframes=ordered_items),
         )
+        if failures:
+            preview = "; ".join(
+                f"{episode_key}/{clip_id}/{frame_role}: {exc}"
+                for episode_key, clip_id, frame_role, exc in failures[:5]
+            )
+            if len(failures) > 5:
+                preview = f"{preview}; ..."
+            raise ProviderBadResponseError(
+                "storyboard_keyframe_generation failed for "
+                f"{len(failures)}/{len(pending)} pending keyframe image(s); "
+                f"saved {len(generated_items)} successful new keyframe(s) and "
+                f"{len(ordered_items)} total keyframe record(s). "
+                "Rerun without --force to skip saved files and continue missing clips. "
+                f"Failures: {preview}"
+            )
         return state
 
 
-class ShotManifestGenerationNode(StoryboardAssetNodeBase):
-    name = "shot_manifest_generation"
+class ClipManifestGenerationNode(StoryboardAssetNodeBase):
+    name = "clip_manifest_generation"
 
     @staticmethod
     def _clean_text(value: object) -> str:
@@ -1986,7 +2314,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         item = keyframes.get((episode_key, clip_id, frame_role))
         if item is None:
             raise ValueError(
-                "shot_manifest_generation missing storyboard_keyframe_generation "
+                "clip_manifest_generation missing storyboard_keyframe_generation "
                 f"{frame_role}_frame for {episode_key}/{clip_id}"
             )
         return item
@@ -2180,30 +2508,30 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
     def _video_prompt_for_shot(self, shot_prompt: StoryboardPromptClip) -> tuple[str, list[str]]:
         return self._video_prompt_for_clip(shot_prompt)
 
-    def _shot_video_model_params(self, provider: object) -> dict[str, Any]:
+    def _clip_video_model_params(self, provider: object) -> dict[str, Any]:
         binding = getattr(provider, "model_binding", None)
         params = getattr(binding, "params", {}) if binding is not None else {}
         if isinstance(params, dict) and params:
             return dict(params)
-        node_settings = self.repo.settings.nodes.get("shot_video_generation")
+        node_settings = self.repo.settings.nodes.get("clip_video_generation")
         if node_settings is None:
             return {}
         return dict(node_settings.params)
 
-    def _shot_video_template_candidates(self, provider: object) -> list[str]:
-        params = self._shot_video_model_params(provider)
-        configured = str(params.get("prompt_template") or params.get("shot_video_prompt_template") or "").strip()
+    def _clip_video_template_candidates(self, provider: object) -> list[str]:
+        params = self._clip_video_model_params(provider)
+        configured = str(params.get("prompt_template") or params.get("clip_video_prompt_template") or "").strip()
         if configured:
             return [configured.removesuffix(".md")]
         provider_name = slugify(str(getattr(provider, "name", "") or ""), fallback="provider").lower()
         model_name = slugify(str(getattr(provider, "model", "") or ""), fallback="model").lower()
         return [
-            f"shot_video/{provider_name}_{model_name}",
-            f"shot_video/{provider_name}",
-            "shot_video/default",
+            f"clip_video/{provider_name}_{model_name}",
+            f"clip_video/{provider_name}",
+            "clip_video/default",
         ]
 
-    def _render_shot_video_prompt_template(
+    def _render_clip_video_prompt_template(
         self,
         *,
         provider: object,
@@ -2211,15 +2539,15 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         shot_id: str,
         duration_seconds: float,
         video_prompt: str,
-        shot_video_inputs: list[ShotVideoInput],
+        clip_video_inputs: list[ClipVideoInput],
         is_first_clip: bool,
         start_frame_source_clip_id: str,
         end_frame_source_clip_id: str,
     ) -> tuple[str, str]:
         prompts = getattr(self.workflow, "prompts", None)
         if prompts is None:
-            raise ValueError("shot_manifest_generation requires workflow prompt store to render final_video_prompt")
-        params = self._shot_video_model_params(provider)
+            raise ValueError("clip_manifest_generation requires workflow prompt store to render final_video_prompt")
+        params = self._clip_video_model_params(provider)
         negative_rules = params.get("negative_rules") or []
         if isinstance(negative_rules, str):
             negative_rules = [negative_rules]
@@ -2229,14 +2557,14 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         if not clean_negative_rules:
             binding = getattr(provider, "model_binding", None)
             model_id = getattr(binding, "model_id", None)
-            node_settings = self.repo.settings.nodes.get("shot_video_generation")
+            node_settings = self.repo.settings.nodes.get("clip_video_generation")
             if not model_id and node_settings is not None:
                 model_id = node_settings.model
             model_label = str(model_id or getattr(provider, "model", "unknown"))
             raise ValueError(
-                "shot_manifest_generation requires model-bound "
-                f"nodes.shot_video_generation.params.negative_rules for {model_label}; "
-                "put provider/model-specific negative rules under the same shot_video_generation node config."
+                "clip_manifest_generation requires model-bound "
+                f"nodes.clip_video_generation.params.negative_rules for {model_label}; "
+                "put provider/model-specific negative rules under the same clip_video_generation node config."
             )
         negative_rules_text = "\n".join(f"- {rule}" for rule in clean_negative_rules)
 
@@ -2251,10 +2579,10 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 "required": item.required,
                 "metadata": item.metadata,
             }
-            for item in shot_video_inputs
+            for item in clip_video_inputs
         ]
         slots_by_type: dict[str, list[str]] = {}
-        for item in shot_video_inputs:
+        for item in clip_video_inputs:
             slots_by_type.setdefault(str(item.asset_type), []).append(item.slot)
         clip_start_frame_slot = ", ".join(slots_by_type.get("clip_start_frame", [])) or "无"
         clip_end_frame_slot = ", ".join(slots_by_type.get("clip_end_frame", [])) or "无"
@@ -2275,7 +2603,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
             )
 
         last_error: Exception | None = None
-        for template_name in self._shot_video_template_candidates(provider):
+        for template_name in self._clip_video_template_candidates(provider):
             try:
                 return (
                     prompts.render(
@@ -2285,7 +2613,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                         shot_id=shot_id,
                         duration_seconds=duration_seconds,
                         video_prompt=video_prompt,
-                        shot_video_inputs_json=json.dumps(input_rows, ensure_ascii=False, indent=2),
+                        clip_video_inputs_json=json.dumps(input_rows, ensure_ascii=False, indent=2),
                         clip_start_frame_slot=clip_start_frame_slot,
                         clip_end_frame_slot=clip_end_frame_slot,
                         storyboard_input_slot=storyboard_slot,
@@ -2324,26 +2652,26 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 max_images = min(max_images, int(limits.get("max_reference_images") or max_images))
         return max_images
 
-    def _limit_shot_video_inputs_for_provider(
+    def _limit_clip_video_inputs_for_provider(
         self,
         *,
-        inputs: list[ShotVideoInput],
+        inputs: list[ClipVideoInput],
         provider: object,
         clip_id: str,
-    ) -> tuple[list[ShotVideoInput], list[str]]:
+    ) -> tuple[list[ClipVideoInput], list[str]]:
         max_images = self._provider_max_reference_images(provider)
         if len(inputs) <= max_images:
             return inputs, []
         if max_images < 3:
             raise ValueError(
-                f"shot_manifest_generation requires at least 3 image refs for {clip_id} "
+                f"clip_manifest_generation requires at least 3 image refs for {clip_id} "
                 f"(clip_start_frame, clip_end_frame, storyboard); provider supports max_reference_images={max_images}"
             )
         kept = inputs[:max_images]
         omitted = inputs[max_images:]
         warnings = [
             (
-                f"shot_video_inputs truncated to provider max_reference_images={max_images}; "
+                f"clip_video_inputs truncated to provider max_reference_images={max_images}; "
                 "omitted "
                 + ", ".join(f"{item.slot}:{item.asset_type}" for item in omitted)
             )
@@ -2351,8 +2679,8 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         return kept, warnings
 
     @staticmethod
-    def _append_shot_video_input(
-        inputs: list[ShotVideoInput],
+    def _append_clip_video_input(
+        inputs: list[ClipVideoInput],
         *,
         asset_type: str,
         asset_id: str | None,
@@ -2365,7 +2693,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
     ) -> None:
         order = len(inputs) + 1
         inputs.append(
-            ShotVideoInput(
+            ClipVideoInput(
                 slot=f"image_{order}",
                 asset_type=asset_type,
                 asset_id=asset_id,
@@ -2387,7 +2715,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
             )
         )
 
-    def _shot_video_inputs_for_shot(
+    def _clip_video_inputs_for_shot(
         self,
         *,
         state: ProjectState,
@@ -2400,10 +2728,10 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         prop_ids: list[str],
         is_first_clip: bool,
         start_frame_source_clip_id: str,
-    ) -> tuple[list[ShotVideoInput], list[str]]:
-        inputs: list[ShotVideoInput] = []
+    ) -> tuple[list[ClipVideoInput], list[str]]:
+        inputs: list[ClipVideoInput] = []
         warnings: list[str] = []
-        self._append_shot_video_input(
+        self._append_clip_video_input(
             inputs,
             asset_type="clip_start_frame",
             asset_id=start_frame.asset_id,
@@ -2421,7 +2749,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
             panel_ref=start_frame.panel_ref,
             source_clip_id=start_frame_source_clip_id,
         )
-        self._append_shot_video_input(
+        self._append_clip_video_input(
             inputs,
             asset_type="clip_end_frame",
             asset_id=end_frame.asset_id,
@@ -2435,7 +2763,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
             panel_ref=end_frame.panel_ref,
             source_clip_id=end_frame.clip_id,
         )
-        self._append_shot_video_input(
+        self._append_clip_video_input(
             inputs,
             asset_type="storyboard",
             asset_id=storyboard_sheet.asset_id,
@@ -2452,7 +2780,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
             role = state.roles.get(role_id)
             if role is None:
                 warnings.append(f"missing role for shot video input: {role_id}")
-                self._append_shot_video_input(
+                self._append_clip_video_input(
                     inputs,
                     asset_type="roleboard",
                     asset_id=None,
@@ -2473,7 +2801,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 appearances = [base] if base is not None else []
             if not appearances:
                 warnings.append(f"{role_id}: role has no appearance for shot video input")
-                self._append_shot_video_input(
+                self._append_clip_video_input(
                     inputs,
                     asset_type="roleboard",
                     asset_id=None,
@@ -2490,7 +2818,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 asset_url = appearance.asset_url or appearance.design_image_asset_url
                 if not (asset_path or asset_url):
                     warnings.append(f"{role_id}/{appearance.id}: roleboard image is missing")
-                self._append_shot_video_input(
+                self._append_clip_video_input(
                     inputs,
                     asset_type="roleboard",
                     asset_id=appearance.asset_id or appearance.design_image_asset_id or appearance.id,
@@ -2508,7 +2836,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
             layout = state.layouts.get(layout_id)
             if layout is None:
                 warnings.append(f"missing layout for shot video input: {layout_id}")
-                self._append_shot_video_input(
+                self._append_clip_video_input(
                     inputs,
                     asset_type="layout",
                     asset_id=None,
@@ -2521,7 +2849,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 continue
             if not (layout.asset_path or layout.asset_url):
                 warnings.append(f"{layout_id}: layout image is missing")
-            self._append_shot_video_input(
+            self._append_clip_video_input(
                 inputs,
                 asset_type="layout",
                 asset_id=layout.asset_id or layout.id,
@@ -2537,7 +2865,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
             prop = state.props.get(prop_id)
             if prop is None:
                 warnings.append(f"missing prop for shot video input: {prop_id}")
-                self._append_shot_video_input(
+                self._append_clip_video_input(
                     inputs,
                     asset_type="prop",
                     asset_id=None,
@@ -2551,7 +2879,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 continue
             if not (prop.asset_path or prop.asset_url):
                 warnings.append(f"{prop_id}: prop image is missing")
-            self._append_shot_video_input(
+            self._append_clip_video_input(
                 inputs,
                 asset_type="prop",
                 asset_id=prop.asset_id or prop.id,
@@ -2600,7 +2928,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         existing_by_index = {clip.index: clip for clip in (existing_episode.clips if existing_episode else [])}
         episode_warnings: list[str] = []
         clips: list[StoryboardShot] = []
-        video_provider = self.router.video("shot", node_name="shot_video_generation")
+        video_provider = self.router.video("shot", node_name="clip_video_generation")
 
         for clip_index, clip_prompt in enumerate(storyboard.clips, start=1):
             clip_id = self._clean_text(clip_prompt.clip_id)
@@ -2646,7 +2974,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
             episode_warnings.extend(f"{clip_id}: {warning}" for warning in prompt_warnings)
             storyboard_sheet = storyboard_sheets.get(clip_id)
             if storyboard_sheet is None:
-                raise ValueError(f"shot_manifest_generation missing storyboard_generation image for {clip_id}")
+                raise ValueError(f"clip_manifest_generation missing storyboard_generation image for {clip_id}")
             current_end_frame = self._require_keyframe(
                 keyframes,
                 episode_key=storyboard.episode_key,
@@ -2669,7 +2997,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                     frame_role="end",
                 )
                 start_frame_source_clip_id = previous_clip_id
-            shot_video_inputs, input_warnings = self._shot_video_inputs_for_shot(
+            clip_video_inputs, input_warnings = self._clip_video_inputs_for_shot(
                 state=state,
                 start_frame=start_frame,
                 end_frame=current_end_frame,
@@ -2681,25 +3009,25 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 is_first_clip=is_first_clip,
                 start_frame_source_clip_id=start_frame_source_clip_id,
             )
-            shot_video_inputs, limit_warnings = self._limit_shot_video_inputs_for_provider(
-                inputs=shot_video_inputs,
+            clip_video_inputs, limit_warnings = self._limit_clip_video_inputs_for_provider(
+                inputs=clip_video_inputs,
                 provider=video_provider,
                 clip_id=clip_id,
             )
             episode_warnings.extend(f"{clip_id}: {warning}" for warning in input_warnings)
             episode_warnings.extend(f"{clip_id}: {warning}" for warning in limit_warnings)
-            final_video_prompt, prompt_template = self._render_shot_video_prompt_template(
+            final_video_prompt, prompt_template = self._render_clip_video_prompt_template(
                 provider=video_provider,
                 episode_key=storyboard.episode_key,
                 shot_id=clip_id,
                 duration_seconds=float(clip_prompt.duration_seconds),
                 video_prompt=video_prompt,
-                shot_video_inputs=shot_video_inputs,
+                clip_video_inputs=clip_video_inputs,
                 is_first_clip=is_first_clip,
                 start_frame_source_clip_id=start_frame_source_clip_id,
                 end_frame_source_clip_id=clip_id,
             )
-            for item in shot_video_inputs:
+            for item in clip_video_inputs:
                 item.metadata.setdefault("final_video_prompt_template", prompt_template)
                 item.metadata.setdefault("video_model", getattr(video_provider, "model", "-"))
             clip = StoryboardShot(
@@ -2727,7 +3055,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 source_storyboard_asset_path=storyboard_sheet.asset_path,
                 video_prompt=video_prompt,
                 final_video_prompt=final_video_prompt,
-                shot_video_inputs=shot_video_inputs,
+                clip_video_inputs=clip_video_inputs,
                 start_frame_asset_id=start_frame.asset_id,
                 start_frame_asset_path=start_frame.asset_path,
                 start_frame_asset_url=start_frame.asset_url,
@@ -2751,7 +3079,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         try:
             return StoryboardEpisodeOutput.model_validate_json(path.read_text(encoding="utf-8"))
         except Exception as exc:
-            self.logger.warning("shot_manifest_generation ignored invalid existing shot file %s: %s", path, exc)
+            self.logger.warning("clip_manifest_generation ignored invalid existing shot file %s: %s", path, exc)
             return None
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
@@ -2762,14 +3090,14 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
         storyboard_by_episode = {episode.episode_key: episode for episode in prompt_output.storyboards}
         storyboard_sheets = {item.clip_id: item for item in sheet_output.generated_storyboards}
         keyframes = self._keyframes_by_clip_role(keyframe_output)
-        generated: list[ShotManifestGenerationEpisodeItem] = []
+        generated: list[ClipManifestGenerationEpisodeItem] = []
 
         for episode_key in target_episode_keys:
             storyboard = storyboard_by_episode.get(episode_key)
             if storyboard is None:
-                raise ValueError(f"shot_manifest_generation missing storyboard_prompt episode: {episode_key}")
+                raise ValueError(f"clip_manifest_generation missing storyboard_prompt episode: {episode_key}")
             if not storyboard.clips:
-                raise ValueError(f"shot_manifest_generation requires at least one clip for {episode_key}")
+                raise ValueError(f"clip_manifest_generation requires at least one clip for {episode_key}")
             existing = self._load_existing_episode(project_dir, episode_key)
             episode, warnings = self._build_episode_manifest(
                 project_dir=project_dir,
@@ -2782,7 +3110,7 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
             self.workflow._save_storyboard_episode(project_dir, episode)
             shot_path = self.layout.project_relative(project_dir, self.layout.shot_path(project_dir, episode_key))
             generated.append(
-                ShotManifestGenerationEpisodeItem(
+                ClipManifestGenerationEpisodeItem(
                     episode_key=episode_key,
                     clip_count=len(episode.clips),
                     clip_path=shot_path,
@@ -2790,29 +3118,29 @@ class ShotManifestGenerationNode(StoryboardAssetNodeBase):
                 )
             )
             self.logger.info(
-                "shot_manifest_generation wrote %s clips=%d warnings=%d",
+                "clip_manifest_generation wrote %s clips=%d warnings=%d",
                 shot_path,
                 len(episode.clips),
                 len(warnings),
             )
 
         existing_output_path = self.layout.node_output_path(project_dir, self.name)
-        existing_items: dict[str, ShotManifestGenerationEpisodeItem] = {}
+        existing_items: dict[str, ClipManifestGenerationEpisodeItem] = {}
         if existing_output_path.exists():
             try:
-                existing_output = ShotManifestGenerationOutput.model_validate_json(
+                existing_output = ClipManifestGenerationOutput.model_validate_json(
                     existing_output_path.read_text(encoding="utf-8")
                 )
                 existing_items.update({item.episode_key: item for item in existing_output.episodes})
             except Exception as exc:
-                self.logger.warning("shot_manifest_generation ignored invalid existing output: %s", exc)
+                self.logger.warning("clip_manifest_generation ignored invalid existing output: %s", exc)
         existing_items.update({item.episode_key: item for item in generated})
         ordered = [
             existing_items[episode_key]
             for episode_key in self.expected_episode_keys(state)
             if episode_key in existing_items
         ]
-        self.repo.save_node_output(project_dir, self.name, ShotManifestGenerationOutput(episodes=ordered))
+        self.repo.save_node_output(project_dir, self.name, ClipManifestGenerationOutput(episodes=ordered))
         return state
 
 
@@ -2846,7 +3174,7 @@ def build_storyboard_asset_node_runners(workflow: Any) -> dict[str, StoryboardAs
         StoryboardPromptNode.name: StoryboardPromptNode(**deps),
         StoryboardGenerationNode.name: StoryboardGenerationNode(**deps),
         StoryboardKeyframeGenerationNode.name: StoryboardKeyframeGenerationNode(**deps),
-        ShotManifestGenerationNode.name: ShotManifestGenerationNode(**deps),
+        ClipManifestGenerationNode.name: ClipManifestGenerationNode(**deps),
     }
 
 
@@ -2861,7 +3189,7 @@ def build_storyboard_asset_nodes(workflow: Any) -> list[WorkflowNode]:
 __all__ = [
     "STORYBOARD_ASSET_NODE_NAMES",
     "STORYBOARD_IMAGE_PROVIDER_NODE_NAME",
-    "ShotManifestGenerationNode",
+    "ClipManifestGenerationNode",
     "StoryboardGenerationNode",
     "StoryboardKeyframeGenerationNode",
     "StoryboardPromptNode",

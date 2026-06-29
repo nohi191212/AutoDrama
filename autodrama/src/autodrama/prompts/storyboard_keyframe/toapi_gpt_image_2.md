@@ -40,9 +40,21 @@ Source storyboard asset:
 - local_path: {{source_storyboard_asset_path}}
 - remote_url: {{source_storyboard_asset_url}}
 
+# Image References
+
+If reference images are attached to this request, interpret them in this order:
+
+- image_1: current clip 12-panel storyboard sheet; use it only to locate and understand the target panel `{{panel_ref}}`.
+- following roleboard images: lock character identity, face shape, hair, body type, age feeling, costume, and role-specific details.
+- following layout images: lock scene space, structure, materials, lighting direction, scale, and movement paths.
+- following prop images, if any: lock prop shape, material, color, scale, and usage state.
+
+Use the reference content as production guidance, but generate exactly one finished cinematic frame. Do not reproduce the storyboard grid, roleboard layout, scene three-view sheet, or prop design sheet.
+
 # Visual Requirements
 
 - Generate exactly one clean cinematic live-action frame.
+- The output canvas must be {{final_aspect_ratio}} vertical video frame composition when {{final_aspect_ratio}} is a vertical ratio; do not output a square image even if the storyboard reference sheet is square.
 - If `frame_role` is `start`, the image must faithfully represent the current clip P01 / first panel content.
 - If `frame_role` is `end`, the image must faithfully represent the current clip P12 / last panel content.
 - Preserve character identity, face shape, hair, clothing, posture, scene layout, props, lighting direction, camera angle, focal length, and mood from the storyboard plan.

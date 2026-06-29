@@ -64,7 +64,7 @@ from autodrama.workflows.nodes.static_asset_nodes import (
 from autodrama.workflows.nodes.voice_nodes import VoiceNodeBase, build_voice_node_runners
 from autodrama.workflows.router_adapter import adapt_workflow_router
 from autodrama.workflows.runner import WorkflowRunner
-from autodrama.workflows.selection import select_episode_keys
+from autodrama.workflows.selection import normalize_clip_selectors, select_episode_keys
 
 
 PREGEN_NODES = PREGEN_NODE_NAMES
@@ -78,7 +78,7 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "storyboard_prompt",
     "storyboard_generation",
     "storyboard_keyframe_generation",
-    "shot_manifest_generation",
+    "clip_manifest_generation",
     "role_voice_select",
     "prop_prompt",
     "prop_image_generation",
@@ -563,6 +563,7 @@ class PregenWorkflow:
         only: str | None = None,
         episode_keys: list[str] | None = None,
         role_names: list[str] | None = None,
+        clip_selectors: list[str] | None = None,
     ) -> ProjectState:
         if only is not None:
             only = PREGEN_ONLY_ALIASES.get(only, only)
@@ -582,28 +583,35 @@ class PregenWorkflow:
         target_nodes = [only] if only else PREGEN_NODES[: PREGEN_NODES.index(until) + 1]
         selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
         selected_role_names = self._select_role_names(role_names) if role_names else None
+        selected_clip_selectors = normalize_clip_selectors(clip_selectors) if clip_selectors else set()
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
                 "--episodes is only supported for pregen --only clip_segment, roleboard_prompt, roleboard_generation, "
                 "role_subject_video_generation, role_subject_element_generation, storyboard_prompt, "
-                "storyboard_generation, storyboard_keyframe_generation, shot_manifest_generation, "
+                "storyboard_generation, storyboard_keyframe_generation, clip_manifest_generation, "
                 "role_voice_select, prop_prompt, prop_image_generation, or layout_image_generation."
             )
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError("--roles is only supported for pregen --only role_voice_select.")
+        if selected_clip_selectors and (
+            len(target_nodes) != 1 or target_nodes[0] != "storyboard_keyframe_generation"
+        ):
+            raise ValueError("--clips is only supported for pregen --only storyboard_keyframe_generation.")
         logger.info(
-            "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s completed=%s",
+            "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s completed=%s",
             state.project_id,
             until,
             only or "-",
             force,
             ",".join(selected_episode_keys or []) or "-",
             ",".join(selected_role_names or []) or "-",
+            ",".join(sorted(selected_clip_selectors)) or "-",
             ",".join(state.completed_nodes) or "-",
         )
 
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
         previous_active_role_names = getattr(self, "_active_role_names", None)
+        previous_active_clip_selectors = getattr(self, "_active_clip_selectors", None)
         previous_force_pregen = getattr(self, "_force_pregen", None)
         previous_run_context = getattr(self, "_run_context", None)
         self._run_context = WorkflowRunContext(
@@ -614,12 +622,17 @@ class PregenWorkflow:
             force=force,
             selected_episode_keys=selected_episode_keys,
             selected_role_names=selected_role_names,
+            clip_selectors=selected_clip_selectors,
         )
         self._force_pregen = bool(force)
         if selected_episode_keys is not None:
             self._active_episode_keys = set(selected_episode_keys)
         if selected_role_names is not None:
             self._active_role_names = list(selected_role_names)
+        if selected_clip_selectors:
+            self._active_clip_selectors = set(selected_clip_selectors)
+        elif hasattr(self, "_active_clip_selectors"):
+            delattr(self, "_active_clip_selectors")
         try:
             node_by_name = {
                 node.name: node
@@ -646,6 +659,11 @@ class PregenWorkflow:
                     delattr(self, "_active_role_names")
                 else:
                     self._active_role_names = previous_active_role_names
+            if previous_active_clip_selectors is None:
+                if hasattr(self, "_active_clip_selectors"):
+                    delattr(self, "_active_clip_selectors")
+            else:
+                self._active_clip_selectors = previous_active_clip_selectors
             if previous_force_pregen is None:
                 if hasattr(self, "_force_pregen"):
                     delattr(self, "_force_pregen")
@@ -1352,12 +1370,12 @@ class PregenWorkflow:
         return refs
 
     @staticmethod
-    def _shot_video_ref_asset_type(ref) -> str:
+    def _clip_video_ref_asset_type(ref) -> str:
         metadata = getattr(ref, "metadata", {}) or {}
         return str(metadata.get("asset_type") or "").strip()
 
     @staticmethod
-    def _shot_video_ref_duration_seconds(ref) -> float | None:
+    def _clip_video_ref_duration_seconds(ref) -> float | None:
         metadata = getattr(ref, "metadata", {}) or {}
         for key in ("duration_seconds", "duration"):
             value = metadata.get(key)
@@ -1372,9 +1390,9 @@ class PregenWorkflow:
         return None
 
     @classmethod
-    def _prioritize_shot_video_refs(cls, refs: list, *, provider=None) -> list:
+    def _prioritize_clip_video_refs(cls, refs: list, *, provider=None) -> list:
         def image_priority(ref) -> tuple[int, str]:
-            asset_type = cls._shot_video_ref_asset_type(ref)
+            asset_type = cls._clip_video_ref_asset_type(ref)
             priority = {
                 "storyboard": 0,
                 "layout": 1,
@@ -1386,7 +1404,7 @@ class PregenWorkflow:
             return priority, str(getattr(ref, "id", "") or "")
 
         def video_priority(ref) -> tuple[int, str]:
-            asset_type = cls._shot_video_ref_asset_type(ref)
+            asset_type = cls._clip_video_ref_asset_type(ref)
             priority = {
                 "previous_shot_video": 0,
                 "reference_and_previous_shot_video": 0,
@@ -1424,7 +1442,7 @@ class PregenWorkflow:
         for ref in sorted(videos, key=video_priority):
             if len(selected_videos) >= max_videos:
                 break
-            duration = cls._shot_video_ref_duration_seconds(ref)
+            duration = cls._clip_video_ref_duration_seconds(ref)
             if max_video_duration > 0 and duration is not None:
                 if selected_video_duration + duration > max_video_duration:
                     continue
@@ -1435,7 +1453,7 @@ class PregenWorkflow:
         seen_images: set[tuple[str, str, str, str]] = set()
         for ref in sorted(images, key=image_priority):
             key = (
-                cls._shot_video_ref_asset_type(ref),
+                cls._clip_video_ref_asset_type(ref),
                 str(getattr(ref, "id", "") or ""),
                 str(getattr(ref, "path", "") or ""),
                 str(getattr(ref, "url", "") or ""),
@@ -1539,7 +1557,7 @@ class PregenWorkflow:
         return bool(current_shot.layout_id and current_shot.layout_id == previous_shot.layout_id)
 
     @staticmethod
-    def _shot_video_file_path(project_dir: Path, shot: StoryboardShot) -> Path | None:
+    def _clip_video_file_path(project_dir: Path, shot: StoryboardShot) -> Path | None:
         if not shot.video_asset_path:
             return None
         video_path = Path(shot.video_asset_path)
@@ -1632,7 +1650,7 @@ class PregenWorkflow:
         return walk(value)
 
     @classmethod
-    def _shot_video_web_url(cls, shot: StoryboardShot) -> str | None:
+    def _clip_video_web_url(cls, shot: StoryboardShot) -> str | None:
         asset_url = getattr(shot, "video_asset_url", None)
         if cls._web_url_is_probably_usable(asset_url):
             return str(asset_url)
@@ -1642,7 +1660,7 @@ class PregenWorkflow:
     def _video_provider_requires_web_reference_video(provider=None) -> bool:
         return bool(getattr(provider, "reference_video_requires_web_url", False))
 
-    def _shot_video_reference_available(
+    def _clip_video_reference_available(
         self,
         project_dir: Path,
         shot: StoryboardShot,
@@ -1650,8 +1668,8 @@ class PregenWorkflow:
         provider=None,
     ) -> bool:
         if self._video_provider_requires_web_reference_video(provider):
-            return self._shot_video_web_url(shot) is not None
-        return self._shot_video_file_path(project_dir, shot) is not None or self._shot_video_web_url(shot) is not None
+            return self._clip_video_web_url(shot) is not None
+        return self._clip_video_file_path(project_dir, shot) is not None or self._clip_video_web_url(shot) is not None
 
     def _previous_video_shot(
         self,
@@ -1664,7 +1682,7 @@ class PregenWorkflow:
         previous_shot = self._previous_shot(episode, shot)
         if previous_shot is None:
             return None
-        return previous_shot if self._shot_video_reference_available(project_dir, previous_shot, provider=provider) else None
+        return previous_shot if self._clip_video_reference_available(project_dir, previous_shot, provider=provider) else None
 
     def _nearest_same_scene_video_shot(
         self,
@@ -1684,7 +1702,7 @@ class PregenWorkflow:
         for candidate in previous_shots:
             if not self._shots_share_scene(shot, candidate):
                 continue
-            if self._shot_video_reference_available(project_dir, candidate, provider=provider):
+            if self._clip_video_reference_available(project_dir, candidate, provider=provider):
                 return candidate
         return None
 
@@ -1768,12 +1786,12 @@ class PregenWorkflow:
                 "source_shot_id": shot.shot_id,
                 "panel_count": 12,
                 "grid": "4x3",
-                "panel_aspect_ratio": "16:9",
+                "panel_aspect_ratio": "3:4",
                 "name": f"{shot.shot_id} 12宫格故事板",
             },
         )
 
-    def _shot_video_asset_ref(
+    def _clip_video_asset_ref(
         self,
         project_dir: Path,
         source_shot: StoryboardShot,
@@ -1787,8 +1805,8 @@ class PregenWorkflow:
     ):
         from autodrama.providers.base import AssetRef
 
-        video_url = self._shot_video_web_url(source_shot)
-        video_path = self._shot_video_file_path(project_dir, source_shot)
+        video_url = self._clip_video_web_url(source_shot)
+        video_path = self._clip_video_file_path(project_dir, source_shot)
         if self._video_provider_requires_web_reference_video(provider) and not video_url:
             get_logger().warning(
                 "skip video reference %s for %s: provider %s requires a non-expired web URL, "
@@ -1830,7 +1848,7 @@ class PregenWorkflow:
     ) -> list:
         previous_shot = self._previous_video_shot(project_dir, episode, shot, provider=provider)
         previous_ref = (
-            self._shot_video_asset_ref(
+            self._clip_video_asset_ref(
                 project_dir,
                 previous_shot,
                 asset_type="previous_shot_video",
@@ -1847,7 +1865,7 @@ class PregenWorkflow:
         )
         return [previous_ref] if previous_ref is not None else []
 
-    def _shot_video_reference_context(
+    def _clip_video_reference_context(
         self,
         project_dir: Path | None,
         episode: StoryboardEpisodeOutput | None,
@@ -1860,10 +1878,10 @@ class PregenWorkflow:
         scene_shot = self._nearest_same_scene_video_shot(project_dir, episode, shot, provider=provider)
         previous_shot = self._previous_video_shot(project_dir, episode, shot, provider=provider)
         if scene_shot is not None and previous_shot is not None:
-            scene_path = self._shot_video_file_path(project_dir, scene_shot)
-            previous_path = self._shot_video_file_path(project_dir, previous_shot)
-            scene_url = self._shot_video_web_url(scene_shot)
-            previous_url = self._shot_video_web_url(previous_shot)
+            scene_path = self._clip_video_file_path(project_dir, scene_shot)
+            previous_path = self._clip_video_file_path(project_dir, previous_shot)
+            scene_url = self._clip_video_web_url(scene_shot)
+            previous_url = self._clip_video_web_url(previous_shot)
             if scene_shot.shot_id == previous_shot.shot_id or (
                 scene_path is not None and previous_path is not None and scene_path == previous_path
             ) or (
@@ -1877,7 +1895,7 @@ class PregenWorkflow:
             return "previous_video_only"
         return "none"
 
-    def _shot_video_refs(
+    def _clip_video_refs(
         self,
         project_dir: Path,
         state: ProjectState,
@@ -1997,7 +2015,7 @@ class PregenWorkflow:
             ]
         refs.extend(role_audio_refs)
         refs.extend(context_video_refs)
-        return self._prioritize_shot_video_refs(refs, provider=provider)
+        return self._prioritize_clip_video_refs(refs, provider=provider)
 
     def _role_for_dialogue_line(
         self,

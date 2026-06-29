@@ -37,7 +37,7 @@ def collect_episode_source_clips(
     for shot in sorted(active_shots_for_episode(episode, shot_selectors), key=lambda item: item.index):
         source_path = resolve_project_path(project_dir, shot.video_asset_path)
         if source_path is None or not source_path.is_file() or source_path.stat().st_size <= 0:
-            warnings.append(f"{shot.shot_id}: missing shot video asset; run generation through shot_video_generation")
+            warnings.append(f"{shot.shot_id}: missing shot video asset; run generation through clip_video_generation")
             continue
         if len(clips) >= max_clips:
             warnings.append(f"clip limit reached: using first {max_clips} usable clips for {episode_key}")

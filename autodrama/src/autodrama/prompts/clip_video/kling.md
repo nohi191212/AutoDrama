@@ -10,7 +10,7 @@
 {{clip_continuity_instructions}}
 
 输入清单：
-{{shot_video_inputs_json}}
+{{clip_video_inputs_json}}
 
 当前 clip 的 camera shot 与十二宫格面板内容：
 {{video_prompt}}

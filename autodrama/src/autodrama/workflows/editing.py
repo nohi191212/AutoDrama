@@ -24,7 +24,7 @@ EDITING_NODES = [
 
 
 class EditMissingAsset(BaseModel):
-    asset_type: Literal["shot_video", "dialogue_audio", "bgm"]
+    asset_type: Literal["clip_video", "dialogue_audio", "bgm"]
     episode_key: str
     shot_id: str | None = None
     asset_id: str | None = None
@@ -381,7 +381,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         if not self._project_path_exists(project_dir, source_path):
             missing.append(
                 EditMissingAsset(
-                    asset_type="shot_video",
+                    asset_type="clip_video",
                     episode_key=episode_key,
                     shot_id=shot.shot_id,
                     asset_id=shot.video_asset_id,
