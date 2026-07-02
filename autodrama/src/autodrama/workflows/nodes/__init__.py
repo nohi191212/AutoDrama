@@ -43,7 +43,8 @@ def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
         node for node in build_role_nodes(workflow) if node.name in default_role_names
     ]
     return [
-        *build_script_nodes(workflow, after_novel_nodes=build_director_nodes(workflow)),
+        *build_script_nodes(workflow),
+        *build_director_nodes(workflow),
         *default_role_nodes,
         *build_static_asset_nodes(workflow),
         *build_storyboard_asset_nodes(workflow),
@@ -64,9 +65,8 @@ def build_manual_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
 
 
 PREGEN_NODE_NAMES = [
-    *SCRIPT_NODE_NAMES[:2],
+    *SCRIPT_NODE_NAMES,
     *DIRECTOR_NODE_NAMES,
-    *SCRIPT_NODE_NAMES[2:],
     *DEFAULT_PREGEN_ROLE_NODE_NAMES,
     *STATIC_ASSET_NODE_NAMES,
     *STORYBOARD_ASSET_NODE_NAMES,

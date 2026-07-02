@@ -1044,7 +1044,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             novel_full=self._format_json(
                 self._episode_window_full_context(project_dir, state, episode_key, all_episode_keys)
             ),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=[episode_key]),
+            project_context=DirectorService.project_context(state, episode_keys=[episode_key]),
             roleboard_context=self._format_json(self._roleboard_context_for_ids(project_dir, state, role_ids)),
             layout_context=self._format_json(self._layout_context_for_ids(state, layout_ids)),
             prop_context=self._format_json(self._prop_context_for_ids(state, prop_ids)),
@@ -1401,22 +1401,60 @@ class ClipPromptNode(StoryboardPromptNode):
             }
         )
 
+    def _episode_summary_text(self, project_dir: Path, state: ProjectState, episode_key: str) -> str:
+        stories = self.episode_story_context(project_dir, state, [episode_key])
+        return str(stories.get(episode_key) or "").strip() or "（暂无当前集剧情摘要。）"
+
+    @staticmethod
+    def _first_nonempty(*values: object) -> str:
+        for value in values:
+            text = str(value or "").strip()
+            if text:
+                return text
+        return ""
+
     def _relative_assets_intro(
         self,
         *,
         role_context: list[dict[str, object]],
         layout_context: list[dict[str, object]],
         prop_context: list[dict[str, object]],
-        reference_image_context: list[dict[str, object]],
     ) -> str:
-        return self._format_json(
-            {
-                "roles": role_context,
-                "layouts": layout_context,
-                "props": prop_context,
-                "reference_images": reference_image_context,
-            }
-        )
+        sections: list[str] = []
+
+        if role_context:
+            lines = ["【角色】"]
+            for item in role_context:
+                name = self._first_nonempty(item.get("role_name"), item.get("role_id"), "未命名角色")
+                appearances = item.get("appearances")
+                appearance_desc = ""
+                if isinstance(appearances, list) and appearances:
+                    first_appearance = appearances[0]
+                    if isinstance(first_appearance, dict):
+                        appearance_desc = self._first_nonempty(first_appearance.get("desc"))
+                intro = self._first_nonempty(item.get("intro"), appearance_desc, "暂无介绍。")
+                lines.append(f"{name}：{intro}")
+            sections.append("\n".join(lines))
+
+        if layout_context:
+            lines = ["【场景】"]
+            for item in layout_context:
+                name = self._first_nonempty(item.get("layout_name"), item.get("layout_id"), "未命名场景")
+                desc = self._first_nonempty(item.get("desc"), "暂无描述。")
+                lines.append(f"{name}：{desc}")
+            sections.append("\n".join(lines))
+
+        if prop_context:
+            lines = ["【道具】"]
+            for item in prop_context:
+                name = self._first_nonempty(item.get("prop_name"), item.get("prop_id"), "未命名道具")
+                status = self._first_nonempty(item.get("status"))
+                desc = self._first_nonempty(item.get("desc"), "暂无描述。")
+                label = f"{name}（{status}）" if status and status not in name else name
+                lines.append(f"{label}：{desc}")
+            sections.append("\n".join(lines))
+
+        return "\n\n".join(sections) if sections else "（当前 clip 无明确角色、场景或道具资产。）"
 
     def render_clip_prompt_request(
         self,
@@ -1444,10 +1482,9 @@ class ClipPromptNode(StoryboardPromptNode):
         prop_context = self._prop_context_for_ids(state, prop_ids)
         prompt = self.workflow.prompts.render(
             "clip_prompt",
-            episode_summary=self._format_json(self.episode_story_context(project_dir, state, [episode_key])),
+            episode_summary=self._episode_summary_text(project_dir, state, episode_key),
             clip_text=self._clip_segment_text(source_clip),
-            neighbor_clip_context=self._neighbor_clip_context(source_key=source_key, source_clips=source_clips),
-            visual_tone=self.asset_service.visual_tone(state) or DirectorService.director_prep_context(
+            visual_tone=self.asset_service.visual_tone(state) or DirectorService.project_context(
                 state,
                 episode_keys=[episode_key],
             ),
@@ -1455,7 +1492,6 @@ class ClipPromptNode(StoryboardPromptNode):
                 role_context=role_context,
                 layout_context=layout_context,
                 prop_context=prop_context,
-                reference_image_context=reference_image_context,
             ),
         )
         try:

@@ -241,12 +241,6 @@ class ClipSegmentNodeOutput(RootModel[dict[str, dict[str, ClipSegment]]]):
     pass
 
 
-class DirectorPrepOutput(BaseModel):
-    story_core: str
-    worldview: str
-    visual_tone: str
-
-
 class KeyVisionPromptOutput(BaseModel):
     prompt: str
 

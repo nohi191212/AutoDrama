@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from autodrama.core.schemas import DirectorPrepOutput, KeyVisionPromptOutput, ProjectState
+from autodrama.core.schemas import KeyVisionPromptOutput, ProjectState
 from autodrama.providers.base import TextLLM
 from autodrama.utils.prompts import PromptStore
 
@@ -26,53 +26,28 @@ class DirectorService:
 
     @staticmethod
     def _fallback_context() -> str:
-        return "（暂无导演前期。请以当前剧本文本、已有资产和节点要求为准。）"
+        return "（暂无单独项目约束；请以当前剧本文本、已有资产和节点要求为准。）"
 
     @classmethod
-    def director_prep_context(
+    def project_context(
         cls,
         state: ProjectState,
         *,
         episode_keys: list[str] | None = None,
     ) -> str:
         del episode_keys
-        payload = state.metadata.get("director_prep")
-        if not isinstance(payload, dict) or not payload:
-            return cls._fallback_context()
-        output = DirectorPrepOutput.model_validate(payload)
-        return cls.format_json(output.model_dump(mode="json"))
+        payload: dict[str, str] = {}
+        visual_style_prompt = cls.visual_style_prompt(state)
+        if visual_style_prompt:
+            payload["visual_style_prompt"] = visual_style_prompt
+        visual_tone = str(state.metadata.get("visual_tone") or "").strip()
+        if visual_tone:
+            payload["visual_tone"] = visual_tone
+        return cls.format_json(payload) if payload else cls._fallback_context()
 
     @staticmethod
     def visual_style_prompt(state: ProjectState) -> str:
         return str(state.metadata.get("visual_style_prompt") or "").strip()
-
-    async def director_prep(
-        self,
-        state: ProjectState,
-        provider: TextLLM,
-        *,
-        novel_full: dict[str, str],
-    ) -> DirectorPrepOutput:
-        episode_keys = list(novel_full)
-        prompt = self.prompts.render(
-            "director_prep",
-            title=state.title,
-            raw_script=state.raw_script,
-            novel_full=self.format_json(novel_full),
-            episode_keys=", ".join(episode_keys),
-            episode_count=self._episode_count(state),
-            episode_duration_seconds=self._episode_duration_seconds(state),
-        )
-        return await provider.generate_json(
-            prompt,
-            DirectorPrepOutput,
-            temperature=0.45,
-            metadata={
-                "node_name": "director_prep",
-                "project_id": state.project_id,
-                "expected_keys": episode_keys,
-            },
-        )
 
     async def design_key_vision_prompt(
         self,
@@ -83,8 +58,8 @@ class DirectorService:
             "design_key_vision_prompt",
             title=state.title,
             raw_script=state.raw_script,
-            visual_style_prompt=self.visual_style_prompt(state) or "（未单独配置。请严格继承导演前期中的 visual_tone。）",
-            director_prep=self.director_prep_context(state),
+            visual_style_prompt=self.visual_style_prompt(state) or "（未单独配置。请以原始故事和项目约束为准。）",
+            project_context=self.project_context(state),
         )
         output = await provider.generate_json(
             prompt,

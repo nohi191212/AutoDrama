@@ -8,7 +8,7 @@ model_catalog_file: ./model_catalog.yaml.example
 
 project:
   # Stable ID is recommended because resume relies on it.
-  id: huyao
+  id: huyao_0702
   title: 狐妖太会撩，我靠吓哭游客狂赚千亿
   script_outline_file: ./inputs/狐妖.md
   # The script pipeline lets the text model split the story into this many episodes.
@@ -107,12 +107,6 @@ nodes:
     params:
       reasoning_effort: xhigh
       temperature: 0.3
-      response_format: json_object
-  director_prep:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
       response_format: json_object
   design_key_vision_prompt:
     model: rightcode:gpt-5.5

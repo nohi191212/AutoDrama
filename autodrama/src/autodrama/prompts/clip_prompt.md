@@ -30,9 +30,6 @@
 当前 clip 原文：
 {{clip_text}}
 
-当前 clip 的前后文参考，只用于理解情绪承接和动作连续性，不得扩写出当前 clip 之外的剧情：
-{{neighbor_clip_context}}
-
 全局视觉调性：
 {{visual_tone}}
 

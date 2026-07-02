@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import re
 from pathlib import Path
@@ -241,6 +242,41 @@ def main() -> None:
             )
         },
     )
+    clip_prompt_path = layout.node_output_path(tmp_project, "clip_prompt")
+    clip_prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    clip_prompt_path.write_text(
+        json.dumps(
+            {
+                "clip_prompts": [
+                    {
+                        "episode_key": "episode_002",
+                        "clips": [
+                            {
+                                "episode_key": "episode_002",
+                                "clip_id": f"episode_002_clip_{index:03d}",
+                                "clip_index": index,
+                                "source_clip_key": str(index),
+                                "clip_text": clips[str(index)].text,
+                                "role_names": ["江未晞"],
+                                "layout_names": ["古老殿宇"],
+                                "prop_names": [],
+                                "role_ids": ["role_江未晞"],
+                                "layout_ids": ["layout_古老殿宇"],
+                                "prop_ids": [],
+                                "target_duration_seconds": 10,
+                                "clip_prompt": f"镜头1（0-10秒）：第 {index} 段的逐镜头提示。",
+                                "reference_image_context": [],
+                            }
+                            for index in range(1, 18)
+                        ],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     role_ids = node._role_ids_for_batch(state, episode_key="episode_002", batch_clips=batches[1])
     layout_ids = node._layout_ids_for_batch(state, episode_key="episode_002", batch_clips=batches[1])
@@ -303,11 +339,12 @@ def main() -> None:
         raw_script=state.raw_script,
         novel_extract=node._format_json({"episode_002": "本集摘要"}),
         novel_full=node._format_json(full_context),
-        director_prep="story_core/worldview/visual_tone",
+        project_context="visual_style_prompt/visual_tone",
         roleboard_context=node._format_json(node._roleboard_context_for_ids(tmp_project, state, role_ids)),
         layout_context=node._format_json(node._layout_context_for_ids(state, layout_ids)),
         prop_context=node._format_json([]),
         reference_image_context=node._format_json(ref_context),
+        clip_prompt_context=node._format_json({"episode_002_clip_009": {"clip_prompt": "镜头提示", "target_duration_seconds": 10}}),
         clip_segments=node._format_json({"episode_002": batches[1]}),
     )
     if re.search(r"\{\{[A-Za-z_][A-Za-z0-9_]*\}\}", rendered):

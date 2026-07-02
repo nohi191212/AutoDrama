@@ -102,7 +102,7 @@ class ScriptService:
         novel_full: dict[str, str],
         previous_extract: dict[str, str],
         extract_hints: dict[str, str],
-        director_prep: str | None = None,
+        project_context: str | None = None,
     ) -> ScriptNovelExtractBatchOutput:
         episode_count = self.episode_count(state)
         episode_duration_seconds = self.episode_duration_seconds(state)
@@ -112,7 +112,7 @@ class ScriptService:
             novel_full=self.format_json(novel_full),
             previous_extract=self.format_json(previous_extract) if previous_extract else "（暂无，当前是第一批。）",
             extract_hints=self.format_json(extract_hints),
-            director_prep=director_prep or "（暂无导演前期。）",
+            project_context=project_context or "（暂无项目约束。）",
             batch_episode_keys=", ".join(batch_episode_keys),
             episode_count=episode_count,
             episode_duration_seconds=episode_duration_seconds,

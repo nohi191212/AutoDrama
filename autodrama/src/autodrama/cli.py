@@ -27,7 +27,6 @@ from autodrama.workflows.selection import (
 
 SCRIPT_IMPORT_BOOTSTRAP_NODES = {"script_detail_expand", "script_outline", "script_novel"}
 SCRIPT_IMPORT_INVALIDATE_ON_PRESERVE = {
-    "director_prep",
     "design_key_vision_prompt",
     "design_key_vision_image",
     "script_novel_extract",
@@ -104,7 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Allow importing into a project with downstream assets. Role/prop/layout/media state is preserved; "
-            "director_prep, script_novel_extract, and dynamic generation nodes are marked stale."
+            "script_novel_extract and dynamic generation nodes are marked stale."
         ),
     )
 

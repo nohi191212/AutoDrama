@@ -27,12 +27,6 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
-  director_prep:
-    model: rightcode:gpt-5.5
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
   design_key_vision_prompt:
     model: rightcode:gpt-5.5
     params:

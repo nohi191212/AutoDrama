@@ -39,6 +39,13 @@ STORYBOARD_CHAIN = [
     "clip_manifest_generation",
 ]
 
+SCRIPT_KEY_VISION_CHAIN = [
+    "script_novel_extract",
+    "clip_segment",
+    "design_key_vision_prompt",
+    "design_key_vision_image",
+]
+
 
 def main() -> None:
     for node_name in REMOVED_FROM_DEFAULT:
@@ -58,6 +65,15 @@ def main() -> None:
 
     if PREGEN_NODES[-1] != "clip_manifest_generation":
         raise AssertionError(f"default pregen should end at clip_manifest_generation, got {PREGEN_NODES[-1]!r}")
+    script_index = PREGEN_NODES.index("script_novel_extract")
+    actual_script_key_vision_chain = PREGEN_NODES[
+        script_index : script_index + len(SCRIPT_KEY_VISION_CHAIN)
+    ]
+    if actual_script_key_vision_chain != SCRIPT_KEY_VISION_CHAIN:
+        raise AssertionError(
+            f"script/key-vision chain should be {SCRIPT_KEY_VISION_CHAIN!r}, "
+            f"got {actual_script_key_vision_chain!r}"
+        )
     storyboard_index = PREGEN_NODES.index("clip_prompt")
     actual_storyboard_chain = PREGEN_NODES[storyboard_index : storyboard_index + len(STORYBOARD_CHAIN)]
     if actual_storyboard_chain != STORYBOARD_CHAIN:

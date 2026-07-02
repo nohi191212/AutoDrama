@@ -13,7 +13,6 @@ from autodrama.core.schemas import (
     BGMDesignOutput,
     ClipPromptModelOutput,
     ClipSegmentOutput,
-    DirectorPrepOutput,
     KeyVisionPromptOutput,
     LayoutDedupeReviewOutput,
     LayoutExtractOutput,
@@ -159,12 +158,6 @@ class FakeTextProvider:
                     "苏晚把旧邮件截图推到他面前，附件时间像一枚钉子，把赵启的谎言钉在屏幕上。"
                     "林舟没有立刻说话，他把证据一页页拍下，听着窗外雨声，第一次决定不再退让。"
                 ),
-            }
-        elif schema is DirectorPrepOutput or node_name == "director_prep":
-            data = {
-                "story_core": "林舟在被合同调包陷害后，从隐忍调查转向公开反击。",
-                "worldview": "现代职场悬疑短剧，证据链、会议权力关系和雨夜空间氛围推动戏剧张力。",
-                "visual_tone": "克制写实的短剧摄影，冷白办公光、雨夜反射、低饱和色彩和稳定推进镜头。",
             }
         elif schema is KeyVisionPromptOutput or node_name == "design_key_vision_prompt":
             data = {

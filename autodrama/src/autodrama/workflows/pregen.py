@@ -709,9 +709,6 @@ class PregenWorkflow:
     def _director_node_runner(self, node_name: str) -> DirectorNodeBase:
         return build_director_node_runners(self)[node_name]
 
-    async def _run_director_prep(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._director_node_runner("director_prep").run(project_dir, state)
-
     async def _run_script_novel_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._script_node_runner("script_novel_extract").run(project_dir, state)
 

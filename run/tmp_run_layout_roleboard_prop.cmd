@@ -11,7 +11,6 @@ set "PROJECT="
 set "EPISODES="
 set "PROVIDER_ARGS="
 set "FORCE=--force"
-set "RUN_DIRECTOR_PREP=1"
 set "RUN_KEY_VISION=1"
 set "RUN_ROLEBOARD=1"
 set "RUN_PROP=1"
@@ -62,11 +61,6 @@ if "%~1"=="--no-force" (
   shift
   goto parse
 )
-if "%~1"=="--skip-director-prep" (
-  set "RUN_DIRECTOR_PREP=0"
-  shift
-  goto parse
-)
 if "%~1"=="--skip-key-vision" (
   set "RUN_KEY_VISION=0"
   shift
@@ -102,11 +96,10 @@ echo Usage:
 echo   run\tmp_run_layout_roleboard_prop.cmd [--config FILE] [--project ID_OR_DIR] [--episodes LIST] [--fake] [--force^|--no-force]
 echo.
 echo Default behavior:
-echo   Re-run director_prep, key visual, roleboard, prop, and layout pregen nodes in order.
+echo   Re-run key visual, roleboard, prop, and layout pregen nodes in order.
 echo   --force is enabled by default.
 echo.
 echo Node sequence:
-echo   director_prep
 echo   design_key_vision_prompt
 echo   design_key_vision_image
 echo   roleboard_prompt
@@ -126,7 +119,6 @@ echo   --episode LIST            Alias for --episodes.
 echo   --fake                    Use fake providers.
 echo   --force                   Force rerun. This is the default.
 echo   --no-force                Do not force rerun completed nodes.
-echo   --skip-director-prep      Keep existing director_prep.
 echo   --skip-key-vision         Keep existing key visual prompt/image.
 echo   --skip-roleboard          Skip roleboard_prompt and roleboard_generation.
 echo   --skip-prop               Skip prop_extract, prop_prompt, and prop_image_generation.
@@ -168,16 +160,6 @@ if "%FORCE%"=="--force" (
   echo [autodrama] force: disabled
 )
 
-if not "%RUN_DIRECTOR_PREP%"=="1" goto skip_director_prep
-echo [autodrama] node: director_prep
-call "%START_CMD%" --config "%CONFIG%" %PROJECT_ARGS% --only director_prep %PROVIDER_ARGS% %FORCE%
-if errorlevel 1 goto fail
-goto after_director_prep
-
-:skip_director_prep
-echo [autodrama] skip: director_prep
-
-:after_director_prep
 if not "%RUN_KEY_VISION%"=="1" goto skip_key_vision
 echo [autodrama] node: design_key_vision_prompt
 call "%START_CMD%" --config "%CONFIG%" %PROJECT_ARGS% --only design_key_vision_prompt %PROVIDER_ARGS% %FORCE%

@@ -9,8 +9,8 @@
 完整小说正文（按 episode_key 组织）：
 {{novel_full}}
 
-导演前期约束（辅助判断称谓和人物边界；不得用它新增角色或替代完整正文证据）：
-{{director_prep}}
+项目约束（辅助判断称谓和人物边界；不得用它新增角色或替代完整正文证据）：
+{{project_context}}
 
 当前角色列表（包含角色名称、别名、简介、episode_keys 等）：
 {{role_index}}

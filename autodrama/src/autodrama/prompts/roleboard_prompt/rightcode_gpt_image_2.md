@@ -29,8 +29,8 @@
 当前角色出现过的完整章节正文：
 {{role_novel_full}}
 
-导演前期约束：
-{{director_prep}}
+项目约束：
+{{project_context}}
 
 主视觉原图资产（用于统一项目画风、光影、气质和世界观视觉方向）：
 {{key_vision_asset}}

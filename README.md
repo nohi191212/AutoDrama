@@ -94,7 +94,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - `nodes.roleboard_generation.params.roleboard_prompt_template`: 可选的角色板 prompt 模板覆盖；未配置时按生图模型自动尝试 `roleboard_prompt/<provider>_<model>`、`roleboard_prompt/<provider>`、`roleboard_prompt/default`。
 - `nodes.roleboard_generation.params.roleboard_generation_concurrency`: 角色身份板图片生成并发数，默认 1，最大 5。
 - `generation.prop_design_style_prompt`: 道具设计统一画风 prompt。
-- `generation.layout_design_style_prompt`: 旧场景设计风格字段；新 `layout_prompt` 不再读取它，场景画面调性来自导演前期的 `visual_tone`。
+- `generation.layout_design_style_prompt`: 旧场景设计风格字段；新 `layout_prompt` 不再读取它，场景画面调性来自配置中的 `visual_tone`。
 - `output.root_dir`: 输出目录，默认 `./outputs`。
 - `providers`: 各 Provider 的 base URL、模型名和选项。
 - `routing`: 不同能力和用途的 Provider 路由。
@@ -177,7 +177,7 @@ $env:PYTHONPATH="autodrama/src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli import-script --config config.yaml --project huyao --script inputs/狐妖.md --detail-expand --expanded-script-out inputs/狐妖_细化.md --preserve-assets
 ```
 
-Windows 下也可以直接用快捷脚本。它默认会保留已有资产、执行保守细化，并自动刷新 `director_prep` 和 `script_novel_extract`：
+Windows 下也可以直接用快捷脚本。它默认会保留已有资产、执行保守细化，并自动刷新 `script_novel_extract`：
 
 ```powershell
 run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐妖.md --expanded-script-out inputs/狐妖_细化.md
@@ -189,7 +189,7 @@ run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐�
 run\refresh_script.cmd --config config.yaml --project huyao --script inputs/狐妖.md --expanded-script-out inputs/狐妖_细化.md --storyboard --episodes 1
 ```
 
-`--preserve-assets` 会保留角色、道具、场景、图片、音频、视频状态，包括已生成的 roleboard 身份板，只把 `director_prep`、`script_novel_extract` 和可选的 pregen 故事板节点标记为需要重跑。导入后先刷新导演前期和剧情摘要：
+`--preserve-assets` 会保留角色、道具、场景、图片、音频、视频状态，包括已生成的 roleboard 身份板，只把 `script_novel_extract` 和可选的 pregen 故事板节点标记为需要重跑。导入后先刷新剧情摘要：
 
 ```powershell
 run\start.cmd --config config.yaml --project huyao --until script_novel_extract
@@ -203,7 +203,7 @@ run\start.cmd --config config.yaml --project huyao --only storyboard_keyframe_ge
 run\start.cmd --config config.yaml --project huyao --only clip_manifest_generation --episodes 1
 ```
 
-`import-script` 会写入 `assets/json/scripts/novel_full/episode_001.json`，并把 `script_outline`、`script_novel` 标记为已完成。后续普通预生成会跳过重写型脚本节点，先生成 `director_prep`，再从 `script_novel_extract` 继续：
+`import-script` 会写入 `assets/json/scripts/novel_full/episode_001.json`，并把 `script_outline`、`script_novel` 标记为已完成。后续普通预生成会跳过重写型脚本节点，从 `script_novel_extract`、`clip_segment` 和主视觉节点继续：
 
 ```powershell
 run\start.cmd --config config.yaml --project huyao
@@ -233,29 +233,35 @@ $env:PYTHONPATH="autodrama/src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id>
 ```
 
-`pregen` 默认运行到 `role_voice_select`。`prop_*`、`layout_*` 和 `bgm_*` 节点暂时从默认 pregen 流程中屏蔽，代码仍保留，需要时可用 `--only` 手动运行。
+`pregen` 默认运行到 `clip_manifest_generation`。`ambient_entity_extract`、`role_subject_*`、`role_voice_select` 和 `bgm_*` 节点代码仍保留，但不在默认链路里，需要时可用 `--only` 手动运行。
 
 ```text
 script_outline
 script_novel
-director_prep
-design_key_vision_prompt
-design_key_vision_image
 script_novel_extract
 clip_segment
+design_key_vision_prompt
+design_key_vision_image
 role_extract_primary
 role_extract_functional
 role_extract
 role_episode_key_audit
 role_duplicate_audit
-ambient_entity_extract
 roleboard_prompt
 roleboard_generation
+prop_extract
+prop_dedupe
+prop_prompt
+prop_image_generation
+layout_extract
+layout_dedupe_review
+layout_prompt
+layout_image_generation
+clip_prompt
 storyboard_prompt
 storyboard_generation
 storyboard_keyframe_generation
 clip_manifest_generation
-role_voice_select
 ```
 
 如果只需要跑到主视觉原图生成，可把流程停在 `design_key_vision_image`：
@@ -273,16 +279,22 @@ role_episode_key_audit
 role_duplicate_audit
 roleboard_prompt
 roleboard_generation
+prop_extract
+prop_prompt
+prop_image_generation
+layout_extract
+layout_prompt
+layout_image_generation
+clip_prompt
 storyboard_prompt
 storyboard_generation
 storyboard_keyframe_generation
 clip_manifest_generation
-role_voice_select
 ```
 
 `roleboard_prompt` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并结合主视觉原图信息输出 prompt-only 的角色身份板提示词；代码负责生成 `role_id`、`appearance_id` 等内部 ID。`roleboard_prompt` 的模板按后续 `roleboard_generation` 绑定的生图 provider/model 自动选择，也可通过 `nodes.roleboard_generation.params.roleboard_prompt_template` 显式指定，便于为 GPT-Image、Seedream 等不同模型维护不同调性的角色板提示词。`roleboard_generation` 使用身份板提示词和 `design_key_vision_image` 产出的主视觉原图作为参考图，生成正面、侧面、背面、表情、动作、服装细节等角色身份板，并要求图片边缘带小号“角色：<角色名> | <形象名>”以及可选的“正面/侧面/背面/头部/表情/动作/服装细节/配饰细节”视图标签，方便后续把图片单独作为参考图时直接识别角色；除这些指定标签外仍禁止字幕、水印、logo、编号、ID、文件名、项目名、剧情台词或乱码文字。`roleboard_generation` 支持按 `nodes.roleboard_generation.params.roleboard_generation_concurrency` 并发生成多张角色板。`role_voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，参考角色身份板并按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；后续 `shot_dialogue_audio_generation` 会直接使用该 `voice_type` 生成逐镜头对白音频。功能角色如果 `has_dialogue=false` 不选择声音。
 
-`clip_segment` 在剧本正文和摘要之后运行，把每集文本切成建议 8-15 秒的 clip，并为每个 clip 提取 `role_names`、`prop_names`、`layout_names`；episode 时长只作为文本节奏参考，不再用来硬性校验 clip 数量。`storyboard_prompt` 在 `roleboard_generation` 之后运行，严格跟随 `clip_segment` 的 clip 数和顺序，把导演前期、完整正文、剧情摘要、clip 片段和角色身份板摘要整理成 storyboard clip；每个 clip 的 `video_prompt` 内部再拆 1-4 个真实 `Camera Shot`，推荐 2-4 个，并写出 P01-P12 十二宫格面板规划。P01-P12 是视觉节奏帧，不是 1 秒 1 格；真实切镜边界会要求在故事板宫格之间用醒目的红色斜杠标出。pregen 的 `storyboard_generation` 会为每个 storyboard clip 生成一张黑白线稿 12 宫格故事板整图，保存到 `assets/images/storyboards/`。`storyboard_keyframe_generation` 紧随其后，从每集首个 clip 的 P01/P12 生成 start/end 关键帧，并从后续 clip 的 P12 生成 end 关键帧。`clip_manifest_generation` 是本地整理节点，会把故事板 prompt、12 宫格故事板整图、首尾关键帧、角色/道具/场景 ID 和融合后的 `video_prompt` 写入 `shots/<episode_key>.json`，同时保留已有视频/音频动态资产字段。这里的 `storyboard_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
+`clip_segment` 在剧本正文和摘要之后运行，把每集文本切成建议 8-15 秒的 clip，并为每个 clip 提取 `role_names`、`prop_names`、`layout_names`；episode 时长只作为文本节奏参考，不再用来硬性校验 clip 数量。`clip_prompt` 在角色、道具、场景静态资产之后运行，为每个 clip 生成逐镜头视频提示词。`storyboard_prompt` 严格跟随 `clip_segment` 的 clip 数和顺序，把项目约束、完整正文、剧情摘要、clip 片段、`clip_prompt`、角色身份板摘要以及道具/场景摘要整理成 storyboard clip；每个 clip 的 `video_prompt` 内部再拆 1-4 个真实 `Camera Shot`，推荐 2-4 个，并写出 P01-P12 十二宫格面板规划。P01-P12 是视觉节奏帧，不是 1 秒 1 格；真实切镜边界会要求在故事板宫格之间用醒目的红色斜杠标出。pregen 的 `storyboard_generation` 会为每个 storyboard clip 生成一张黑白线稿 12 宫格故事板整图，保存到 `assets/images/storyboards/`。`storyboard_keyframe_generation` 紧随其后，从每集首个 clip 的 P01/P12 生成 start/end 关键帧，并从后续 clip 的 P12 生成 end 关键帧。`clip_manifest_generation` 是本地整理节点，会把故事板 prompt、12 宫格故事板整图、首尾关键帧、角色/道具/场景 ID 和融合后的 `video_prompt` 写入 `shots/<episode_key>.json`，同时保留已有视频/音频动态资产字段。这里的 `storyboard_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
 
 `role_episode_key_audit` 在 `role_extract` 之后运行，会以 30 并发逐个检查角色 JSON 的 `episode_keys` 覆盖情况；如果发现遗漏，只向 `role_extract*`、已有 `roleboard_prompt`、角色 JSON 和 state 角色记录追加缺失的 `episode_keys/source_chapters`，不会删除或重排原有条目。
 

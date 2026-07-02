@@ -30,11 +30,6 @@ class RoleService:
 
     @staticmethod
     def visual_tone(state: ProjectState) -> str:
-        director_prep = state.metadata.get("director_prep")
-        if isinstance(director_prep, dict):
-            visual_tone = str(director_prep.get("visual_tone") or "").strip()
-            if visual_tone:
-                return visual_tone
         return str(state.metadata.get("visual_tone") or "").strip()
 
     @classmethod
@@ -85,7 +80,7 @@ class RoleService:
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
             clip_segments=self.clip_segments_context(state, list(novel_full)),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
+            project_context=DirectorService.project_context(state, episode_keys=list(novel_full)),
             existing_roles=self.format_json(existing_roles),
             episode_keys=", ".join(novel_full),
         )
@@ -116,7 +111,7 @@ class RoleService:
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
             clip_segments=self.clip_segments_context(state, list(novel_full)),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
+            project_context=DirectorService.project_context(state, episode_keys=list(novel_full)),
             existing_primary_roles=self.format_json(existing_primary_roles),
             episode_keys=", ".join(novel_full),
         )
@@ -148,7 +143,7 @@ class RoleService:
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
             clip_segments=self.clip_segments_context(state, list(novel_full)),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
+            project_context=DirectorService.project_context(state, episode_keys=list(novel_full)),
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(existing_functional_roles),
             episode_keys=", ".join(novel_full),
@@ -207,7 +202,7 @@ class RoleService:
             title=state.title,
             novel_full=self.format_json(novel_full),
             clip_segments=self.clip_segments_context(state, list(novel_full)),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
+            project_context=DirectorService.project_context(state, episode_keys=list(novel_full)),
             role_index=self.format_json(role_index),
         )
         return await provider.generate_json(
@@ -237,7 +232,7 @@ class RoleService:
             raw_script=state.raw_script,
             novel_full=self.format_json(novel_full),
             clip_segments=self.clip_segments_context(state, list(novel_full)),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(novel_full)),
+            project_context=DirectorService.project_context(state, episode_keys=list(novel_full)),
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(functional_roles),
             episode_keys=", ".join(novel_full),
@@ -276,10 +271,10 @@ class RoleService:
             role_novel_extract=self.format_json(role_novel_extract),
             role_novel_full=self.format_json(role_novel_full),
             clip_segments=self.clip_segments_context(state, list(role_novel_full)),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(role_novel_full)),
+            project_context=DirectorService.project_context(state, episode_keys=list(role_novel_full)),
             visual_tone=(
                 self.visual_tone(state)
-                or "（暂无 director_prep.visual_tone，请只依据人物介绍生成中性、可复用的角色身份板提示词。）"
+                or "（暂无 visual_tone，请只依据人物介绍生成中性、可复用的角色身份板提示词。）"
             ),
             role_index=self.format_json(role_index),
             key_vision_asset=self.format_json(key_vision_asset or {}),

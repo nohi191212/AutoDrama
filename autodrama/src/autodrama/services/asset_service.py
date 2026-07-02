@@ -33,11 +33,6 @@ class AssetService:
 
     @staticmethod
     def visual_tone(state: ProjectState) -> str:
-        director_prep = state.metadata.get("director_prep")
-        if isinstance(director_prep, dict):
-            visual_tone = str(director_prep.get("visual_tone") or "").strip()
-            if visual_tone:
-                return visual_tone
         return str(state.metadata.get("visual_tone") or "").strip()
 
     @classmethod
@@ -217,7 +212,7 @@ class AssetService:
             "bgm_design",
             title=state.title,
             episode_stories=self.format_json(episode_stories),
-            director_prep=DirectorService.director_prep_context(state, episode_keys=list(episode_stories)),
+            project_context=DirectorService.project_context(state, episode_keys=list(episode_stories)),
             bgm_count=bgm_count,
         )
         return await provider.generate_json(

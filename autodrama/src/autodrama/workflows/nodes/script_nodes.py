@@ -332,7 +332,7 @@ class ScriptNovelExtractNode(ScriptNodeBase):
                 novel_full=novel_contents,
                 previous_extract=previous_extract,
                 extract_hints=extract_hints,
-                director_prep=DirectorService.director_prep_context(state, episode_keys=batch_keys),
+                project_context=DirectorService.project_context(state, episode_keys=batch_keys),
             )
             actual_keys = set(output.novel_extract)
             expected_keys = set(batch_keys)

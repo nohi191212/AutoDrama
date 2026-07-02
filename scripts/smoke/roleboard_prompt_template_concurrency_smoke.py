@@ -17,7 +17,7 @@ def render_roleboard_templates() -> None:
         "role_index": "[]",
         "role_novel_extract": "{}",
         "role_novel_full": "{}",
-        "director_prep": "{}",
+        "project_context": "{}",
         "visual_tone": "克制写实的短剧摄影，低饱和色彩，干净留白，人物质感清晰。",
         "character_intro": (
             '{"name":"陈伶","brief":"归来的红衣少年",'

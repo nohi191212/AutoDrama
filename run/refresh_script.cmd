@@ -121,7 +121,7 @@ echo   run\refresh_script.cmd [--fake]
 echo.
 echo Default behavior:
 echo   1. Import the mature script with --preserve-assets --detail-expand.
-echo   2. Refresh director_prep and script_novel_extract.
+echo   2. Refresh script_novel_extract.
 echo.
 echo It preserves existing roles, props, layouts, images, audio, and videos.
 echo It does not run dynamic generation or clip_video_generation.
@@ -172,8 +172,8 @@ call :log "preserve assets: true"
 if not "%DETAIL_EXPAND%"=="" call :log "detail expand: true"
 if "%DETAIL_EXPAND%"=="" call :log "detail expand: false"
 if not "%EXPANDED_SCRIPT_OUT%"=="" call :log "expanded script out: %EXPANDED_SCRIPT_OUT%"
-if not "%RUN_EXTRACT%"=="" call :log "refresh director_prep + script_novel_extract: true"
-if "%RUN_EXTRACT%"=="" call :log "refresh director_prep + script_novel_extract: false"
+if not "%RUN_EXTRACT%"=="" call :log "refresh script_novel_extract: true"
+if "%RUN_EXTRACT%"=="" call :log "refresh script_novel_extract: false"
 if not "%RUN_STORYBOARD%"=="" call :log "storyboard refresh: true"
 
 "%AUTODRAMA_PYTHON%" -m autodrama.cli import-script --config "%CONFIG%" %PROJECT_ARGS% %SCRIPT_ARGS% %DETAIL_EXPAND% %EXPANDED_SCRIPT_OUT_ARGS% --max-expand-ratio "%MAX_EXPAND_RATIO%" %PROVIDER_ARGS% --preserve-assets
