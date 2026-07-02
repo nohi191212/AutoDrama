@@ -54,17 +54,24 @@ def test_pregen_runs_integrated_role_pipeline(tmp_path: Path) -> None:
     assert all(str(value).startswith("assets/json/scripts/novel_extract/") for value in state.script.novel_extract.values())
     assert "role_林舟".lower() in {key.lower() for key in state.roles}
     dialogue_roles = [role for role in state.roles.values() if role.has_dialogue]
-    assert any(role.audio for role in dialogue_roles)
-    assert all(role.voice_type for role in dialogue_roles)
-    assert all(audio.voice_type == role.voice_type for role in dialogue_roles for audio in role.audio.values())
+    assert dialogue_roles
+    assert all(not role.voice_type for role in dialogue_roles)
     assert state.roles["role_林舟"].appearances["base"].design_image_asset_path
     assert state.roles["role_林舟"].appearances["base"].asset_path
     assert state.props
     assert state.layouts
-    assert state.bgms
     assert (project_dir / "assets" / "json" / "nodes" / "role_extract.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "roleboard_prompt.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "roleboard_generation.json").exists()
-    assert (project_dir / "assets" / "json" / "nodes" / "role_voice_select.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "prop_extract.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "prop_image_generation.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "layout_extract.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "layout_image_generation.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "clip_prompt.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "clip_manifest_generation.json").exists()
+    assert not (project_dir / "assets" / "json" / "nodes" / "ambient_entity_extract.json").exists()
+    assert not (project_dir / "assets" / "json" / "nodes" / "role_subject_video_generation.json").exists()
+    assert not (project_dir / "assets" / "json" / "nodes" / "role_subject_element_generation.json").exists()
+    assert not (project_dir / "assets" / "json" / "nodes" / "role_voice_select.json").exists()
     assert not hasattr(state, "storyboards")
     assert (settings.output.root_dir / "current_project.json").exists()

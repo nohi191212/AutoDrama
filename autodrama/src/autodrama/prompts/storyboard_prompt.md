@@ -69,6 +69,9 @@ Clip 片段：
 随请求附加的参考图片顺序：
 {{reference_image_context}}
 
+逐镜头视频提示词（由 `clip_prompt` 节点生成）：
+{{clip_prompt_context}}
+
 # 拆分要求
 
 - 每个输出对象是 `clip`，不是 shot。每个 clip 必须严格对应本批输入 `clip_segments` 中同一集、同一顺序的一个片段。
@@ -80,6 +83,7 @@ Clip 片段：
 - `role_ids`、`layout_ids`、`prop_ids` 必须只使用输入资产摘要里已有的 ID；没有道具时 `prop_ids` 输出空数组。
 - `layout_ids` 至少 1 个。一个 clip 通常只放 1 个主场景；确需空间切换时可以放多个，但 `video_prompt` 必须说明切换方式。
 - 不要自造新角色、场景、道具 ID；背景群众不要写进 `role_ids`。
+- `video_prompt` 必须继承对应 `clip_prompt` 的镜头时间段、运镜设计、画面内容、声音设计和 `target_duration_seconds`。可以为了十二宫格故事板补充 panel 信息，但不要推翻 `clip_prompt` 的逐镜头设计。
 - `video_prompt` 是后续故事板生图和视频生成的主体输入，必须把剧情、角色动作、角色外貌锁定、场景、关键道具、拍摄手法、所用机器、镜头语言、声音/对白全部融合进去。
 - 如果存在随请求附加的参考图片，必须按“随请求附加的参考图片顺序”理解：roleboard 图片用于锁定角色脸型、发型、体态、服装和年龄感；layout 图片用于锁定场景空间、结构、材质、光线和主要动线。不要把图片顺序、文件名或资产 ID 写进输出 `video_prompt`。
 

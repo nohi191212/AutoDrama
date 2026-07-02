@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from autodrama.core.schemas import (
     AmbientEntityOutput,
     BGMDesignOutput,
+    ClipPromptModelOutput,
     ClipSegmentOutput,
     DirectorPrepOutput,
     KeyVisionPromptOutput,
@@ -282,6 +283,22 @@ class FakeTextProvider:
         elif schema is RoleSubjectVideoIntroTextOutput or node_name == "role_subject_video_intro_text":
             role_name = str(metadata.get("role_name") or "林舟").strip() or "林舟"
             data = {"intro_text": f"我是{role_name}，我会记住这一刻。"}
+        elif schema is ClipPromptModelOutput or node_name == "clip_prompt":
+            data = {
+                "clip_prompt": (
+                    "镜头1（0-3秒）：\n"
+                    "景别运镜：50mm 斜侧近景，轻微手持推进。\n"
+                    "画面内容：雨夜办公室冷白顶灯下，林舟半侧脸低头检查合同页码，"
+                    "手指沿着纸张边缘缓慢滑过，发现关键页纸色异常。\n"
+                    "声音设计：窗外雨声、空调低频和纸张摩擦声。\n\n"
+                    "镜头2（3-8秒）：\n"
+                    "景别运镜：低机位桌面跟拍，轨道车缓慢横移。\n"
+                    "画面内容：林舟把邮件截图推向桌面中央，视线压向对面的空位，"
+                    "低声说：“这份合同被换过，时间线就在这里。”口型清晰匹配台词。\n"
+                    "声音设计：文件轻响、远处雷声和一句克制的对白。"
+                ),
+                "target_duration_seconds": 8,
+            }
         elif schema is StoryboardPromptOutput or node_name == "storyboard_prompt":
             expected_keys = metadata.get("expected_keys") or episode_keys
             storyboard_episode_keys = [str(key) for key in expected_keys]

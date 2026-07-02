@@ -8,7 +8,7 @@ set "CONFIG=config.yaml"
 set "PROJECT="
 set "WORKFLOW=pregen"
 set "PROVIDER_ARGS="
-set "UNTIL=role_voice_select"
+set "UNTIL=clip_manifest_generation"
 set "ONLY="
 set "EPISODES="
 set "SHOTS="
@@ -38,13 +38,13 @@ if "%~1"=="--workflow" (
 )
 if "%~1"=="--generation" (
   set "WORKFLOW=generation"
-  if "%UNTIL%"=="role_voice_select" set "UNTIL=dynamic_asset_solidification"
+  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=dynamic_asset_solidification"
   shift
   goto parse
 )
 if "%~1"=="--postgen" (
   set "WORKFLOW=postgen"
-  if "%UNTIL%"=="role_voice_select" set "UNTIL=postgen_video_composition"
+  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=postgen_video_composition"
   shift
   goto parse
 )
@@ -145,13 +145,13 @@ echo from config.yaml when available, otherwise D:\miniforge3\envs\autodrama\pyt
 echo.
 echo Defaults:
 echo   workflow: pregen
-echo   role_voice_select
+echo   clip_manifest_generation
 echo.
 echo Notes:
-echo   pregen writes roleboards, 12-panel storyboard sheets, shot manifests, and selected role voice_type bindings through role_voice_select.
-echo   prop/layout/BGM nodes are deferred from the default pregen chain and can be run with --only.
-echo   pregen visual/audio chain is roleboard_prompt, roleboard_generation, storyboard_prompt,
-echo   storyboard_generation, clip_manifest_generation, then role_voice_select.
+echo   pregen writes roleboards, prop/layout assets, 12-panel storyboard sheets, and shot manifests through clip_manifest_generation.
+echo   ambient entity, role subject, role voice selection, and BGM nodes are optional and can be run with --only.
+echo   pregen visual/static chain is roleboard_prompt, roleboard_generation, prop/layout generation,
+echo   clip_prompt, storyboard_prompt, storyboard_generation, storyboard_keyframe_generation, then clip_manifest_generation.
 echo   pregen --roles is supported with --only role_voice_select.
 echo   pregen --clips is supported with --only storyboard_keyframe_generation.
 echo   generation starts with shot_dialogue_audio_generation, then clip_video_generation and solidification.
@@ -179,10 +179,10 @@ exit /b 2
 
 :workflow_ok
 if /I "%WORKFLOW%"=="generation" (
-  if "%UNTIL%"=="role_voice_select" set "UNTIL=dynamic_asset_solidification"
+  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=dynamic_asset_solidification"
 )
 if /I "%WORKFLOW%"=="postgen" (
-  if "%UNTIL%"=="role_voice_select" set "UNTIL=postgen_video_composition"
+  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=postgen_video_composition"
 )
 
 for /f "tokens=1,* delims=:" %%A in ('findstr /R /C:"^[ ][ ]*windows:" "%CONFIG%" 2^>nul') do (

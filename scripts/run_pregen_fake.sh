@@ -9,17 +9,18 @@ Usage:
   scripts/run_pregen_fake.sh [--config FILE] [--project ID_OR_DIR] [--until NODE] [--force]
 
 Default NODE:
-  role_voice_select
+  clip_manifest_generation
 
 This runs the pre-generation workflow only with fake providers, including
-roleboards, shot-level 12-panel storyboard sheets, shot manifests, and role voice_type bindings
-by default.
+roleboards, prop/layout static assets, shot-level 12-panel storyboard sheets,
+and shot manifests by default. Ambient entity, role subject, voice, and BGM
+nodes can still be run manually with --only.
 Project ID and input outline file are read from config.yaml by default. Use
 --project to run a specific existing project or output directory.
 USAGE
 }
 
-until="role_voice_select"
+until="clip_manifest_generation"
 force=""
 project=""
 

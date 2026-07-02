@@ -75,6 +75,7 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "roleboard_generation",
     "role_subject_video_generation",
     "role_subject_element_generation",
+    "clip_prompt",
     "storyboard_prompt",
     "storyboard_generation",
     "storyboard_keyframe_generation",
@@ -558,7 +559,7 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         *,
-        until: str = "role_voice_select",
+        until: str = "clip_manifest_generation",
         force: bool = False,
         only: str | None = None,
         episode_keys: list[str] | None = None,
@@ -587,7 +588,7 @@ class PregenWorkflow:
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
                 "--episodes is only supported for pregen --only clip_segment, roleboard_prompt, roleboard_generation, "
-                "role_subject_video_generation, role_subject_element_generation, storyboard_prompt, "
+                "role_subject_video_generation, role_subject_element_generation, clip_prompt, storyboard_prompt, "
                 "storyboard_generation, storyboard_keyframe_generation, clip_manifest_generation, "
                 "role_voice_select, prop_prompt, prop_image_generation, or layout_image_generation."
             )

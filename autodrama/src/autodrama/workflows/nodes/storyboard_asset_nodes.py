@@ -12,6 +12,10 @@ from pydantic import BaseModel
 from autodrama.core.errors import ProviderBadResponseError
 from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
+    ClipPromptEpisode,
+    ClipPromptItem,
+    ClipPromptModelOutput,
+    ClipPromptOutput,
     ClipSegmentNodeOutput,
     ProjectState,
     ClipManifestGenerationEpisodeItem,
@@ -35,6 +39,7 @@ from autodrama.workflows.nodes.static_asset_nodes import StaticAssetNodeBase
 from autodrama.workflows.runner import WorkflowNode
 
 STORYBOARD_ASSET_NODE_NAMES = [
+    "clip_prompt",
     "storyboard_prompt",
     "storyboard_generation",
     "storyboard_keyframe_generation",
@@ -157,6 +162,19 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
 
     def clip_segments_by_episode(self, project_dir: Path) -> dict[str, object]:
         return dict(self.load_clip_segment_output(project_dir).root)
+
+    def load_clip_prompt_output(self, project_dir: Path) -> ClipPromptOutput:
+        path = self.layout.node_output_path(project_dir, "clip_prompt")
+        if not path.exists():
+            raise FileNotFoundError("clip_prompt output is missing; run pregen through clip_prompt first")
+        return ClipPromptOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def clip_prompts_by_episode(output: ClipPromptOutput) -> dict[str, dict[str, ClipPromptItem]]:
+        return {
+            episode.episode_key: {clip.clip_id: clip for clip in episode.clips}
+            for episode in output.clip_prompts
+        }
 
     def episode_story_context(self, project_dir: Path, state: ProjectState, episode_keys: list[str]) -> dict[str, str]:
         refs = state.script.novel_extract
@@ -950,6 +968,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
         all_episode_keys: list[str],
         final_aspect_ratio: str,
         total_clip_count_by_episode: dict[str, int],
+        clip_prompt_items_by_episode: dict[str, dict[str, ClipPromptItem]],
         batch_index: int,
         batch_total: int,
         batch_clips: dict[str, object],
@@ -965,6 +984,34 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             role_ids=role_ids,
             layout_ids=layout_ids,
         )
+        clip_prompt_context: list[dict[str, object]] = []
+        missing_clip_prompts: list[str] = []
+        for offset, source_key in enumerate(batch_keys):
+            try:
+                expected_index = int(str(source_key).strip())
+            except ValueError:
+                expected_index = offset + 1
+            clip_id = self.clip_id_for_episode_index(episode_key, expected_index)
+            item = clip_prompt_items_by_episode.get(episode_key, {}).get(clip_id)
+            if item is None:
+                missing_clip_prompts.append(clip_id)
+                continue
+            clip_prompt_context.append(
+                {
+                    "clip_id": item.clip_id,
+                    "source_clip_key": item.source_clip_key,
+                    "target_duration_seconds": item.target_duration_seconds,
+                    "role_ids": item.role_ids,
+                    "layout_ids": item.layout_ids,
+                    "prop_ids": item.prop_ids,
+                    "clip_prompt": item.clip_prompt,
+                }
+            )
+        if missing_clip_prompts:
+            raise ValueError(
+                "storyboard_prompt requires clip_prompt output for: "
+                + ", ".join(missing_clip_prompts)
+            )
         first_key = batch_keys[0] if batch_keys else "-"
         last_key = batch_keys[-1] if batch_keys else "-"
         self.logger.info(
@@ -1002,6 +1049,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             layout_context=self._format_json(self._layout_context_for_ids(state, layout_ids)),
             prop_context=self._format_json(self._prop_context_for_ids(state, prop_ids)),
             reference_image_context=self._format_json(reference_image_context),
+            clip_prompt_context=self._format_json(clip_prompt_context),
             clip_segments=self._format_json({episode_key: batch_clips}),
         )
         batch_output = await provider.generate_json(
@@ -1046,6 +1094,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
         final_aspect_ratio = self.final_aspect_ratio()
         clip_segments_by_episode = self.clip_segments_by_episode(project_dir)
         expected_clip_segments = self._expected_clip_segments(clip_segments_by_episode, target_episode_keys)
+        clip_prompt_items_by_episode = self.clip_prompts_by_episode(self.load_clip_prompt_output(project_dir))
         total_clip_count_by_episode = {
             episode_key: len(clips)
             for episode_key, clips in expected_clip_segments.items()
@@ -1085,6 +1134,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
                     all_episode_keys=all_episode_keys,
                     final_aspect_ratio=final_aspect_ratio,
                     total_clip_count_by_episode=total_clip_count_by_episode,
+                    clip_prompt_items_by_episode=clip_prompt_items_by_episode,
                     batch_index=batch_index,
                     batch_total=batch_total,
                     batch_clips=batch_clips,
@@ -1193,6 +1243,376 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             expected_clip_segments=expected_clip_segments,
         )
         merged = self.merge_storyboard_prompt_outputs(
+            project_dir=project_dir,
+            generated_output=output,
+            target_episode_keys=target_episode_keys,
+            all_episode_keys=all_episode_keys,
+        )
+        self.repo.save_node_output(project_dir, self.name, merged)
+        return state
+
+
+class ClipPromptNode(StoryboardPromptNode):
+    name = "clip_prompt"
+
+    def _clip_prompt_reference_refs(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        *,
+        role_ids: list[str],
+        layout_ids: list[str],
+        prop_ids: list[str],
+    ) -> tuple[list[AssetRef], list[dict[str, object]]]:
+        refs: list[AssetRef] = []
+        context: list[dict[str, object]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def append(ref: AssetRef, item: dict[str, object]) -> None:
+            key = (str(ref.id or ""), str(ref.path or ref.url or ""))
+            if key in seen:
+                return
+            seen.add(key)
+            refs.append(ref)
+            item["input_slot"] = f"image_{len(refs)}"
+            context.append(item)
+
+        for role_id in role_ids:
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            appearance = role.appearances.get("base") or next(iter(role.appearances.values()), None)
+            if appearance is None:
+                continue
+            asset_path = appearance.asset_path or appearance.design_image_asset_path
+            asset_url = appearance.asset_url or appearance.design_image_asset_url
+            existing = self.layout.existing_project_file(project_dir, asset_path)
+            if not existing and not asset_url:
+                continue
+            append(
+                AssetRef(
+                    id=appearance.asset_id or appearance.design_image_asset_id or appearance.id,
+                    type="image",
+                    path=str(project_dir / existing) if existing else None,
+                    url=asset_url,
+                    metadata={
+                        "asset_type": "roleboard",
+                        "role_id": role.id,
+                        "role_name": role.name,
+                        "appearance_id": appearance.id,
+                        "appearance_name": appearance.name,
+                        "reference_for": "clip_prompt",
+                    },
+                ),
+                {
+                    "asset_type": "roleboard",
+                    "role_id": role.id,
+                    "role_name": role.name,
+                    "appearance_id": appearance.id,
+                    "appearance_name": appearance.name,
+                },
+            )
+
+        for layout_id in layout_ids:
+            layout = state.layouts.get(layout_id)
+            if layout is None:
+                continue
+            existing = self.layout.existing_project_file(project_dir, layout.asset_path)
+            if not existing and not layout.asset_url:
+                continue
+            append(
+                AssetRef(
+                    id=layout.asset_id or layout.id,
+                    type="image",
+                    path=str(project_dir / existing) if existing else None,
+                    url=layout.asset_url,
+                    metadata={
+                        "asset_type": "layout",
+                        "layout_id": layout.id,
+                        "layout_name": layout.name,
+                        "reference_for": "clip_prompt",
+                    },
+                ),
+                {
+                    "asset_type": "layout",
+                    "layout_id": layout.id,
+                    "layout_name": layout.name,
+                },
+            )
+
+        for prop_id in prop_ids:
+            prop = state.props.get(prop_id)
+            if prop is None:
+                continue
+            existing = self.layout.existing_project_file(project_dir, prop.asset_path)
+            if not existing and not prop.asset_url:
+                continue
+            append(
+                AssetRef(
+                    id=prop.asset_id or prop.id,
+                    type="image",
+                    path=str(project_dir / existing) if existing else None,
+                    url=prop.asset_url,
+                    metadata={
+                        "asset_type": "prop",
+                        "prop_id": prop.id,
+                        "prop_name": prop.name,
+                        "reference_for": "clip_prompt",
+                    },
+                ),
+                {
+                    "asset_type": "prop",
+                    "prop_id": prop.id,
+                    "prop_name": prop.name,
+                },
+            )
+        return refs, context
+
+    def _neighbor_clip_context(
+        self,
+        *,
+        source_key: str,
+        source_clips: dict[str, object],
+    ) -> str:
+        ordered_keys = self._sorted_clip_segment_keys(source_clips)
+        try:
+            index = ordered_keys.index(source_key)
+        except ValueError:
+            index = 0
+
+        def item_at(offset: int) -> dict[str, object] | None:
+            target_index = index + offset
+            if target_index < 0 or target_index >= len(ordered_keys):
+                return None
+            key = ordered_keys[target_index]
+            return {
+                "clip_key": key,
+                "text": self._clip_segment_text(source_clips[key]),
+                "role_names": self._clip_segment_values(source_clips[key], "role_names"),
+                "layout_names": self._clip_segment_values(source_clips[key], "layout_names"),
+                "prop_names": self._clip_segment_values(source_clips[key], "prop_names"),
+            }
+
+        return self._format_json(
+            {
+                "previous_clip": item_at(-1),
+                "current_clip": item_at(0),
+                "next_clip": item_at(1),
+            }
+        )
+
+    def _relative_assets_intro(
+        self,
+        *,
+        role_context: list[dict[str, object]],
+        layout_context: list[dict[str, object]],
+        prop_context: list[dict[str, object]],
+        reference_image_context: list[dict[str, object]],
+    ) -> str:
+        return self._format_json(
+            {
+                "roles": role_context,
+                "layouts": layout_context,
+                "props": prop_context,
+                "reference_images": reference_image_context,
+            }
+        )
+
+    def render_clip_prompt_request(
+        self,
+        *,
+        project_dir: Path,
+        state: ProjectState,
+        episode_key: str,
+        source_key: str,
+        source_clip: object,
+        source_clips: dict[str, object],
+    ) -> tuple[str, list[AssetRef], dict[str, object]]:
+        batch_clips = {source_key: source_clip}
+        role_ids = self._role_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
+        layout_ids = self._layout_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
+        prop_ids = self._prop_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
+        refs, reference_image_context = self._clip_prompt_reference_refs(
+            project_dir,
+            state,
+            role_ids=role_ids,
+            layout_ids=layout_ids,
+            prop_ids=prop_ids,
+        )
+        role_context = self._roleboard_context_for_ids(project_dir, state, role_ids)
+        layout_context = self._layout_context_for_ids(state, layout_ids)
+        prop_context = self._prop_context_for_ids(state, prop_ids)
+        prompt = self.workflow.prompts.render(
+            "clip_prompt",
+            episode_summary=self._format_json(self.episode_story_context(project_dir, state, [episode_key])),
+            clip_text=self._clip_segment_text(source_clip),
+            neighbor_clip_context=self._neighbor_clip_context(source_key=source_key, source_clips=source_clips),
+            visual_tone=self.asset_service.visual_tone(state) or DirectorService.director_prep_context(
+                state,
+                episode_keys=[episode_key],
+            ),
+            relative_assets_intro=self._relative_assets_intro(
+                role_context=role_context,
+                layout_context=layout_context,
+                prop_context=prop_context,
+                reference_image_context=reference_image_context,
+            ),
+        )
+        try:
+            clip_index = int(str(source_key).strip())
+        except ValueError:
+            clip_index = self._sorted_clip_segment_keys(source_clips).index(source_key) + 1
+        return prompt, refs, {
+            "clip_index": clip_index,
+            "clip_id": self.clip_id_for_episode_index(episode_key, clip_index),
+            "role_ids": role_ids,
+            "layout_ids": layout_ids,
+            "prop_ids": prop_ids,
+            "role_names": self._clip_segment_values(source_clip, "role_names"),
+            "layout_names": self._clip_segment_values(source_clip, "layout_names"),
+            "prop_names": self._clip_segment_values(source_clip, "prop_names"),
+            "reference_image_context": reference_image_context,
+        }
+
+    @staticmethod
+    def _validate_target_duration(value: object, *, clip_id: str) -> int:
+        try:
+            duration = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"clip_prompt returned invalid target_duration_seconds for {clip_id}") from exc
+        if not 8 <= duration <= 15:
+            raise ValueError(
+                f"clip_prompt target_duration_seconds for {clip_id} must be an integer in [8, 15]; "
+                f"got {duration}"
+            )
+        return duration
+
+    def merge_clip_prompt_outputs(
+        self,
+        *,
+        project_dir: Path,
+        generated_output: ClipPromptOutput,
+        target_episode_keys: list[str],
+        all_episode_keys: list[str],
+    ) -> ClipPromptOutput:
+        existing_path = self.layout.node_output_path(project_dir, self.name)
+        by_episode: dict[str, ClipPromptEpisode] = {}
+        if existing_path.exists():
+            try:
+                existing = ClipPromptOutput.model_validate_json(existing_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                self.logger.warning("clip_prompt ignored invalid existing output %s: %s", existing_path, exc)
+            else:
+                by_episode.update({episode.episode_key: episode for episode in existing.clip_prompts})
+        for episode in generated_output.clip_prompts:
+            by_episode[episode.episode_key] = episode
+        ordered_keys = [key for key in all_episode_keys if key in by_episode]
+        for key in by_episode:
+            if key not in ordered_keys and key not in target_episode_keys:
+                ordered_keys.append(key)
+        return ClipPromptOutput(clip_prompts=[by_episode[key] for key in ordered_keys])
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("storyboard", node_name=self.name)
+        self.logger.info(
+            "node=clip_prompt provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        self.workflow._hydrate_roles_from_design_files(project_dir, state)
+        target_episode_keys = self.target_episode_keys(state)
+        all_episode_keys = self.expected_episode_keys(state)
+        clip_segments_by_episode = self.clip_segments_by_episode(project_dir)
+        expected_clip_segments = self._expected_clip_segments(clip_segments_by_episode, target_episode_keys)
+
+        clip_specs: list[tuple[str, str, object, dict[str, object]]] = []
+        for episode_key in target_episode_keys:
+            source_clips = expected_clip_segments[episode_key]
+            for source_key in self._sorted_clip_segment_keys(source_clips):
+                clip_specs.append((episode_key, source_key, source_clips[source_key], source_clips))
+
+        concurrency = self.batch_generation_concurrency(provider)
+        self.logger.info("node=clip_prompt clips=%d concurrency=%d", len(clip_specs), concurrency)
+        print(f"[autodrama] clip_prompt clips={len(clip_specs)} concurrency={concurrency}", flush=True)
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def generate_one(
+            episode_key: str,
+            source_key: str,
+            source_clip: object,
+            source_clips: dict[str, object],
+        ) -> tuple[str, ClipPromptItem]:
+            prompt, refs, context = self.render_clip_prompt_request(
+                project_dir=project_dir,
+                state=state,
+                episode_key=episode_key,
+                source_key=source_key,
+                source_clip=source_clip,
+                source_clips=source_clips,
+            )
+            clip_id = str(context["clip_id"])
+            async with semaphore:
+                result = await provider.generate_json(
+                    prompt,
+                    ClipPromptModelOutput,
+                    temperature=0.45,
+                    metadata={
+                        "node_name": self.name,
+                        "project_id": state.project_id,
+                        "episode_key": episode_key,
+                        "clip_id": clip_id,
+                        "source_clip_key": source_key,
+                    },
+                    refs=refs,
+                )
+            state.budget.used_text_calls += 1
+            clip_prompt = sanitize_video_prompt_text(str(result.clip_prompt or "").strip())
+            if not clip_prompt:
+                raise ValueError(f"clip_prompt returned empty clip_prompt for {clip_id}")
+            return episode_key, ClipPromptItem(
+                episode_key=episode_key,
+                clip_id=clip_id,
+                clip_index=int(context["clip_index"]),
+                source_clip_key=source_key,
+                clip_text=self._clip_segment_text(source_clip),
+                role_names=list(context["role_names"]),
+                layout_names=list(context["layout_names"]),
+                prop_names=list(context["prop_names"]),
+                role_ids=list(context["role_ids"]),
+                layout_ids=list(context["layout_ids"]),
+                prop_ids=list(context["prop_ids"]),
+                target_duration_seconds=self._validate_target_duration(
+                    result.target_duration_seconds,
+                    clip_id=clip_id,
+                ),
+                clip_prompt=clip_prompt,
+                reference_image_context=list(context["reference_image_context"]),
+                provider=str(getattr(provider, "name", "unknown")),
+                model=str(getattr(provider, "model", "") or ""),
+            )
+
+        tasks = [asyncio.create_task(generate_one(*spec)) for spec in clip_specs]
+        try:
+            results = list(await asyncio.gather(*tasks)) if tasks else []
+        except Exception:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        clips_by_episode: dict[str, list[ClipPromptItem]] = {episode_key: [] for episode_key in target_episode_keys}
+        for episode_key, item in results:
+            clips_by_episode.setdefault(episode_key, []).append(item)
+        for items in clips_by_episode.values():
+            items.sort(key=lambda item: item.clip_index)
+
+        output = ClipPromptOutput(
+            clip_prompts=[
+                ClipPromptEpisode(episode_key=episode_key, clips=clips_by_episode.get(episode_key, []))
+                for episode_key in target_episode_keys
+            ]
+        )
+        merged = self.merge_clip_prompt_outputs(
             project_dir=project_dir,
             generated_output=output,
             target_episode_keys=target_episode_keys,
@@ -3171,6 +3591,7 @@ def build_storyboard_asset_node_runners(workflow: Any) -> dict[str, StoryboardAs
 
         deps["logger"] = get_logger()
     return {
+        ClipPromptNode.name: ClipPromptNode(**deps),
         StoryboardPromptNode.name: StoryboardPromptNode(**deps),
         StoryboardGenerationNode.name: StoryboardGenerationNode(**deps),
         StoryboardKeyframeGenerationNode.name: StoryboardKeyframeGenerationNode(**deps),
@@ -3189,6 +3610,7 @@ def build_storyboard_asset_nodes(workflow: Any) -> list[WorkflowNode]:
 __all__ = [
     "STORYBOARD_ASSET_NODE_NAMES",
     "STORYBOARD_IMAGE_PROVIDER_NODE_NAME",
+    "ClipPromptNode",
     "ClipManifestGenerationNode",
     "StoryboardGenerationNode",
     "StoryboardKeyframeGenerationNode",

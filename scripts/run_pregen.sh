@@ -9,22 +9,22 @@ Usage:
   scripts/run_pregen.sh [--config FILE] [--project ID_OR_DIR] [--until NODE] [--only NODE] [--episodes 1,3] [--force]
 
 Default NODE:
-  role_voice_select
+  clip_manifest_generation
 
 This uses provider routing from config.yaml. For current config.yaml.example,
 Aliyun/DashScope capabilities are configured under providers.aliyun and routed
 per capability; role text still points to DeepSeek by default.
 Project ID and input outline file are read from config.yaml by default. Use
 --project to run a specific existing project or output directory. --episodes is
-supported for clip_segment, roleboard_prompt, roleboard_generation, storyboard_prompt,
-storyboard_generation, clip_manifest_generation, role_voice_select,
+supported for clip_segment, roleboard_prompt, roleboard_generation, clip_prompt,
+storyboard_prompt, storyboard_generation, clip_manifest_generation, role_voice_select,
 prop_prompt, prop_image_generation, and layout_image_generation
-when used with --only. Prop, layout, and BGM nodes are currently deferred from
-the default pregen chain and can be run manually with --only.
+when used with --only. Ambient entity, role subject, voice, and BGM nodes are
+deferred from the default pregen chain and can be run manually with --only.
 USAGE
 }
 
-until="role_voice_select"
+until="clip_manifest_generation"
 force=""
 project=""
 only=""

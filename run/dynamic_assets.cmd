@@ -7,7 +7,7 @@ pushd "%ROOT_DIR%" >nul
 set "CONFIG=config.yaml"
 set "PROJECT="
 set "PROVIDER_ARGS="
-set "PREGEN_UNTIL=role_voice_select"
+set "PREGEN_UNTIL=clip_manifest_generation"
 set "GENERATION_UNTIL=dynamic_asset_solidification"
 set "GENERATION_ONLY="
 set "EPISODES="
@@ -106,7 +106,7 @@ echo   run\dynamic_assets.cmd [--episodes episode_001,episode_003] [--skip-prege
 echo   run\dynamic_assets.cmd --only clip_video_generation --episodes 1,3 [--shots 1-3]
 echo.
 echo This advances a project through:
-echo   1. pregen until role_voice_select, including roleboards, 12-panel storyboard sheets, shot manifests, and role voice_type bindings
+echo   1. pregen until clip_manifest_generation, including roleboards, prop/layout assets, 12-panel storyboard sheets, and shot manifests
 echo   2. generation from shot_dialogue_audio_generation to dynamic_asset_solidification
 echo.
 echo Options:
@@ -117,7 +117,7 @@ echo   --shots LIST            Comma-separated shot indexes or ids inside select
 echo   --fake                  Use fake providers for local smoke runs.
 echo   --force                 Re-run workflow nodes even if already completed.
 echo   --skip-pregen           Run only dynamic generation.
-echo   --pregen-until NODE     Override pregen stop node. Default: role_voice_select
+echo   --pregen-until NODE     Override pregen stop node. Default: clip_manifest_generation
 echo   --generation-until NODE Override generation stop node. Default: dynamic_asset_solidification
 echo   --generation-only NODE  Run one dynamic generation node.
 echo   --only NODE             Alias for --skip-pregen --generation-only NODE.

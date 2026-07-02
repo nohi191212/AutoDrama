@@ -369,6 +369,41 @@ class RoleboardPromptOutput(BaseModel):
     prompts: list[RoleboardPromptItem]
 
 
+class ClipPromptModelOutput(BaseModel):
+    clip_prompt: str
+    target_duration_seconds: int
+
+
+class ClipPromptItem(BaseModel):
+    episode_key: str
+    clip_id: str
+    clip_index: int
+    source_clip_key: str
+    clip_text: str
+    role_names: list[str] = Field(default_factory=list)
+    layout_names: list[str] = Field(default_factory=list)
+    prop_names: list[str] = Field(default_factory=list)
+    role_ids: list[str] = Field(default_factory=list)
+    layout_ids: list[str] = Field(default_factory=list)
+    prop_ids: list[str] = Field(default_factory=list)
+    target_duration_seconds: int
+    clip_prompt: str
+    reference_image_context: list[dict[str, Any]] = Field(default_factory=list)
+    provider: str | None = None
+    model: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClipPromptEpisode(BaseModel):
+    episode_key: str
+    clips: list[ClipPromptItem] = Field(default_factory=list)
+
+
+class ClipPromptOutput(BaseModel):
+    clip_prompts: list[ClipPromptEpisode]
+
+
 class StoryboardPromptClip(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

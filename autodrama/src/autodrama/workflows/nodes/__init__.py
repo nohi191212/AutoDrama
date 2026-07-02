@@ -23,39 +23,42 @@ from autodrama.workflows.nodes.static_asset_nodes import STATIC_ASSET_NODE_NAMES
 from autodrama.workflows.nodes.voice_nodes import VOICE_NODE_NAMES, build_voice_nodes
 from autodrama.workflows.runner import EpisodeWorkflowNode, WorkflowNode
 
-ROLEBOARD_STATIC_NODE_NAMES = ["roleboard_generation"]
-DEFERRED_PREGEN_STATIC_NODE_NAMES = [
-    node_name for node_name in STATIC_ASSET_NODE_NAMES if node_name not in ROLEBOARD_STATIC_NODE_NAMES
+DEFAULT_PREGEN_ROLE_NODE_NAMES = [
+    node_name for node_name in ROLE_NODE_NAMES if node_name != "ambient_entity_extract"
+]
+MANUAL_PREGEN_ROLE_NODE_NAMES = [
+    node_name for node_name in ROLE_NODE_NAMES if node_name not in DEFAULT_PREGEN_ROLE_NODE_NAMES
 ]
 DEFERRED_PREGEN_NODE_NAMES = [
-    *DEFERRED_PREGEN_STATIC_NODE_NAMES,
+    *MANUAL_PREGEN_ROLE_NODE_NAMES,
+    *ROLE_SUBJECT_NODE_NAMES,
+    *VOICE_NODE_NAMES,
     *BGM_NODE_NAMES,
 ]
 
 
-def _split_static_asset_nodes(nodes: list[WorkflowNode]) -> tuple[list[WorkflowNode], list[WorkflowNode]]:
-    roleboard_names = set(ROLEBOARD_STATIC_NODE_NAMES)
-    roleboard_nodes = [node for node in nodes if node.name in roleboard_names]
-    remaining_nodes = [node for node in nodes if node.name not in roleboard_names]
-    return roleboard_nodes, remaining_nodes
-
-
 def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
-    roleboard_nodes, _remaining_static_nodes = _split_static_asset_nodes(build_static_asset_nodes(workflow))
+    default_role_names = set(DEFAULT_PREGEN_ROLE_NODE_NAMES)
+    default_role_nodes = [
+        node for node in build_role_nodes(workflow) if node.name in default_role_names
+    ]
     return [
         *build_script_nodes(workflow, after_novel_nodes=build_director_nodes(workflow)),
-        *build_role_nodes(workflow),
-        *roleboard_nodes,
-        *build_role_subject_nodes(workflow),
+        *default_role_nodes,
+        *build_static_asset_nodes(workflow),
         *build_storyboard_asset_nodes(workflow),
-        *build_voice_nodes(workflow),
     ]
 
 
 def build_manual_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
-    _roleboard_nodes, remaining_static_nodes = _split_static_asset_nodes(build_static_asset_nodes(workflow))
+    manual_role_names = set(MANUAL_PREGEN_ROLE_NODE_NAMES)
+    manual_role_nodes = [
+        node for node in build_role_nodes(workflow) if node.name in manual_role_names
+    ]
     return [
-        *remaining_static_nodes,
+        *manual_role_nodes,
+        *build_role_subject_nodes(workflow),
+        *build_voice_nodes(workflow),
         *build_bgm_nodes(workflow),
     ]
 
@@ -64,11 +67,9 @@ PREGEN_NODE_NAMES = [
     *SCRIPT_NODE_NAMES[:2],
     *DIRECTOR_NODE_NAMES,
     *SCRIPT_NODE_NAMES[2:],
-    *ROLE_NODE_NAMES,
-    *ROLEBOARD_STATIC_NODE_NAMES,
-    *ROLE_SUBJECT_NODE_NAMES,
+    *DEFAULT_PREGEN_ROLE_NODE_NAMES,
+    *STATIC_ASSET_NODE_NAMES,
     *STORYBOARD_ASSET_NODE_NAMES,
-    *VOICE_NODE_NAMES,
 ]
 AVAILABLE_PREGEN_NODE_NAMES = [
     *PREGEN_NODE_NAMES,

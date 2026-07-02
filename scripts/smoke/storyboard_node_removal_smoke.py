@@ -14,6 +14,7 @@ from autodrama.workflows.nodes import AVAILABLE_PREGEN_NODE_NAMES, PREGEN_NODE_N
 
 
 EXPECTED_STORYBOARD_NODES = [
+    "clip_prompt",
     "storyboard_prompt",
     "storyboard_generation",
     "storyboard_keyframe_generation",

@@ -121,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=pregen_only_choices,
         help=(
             "Run exactly one pre-generation node, even if it is already completed. "
-            "Deferred prop/layout/BGM nodes are available only through --only."
+            "Optional ambient entity, role subject, voice, and BGM nodes are available through --only."
         ),
     )
     pregen_parser.add_argument(
@@ -130,12 +130,11 @@ def build_parser() -> argparse.ArgumentParser:
         dest="episodes",
         help=(
             "Supported with pregen --only clip_segment, roleboard_prompt, roleboard_generation, "
-            "role_subject_video_generation, role_subject_element_generation, storyboard_prompt, "
+            "role_subject_video_generation, role_subject_element_generation, clip_prompt, storyboard_prompt, "
             "storyboard_generation, storyboard_keyframe_generation, clip_manifest_generation, "
             "role_voice_select, "
             "prop_prompt, prop_image_generation, or layout_image_generation "
-            "(legacy aliases: prop_design, prop_generation). "
-            "Prop/layout episode-scoped nodes are deferred from the default pregen chain."
+            "(legacy aliases: prop_design, prop_generation)."
         ),
     )
     pregen_parser.add_argument(
