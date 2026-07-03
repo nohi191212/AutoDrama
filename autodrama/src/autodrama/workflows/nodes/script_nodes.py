@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Callable
 
-from autodrama.core.schemas import ClipSegmentNodeOutput, ClipSegmentOutput, ProjectState, ScriptNovelExtractOutput, ScriptNovelOutput
+from autodrama.core.schemas import (
+    ClipSegmentNodeOutput,
+    ClipSegmentOutput,
+    ProjectState,
+    ScriptNovelExtractOutput,
+    ScriptNovelOutput,
+    ScriptOutlineOutput,
+)
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
@@ -45,7 +53,7 @@ class ScriptNodeBase:
         self.force_getter = force_getter or (lambda: False)
 
     def expected_episode_keys(self, state: ProjectState) -> list[str]:
-        return self.script_service.episode_keys(self.script_service.episode_count(state))
+        return self.script_service.state_episode_keys(state)
 
     def target_episode_keys(self, state: ProjectState) -> list[str]:
         getter = getattr(self.workflow, "_active_episode_keys_in_order", None)
@@ -65,17 +73,31 @@ class ScriptNodeBase:
                 f"got {', '.join(sorted(actual)) or '-'}"
             )
 
-    def validate_script_outline(self, output_episode_count: int, output_duration: int, state: ProjectState) -> None:
-        expected_episode_count = self.script_service.episode_count(state)
-        expected_duration = self.script_service.episode_duration_seconds(state)
-        if output_episode_count != expected_episode_count:
+    @staticmethod
+    def validate_script_outline(output: ScriptOutlineOutput) -> dict[str, str]:
+        if not str(output.outline or "").strip():
+            raise ValueError("script_outline outline is empty")
+        episode_outlines = {
+            str(key).strip(): str(value or "").strip()
+            for key, value in dict(output.episode_outlines or {}).items()
+            if str(key).strip()
+        }
+        if not episode_outlines:
+            raise ValueError("script_outline episode_outlines is empty")
+        invalid_keys = [
+            key
+            for key in episode_outlines
+            if re.fullmatch(r"episode_\d{3}", key) is None
+        ]
+        if invalid_keys:
             raise ValueError(
-                f"script_outline episode_count must be {expected_episode_count}; got {output_episode_count}"
+                "script_outline episode_outlines keys must use episode_001 format; "
+                f"got {', '.join(invalid_keys)}"
             )
-        if output_duration != expected_duration:
-            raise ValueError(
-                f"script_outline target_duration_seconds must be {expected_duration}; got {output_duration}"
-            )
+        empty_keys = [key for key, value in episode_outlines.items() if not value]
+        if empty_keys:
+            raise ValueError(f"script_outline episode_outlines contains empty text: {', '.join(empty_keys)}")
+        return episode_outlines
 
     @staticmethod
     def format_previous_novel_chapters(novel_full: dict[str, str], episode_keys: list[str]) -> str:
@@ -98,11 +120,13 @@ class ScriptOutlineNode(ScriptNodeBase):
             getattr(provider, "model", "-"),
         )
         output = await self.script_service.script_outline(state, provider)
-        self.validate_script_outline(output.episode_count, output.target_duration_seconds, state)
-        self.validate_episode_keys("script_outline.episode_outlines", output.episode_outlines, state)
-        state.script.outline = output.outline
+        episode_outlines = self.validate_script_outline(output)
+        outline = str(output.outline or "").strip()
+        state.script.outline = outline
         state.script.episode_outlines = {}
-        for episode_key, content in output.episode_outlines.items():
+        ordered_episode_keys = self.script_service.sort_episode_keys(list(episode_outlines))
+        for episode_key in ordered_episode_keys:
+            content = episode_outlines[episode_key]
             outline_path = self.script_contents.content_path(project_dir, "outlines", episode_key)
             self.repo.write_json(
                 outline_path,
@@ -113,15 +137,14 @@ class ScriptOutlineNode(ScriptNodeBase):
                 ),
             )
             state.script.episode_outlines[episode_key] = self.script_contents.project_relative(project_dir, outline_path)
+        state.metadata["episode_count"] = len(ordered_episode_keys)
+        state.metadata["script_outline_episode_keys"] = ordered_episode_keys
         state.budget.used_text_calls += 1
         self.repo.save_node_output(
             project_dir,
             self.name,
             {
-                "logline": output.logline,
-                "outline": output.outline,
-                "episode_count": output.episode_count,
-                "target_duration_seconds": output.target_duration_seconds,
+                "outline": outline,
                 "episode_outlines": state.script.episode_outlines,
             },
         )
@@ -219,12 +242,6 @@ class ScriptNovelNode(ScriptNodeBase):
                 current_episode_outline=outline_contents.get(episode_key, ""),
                 previous_chapters=previous_chapters,
             )
-            if output.episode_key != episode_key:
-                raise ValueError(f"script_novel episode_key must be {episode_key}; got {output.episode_key}")
-            if output.target_char_count != target_char_count:
-                raise ValueError(
-                    f"script_novel target_char_count must be {target_char_count}; got {output.target_char_count}"
-                )
             novel_full = output.novel_full.strip()
             if not novel_full:
                 raise ValueError(f"script_novel novel_full is empty for {episode_key}")

@@ -67,7 +67,7 @@ class RoleNodeBase:
         self.logger = logger
 
     def expected_episode_keys(self, state: ProjectState) -> list[str]:
-        return self.script_service.episode_keys(self.script_service.episode_count(state))
+        return self.script_service.state_episode_keys(state)
 
     def validate_episode_keys(self, label: str, payload: dict[str, object], state: ProjectState) -> None:
         expected_keys = self.expected_episode_keys(state)

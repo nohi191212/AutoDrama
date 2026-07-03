@@ -122,10 +122,7 @@ class FakeTextProvider:
 
         if schema is ScriptOutlineOutput or node_name == "script_outline":
             data = {
-                "logline": "落魄青年在雨夜发现被调包的合同，决定当众反击。",
                 "outline": "林舟被赵启陷害丢掉晋升机会，苏晚提醒他查看旧邮件。林舟逐步发现合同被调包的证据，并在会议上反击。",
-                "episode_count": episode_count,
-                "target_duration_seconds": episode_duration_seconds,
                 "episode_outlines": {
                     key: f"第{index}集：林舟围绕合同调包事件推进调查与反击，冲突逐步升级。"
                     for index, key in enumerate(episode_keys, start=1)
@@ -148,10 +145,7 @@ class FakeTextProvider:
             }
         elif schema is ScriptNovelEpisodeOutput or node_name == "script_novel_episode":
             episode_key = str(metadata.get("episode_key") or episode_keys[0])
-            target_char_count = int(metadata.get("target_char_count") or _extract_prompt_int(prompt, "当前集目标字数", 1800))
             data = {
-                "episode_key": episode_key,
-                "target_char_count": target_char_count,
                 "novel_full": (
                     f"{episode_key}，雨夜办公室的灯只剩下一排。林舟摊开合同，"
                     "发现关键页纸张颜色比其他页浅了半分，装订孔也错开了一线。"

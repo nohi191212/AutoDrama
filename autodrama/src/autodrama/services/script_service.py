@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from autodrama.core.schemas import (
     ClipSegmentOutput,
@@ -35,19 +36,41 @@ class ScriptService:
         return [f"episode_{index:03d}" for index in range(1, episode_count + 1)]
 
     @staticmethod
+    def sort_episode_keys(keys: list[str]) -> list[str]:
+        def sort_key(value: str) -> tuple[int, int, str]:
+            match = re.fullmatch(r"episode_(\d+)", value)
+            if match:
+                return (0, int(match.group(1)), value)
+            return (1, 0, value)
+
+        return sorted(dict.fromkeys(keys), key=sort_key)
+
+    @classmethod
+    def state_episode_keys(cls, state: ProjectState) -> list[str]:
+        for refs in (
+            state.script.episode_outlines,
+            state.script.novel_full,
+            state.script.novel_extract,
+        ):
+            keys = [
+                str(key)
+                for key, value in dict(refs or {}).items()
+                if str(key).strip() and value
+            ]
+            if keys:
+                return cls.sort_episode_keys(keys)
+        return cls.episode_keys(cls.episode_count(state))
+
+    @staticmethod
     def format_json(value: object) -> str:
         return json.dumps(value, ensure_ascii=False, indent=2)
 
     async def script_outline(self, state: ProjectState, provider: TextLLM) -> ScriptOutlineOutput:
-        episode_count = self.episode_count(state)
         episode_duration_seconds = self.episode_duration_seconds(state)
         prompt = self.prompts.render(
             "script_outline",
-            title=state.title,
             raw_script=state.raw_script,
-            episode_count=episode_count,
             episode_duration_seconds=episode_duration_seconds,
-            episode_keys=", ".join(self.episode_keys(episode_count)),
         )
         return await provider.generate_json(
             prompt,
@@ -57,7 +80,6 @@ class ScriptService:
                 "node_name": "script_outline",
                 "project_id": state.project_id,
                 "required_mapping_field": "episode_outlines",
-                "expected_keys": self.episode_keys(episode_count),
             },
         )
 
@@ -104,7 +126,8 @@ class ScriptService:
         extract_hints: dict[str, str],
         project_context: str | None = None,
     ) -> ScriptNovelExtractBatchOutput:
-        episode_count = self.episode_count(state)
+        episode_keys = self.state_episode_keys(state)
+        episode_count = len(episode_keys)
         episode_duration_seconds = self.episode_duration_seconds(state)
         prompt = self.prompts.render(
             "script_novel_extract",
@@ -195,21 +218,13 @@ class ScriptService:
         current_episode_outline: str,
         previous_chapters: str,
     ) -> ScriptNovelEpisodeOutput:
-        episode_count = self.episode_count(state)
-        episode_duration_seconds = self.episode_duration_seconds(state)
-        target_char_count = self.episode_target_char_count(state)
         prompt = self.prompts.render(
             "script_novel_episode",
             title=state.title,
             outline=state.script.outline or "",
             episode_outlines=self.format_json(episode_outlines),
-            current_episode_key=episode_key,
             current_episode_outline=current_episode_outline,
             previous_chapters=previous_chapters,
-            episode_count=episode_count,
-            episode_duration_seconds=episode_duration_seconds,
-            target_char_count=target_char_count,
-            episode_keys=", ".join(self.episode_keys(episode_count)),
         )
         return await provider.generate_json(
             prompt,
@@ -219,6 +234,5 @@ class ScriptService:
                 "node_name": "script_novel_episode",
                 "project_id": state.project_id,
                 "episode_key": episode_key,
-                "target_char_count": target_char_count,
             },
         )

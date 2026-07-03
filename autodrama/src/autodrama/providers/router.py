@@ -87,6 +87,12 @@ class BoundProviderProxy:
                 setattr(self._provider, "use_response_format", use_response_format)
             except Exception:
                 pass
+        refresh_endpoint = getattr(self._provider, "refresh_endpoint", None)
+        if callable(refresh_endpoint):
+            try:
+                refresh_endpoint()
+            except Exception:
+                pass
 
     def _metadata(self, metadata: dict[str, Any] | None) -> dict[str, Any]:
         merged = dict(metadata or {})

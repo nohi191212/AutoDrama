@@ -43,7 +43,7 @@ class BGMNodeBase:
         self.logger = logger
 
     def expected_episode_keys(self, state: ProjectState) -> list[str]:
-        return self.script_service.episode_keys(self.script_service.episode_count(state))
+        return self.script_service.state_episode_keys(state)
 
     def episode_stories(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
         episode_keys = self.expected_episode_keys(state)

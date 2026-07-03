@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from autodrama.core.schemas import ProjectState, StoryboardEpisodeOutput
 from autodrama.repositories.project_repo import ProjectRepository
+from autodrama.services.script_service import ScriptService
 
 CHECKLIST_FILENAME = "generation_checklist.json"
 
@@ -37,8 +38,7 @@ def _episode_display_name(state: ProjectState, episode_key: str) -> str:
 
 
 def _expected_episode_keys(state: ProjectState) -> list[str]:
-    count = int(state.metadata.get("episode_count") or 1)
-    return [f"episode_{index:03d}" for index in range(1, count + 1)]
+    return ScriptService.state_episode_keys(state)
 
 
 def _load_shot(project_dir: Path, episode_key: str) -> StoryboardEpisodeOutput | None:

@@ -3,11 +3,11 @@ from __future__ import annotations
 import re
 
 from autodrama.core.schemas import ProjectState, StoryboardEpisodeOutput, StoryboardShot
+from autodrama.services.script_service import ScriptService
 
 
 def expected_episode_keys(state: ProjectState) -> list[str]:
-    count = int(state.metadata.get("episode_count") or 1)
-    return [f"episode_{index:03d}" for index in range(1, count + 1)]
+    return ScriptService.state_episode_keys(state)
 
 
 def parse_episode_keys(value: str | None) -> list[str] | None:

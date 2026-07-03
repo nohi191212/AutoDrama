@@ -198,10 +198,7 @@ class NodeRecord(BaseModel):
 
 
 class ScriptOutlineOutput(BaseModel):
-    logline: str
     outline: str
-    episode_count: int = 1
-    target_duration_seconds: int = 30
     episode_outlines: dict[str, str] = Field(default_factory=dict)
 
 
@@ -246,9 +243,9 @@ class KeyVisionPromptOutput(BaseModel):
 
 
 class ScriptNovelEpisodeOutput(BaseModel):
-    episode_key: str
-    target_char_count: int
-    novel_full: str = Field(validation_alias=AliasChoices("novel_full", "novel_text"))
+    model_config = ConfigDict(extra="forbid")
+
+    novel_full: str
 
 
 class RoleExtractItem(BaseModel):

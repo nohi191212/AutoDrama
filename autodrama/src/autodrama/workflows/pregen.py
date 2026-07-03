@@ -126,7 +126,7 @@ class PregenWorkflow:
         self.runner = WorkflowRunner(repo=self.repo, logger=get_logger())
 
     def _expected_episode_keys(self, state: ProjectState) -> list[str]:
-        return self.script_service.episode_keys(self.script_service.episode_count(state))
+        return self.script_service.state_episode_keys(state)
 
     def _validate_episode_keys(self, label: str, payload: dict[str, object], state: ProjectState) -> None:
         expected_keys = self._expected_episode_keys(state)
@@ -256,18 +256,6 @@ class PregenWorkflow:
         for role in state.roles.values():
             if self._role_needs_voice(role):
                 self._ensure_normal_role_audio(role)
-
-    def _validate_script_outline(self, output_episode_count: int, output_duration: int, state: ProjectState) -> None:
-        expected_episode_count = self.script_service.episode_count(state)
-        expected_duration = self.script_service.episode_duration_seconds(state)
-        if output_episode_count != expected_episode_count:
-            raise ValueError(
-                f"script_outline episode_count must be {expected_episode_count}; got {output_episode_count}"
-            )
-        if output_duration != expected_duration:
-            raise ValueError(
-                f"script_outline target_duration_seconds must be {expected_duration}; got {output_duration}"
-            )
 
     def _apply_script_plan_settings(self, state: ProjectState) -> None:
         state.metadata["episode_count"] = self.repo.settings.project.episode_count

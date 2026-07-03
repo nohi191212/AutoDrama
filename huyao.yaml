@@ -365,7 +365,7 @@ providers:
       omni_response_format: false
 
   rightcode:
-    base_url: https://www.right.codes/draw
+    base_url: https://www.right.codes
     api_key_env: RIGHTCODE_API_KEY
     models:
       text: gpt-5.5
@@ -376,6 +376,10 @@ providers:
       # Used by roleboard_generation for role identity boards.
       roleboard: gpt-image-2-vip
     options:
+      model_base_paths:
+        gpt-5.5: /codex
+        gpt-image-2: /draw
+        gpt-image-2-vip: /draw
       text_response_format: true
       reasoning_effort: xhigh
       storyboard_reasoning_effort: xhigh

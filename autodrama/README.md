@@ -106,7 +106,7 @@ Edit `config.yaml` before production runs:
 - `project.id`: stable project id, recommended for resume.
 - `project.title`: project title.
 - `project.script_outline_file`: input story outline file, default `./inputs/story_outline.md`.
-- `project.episode_count` and `project.episode_duration_seconds`.
+- `project.episode_count` and `project.episode_duration_seconds`. `project.episode_count` is an initialization/fallback value; normal `script_outline` output decides the actual episode count through `episode_outlines`.
 - provider API keys via `apikeys.yaml` or environment variables.
 
 ### 1. Initialize or inspect a project

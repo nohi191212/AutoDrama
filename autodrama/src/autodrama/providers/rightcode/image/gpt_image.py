@@ -14,6 +14,7 @@ from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef, ImageGenerationResult
 from autodrama.providers.http import request_id_from_response
 from autodrama.providers.media_refs import file_to_data_url
+from autodrama.providers.rightcode.url_utils import resolve_rightcode_endpoint
 
 
 class RightCodeImageProvider:
@@ -40,9 +41,9 @@ class RightCodeImageProvider:
     def __init__(self, settings: ProviderSettings, runtime: RuntimeSettings) -> None:
         self.settings = settings
         self.runtime = runtime
-        self.base_url = (settings.base_url or "https://www.right.codes/draw").rstrip("/")
-        self.endpoint = self._resolve_endpoint(self.base_url)
         self.model = settings.models.get("image", "gpt-image-2")
+        self.base_url = (settings.base_url or "https://www.right.codes").rstrip("/")
+        self.endpoint = self._resolve_endpoint(self.base_url)
         self.api_key = settings.secret("api_key_env")
         self.max_reference_images = int(
             settings.options.get("rightcode_max_reference_images")
@@ -50,20 +51,20 @@ class RightCodeImageProvider:
             or 16
         )
 
-    @staticmethod
-    def _resolve_endpoint(base_url: str) -> str:
-        for suffix in (
-            "/v1/images/generations",
-            "/images/generations",
-            "/v1/chat/completions",
-            "/chat/completions",
-        ):
-            if base_url.endswith(suffix):
-                base_url = base_url[: -len(suffix)].rstrip("/")
-                break
-        if base_url.endswith("/v1"):
-            return f"{base_url}/images/generations"
-        return f"{base_url}/v1/images/generations"
+    def refresh_endpoint(self) -> None:
+        self.endpoint = self._resolve_endpoint(self.base_url)
+
+    def _resolve_endpoint(self, base_url: str) -> str:
+        settings = self.settings.model_copy(deep=True)
+        settings.base_url = base_url
+        return resolve_rightcode_endpoint(
+            settings,
+            capability="image",
+            model_key="image",
+            model=self.model,
+            default_base_path="/draw",
+            api_path="/v1/images/generations",
+        )
 
     async def generate_image(
         self,

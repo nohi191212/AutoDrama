@@ -87,7 +87,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - `project.id`: 项目 ID。建议固定，便于断点续跑。
 - `project.title`: 项目标题。
 - `project.script_outline_file`: 输入故事大纲文件，默认示例为 `./inputs/story_outline.md`。
-- `project.episode_count`: 剧集数量。
+- `project.episode_count`: 初始化/回退剧集数量；普通 `script_outline` 会根据内容量自行划分实际集数，并用输出的 `episode_outlines` 数量覆盖运行态集数。
 - `project.episode_duration_seconds`: 单集目标时长。
 - `project.bgm_count`: 全局 BGM 数量。
 - `generation.roleboard_style_prompt`: 角色身份板统一风格 prompt；身份板允许指定的小号角色名和视图标签，不允许其他文字、水印或 logo。

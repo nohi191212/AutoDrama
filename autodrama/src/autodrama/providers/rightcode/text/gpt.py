@@ -15,6 +15,7 @@ from autodrama.logging import get_pregen_detail_logger
 from autodrama.providers.base import AssetRef
 from autodrama.providers.json_utils import parse_json_object
 from autodrama.providers.media_refs import ref_url_or_data
+from autodrama.providers.rightcode.url_utils import resolve_rightcode_endpoint
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -27,16 +28,10 @@ class RightCodeTextProvider:
     def __init__(self, settings: ProviderSettings, runtime: RuntimeSettings, *, model_key: str = "text") -> None:
         self.settings = settings
         self.runtime = runtime
-        base_url = (
-            settings.options.get(f"{model_key}_base_url")
-            or settings.options.get("text_base_url")
-            or settings.base_url
-            or "https://www.right.codes/codex"
-        )
-        self.base_url = str(base_url).rstrip("/")
-        self.endpoint = self._resolve_endpoint(self.base_url)
         self.model_key = model_key
         self.model = settings.models.get(model_key) or settings.models.get("text", "gpt-5.5")
+        self.base_url = str(settings.base_url or "https://www.right.codes").rstrip("/")
+        self.endpoint = self._resolve_endpoint(self.base_url)
         self.api_key = settings.secret("api_key_env")
         self.reasoning_effort = str(
             settings.options.get(f"{model_key}_reasoning_effort", settings.options.get("reasoning_effort", "xhigh"))
@@ -69,24 +64,20 @@ class RightCodeTextProvider:
             default=False,
         )
 
-    @staticmethod
-    def _resolve_endpoint(base_url: str) -> str:
-        for suffix in (
-            "/v1/responses",
-            "/responses",
-            "/v1/images/generations",
-            "/images/generations",
-            "/v1/chat/completions",
-            "/chat/completions",
-        ):
-            if base_url.endswith(suffix):
-                base_url = base_url[: -len(suffix)].rstrip("/")
-                break
-        if base_url.endswith("/draw"):
-            base_url = f"{base_url[:-5]}/codex"
-        if base_url.endswith("/v1"):
-            return f"{base_url}/responses"
-        return f"{base_url}/v1/responses"
+    def refresh_endpoint(self) -> None:
+        self.endpoint = self._resolve_endpoint(self.base_url)
+
+    def _resolve_endpoint(self, base_url: str) -> str:
+        settings = self.settings.model_copy(deep=True)
+        settings.base_url = base_url
+        return resolve_rightcode_endpoint(
+            settings,
+            capability="text",
+            model_key=self.model_key,
+            model=self.model,
+            default_base_path="/codex",
+            api_path="/v1/responses",
+        )
 
     @staticmethod
     def _bool_option(value: object, *, default: bool) -> bool:
@@ -234,6 +225,7 @@ class RightCodeTextProvider:
         metadata_constraints_block = (
             f"\n\nAdditional structured constraints:\n{metadata_constraints}" if metadata_constraints else ""
         )
+        json_mode_prefix = "This request uses json response_format. Return only valid json."
 
         if repair:
             system_prompt = (
@@ -243,9 +235,10 @@ class RightCodeTextProvider:
                 "only fix JSON syntax and schema mismatches."
             )
             user_prompt = (
+                f"{json_mode_prefix}\n\n"
                 "The previous model response could not be parsed or validated.\n\n"
                 f"Error:\n{parse_error!r}\n\n"
-                f"Required JSON schema:\n{schema_pretty_json}"
+                f"Required json schema:\n{schema_pretty_json}"
                 f"{metadata_constraints_block}\n\n"
                 "Invalid response content:\n"
                 f"{original_content or ''}\n\n"
@@ -258,7 +251,11 @@ class RightCodeTextProvider:
                 "Return only valid JSON that matches the requested schema. "
                 "Do not wrap the answer in Markdown."
             )
-            user_prompt = f"{prompt}\n\nRequired JSON schema:\n{schema_json}{metadata_constraints_block}"
+            user_prompt = f"{json_mode_prefix}\n\n{prompt}\n\nRequired json schema:\n{schema_json}{metadata_constraints_block}"
+
+        content_parts = self._input_content_parts(user_prompt, refs if not repair else [])
+        if self.use_response_format:
+            content_parts.insert(0, {"type": "input_text", "text": "json"})
 
         payload: dict[str, Any] = {
             "model": self.model,
@@ -267,14 +264,14 @@ class RightCodeTextProvider:
                 {
                     "type": "message",
                     "role": "user",
-                    "content": self._input_content_parts(user_prompt, refs if not repair else []),
+                    "content": content_parts,
                 },
             ],
             "temperature": temperature,
             "stream": self.stream,
         }
         if self.use_response_format:
-            payload["text"] = {"format": {"type": "json_object"}}
+            payload["response_format"] = {"type": "json_object"}
         reasoning_effort = (
             metadata.get(f"{self.model_key}_reasoning_effort")
             or metadata.get("reasoning_effort")
@@ -472,6 +469,10 @@ class RightCodeTextProvider:
                 if console_stream:
                     cls._print_stream_boundary(console_stream_label, start=False, printed_any=printed_any)
                 raise ProviderBadResponseError(f"RightCode text stream ended with {event_type}: {error!r}")
+            if event_type == "error":
+                if console_stream:
+                    cls._print_stream_boundary(console_stream_label, start=False, printed_any=printed_any)
+                raise ProviderBadResponseError(f"RightCode text stream error: {event.get('error') or event!r}")
             if event_type == "response.completed":
                 payload = cls._payload_from_stream_events(events)
                 if console_stream and not printed_any and payload is not None:
@@ -599,11 +600,19 @@ class RightCodeTextProvider:
                 direct_payload = event
             cls._append_chat_completion_delta(event, delta_chunks)
 
+        output_text = "\n".join(done_texts).strip() if done_texts else "".join(delta_chunks).strip()
         if completed_response is not None:
+            if output_text and not isinstance(completed_response.get("output_text"), str):
+                completed_response = dict(completed_response)
+                completed_response["output_text"] = output_text
+                completed_response["raw_events"] = events[-5:]
             return completed_response
         if direct_payload is not None:
+            if output_text and not isinstance(direct_payload.get("output_text"), str):
+                direct_payload = dict(direct_payload)
+                direct_payload["output_text"] = output_text
+                direct_payload["raw_events"] = events[-5:]
             return direct_payload
-        output_text = "\n".join(done_texts).strip() if done_texts else "".join(delta_chunks).strip()
         if output_text:
             return {"output_text": output_text, "raw_events": events[-5:]}
         return None
@@ -703,7 +712,7 @@ class RightCodeTextProvider:
                     "attempt": f"{attempt}/{max_attempts}",
                     "schema": schema.__name__,
                     "temperature": temperature,
-                    "response_format": payload.get("text"),
+                    "response_format": payload.get("response_format"),
                     "reasoning_effort": (payload.get("reasoning") or {}).get("effort"),
                     "stream": payload.get("stream"),
                     "console_stream": console_stream,

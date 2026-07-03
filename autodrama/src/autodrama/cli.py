@@ -627,12 +627,8 @@ async def cmd_import_script(args: argparse.Namespace) -> int:
         project_dir,
         "script_outline",
         {
-            "logline": state.title,
             "outline": state.script.outline,
-            "episode_count": script_service.episode_count(state),
-            "target_duration_seconds": script_service.episode_duration_seconds(state),
             "episode_outlines": state.script.episode_outlines,
-            "imported_mature_script": True,
         },
     )
     repo.save_node_output(
