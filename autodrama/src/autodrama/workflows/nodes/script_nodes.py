@@ -8,6 +8,7 @@ from autodrama.core.schemas import (
     ClipSegmentNodeOutput,
     ClipSegmentOutput,
     ProjectState,
+    ScriptDetailExpandOutput,
     ScriptNovelExtractOutput,
     ScriptNovelOutput,
     ScriptOutlineOutput,
@@ -21,11 +22,19 @@ from autodrama.services.script_service import ScriptService
 from autodrama.workflows.runner import WorkflowNode
 
 SCRIPT_NODE_NAMES = [
-    "script_outline",
-    "script_novel",
+    "script_import",
+    "script_detail_expand",
     "script_novel_extract",
     "clip_segment",
 ]
+MANUAL_SCRIPT_NODE_NAMES = [
+    "script_outline",
+    "script_novel",
+]
+SCRIPT_COMPLETION_ALIASES = {
+    "script_import": ("script_outline",),
+    "script_detail_expand": ("script_novel",),
+}
 
 SCRIPT_NOVEL_EXTRACT_BATCH_SIZE = 5
 
@@ -54,6 +63,12 @@ class ScriptNodeBase:
 
     def expected_episode_keys(self, state: ProjectState) -> list[str]:
         return self.script_service.state_episode_keys(state)
+
+    def mark_completion_aliases(self, state: ProjectState) -> None:
+        if self.name == "script_outline":
+            state.mark_completed("script_import")
+        elif self.name == "script_novel":
+            state.mark_completed("script_detail_expand")
 
     def target_episode_keys(self, state: ProjectState) -> list[str]:
         getter = getattr(self.workflow, "_active_episode_keys_in_order", None)
@@ -109,6 +124,164 @@ class ScriptNodeBase:
         return "\n\n".join(chunks) if chunks else "（暂无，当前是第一章。）"
 
 
+class ScriptImportNode(ScriptNodeBase):
+    name = "script_import"
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        episode_keys = self.expected_episode_keys(state)
+        if len(episode_keys) != 1:
+            raise ValueError(
+                "script_import currently imports one mature screenplay as one episode; "
+                f"got episode keys {', '.join(episode_keys)}. "
+                "Use pregen --only script_outline and pregen --only script_novel for generated multi-episode scripts."
+            )
+        episode_key = episode_keys[0]
+        source_script = str(state.raw_script or state.script.raw_script or "").strip()
+        if not source_script:
+            raise ValueError("script_import raw_script is empty")
+
+        state.raw_script = source_script
+        state.script.raw_script = source_script
+        state.script.outline = "成熟剧本导入：以 locked novel_full 分场剧本文本作为后续资产抽取的唯一剧情依据。"
+        state.script.episode_outlines = {
+            episode_key: self.script_contents.write_content(
+                project_dir,
+                "outlines",
+                episode_key,
+                node_name=self.name,
+                content=(
+                    "成熟剧本导入，不进行大纲重写。后续剧情、角色、道具、场景均以 novel_full 为准。\n\n"
+                    + source_script[:1200]
+                ),
+            )
+        }
+        source_script_file = state.metadata.get("source_script_file")
+        state.script.novel_full = {
+            episode_key: self.script_contents.write_content(
+                project_dir,
+                "novel_full",
+                episode_key,
+                node_name=self.name,
+                content=source_script,
+                dependency_field="source_script_file",
+                dependency_path=str(source_script_file) if source_script_file else None,
+            )
+        }
+        state.script.novel_extract = {episode_key: state.script.novel_extract.get(episode_key) or False}
+        state.metadata.update(
+            {
+                "script_mode": "mature_script",
+                "mature_script_imported_episode_key": episode_key,
+                "script_import_source_file": str(source_script_file) if source_script_file else None,
+                "script_import_episode_keys": [episode_key],
+                "script_novel_full_episode_paths": dict(state.script.novel_full),
+            }
+        )
+        self.repo.save_node_output(
+            project_dir,
+            self.name,
+            {
+                "imported_mature_script": True,
+                "episode_key": episode_key,
+                "novel_full": state.script.novel_full,
+            },
+        )
+        return state
+
+
+class ScriptDetailExpandNode(ScriptNodeBase):
+    name = "script_detail_expand"
+    DEFAULT_MAX_EXPAND_RATIO = 1.35
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("script", node_name=self.name)
+        max_expand_ratio = float(state.metadata.get("mature_script_max_expand_ratio") or self.DEFAULT_MAX_EXPAND_RATIO)
+        self.logger.info(
+            "node=script_detail_expand provider=%s model=%s max_expand_ratio=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+            max_expand_ratio,
+        )
+        episode_keys = self.expected_episode_keys(state)
+        self.validate_episode_keys("script_import.novel_full", state.script.novel_full, state)
+        imported_contents = self.script_contents.load_contents(
+            project_dir,
+            state.script.novel_full,
+            episode_keys,
+            label="script_import.novel_full",
+        )
+
+        expanded_paths: dict[str, str] = {}
+        expanded_outputs: dict[str, dict[str, object]] = {}
+        source_paths = dict(state.script.novel_full)
+        source_script_file = state.metadata.get("source_script_file")
+        for episode_key in episode_keys:
+            raw_script = str(imported_contents.get(episode_key) or "").strip()
+            if not raw_script:
+                raise ValueError(f"script_detail_expand raw script is empty for {episode_key}")
+            detail_expand_output = await self.script_service.script_detail_expand(
+                state,
+                provider,
+                episode_key=episode_key,
+                raw_script=raw_script,
+                max_expand_ratio=max_expand_ratio,
+            )
+            if detail_expand_output.episode_key != episode_key:
+                raise ValueError(
+                    f"script_detail_expand episode_key must be {episode_key}; "
+                    f"got {detail_expand_output.episode_key}"
+                )
+            expanded_script = detail_expand_output.expanded_script.strip()
+            if not expanded_script:
+                raise ValueError(f"script_detail_expand returned empty expanded_script for {episode_key}")
+            max_allowed_chars = max(
+                int(len(raw_script) * max_expand_ratio * 1.05),
+                len(raw_script) + 400,
+            )
+            if len(expanded_script) > max_allowed_chars:
+                raise ValueError(
+                    "script_detail_expand exceeded the allowed expansion size: "
+                    f"episode={episode_key} source={len(raw_script)} "
+                    f"expanded={len(expanded_script)} max_allowed={max_allowed_chars}"
+                )
+
+            expanded_paths[episode_key] = self.script_contents.write_content(
+                project_dir,
+                "novel_full",
+                episode_key,
+                node_name=self.name,
+                content=expanded_script,
+                dependency_field="source_script_file" if source_script_file else "source_script_path",
+                dependency_path=str(source_script_file) if source_script_file else source_paths.get(episode_key),
+            )
+            expanded_outputs[episode_key] = ScriptDetailExpandOutput(
+                episode_key=episode_key,
+                expanded_script=expanded_script,
+                source_char_count=detail_expand_output.source_char_count or len(raw_script),
+                expanded_char_count=detail_expand_output.expanded_char_count or len(expanded_script),
+            ).model_dump(mode="json")
+            state.budget.used_text_calls += 1
+
+        state.script.novel_full = expanded_paths
+        state.metadata.update(
+            {
+                "mature_script_detail_expanded": True,
+                "mature_script_max_expand_ratio": max_expand_ratio,
+                "script_novel_full_episode_paths": dict(state.script.novel_full),
+            }
+        )
+        self.repo.save_node_output(
+            project_dir,
+            self.name,
+            {
+                "detail_expanded": True,
+                "novel_full": state.script.novel_full,
+                "episodes": expanded_outputs,
+            },
+        )
+        return state
+
+
 class ScriptOutlineNode(ScriptNodeBase):
     name = "script_outline"
 
@@ -148,6 +321,7 @@ class ScriptOutlineNode(ScriptNodeBase):
                 "episode_outlines": state.script.episode_outlines,
             },
         )
+        self.mark_completion_aliases(state)
         return state
 
 
@@ -274,6 +448,7 @@ class ScriptNovelNode(ScriptNodeBase):
         self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
         output = ScriptNovelOutput(novel_full=state.script.novel_full)
         self.repo.save_node_output(project_dir, self.name, output)
+        self.mark_completion_aliases(state)
         return state
 
 
@@ -558,6 +733,8 @@ def build_script_node_runners(workflow: Any) -> dict[str, ScriptNodeBase]:
         "force_getter": force_getter,
     }
     return {
+        ScriptImportNode.name: ScriptImportNode(**deps),
+        ScriptDetailExpandNode.name: ScriptDetailExpandNode(**deps),
         ScriptOutlineNode.name: ScriptOutlineNode(**deps),
         ScriptNovelNode.name: ScriptNovelNode(**deps),
         ScriptNovelExtractNode.name: ScriptNovelExtractNode(**deps),
@@ -571,15 +748,19 @@ def build_script_nodes(workflow: Any, after_novel_nodes: list[WorkflowNode] | No
     nodes: list[WorkflowNode] = []
     for node_name in SCRIPT_NODE_NAMES:
         nodes.append(WorkflowNode(name=node_name, run=runners[node_name].run))
-        if node_name == "script_novel":
+        if node_name == "script_detail_expand":
             nodes.extend(after_novel_nodes)
     return nodes
 
 
 __all__ = [
+    "MANUAL_SCRIPT_NODE_NAMES",
+    "SCRIPT_COMPLETION_ALIASES",
     "SCRIPT_NODE_NAMES",
     "SCRIPT_NOVEL_EXTRACT_BATCH_SIZE",
     "ClipSegmentNode",
+    "ScriptDetailExpandNode",
+    "ScriptImportNode",
     "ScriptNovelExtractNode",
     "ScriptNovelNode",
     "ScriptOutlineNode",

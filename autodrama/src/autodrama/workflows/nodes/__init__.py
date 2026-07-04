@@ -12,7 +12,12 @@ from autodrama.workflows.nodes.dynamic_asset_solidification_node import (
 )
 from autodrama.workflows.nodes.role_nodes import ROLE_NODE_NAMES, build_role_nodes
 from autodrama.workflows.nodes.role_subject_nodes import ROLE_SUBJECT_NODE_NAMES, build_role_subject_nodes
-from autodrama.workflows.nodes.script_nodes import SCRIPT_NODE_NAMES, build_script_nodes
+from autodrama.workflows.nodes.script_nodes import (
+    MANUAL_SCRIPT_NODE_NAMES,
+    SCRIPT_NODE_NAMES,
+    build_script_node_runners,
+    build_script_nodes,
+)
 from autodrama.workflows.nodes.shot_dialogue_audio_node import (
     SHOT_DIALOGUE_AUDIO_NODE_NAME,
     build_shot_dialogue_audio_episode_node,
@@ -30,6 +35,7 @@ MANUAL_PREGEN_ROLE_NODE_NAMES = [
     node_name for node_name in ROLE_NODE_NAMES if node_name not in DEFAULT_PREGEN_ROLE_NODE_NAMES
 ]
 DEFERRED_PREGEN_NODE_NAMES = [
+    *MANUAL_SCRIPT_NODE_NAMES,
     *MANUAL_PREGEN_ROLE_NODE_NAMES,
     *ROLE_SUBJECT_NODE_NAMES,
     *VOICE_NODE_NAMES,
@@ -52,11 +58,17 @@ def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
 
 
 def build_manual_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
+    script_runners = build_script_node_runners(workflow)
+    manual_script_nodes = [
+        WorkflowNode(name=node_name, run=script_runners[node_name].run)
+        for node_name in MANUAL_SCRIPT_NODE_NAMES
+    ]
     manual_role_names = set(MANUAL_PREGEN_ROLE_NODE_NAMES)
     manual_role_nodes = [
         node for node in build_role_nodes(workflow) if node.name in manual_role_names
     ]
     return [
+        *manual_script_nodes,
         *manual_role_nodes,
         *build_role_subject_nodes(workflow),
         *build_voice_nodes(workflow),
@@ -98,6 +110,7 @@ __all__ = [
     "DIRECTOR_NODE_NAMES",
     "DYNAMIC_ASSET_SOLIDIFICATION_NODE_NAME",
     "GENERATION_NODE_NAMES",
+    "MANUAL_SCRIPT_NODE_NAMES",
     "PREGEN_NODE_NAMES",
     "ROLE_NODE_NAMES",
     "ROLE_SUBJECT_NODE_NAMES",
@@ -115,6 +128,7 @@ __all__ = [
     "build_pregen_nodes",
     "build_role_nodes",
     "build_role_subject_nodes",
+    "build_script_node_runners",
     "build_script_nodes",
     "build_shot_dialogue_audio_episode_node",
     "build_clip_video_episode_node",

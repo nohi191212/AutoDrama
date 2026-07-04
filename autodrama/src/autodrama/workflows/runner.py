@@ -12,6 +12,16 @@ from autodrama.repositories.project_repo import ProjectRepository
 
 NodeFunc = Callable[[Path, ProjectState], Awaitable[ProjectState]]
 EpisodeNodeFunc = Callable[[Path, ProjectState, str], Awaitable[BaseModel]]
+NODE_COMPLETION_ALIASES = {
+    "script_import": ("script_outline",),
+    "script_detail_expand": ("script_novel",),
+}
+
+
+def node_is_completed(node_name: str, completed_nodes: list[str]) -> bool:
+    if node_name in completed_nodes:
+        return True
+    return any(alias in completed_nodes for alias in NODE_COMPLETION_ALIASES.get(node_name, ()))
 
 
 @dataclass(slots=True)
@@ -41,7 +51,7 @@ class WorkflowRunner:
         skip_completed: bool = True,
     ) -> ProjectState:
         for index, node in enumerate(nodes, start=1):
-            if skip_completed and not force and node.name in state.completed_nodes:
+            if skip_completed and not force and node_is_completed(node.name, state.completed_nodes):
                 with log_context(node_name=node.name):
                     self.logger.info("node %d/%d %s skipped", index, len(nodes), node.name)
                 continue

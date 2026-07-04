@@ -87,7 +87,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - `project.id`: 项目 ID。建议固定，便于断点续跑。
 - `project.title`: 项目标题。
 - `project.script_outline_file`: 输入故事大纲文件，默认示例为 `./inputs/story_outline.md`。
-- `project.episode_count`: 初始化/回退剧集数量；普通 `script_outline` 会根据内容量自行划分实际集数，并用输出的 `episode_outlines` 数量覆盖运行态集数。
+- `project.episode_count`: 初始化/回退剧集数量；默认 `script_import` 当前按单集成熟剧本导入。需要生成式多集拆分时，可手动运行 `script_outline` / `script_novel`。
 - `project.episode_duration_seconds`: 单集目标时长。
 - `project.bgm_count`: 全局 BGM 数量。
 - `generation.roleboard_style_prompt`: 角色身份板统一风格 prompt；身份板允许指定的小号角色名和视图标签，不允许其他文字、水印或 logo。
@@ -156,14 +156,14 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli init --config config.ya
 
 ### 2. 导入成熟分场剧本
 
-如果输入文件已经是成熟分场剧本，不想让 `script_outline` / `script_novel` 再重写剧情，可以先把剧本导入为锁定的 `novel_full`：
+如果输入文件已经是成熟分场剧本，默认 pregen 会先通过 `script_import` 导入为锁定的 `novel_full`，再通过 `script_detail_expand` 做保守细化。也可以显式使用导入命令刷新剧本文本：
 
 ```powershell
 $env:PYTHONPATH="autodrama/src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli import-script --config config.yaml --project huyao --script inputs/狐妖.md --force
 ```
 
-需要在导入前只补少量动作、空间、光影、材质、声音等可拍摄细节时，加 `--detail-expand`：
+使用 `import-script` 时，需要同步补少量动作、空间、光影、材质、声音等可拍摄细节，可以加 `--detail-expand`：
 
 ```powershell
 $env:PYTHONPATH="autodrama/src"
@@ -203,7 +203,7 @@ run\start.cmd --config config.yaml --project huyao --only storyboard_keyframe_ge
 run\start.cmd --config config.yaml --project huyao --only clip_manifest_generation --episodes 1
 ```
 
-`import-script` 会写入 `assets/json/scripts/novel_full/episode_001.json`，并把 `script_outline`、`script_novel` 标记为已完成。后续普通预生成会跳过重写型脚本节点，从 `script_novel_extract`、`clip_segment` 和主视觉节点继续：
+`import-script` 会写入 `assets/json/scripts/novel_full/episode_001.json`，并把 `script_import` 标记为已完成；加 `--detail-expand` 时也会标记 `script_detail_expand`。它仍会写入并标记 `script_outline` / `script_novel` 作为兼容信息，旧项目里 `script_outline` 完成会视为 `script_import` 完成，`script_novel` 完成会视为 `script_detail_expand` 完成。后续普通预生成会从 `script_novel_extract`、`clip_segment` 和主视觉节点继续：
 
 ```powershell
 run\start.cmd --config config.yaml --project huyao
@@ -233,11 +233,11 @@ $env:PYTHONPATH="autodrama/src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id>
 ```
 
-`pregen` 默认运行到 `clip_manifest_generation`。`ambient_entity_extract`、`role_subject_*`、`role_voice_select` 和 `bgm_*` 节点代码仍保留，但不在默认链路里，需要时可用 `--only` 手动运行。
+`pregen` 默认运行到 `clip_manifest_generation`。`script_outline`、`script_novel`、`ambient_entity_extract`、`role_subject_*`、`role_voice_select` 和 `bgm_*` 节点代码仍保留，但不在默认链路里，需要时可用 `--only` 手动运行。
 
 ```text
-script_outline
-script_novel
+script_import
+script_detail_expand
 script_novel_extract
 clip_segment
 design_key_vision_prompt

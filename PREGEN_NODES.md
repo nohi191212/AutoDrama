@@ -16,8 +16,8 @@ Default stop node:
 
 ## Default PREGEN_NODES Order
 
-1. `script_outline`
-2. `script_novel`
+1. `script_import`
+2. `script_detail_expand`
 3. `script_novel_extract`
 4. `clip_segment`
 5. `design_key_vision_prompt`
@@ -48,12 +48,14 @@ Default stop node:
 These nodes remain implemented and available through `run pregen --only NODE`,
 but they are not part of the default `PREGEN_NODES` chain.
 
-1. `ambient_entity_extract`
-2. `role_subject_video_generation`
-3. `role_subject_element_generation`
-4. `role_voice_select`
-5. `bgm_design`
-6. `bgm_generation`
+1. `script_outline`
+2. `script_novel`
+3. `ambient_entity_extract`
+4. `role_subject_video_generation`
+5. `role_subject_element_generation`
+6. `role_voice_select`
+7. `bgm_design`
+8. `bgm_generation`
 
 ## Legacy `--only` Aliases
 

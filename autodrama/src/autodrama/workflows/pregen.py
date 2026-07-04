@@ -688,6 +688,12 @@ class PregenWorkflow:
     def _script_node_runner(self, node_name: str) -> ScriptNodeBase:
         return build_script_node_runners(self)[node_name]
 
+    async def _run_script_import(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._script_node_runner("script_import").run(project_dir, state)
+
+    async def _run_script_detail_expand(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._script_node_runner("script_detail_expand").run(project_dir, state)
+
     async def _run_script_outline(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._script_node_runner("script_outline").run(project_dir, state)
 

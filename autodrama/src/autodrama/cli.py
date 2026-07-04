@@ -25,7 +25,7 @@ from autodrama.workflows.selection import (
 )
 
 
-SCRIPT_IMPORT_BOOTSTRAP_NODES = {"script_detail_expand", "script_outline", "script_novel"}
+SCRIPT_IMPORT_BOOTSTRAP_NODES = {"script_import", "script_detail_expand", "script_outline", "script_novel"}
 SCRIPT_IMPORT_INVALIDATE_ON_PRESERVE = {
     "design_key_vision_prompt",
     "design_key_vision_image",
@@ -451,7 +451,7 @@ def _invalidate_preserved_script_dependents(state) -> list[str]:
             kept_completed_nodes.append(node_name)
     state.completed_nodes = kept_completed_nodes
     if state.current_node in SCRIPT_IMPORT_INVALIDATE_ON_PRESERVE:
-        state.current_node = "script_novel"
+        state.current_node = "script_detail_expand"
     return invalidated
 
 
@@ -625,6 +625,17 @@ async def cmd_import_script(args: argparse.Namespace) -> int:
 
     repo.save_node_output(
         project_dir,
+        "script_import",
+        {
+            "outline": state.script.outline,
+            "episode_outlines": state.script.episode_outlines,
+            "novel_full": state.script.novel_full,
+            "imported_mature_script": True,
+            "detail_expanded": bool(args.detail_expand),
+        },
+    )
+    repo.save_node_output(
+        project_dir,
         "script_outline",
         {
             "outline": state.script.outline,
@@ -640,10 +651,11 @@ async def cmd_import_script(args: argparse.Namespace) -> int:
             "detail_expanded": bool(args.detail_expand),
         },
     )
-    if detail_expand_output is not None:
-        state.mark_completed("script_detail_expand")
     state.mark_completed("script_outline")
     state.mark_completed("script_novel")
+    state.mark_completed("script_import")
+    if detail_expand_output is not None:
+        state.mark_completed("script_detail_expand")
     repo.save_state(project_dir, state)
     logger.info(
         "mature script imported project_id=%s episode_key=%s project_dir=%s detail_expanded=%s",

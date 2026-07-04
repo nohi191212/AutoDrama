@@ -11,6 +11,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from autodrama.workflows.pregen import PREGEN_NODES, PREGEN_ONLY_NODES, PregenWorkflow
+from autodrama.workflows.runner import node_is_completed
 
 
 REMOVED_FROM_DEFAULT = [
@@ -39,6 +40,11 @@ STORYBOARD_CHAIN = [
     "clip_manifest_generation",
 ]
 
+SCRIPT_DEFAULT_PREFIX = [
+    "script_import",
+    "script_detail_expand",
+]
+
 SCRIPT_KEY_VISION_CHAIN = [
     "script_novel_extract",
     "clip_segment",
@@ -48,6 +54,21 @@ SCRIPT_KEY_VISION_CHAIN = [
 
 
 def main() -> None:
+    if PREGEN_NODES[: len(SCRIPT_DEFAULT_PREFIX)] != SCRIPT_DEFAULT_PREFIX:
+        raise AssertionError(
+            f"default script chain should start with {SCRIPT_DEFAULT_PREFIX!r}, "
+            f"got {PREGEN_NODES[: len(SCRIPT_DEFAULT_PREFIX)]!r}"
+        )
+    for node_name in ("script_outline", "script_novel"):
+        if node_name in PREGEN_NODES:
+            raise AssertionError(f"{node_name} should be optional, not in the default pregen chain")
+        if node_name not in PREGEN_ONLY_NODES:
+            raise AssertionError(f"{node_name} should remain available through pregen --only")
+    if not node_is_completed("script_import", ["script_outline"]):
+        raise AssertionError("script_outline completion should satisfy script_import")
+    if not node_is_completed("script_detail_expand", ["script_novel"]):
+        raise AssertionError("script_novel completion should satisfy script_detail_expand")
+
     for node_name in REMOVED_FROM_DEFAULT:
         if node_name in PREGEN_NODES:
             raise AssertionError(f"{node_name} should not be in the default pregen chain")
