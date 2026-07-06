@@ -9,22 +9,22 @@ Implemented scope:
 1. `script_outline`
 2. `script_novel`
 3. `script_novel_extract`
-4. `clip_segment`
-5. `design_key_vision_prompt`
-6. `design_key_vision_image`
-7. `role_extract_primary`
-8. `role_extract_functional`
-9. `role_extract`
-10. `role_episode_key_audit`
-11. `role_duplicate_audit`
-12. `roleboard_prompt`
-13. `roleboard_generation`
-14. `prop_extract`
-15. `prop_dedupe`
-16. `prop_prompt`
-17. `prop_image_generation`
-18. `layout_extract`
-19. `layout_dedupe_review`
+4. `design_key_vision_prompt`
+5. `design_key_vision_image`
+6. `role_extract_primary`
+7. `role_extract_functional`
+8. `role_extract`
+9. `role_episode_key_audit`
+10. `role_duplicate_audit`
+11. `roleboard_prompt`
+12. `roleboard_generation`
+13. `prop_extract`
+14. `prop_dedupe`
+15. `layout_extract`
+16. `layout_dedupe_review`
+17. `clip_segment`
+18. `prop_prompt`
+19. `prop_image_generation`
 20. `layout_prompt`
 21. `layout_image_generation`
 22. `clip_prompt`
@@ -38,7 +38,6 @@ Implemented scope:
 30. `role_voice_select`
 31. `bgm_design`
 32. `bgm_generation`
-
 `run pregen` currently covers script, role identity boards, prop/layout static assets, shot-level 12-panel storyboard sheets, and per-episode shot manifests. It stops at `clip_manifest_generation` by default. `ambient_entity_extract`, `role_subject_*`, `role_voice_select`, and `bgm_*` nodes remain implemented but are deferred from the default chain and can be run manually with `--only`.
 
 Script episode content is stored as per-episode JSON files:
@@ -47,11 +46,11 @@ Script episode content is stored as per-episode JSON files:
 - `script_novel`: `assets/json/scripts/novel_full/episode_XXX.json`
 - `script_novel_extract`: `assets/json/scripts/novel_extract/episode_XXX.json`
 
-After `clip_segment`, `design_key_vision_prompt` writes the global key-vision prompt from the full script context and configured project visual prompts. `design_key_vision_image` renders the key visual original to `assets/images/key_visions/key_vision_original.png` and records the provider image URL when one is returned. Role identity-board generation uses this key visual as a style and character-world reference image.
+After `script_novel_extract`, `design_key_vision_prompt` writes the global key-vision prompt from the full script context and configured project visual prompts. `design_key_vision_image` renders the key visual original to `assets/images/key_visions/key_vision_original.png` and records the provider image URL when one is returned. Role identity-board generation uses this key visual as a style and character-world reference image.
 
 Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at most one direct source path such as `source_novel_full_path`. The state stores the JSON path when an episode is generated, or `false` when it is not generated yet.
 
-`clip_segment` reads complete episode text and splits each episode into suggested 8-15 second clip text units, each carrying only `text`, `role_names`, `prop_names`, and `layout_names`; episode duration is only a rhythm reference and no longer forces a computed clip count. `role_extract_primary` reads the complete `novel_full` set and recursively extracts only primary roles. `role_extract_functional` then receives separated `primary_roles` and `functional_roles` lists and recursively extracts short-lived functional roles outside the primary set. `role_extract` merges those outputs in stable order, with primary roles first and background/ambient entities excluded from `roles`. `role_episode_key_audit` checks role JSON records and appends missing `episode_keys/source_chapters`; `role_duplicate_audit` merges duplicated role extracts before visual/audio generation. `ambient_entity_extract` can still be run manually with `--only` to write background entities to `assets/json/assets/ambient_entities.json` for scene/storyboard use without entering the role asset chain. `roleboard_prompt` then runs one role at a time, loading only that role's `novel_full` episodes plus the key-vision context, and writes prompt-only role identity-board prompts. Code generates `role_id` and `appearance_id`; model output must not include IDs, paths, URLs, filenames, node names, or project IDs. `roleboard_generation` uses the roleboard prompt and the `design_key_vision_image` result as reference to render a reusable role identity board with front, side, back, expression, action, and costume-detail views. The generated board keeps a small edge label such as `角色：<role name> | <appearance name>` plus optional view labels, while still forbidding unrelated text, subtitles, watermarks, logos, ids, filenames, project names, dialogue, wrong names, and garbled text. No separate legacy role-visual stage remains before or after roleboard generation. The default chain then runs `prop_extract`, `prop_dedupe`, `prop_prompt`, `prop_image_generation`, `layout_extract`, `layout_dedupe_review`, `layout_prompt`, and `layout_image_generation` before storyboard work starts. `clip_prompt` resolves each clip's role/layout/prop assets and generates a concise shot-by-shot video prompt plus target duration. `storyboard_prompt` then strictly follows the clip segment count/order and combines project constraints, episode text, episode summaries, clip segments, `clip_prompt` output, roleboard context, and generated prop/layout context into storyboard clips. Each clip contains 1-4 internal `Camera Shot` ranges, recommended 2-4, plus a P01-P12 panel plan where every storyboard panel maps to concrete content. P01-P12 are visual rhythm panels, not one panel per second. Cut boundaries between internal camera shots are marked for the storyboard image with clear red diagonal cut marks. The pregen `storyboard_generation` renders those clips as black-and-white 12-panel storyboard sheets under `assets/images/storyboards/`; each sheet keeps the final frame aspect ratio per panel and prioritizes action/composition/order accuracy over final image quality. `storyboard_keyframe_generation` then renders clean cinematic start/end keyframes from P01/P12: the first clip gets start and end, later clips only get their own end. `clip_manifest_generation` compiles the storyboard clips, per-clip 12-panel storyboard sheet paths, keyframe paths, role/prop/layout ids, dialogue, and fused `video_prompt` into `shots/{episode_key}.json` for dynamic generation. `role_subject_*` and `role_voice_select` remain available through `--only`; when run, `role_voice_select` reads the reusable `.assets/voice_catalog` manifest, references the role identity board, filters candidate voices before a `deepseek-v4-flash` top-3 text shortlist, and uses the Qwen3.5-Omni-Plus audio judge when candidate samples are complete before binding the final provider `voice_type`. Functional roles with `has_dialogue=false` do not select voice.
+`role_extract_primary` reads the complete `novel_full` set and recursively extracts only primary roles. `role_extract_functional` then receives separated `primary_roles` and `functional_roles` lists and recursively extracts short-lived functional roles outside the primary set. `role_extract` merges those outputs in stable order, with primary roles first and background/ambient entities excluded from `roles`. `role_episode_key_audit` checks role JSON records and appends missing `episode_keys/source_chapters`; `role_duplicate_audit` merges duplicated role extracts before visual/audio generation. `ambient_entity_extract` can still be run manually with `--only` to write background entities to `assets/json/assets/ambient_entities.json` for scene/storyboard use without entering the role asset chain. `roleboard_prompt` then runs one role at a time, loading only that role's `novel_full` episodes plus the key-vision context, and writes prompt-only role identity-board prompts. Code generates `role_id` and `appearance_id`; model output must not include IDs, paths, URLs, filenames, node names, or project IDs. `roleboard_generation` uses the roleboard prompt and the `design_key_vision_image` result as reference to render a reusable role identity board with front, side, back, expression, action, and costume-detail views. The generated board keeps a small edge label such as `角色：<role name> | <appearance name>` plus optional view labels, while still forbidding unrelated text, subtitles, watermarks, logos, ids, filenames, project names, dialogue, wrong names, and garbled text. No separate legacy role-visual stage remains before or after roleboard generation. The default chain then runs `prop_extract`, `prop_dedupe`, `layout_extract`, and `layout_dedupe_review` before `clip_segment`; prop/layout prompt and image generation run after clip segmentation. `clip_segment` reads complete episode text, all-episode summaries, and current-episode role/prop/layout indexes formatted as `索引名: 一句话介绍`; it splits each episode into suggested 8-15 second clip text units, each carrying only `text`, `role_names`, `prop_names`, and `layout_names`; episode duration is only a rhythm reference and no longer forces a computed clip count. `clip_prompt` resolves each clip's role/layout/prop assets and generates a concise shot-by-shot video prompt plus target duration. `storyboard_prompt` then strictly follows the clip segment count/order and combines project constraints, episode text, episode summaries, clip segments, `clip_prompt` output, roleboard context, and generated prop/layout context into storyboard clips. Each clip contains 1-4 internal `Camera Shot` ranges, recommended 2-4, plus a P01-P12 panel plan where every storyboard panel maps to concrete content. P01-P12 are visual rhythm panels, not one panel per second. Cut boundaries between internal camera shots are marked for the storyboard image with clear red diagonal cut marks. The pregen `storyboard_generation` renders those clips as black-and-white 12-panel storyboard sheets under `assets/images/storyboards/`; each sheet keeps the final frame aspect ratio per panel and prioritizes action/composition/order accuracy over final image quality. `storyboard_keyframe_generation` then renders clean cinematic start/end keyframes from P01/P12: the first clip gets start and end, later clips only get their own end. `clip_manifest_generation` compiles the storyboard clips, per-clip 12-panel storyboard sheet paths, keyframe paths, role/prop/layout ids, dialogue, and fused `video_prompt` into `shots/{episode_key}.json` for dynamic generation. `role_subject_*` and `role_voice_select` remain available through `--only`; when run, `role_voice_select` reads the reusable `.assets/voice_catalog` manifest, references the role identity board, filters candidate voices before a `deepseek-v4-flash` top-3 text shortlist, and uses the Qwen3.5-Omni-Plus audio judge when candidate samples are complete before binding the final provider `voice_type`. Functional roles with `has_dialogue=false` do not select voice.
 
 `prop_extract` reads all complete episode text as `novel_full_all_episodes` plus the existing `generated_prop_intro` map and maintains reusable prop introductions without image prompts. `prop_dedupe` receives only `generated_prop_intro`, merges duplicate props, and is rerun with `prop_extract` until two consecutive dedupe outputs converge. `prop_prompt` then turns each one-line prop intro plus configured `visual_tone` into pure text prompts; state variants such as `道具名_状态` produce reference-image change prompts. `prop_image_generation` renders base props first, then renders state variants with the base prop image as reference when the provider supports reference images.
 

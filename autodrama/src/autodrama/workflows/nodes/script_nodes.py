@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from pathlib import Path
 from typing import Any, Callable
@@ -24,7 +25,6 @@ SCRIPT_NODE_NAMES = [
     "script_import",
     "script_detail_expand",
     "script_novel_extract",
-    "clip_segment",
 ]
 MANUAL_SCRIPT_NODE_NAMES = [
     "script_outline",
@@ -600,6 +600,123 @@ class ClipSegmentNode(ScriptNodeBase):
     LONG_TEXT_WARNING_CHARS = 900
 
     @staticmethod
+    def _one_line(value: object, *, max_chars: int = 120) -> str:
+        text = " ".join(str(value or "").split()).strip()
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 1].rstrip() + "..."
+
+    @classmethod
+    def _episode_matches(cls, episode_keys: object, episode_key: str) -> bool:
+        if not episode_keys:
+            return True
+        if not isinstance(episode_keys, list):
+            return True
+        return episode_key in {str(key) for key in episode_keys if str(key).strip()}
+
+    @classmethod
+    def _format_asset_index(cls, items: dict[str, str]) -> str:
+        if not items:
+            return "（无）"
+        return "\n".join(f"{name}: {intro}" for name, intro in items.items())
+
+    @staticmethod
+    def _item_intro(item: dict[str, object]) -> str:
+        for key in ("brief", "intro", "desc", "description", "prompt"):
+            value = item.get(key)
+            if str(value or "").strip():
+                return str(value)
+        notes = item.get("appearance_notes") or item.get("visual_notes")
+        if isinstance(notes, list) and notes:
+            return "；".join(str(note) for note in notes[:3] if str(note).strip())
+        return ""
+
+    def _load_node_payload(self, project_dir: Path, node_name: str) -> dict[str, object]:
+        path = self.layout.node_output_path(project_dir, node_name)
+        if not path.exists():
+            raise FileNotFoundError(f"{node_name} output is missing; run pregen through {node_name} before clip_segment")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Invalid {node_name} output JSON: {path}")
+        return payload
+
+    def _load_first_node_payload(self, project_dir: Path, node_names: tuple[str, ...]) -> dict[str, object]:
+        for node_name in node_names:
+            path = self.layout.node_output_path(project_dir, node_name)
+            if path.exists():
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError(f"Invalid {node_name} output JSON: {path}")
+                return payload
+        expected = ", ".join(node_names)
+        raise FileNotFoundError(f"{expected} output is missing; run pregen through {node_names[-1]} before clip_segment")
+    @classmethod
+    def _list_items_index(cls, items: object, episode_key: str) -> dict[str, str]:
+        result: dict[str, str] = {}
+        if not isinstance(items, list):
+            return result
+        for raw_item in items:
+            if not isinstance(raw_item, dict):
+                continue
+            if not cls._episode_matches(raw_item.get("episode_keys"), episode_key):
+                continue
+            name = str(raw_item.get("name") or "").strip()
+            intro = cls._one_line(cls._item_intro(raw_item))
+            if name and intro:
+                result[name] = intro
+        return result
+
+    @classmethod
+    def _mapping_index(cls, mapping: object) -> dict[str, str]:
+        if not isinstance(mapping, dict):
+            return {}
+        return {
+            str(name).strip(): cls._one_line(intro)
+            for name, intro in mapping.items()
+            if str(name).strip() and str(intro or "").strip()
+        }
+
+    @classmethod
+    def _state_assets_index(cls, assets: object, episode_key: str, *, intro_attr: str) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for asset in dict(assets or {}).values():
+            episode_keys = getattr(asset, "episode_keys", [])
+            if not cls._episode_matches(episode_keys, episode_key):
+                continue
+            name = str(getattr(asset, "name", "") or "").strip()
+            intro = cls._one_line(getattr(asset, intro_attr, "") or getattr(asset, "intro", ""))
+            if name and intro:
+                result[name] = intro
+        return result
+
+    def role_index_context(self, project_dir: Path, state: ProjectState, episode_key: str) -> str:
+        payload = self._load_node_payload(project_dir, "role_extract")
+        items = self._list_items_index(payload.get("roles"), episode_key)
+        if not items:
+            items = self._state_assets_index(state.roles, episode_key, intro_attr="intro")
+        return self._format_asset_index(items)
+
+    def prop_index_context(self, project_dir: Path, state: ProjectState, episode_key: str) -> str:
+        items = self._state_assets_index(state.props, episode_key, intro_attr="desc")
+        if items:
+            return self._format_asset_index(items)
+        payload = self._load_first_node_payload(project_dir, ("prop_dedupe", "prop_extract"))
+        items = self._list_items_index(payload.get("props"), episode_key)
+        if not items:
+            items = self._mapping_index(payload.get("generated_prop_intro"))
+        return self._format_asset_index(items)
+
+    def layout_index_context(self, project_dir: Path, state: ProjectState, episode_key: str) -> str:
+        items = self._state_assets_index(state.layouts, episode_key, intro_attr="desc")
+        if items:
+            return self._format_asset_index(items)
+        payload = self._load_first_node_payload(project_dir, ("layout_dedupe_review", "layout_extract"))
+        items = self._list_items_index(payload.get("layouts"), episode_key)
+        if not items:
+            items = self._mapping_index(payload.get("generated_layout_intro"))
+        return self._format_asset_index(items)
+
+    @staticmethod
     def _dedupe_texts(values: list[str]) -> list[str]:
         seen: set[str] = set()
         cleaned: list[str] = []
@@ -721,6 +838,9 @@ class ClipSegmentNode(ScriptNodeBase):
                 episode_key=episode_key,
                 novel_full_this_episode=novel_full.get(episode_key, ""),
                 novel_extract_all_episodes=novel_extract_all_episodes,
+                role_index=self.role_index_context(project_dir, state, episode_key),
+                prop_index=self.prop_index_context(project_dir, state, episode_key),
+                layout_index=self.layout_index_context(project_dir, state, episode_key),
             )
             generated[episode_key] = self.validate_clip_segments(output, state, episode_key=episode_key)
             state.budget.used_text_calls += 1

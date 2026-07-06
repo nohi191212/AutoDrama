@@ -160,6 +160,9 @@ class ScriptService:
         episode_key: str,
         novel_full_this_episode: str,
         novel_extract_all_episodes: str,
+        role_index: str,
+        prop_index: str,
+        layout_index: str,
     ) -> ClipSegmentOutput:
         episode_duration_seconds = self.episode_duration_seconds(state)
         min_clip_seconds = 8
@@ -178,6 +181,9 @@ class ScriptService:
             duration_reference_note=duration_reference_note,
             novel_full_this_episode=novel_full_this_episode,
             novel_extract_all_episodes=novel_extract_all_episodes,
+            role_index=role_index,
+            prop_index=prop_index,
+            layout_index=layout_index,
         )
         print(
             "\n".join(

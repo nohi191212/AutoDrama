@@ -24,10 +24,11 @@ REMOVED_FROM_DEFAULT = [
 INSERTED_AFTER_ROLEBOARD = [
     "prop_extract",
     "prop_dedupe",
-    "prop_prompt",
-    "prop_image_generation",
     "layout_extract",
     "layout_dedupe_review",
+    "clip_segment",
+    "prop_prompt",
+    "prop_image_generation",
     "layout_prompt",
     "layout_image_generation",
 ]
@@ -47,7 +48,6 @@ SCRIPT_DEFAULT_PREFIX = [
 
 SCRIPT_KEY_VISION_CHAIN = [
     "script_novel_extract",
-    "clip_segment",
     "design_key_vision_prompt",
     "design_key_vision_image",
 ]
@@ -95,6 +95,15 @@ def main() -> None:
             f"script/key-vision chain should be {SCRIPT_KEY_VISION_CHAIN!r}, "
             f"got {actual_script_key_vision_chain!r}"
         )
+
+    layout_dedupe_index = PREGEN_NODES.index("layout_dedupe_review")
+    if PREGEN_NODES[layout_dedupe_index + 1] != "clip_segment":
+        raise AssertionError("clip_segment should run immediately after prop/layout extraction and dedupe")
+    if PREGEN_NODES[layout_dedupe_index + 2] != "prop_prompt":
+        raise AssertionError("prop_prompt should run after clip_segment")
+    layout_image_index = PREGEN_NODES.index("layout_image_generation")
+    if PREGEN_NODES[layout_image_index + 1] != "clip_prompt":
+        raise AssertionError("clip_prompt should run after static asset prompts/images")
     storyboard_index = PREGEN_NODES.index("clip_prompt")
     actual_storyboard_chain = PREGEN_NODES[storyboard_index : storyboard_index + len(STORYBOARD_CHAIN)]
     if actual_storyboard_chain != STORYBOARD_CHAIN:

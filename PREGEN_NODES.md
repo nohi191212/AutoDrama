@@ -1,6 +1,6 @@
 # Pregen Nodes
 
-Last updated: 2026-07-02
+Last updated: 2026-07-06
 
 This file records the current `PREGEN_NODES` order used by the default
 `run pregen` workflow.
@@ -19,22 +19,22 @@ Default stop node:
 1. `script_import`
 2. `script_detail_expand`
 3. `script_novel_extract`
-4. `clip_segment`
-5. `design_key_vision_prompt`
-6. `design_key_vision_image`
-7. `role_extract_primary`
-8. `role_extract_functional`
-9. `role_extract`
-10. `role_episode_key_audit`
-11. `role_duplicate_audit`
-12. `roleboard_prompt`
-13. `roleboard_generation`
-14. `prop_extract`
-15. `prop_dedupe`
-16. `prop_prompt`
-17. `prop_image_generation`
-18. `layout_extract`
-19. `layout_dedupe_review`
+4. `design_key_vision_prompt`
+5. `design_key_vision_image`
+6. `role_extract_primary`
+7. `role_extract_functional`
+8. `role_extract`
+9. `role_episode_key_audit`
+10. `role_duplicate_audit`
+11. `roleboard_prompt`
+12. `roleboard_generation`
+13. `prop_extract`
+14. `prop_dedupe`
+15. `layout_extract`
+16. `layout_dedupe_review`
+17. `clip_segment`
+18. `prop_prompt`
+19. `prop_image_generation`
 20. `layout_prompt`
 21. `layout_image_generation`
 22. `clip_prompt`

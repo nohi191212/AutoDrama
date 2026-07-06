@@ -41,10 +41,10 @@ STATIC_ASSET_NODE_NAMES = [
     "roleboard_generation",
     "prop_extract",
     "prop_dedupe",
-    "prop_prompt",
-    "prop_image_generation",
     "layout_extract",
     "layout_dedupe_review",
+    "prop_prompt",
+    "prop_image_generation",
     "layout_prompt",
     "layout_image_generation",
 ]
