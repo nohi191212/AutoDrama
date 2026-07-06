@@ -129,8 +129,7 @@ class FakeTextProvider:
                 },
             }
         elif schema is ScriptDetailExpandOutput or node_name == "script_detail_expand":
-            episode_key = str(metadata.get("episode_key") or episode_keys[0])
-            source_script = _extract_markdown_section(prompt, "输入剧本", "输出要求")
+            source_script = _extract_markdown_section(prompt, "输入剧本", "绝对禁止")
             source_script = source_script or "第一集：\n1-1：室内-日-内\n人物：角色\n△角色站在原地。"
             expanded_script = (
                 source_script.rstrip()
@@ -138,10 +137,7 @@ class FakeTextProvider:
                 + "角色的视线短暂停在关键物件上后才继续动作。"
             )
             data = {
-                "episode_key": episode_key,
                 "expanded_script": expanded_script,
-                "source_char_count": len(source_script),
-                "expanded_char_count": len(expanded_script),
             }
         elif schema is ScriptNovelEpisodeOutput or node_name == "script_novel_episode":
             episode_key = str(metadata.get("episode_key") or episode_keys[0])

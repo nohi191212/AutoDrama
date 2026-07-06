@@ -8,7 +8,6 @@ from autodrama.core.schemas import (
     ClipSegmentNodeOutput,
     ClipSegmentOutput,
     ProjectState,
-    ScriptDetailExpandOutput,
     ScriptNovelExtractOutput,
     ScriptNovelOutput,
     ScriptOutlineOutput,
@@ -191,16 +190,13 @@ class ScriptImportNode(ScriptNodeBase):
 
 class ScriptDetailExpandNode(ScriptNodeBase):
     name = "script_detail_expand"
-    DEFAULT_MAX_EXPAND_RATIO = 1.35
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("script", node_name=self.name)
-        max_expand_ratio = float(state.metadata.get("mature_script_max_expand_ratio") or self.DEFAULT_MAX_EXPAND_RATIO)
         self.logger.info(
-            "node=script_detail_expand provider=%s model=%s max_expand_ratio=%s",
+            "node=script_detail_expand provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
-            max_expand_ratio,
         )
         episode_keys = self.expected_episode_keys(state)
         self.validate_episode_keys("script_import.novel_full", state.script.novel_full, state)
@@ -224,26 +220,10 @@ class ScriptDetailExpandNode(ScriptNodeBase):
                 provider,
                 episode_key=episode_key,
                 raw_script=raw_script,
-                max_expand_ratio=max_expand_ratio,
             )
-            if detail_expand_output.episode_key != episode_key:
-                raise ValueError(
-                    f"script_detail_expand episode_key must be {episode_key}; "
-                    f"got {detail_expand_output.episode_key}"
-                )
             expanded_script = detail_expand_output.expanded_script.strip()
             if not expanded_script:
                 raise ValueError(f"script_detail_expand returned empty expanded_script for {episode_key}")
-            max_allowed_chars = max(
-                int(len(raw_script) * max_expand_ratio * 1.05),
-                len(raw_script) + 400,
-            )
-            if len(expanded_script) > max_allowed_chars:
-                raise ValueError(
-                    "script_detail_expand exceeded the allowed expansion size: "
-                    f"episode={episode_key} source={len(raw_script)} "
-                    f"expanded={len(expanded_script)} max_allowed={max_allowed_chars}"
-                )
 
             expanded_paths[episode_key] = self.script_contents.write_content(
                 project_dir,
@@ -254,19 +234,13 @@ class ScriptDetailExpandNode(ScriptNodeBase):
                 dependency_field="source_script_file" if source_script_file else "source_script_path",
                 dependency_path=str(source_script_file) if source_script_file else source_paths.get(episode_key),
             )
-            expanded_outputs[episode_key] = ScriptDetailExpandOutput(
-                episode_key=episode_key,
-                expanded_script=expanded_script,
-                source_char_count=detail_expand_output.source_char_count or len(raw_script),
-                expanded_char_count=detail_expand_output.expanded_char_count or len(expanded_script),
-            ).model_dump(mode="json")
+            expanded_outputs[episode_key] = detail_expand_output.model_dump(mode="json")
             state.budget.used_text_calls += 1
 
         state.script.novel_full = expanded_paths
         state.metadata.update(
             {
                 "mature_script_detail_expanded": True,
-                "mature_script_max_expand_ratio": max_expand_ratio,
                 "script_novel_full_episode_paths": dict(state.script.novel_full),
             }
         )

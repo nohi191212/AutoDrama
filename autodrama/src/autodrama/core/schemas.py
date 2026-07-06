@@ -207,10 +207,7 @@ class ScriptNovelOutput(BaseModel):
 
 
 class ScriptDetailExpandOutput(BaseModel):
-    episode_key: str
     expanded_script: str = Field(validation_alias=AliasChoices("expanded_script", "script", "novel_full"))
-    source_char_count: int | None = None
-    expanded_char_count: int | None = None
 
 
 class ScriptNovelExtractBatchOutput(BaseModel):

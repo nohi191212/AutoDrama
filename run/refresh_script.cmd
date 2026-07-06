@@ -10,7 +10,6 @@ set "SCRIPT="
 set "PROVIDER_ARGS="
 set "DETAIL_EXPAND=--detail-expand"
 set "EXPANDED_SCRIPT_OUT="
-set "MAX_EXPAND_RATIO=1.35"
 set "RUN_EXTRACT=1"
 set "RUN_STORYBOARD="
 set "EPISODES="
@@ -45,13 +44,7 @@ if "%~1"=="--expanded-script-out" (
   shift
   goto parse
 )
-if "%~1"=="--max-expand-ratio" (
-  if "%~2"=="" goto missing_value
-  set "MAX_EXPAND_RATIO=%~2"
-  shift
-  shift
-  goto parse
-)
+
 if "%~1"=="--fake" (
   set "PROVIDER_ARGS=--provider fake"
   shift
@@ -115,7 +108,7 @@ goto help_error
 :help
 echo Usage:
 echo   run\refresh_script.cmd [--config FILE] [--project ID] [--script FILE]
-echo   run\refresh_script.cmd [--expanded-script-out FILE] [--max-expand-ratio N]
+echo   run\refresh_script.cmd [--expanded-script-out FILE]
 echo   run\refresh_script.cmd [--no-detail-expand] [--skip-extract] [--storyboard] [--episodes 1]
 echo   run\refresh_script.cmd [--fake]
 echo.
@@ -176,7 +169,7 @@ if not "%RUN_EXTRACT%"=="" call :log "refresh script_novel_extract: true"
 if "%RUN_EXTRACT%"=="" call :log "refresh script_novel_extract: false"
 if not "%RUN_STORYBOARD%"=="" call :log "storyboard refresh: true"
 
-"%AUTODRAMA_PYTHON%" -m autodrama.cli import-script --config "%CONFIG%" %PROJECT_ARGS% %SCRIPT_ARGS% %DETAIL_EXPAND% %EXPANDED_SCRIPT_OUT_ARGS% --max-expand-ratio "%MAX_EXPAND_RATIO%" %PROVIDER_ARGS% --preserve-assets
+"%AUTODRAMA_PYTHON%" -m autodrama.cli import-script --config "%CONFIG%" %PROJECT_ARGS% %SCRIPT_ARGS% %DETAIL_EXPAND% %EXPANDED_SCRIPT_OUT_ARGS% %PROVIDER_ARGS% --preserve-assets
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" goto fail
 

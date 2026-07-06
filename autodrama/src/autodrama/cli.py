@@ -86,12 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--expanded-script-out",
         help="Optional path to also save the detail-expanded screenplay as a human-reviewable markdown file.",
     )
-    import_parser.add_argument(
-        "--max-expand-ratio",
-        type=float,
-        default=1.35,
-        help="Maximum allowed expanded/source character ratio for --detail-expand. Default: 1.35.",
-    )
+
     import_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     import_parser.add_argument(
         "--force",
@@ -481,8 +476,6 @@ def _mark_generation_checklist_for_regen(repo: ProjectRepository, project_dir: P
 async def cmd_import_script(args: argparse.Namespace) -> int:
     if args.force and args.preserve_assets:
         raise ValueError("--force and --preserve-assets cannot be used together")
-    if args.max_expand_ratio < 1.0:
-        raise ValueError("--max-expand-ratio must be at least 1.0")
 
     settings = load_settings(args.config)
     repo = ProjectRepository(settings)
@@ -533,35 +526,21 @@ async def cmd_import_script(args: argparse.Namespace) -> int:
         provider_name = getattr(provider, "name", "unknown")
         provider_model = getattr(provider, "model", None)
         logger.info(
-            "node=script_detail_expand provider=%s model=%s episode_key=%s max_expand_ratio=%s",
+            "node=script_detail_expand provider=%s model=%s episode_key=%s",
             provider_name,
             provider_model or "-",
             episode_key,
-            args.max_expand_ratio,
         )
         detail_expand_output = await script_service.script_detail_expand(
             state,
             provider,
             episode_key=episode_key,
             raw_script=source_script,
-            max_expand_ratio=args.max_expand_ratio,
         )
-        if detail_expand_output.episode_key != episode_key:
-            raise ValueError(
-                f"script_detail_expand episode_key must be {episode_key}; got {detail_expand_output.episode_key}"
-            )
         imported_script = detail_expand_output.expanded_script.strip()
         if not imported_script:
             raise ValueError("script_detail_expand returned empty expanded_script")
-        max_allowed_chars = max(
-            int(len(source_script) * args.max_expand_ratio * 1.05),
-            len(source_script) + 400,
-        )
-        if len(imported_script) > max_allowed_chars:
-            raise ValueError(
-                "script_detail_expand exceeded the allowed expansion size: "
-                f"source={len(source_script)} expanded={len(imported_script)} max_allowed={max_allowed_chars}"
-            )
+
         repo.save_node_output(project_dir, "script_detail_expand", detail_expand_output)
         state.budget.used_text_calls += 1
 
@@ -612,7 +591,7 @@ async def cmd_import_script(args: argparse.Namespace) -> int:
             "mature_script_source_file": str(script_path),
             "mature_script_imported_episode_key": episode_key,
             "mature_script_detail_expanded": bool(args.detail_expand),
-            "mature_script_max_expand_ratio": args.max_expand_ratio,
+
             "mature_script_preserved_assets": bool(args.preserve_assets),
             "mature_script_invalidated_nodes": invalidated_nodes,
             "script_novel_full_episode_paths": dict(state.script.novel_full),

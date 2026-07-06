@@ -3,6 +3,10 @@
 ## python environment
 Python Environment: `D:/miniforge3/envs/autodrama/python.exe`
 
+## Prompt Templates
+
+- All prompt templates are sent directly to the LLM API, not to an Agent. When designing prompt templates, include only information the model needs to perform the requested content task.
+- Do not add content-irrelevant project metadata merely for context, such as project title, project ID, source file path, episode key, episode count, or reference duration. Include such fields only when they directly affect the required output format, constraints, or reasoning.
 ## Verification
 
 - Do not use `pytest` for validation in this repository.
