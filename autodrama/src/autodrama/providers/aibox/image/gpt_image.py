@@ -155,7 +155,10 @@ class AiboxImageProvider:
         }
         if requested_resolution:
             params["resolution"] = str(requested_resolution)
-        if aspect_ratio := self._aspect_ratio_parameter(requested_size):
+        requested_aspect_ratio = metadata.get("aspect_ratio")
+        if requested_aspect_ratio:
+            params["aspect_ratio"] = str(requested_aspect_ratio)
+        elif aspect_ratio := self._aspect_ratio_parameter(requested_size):
             params["aspect_ratio"] = aspect_ratio
 
         images = self._reference_images(refs or [], metadata=metadata)
