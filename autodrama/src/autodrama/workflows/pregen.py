@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -72,13 +72,13 @@ PREGEN_ONLY_NODES = AVAILABLE_PREGEN_NODE_NAMES
 EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "clip_segment",
     "roleboard_prompt",
-    "roleboard_generation",
+    "roleboard_image_generation",
     "role_subject_video_generation",
     "role_subject_element_generation",
     "clip_prompt",
-    "storyboard_prompt",
-    "storyboard_generation",
-    "storyboard_keyframe_generation",
+    "clip_storyboard_prompt",
+    "clip_storyboard_image_generation",
+    "clip_storyboard_keyframe_generation",
     "clip_manifest_generation",
     "role_voice_select",
     "prop_prompt",
@@ -87,11 +87,6 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
 }
 ROLE_SCOPED_PREGEN_ONLY_NODES = {
     "role_voice_select",
-}
-PREGEN_ONLY_ALIASES = {
-    "prop_design": "prop_prompt",
-    "prop_generation": "prop_image_generation",
-    "prop_image_generation": "prop_image_generation",
 }
 
 
@@ -554,8 +549,7 @@ class PregenWorkflow:
         role_names: list[str] | None = None,
         clip_selectors: list[str] | None = None,
     ) -> ProjectState:
-        if only is not None:
-            only = PREGEN_ONLY_ALIASES.get(only, only)
+
         if only is not None and only not in PREGEN_ONLY_NODES:
             raise ValueError(f"Unsupported pregen only node: {only}")
         if only is None and until not in PREGEN_NODES:
@@ -575,17 +569,17 @@ class PregenWorkflow:
         selected_clip_selectors = normalize_clip_selectors(clip_selectors) if clip_selectors else set()
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
-                "--episodes is only supported for pregen --only clip_segment, roleboard_prompt, roleboard_generation, "
-                "role_subject_video_generation, role_subject_element_generation, clip_prompt, storyboard_prompt, "
-                "storyboard_generation, storyboard_keyframe_generation, clip_manifest_generation, "
+                "--episodes is only supported for pregen --only clip_segment, roleboard_prompt, roleboard_image_generation, "
+                "role_subject_video_generation, role_subject_element_generation, clip_prompt, clip_storyboard_prompt, "
+                "clip_storyboard_image_generation, clip_storyboard_keyframe_generation, clip_manifest_generation, "
                 "role_voice_select, prop_prompt, prop_image_generation, or layout_image_generation."
             )
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError("--roles is only supported for pregen --only role_voice_select.")
         if selected_clip_selectors and (
-            len(target_nodes) != 1 or target_nodes[0] != "storyboard_keyframe_generation"
+            len(target_nodes) != 1 or target_nodes[0] != "clip_storyboard_keyframe_generation"
         ):
-            raise ValueError("--clips is only supported for pregen --only storyboard_keyframe_generation.")
+            raise ValueError("--clips is only supported for pregen --only clip_storyboard_keyframe_generation.")
         logger.info(
             "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s completed=%s",
             state.project_id,
@@ -1734,7 +1728,7 @@ class PregenWorkflow:
             url=str(asset_url) if asset_url else None,
             metadata={
                 "asset_type": "key_vision",
-                "reference_source": "design_key_vision_image",
+                "reference_source": "key_vision_image_generation",
                 "reference_role": "style_world_reference",
                 "shot_id": shot.shot_id,
                 "shot_index": shot.index,
@@ -1761,7 +1755,7 @@ class PregenWorkflow:
             url=None,
             metadata={
                 "asset_type": "storyboard",
-                "reference_source": "storyboard_generation",
+                "reference_source": "clip_storyboard_image_generation",
                 "reference_role": "composition_action_camera",
                 "episode_key": episode_key,
                 "shot_index": shot.index,
@@ -2151,8 +2145,8 @@ class PregenWorkflow:
     def _static_asset_node_runner(self, node_name: str) -> StaticAssetNodeBase:
         return build_static_asset_node_runners(self)[node_name]
 
-    async def _run_roleboard_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("roleboard_generation").run(project_dir, state)
+    async def _run_roleboard_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("roleboard_image_generation").run(project_dir, state)
 
     def _prop_design_json_path(self, project_dir: Path, prop_id: str) -> Path:
         return self.prop_designs.item_path(project_dir, prop_id)
@@ -2318,8 +2312,8 @@ class PregenWorkflow:
     async def _run_prop_image_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("prop_image_generation").run(project_dir, state)
 
-    async def _run_prop_dedupe(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("prop_dedupe").run(project_dir, state)
+    async def _run_prop_finalize(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("prop_finalize").run(project_dir, state)
 
     async def _run_prop_prompt(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("prop_prompt").run(project_dir, state)
@@ -2327,8 +2321,8 @@ class PregenWorkflow:
     async def _run_layout_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("layout_extract").run(project_dir, state)
 
-    async def _run_layout_dedupe_review(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._static_asset_node_runner("layout_dedupe_review").run(project_dir, state)
+    async def _run_layout_finalize(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("layout_finalize").run(project_dir, state)
 
     async def _run_layout_prompt(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("layout_prompt").run(project_dir, state)

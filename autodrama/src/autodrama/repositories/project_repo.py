@@ -14,9 +14,7 @@ from autodrama.repositories.project_layout import ProjectLayout
 
 
 class ProjectRepository:
-    DROPPED_STATE_METADATA_KEYS = {
-        "role_extract",
-        "prop_extract",
+    DROPPED_STATE_METADATA_KEYS = {        "prop_extract",
         "dynamic_assets",
         "simple_script",
         "global_script",

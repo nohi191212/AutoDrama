@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
@@ -16,8 +16,8 @@ Aliyun/DashScope capabilities are configured under providers.aliyun and routed
 per capability; role text still points to DeepSeek by default.
 Project ID and input outline file are read from config.yaml by default. Use
 --project to run a specific existing project or output directory. --episodes is
-supported for clip_segment, roleboard_prompt, roleboard_generation, clip_prompt,
-storyboard_prompt, storyboard_generation, clip_manifest_generation, role_voice_select,
+supported for clip_segment, roleboard_prompt, roleboard_image_generation, clip_prompt,
+clip_storyboard_prompt, clip_storyboard_image_generation, clip_manifest_generation, role_voice_select,
 prop_prompt, prop_image_generation, and layout_image_generation
 when used with --only. Ambient entity, role subject, voice, and BGM nodes are
 deferred from the default pregen chain and can be run manually with --only.

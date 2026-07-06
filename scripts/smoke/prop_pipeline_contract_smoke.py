@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import sys
@@ -19,7 +19,7 @@ from autodrama.workflows.pregen import PregenWorkflow
 async def main() -> None:
     load_settings(ROOT / "config.yaml")
     load_settings(ROOT / "config.yaml.example")
-    settings = load_settings(ROOT / "huyao.yaml")
+    settings = load_settings(ROOT / "config.yaml")
     settings.output.root_dir = (ROOT / ".tmp" / "prop_pipeline_smoke").resolve()
     settings.project.id = "prop_pipeline_smoke"
     settings.project.episode_count = 1
@@ -66,11 +66,11 @@ async def main() -> None:
         repo=repo,
         router=ProviderRouter(settings, provider_override="fake"),
     )
-    for node_name in ("prop_extract", "prop_dedupe", "prop_prompt", "prop_image_generation"):
+    for node_name in ("prop_extract", "prop_finalize", "prop_prompt", "prop_image_generation"):
         await workflow.run(project_dir, only=node_name, force=True)
 
     extract_path = repo.layout.node_output_path(project_dir, "prop_extract")
-    dedupe_path = repo.layout.node_output_path(project_dir, "prop_dedupe")
+    dedupe_path = repo.layout.node_output_path(project_dir, "prop_finalize")
     prompt_path = repo.layout.node_output_path(project_dir, "prop_prompt")
     image_path = repo.layout.node_output_path(project_dir, "prop_image_generation")
     for path in (extract_path, dedupe_path, prompt_path, image_path):

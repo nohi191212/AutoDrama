@@ -1,4 +1,4 @@
-models:
+﻿models:
   aliyun:qwen-plus:
     provider: aliyun
     family: qwen
@@ -45,11 +45,11 @@ models:
         type: boolean
       prompt_template:
         type: string
-      storyboard_prompt_concurrency:
+      clip_storyboard_prompt_concurrency:
         type: integer
         min: 1
         max: 8
-      storyboard_prompt_batch_concurrency:
+      clip_storyboard_prompt_batch_concurrency:
         type: integer
         min: 1
         max: 8
@@ -194,7 +194,7 @@ models:
         type: integer
         min: 1
         max: 10
-      storyboard_keyframe_generation_concurrency:
+      clip_storyboard_keyframe_generation_concurrency:
         type: integer
         min: 1
         max: 10
@@ -216,19 +216,11 @@ models:
         type: string
       prompt_template:
         type: string
-      roleboard_generation_concurrency:
-        type: integer
-        min: 1
-        max: 5
       roleboard_image_generation_concurrency:
         type: integer
         min: 1
         max: 5
-      storyboard_generation_concurrency:
-        type: integer
-        min: 1
-        max: 5
-      storyboard_sheet_generation_concurrency:
+      clip_storyboard_image_generation_concurrency:
         type: integer
         min: 1
         max: 5
@@ -272,7 +264,7 @@ models:
         type: integer
         min: 1
         max: 10
-      storyboard_keyframe_generation_concurrency:
+      clip_storyboard_keyframe_generation_concurrency:
         type: integer
         min: 1
         max: 10
@@ -294,19 +286,11 @@ models:
         type: string
       prompt_template:
         type: string
-      roleboard_generation_concurrency:
-        type: integer
-        min: 1
-        max: 5
       roleboard_image_generation_concurrency:
         type: integer
         min: 1
         max: 5
-      storyboard_generation_concurrency:
-        type: integer
-        min: 1
-        max: 5
-      storyboard_sheet_generation_concurrency:
+      clip_storyboard_image_generation_concurrency:
         type: integer
         min: 1
         max: 5
@@ -350,7 +334,7 @@ models:
         type: integer
         min: 1
         max: 10
-      storyboard_keyframe_generation_concurrency:
+      clip_storyboard_keyframe_generation_concurrency:
         type: integer
         min: 1
         max: 10
@@ -372,10 +356,6 @@ models:
         type: string
       prompt_template:
         type: string
-      roleboard_generation_concurrency:
-        type: integer
-        min: 1
-        max: 5
       roleboard_image_generation_concurrency:
         type: integer
         min: 1
@@ -419,7 +399,7 @@ models:
         type: integer
         min: 1
         max: 10
-      storyboard_keyframe_generation_concurrency:
+      clip_storyboard_keyframe_generation_concurrency:
         type: integer
         min: 1
         max: 10
@@ -441,10 +421,6 @@ models:
         type: string
       prompt_template:
         type: string
-      roleboard_generation_concurrency:
-        type: integer
-        min: 1
-        max: 5
       roleboard_image_generation_concurrency:
         type: integer
         min: 1
@@ -486,7 +462,7 @@ models:
         type: integer
         min: 1
         max: 10
-      storyboard_keyframe_generation_concurrency:
+      clip_storyboard_keyframe_generation_concurrency:
         type: integer
         min: 1
         max: 10
@@ -508,10 +484,6 @@ models:
         type: string
       prompt_template:
         type: string
-      roleboard_generation_concurrency:
-        type: integer
-        min: 1
-        max: 5
       roleboard_image_generation_concurrency:
         type: integer
         min: 1

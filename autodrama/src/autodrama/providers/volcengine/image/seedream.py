@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -128,7 +128,7 @@ class VolcengineSeedreamImageProvider:
 
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
         node_name = str(metadata.get("node_name") or "")
-        if node_name == "roleboard_generation":
+        if node_name == "roleboard_image_generation":
             return (
                 self.settings.options.get("seedream_roleboard_size")
                 or self.settings.options.get("roleboard_size")
@@ -137,7 +137,7 @@ class VolcengineSeedreamImageProvider:
             return self.settings.options.get("seedream_prop_size") or self.settings.options.get("prop_size")
         if node_name == "layout_image_generation":
             return self.settings.options.get("seedream_layout_size") or self.settings.options.get("layout_size")
-        if node_name == "design_key_vision_image":
+        if node_name == "key_vision_image_generation":
             return self.settings.options.get("seedream_key_vision_size") or self.settings.options.get("key_vision_size")
         return None
 

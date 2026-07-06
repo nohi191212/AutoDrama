@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -20,8 +20,8 @@ KEY_VISION_ASSET_ID = "key_vision_original"
 KEY_VISION_NAME = "主视觉原图"
 
 DIRECTOR_NODE_NAMES = [
-    "design_key_vision_prompt",
-    "design_key_vision_image",
+    "key_vision_prompt",
+    "key_vision_image_generation",
 ]
 
 
@@ -65,26 +65,26 @@ class DirectorNodeBase:
         path = self.layout.node_output_path(project_dir, DesignKeyVisionPromptNode.name)
         if not path.exists():
             raise FileNotFoundError(
-                "design_key_vision_prompt output is missing; run pregen --only design_key_vision_prompt first"
+                "key_vision_prompt output is missing; run pregen --only key_vision_prompt first"
             )
         output = KeyVisionPromptOutput.model_validate_json(path.read_text(encoding="utf-8"))
         output.prompt = str(output.prompt or "").strip()
         if not output.prompt:
-            raise ValueError("design_key_vision_prompt output has an empty prompt")
+            raise ValueError("key_vision_prompt output has an empty prompt")
         return output
 
 
 class DesignKeyVisionPromptNode(DirectorNodeBase):
-    name = "design_key_vision_prompt"
+    name = "key_vision_prompt"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.text_provider()
         self.logger.info(
-            "node=design_key_vision_prompt provider=%s model=%s",
+            "node=key_vision_prompt provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.director_service.design_key_vision_prompt(state, provider)
+        output = await self.director_service.key_vision_prompt(state, provider)
         path = self.repo.save_node_output(project_dir, self.name, output)
         state.metadata["key_vision_prompt"] = output.model_dump(mode="json")
         state.metadata["key_vision_prompt_path"] = self.layout.project_relative(project_dir, path)
@@ -95,12 +95,12 @@ class DesignKeyVisionPromptNode(DirectorNodeBase):
 
 
 class DesignKeyVisionImageNode(DirectorNodeBase):
-    name = "design_key_vision_image"
+    name = "key_vision_image_generation"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("key_vision", node_name=self.name)
         self.logger.info(
-            "node=design_key_vision_image provider=%s model=%s",
+            "node=key_vision_image_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )

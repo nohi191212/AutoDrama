@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from typing import Any
@@ -49,13 +49,13 @@ class DirectorService:
     def visual_style_prompt(state: ProjectState) -> str:
         return str(state.metadata.get("visual_style_prompt") or "").strip()
 
-    async def design_key_vision_prompt(
+    async def key_vision_prompt(
         self,
         state: ProjectState,
         provider: TextLLM,
     ) -> KeyVisionPromptOutput:
         prompt = self.prompts.render(
-            "design_key_vision_prompt",
+            "key_vision_prompt",
             title=state.title,
             raw_script=state.raw_script,
             visual_style_prompt=self.visual_style_prompt(state) or "（未单独配置。请以原始故事和项目约束为准。）",
@@ -66,13 +66,13 @@ class DirectorService:
             KeyVisionPromptOutput,
             temperature=0.45,
             metadata={
-                "node_name": "design_key_vision_prompt",
+                "node_name": "key_vision_prompt",
                 "project_id": state.project_id,
             },
         )
         output.prompt = str(output.prompt or "").strip()
         if not output.prompt:
-            raise ValueError("design_key_vision_prompt returned an empty prompt")
+            raise ValueError("key_vision_prompt returned an empty prompt")
         return output
 
 

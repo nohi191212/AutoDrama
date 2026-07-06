@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -80,7 +80,7 @@ class RoleSubjectNodeBase:
             url=asset_url,
             metadata={
                 "asset_type": "roleboard",
-                "reference_source": "roleboard_generation",
+                "reference_source": "roleboard_image_generation",
                 "role_id": role.id,
                 "role_name": role.name,
                 "appearance_id": appearance.id,
@@ -110,7 +110,7 @@ class RoleSubjectNodeBase:
             url=str(asset_url) if asset_url else None,
             metadata={
                 "asset_type": "key_vision",
-                "reference_source": "design_key_vision_image",
+                "reference_source": "key_vision_image_generation",
                 "reference_role": "style_world_reference",
                 "reference_for": reference_for,
                 "name": name,

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -30,7 +30,7 @@ def main() -> None:
             asset_type="clip_start_frame",
             asset_id="episode_001_clip_001_start_frame",
             asset_path="assets/images/storyboard_keyframes/episode_001_clip_001_start_frame.png",
-            source_node="storyboard_keyframe_generation",
+            source_node="clip_storyboard_keyframe_generation",
             label="start frame",
             order=1,
         ),
@@ -39,7 +39,7 @@ def main() -> None:
             asset_type="clip_end_frame",
             asset_id="episode_001_clip_001_end_frame",
             asset_path="assets/images/storyboard_keyframes/episode_001_clip_001_end_frame.png",
-            source_node="storyboard_keyframe_generation",
+            source_node="clip_storyboard_keyframe_generation",
             label="end frame",
             order=2,
         ),
@@ -48,7 +48,7 @@ def main() -> None:
             asset_type="storyboard",
             asset_id="episode_001_clip_001_storyboard",
             asset_path="assets/images/storyboards/episode_001_clip_001_storyboard.png",
-            source_node="storyboard_generation",
+            source_node="clip_storyboard_image_generation",
             label="storyboard",
             order=3,
         ),
@@ -57,7 +57,7 @@ def main() -> None:
             asset_type="roleboard",
             asset_id="role_linzhou_base",
             asset_path="assets/images/roles/role_linzhou_base.png",
-            source_node="roleboard_generation",
+            source_node="roleboard_image_generation",
             label="roleboard",
             role_id="role_linzhou",
             order=4,

@@ -1,4 +1,4 @@
-# 首尾帧与 Clip 视频生成代码规划
+﻿# 首尾帧与 Clip 视频生成代码规划
 
 ## 目标
 
@@ -8,7 +8,7 @@
 
 - `clip_segment` 负责从 episode 文本中切出剧情片段，每个 clip 建议 8 到 15 秒。
 - episode 的总时长只作为文本切分的节奏参考，不再作为 clip 数量的硬性校验依据。
-- `storyboard_generation` 之后新增首尾帧生成节点。
+- `clip_storyboard_image_generation` 之后新增首尾帧生成节点。
 - 每个 clip 仍然生成十二宫格 storyboard，但十二宫格不是 1 秒 1 格。
 - clip 内部可以包含多个真实镜头切换，统一称为 `Camera Shot`。
 - 首个 clip 使用自己的首帧和尾帧生成视频。
@@ -86,17 +86,17 @@
 - `max_clip_seconds`
 - `duration_reference_note`
 
-## 三、调整 `storyboard_prompt`
+## 三、调整 `clip_storyboard_prompt`
 
 涉及文件：
 
-- `autodrama/src/autodrama/prompts/storyboard_prompt.md`
+- `autodrama/src/autodrama/prompts/clip_storyboard_prompt.md`
 - `autodrama/src/autodrama/workflows/nodes/storyboard_asset_nodes.py`
 - `autodrama/src/autodrama/core/schemas.py`
 
 ### 输入输出关系
 
-`storyboard_prompt` 应严格跟随 `clip_segment`。
+`clip_storyboard_prompt` 应严格跟随 `clip_segment`。
 
 规则：
 
@@ -127,7 +127,7 @@
 
 ### 校验调整
 
-`validate_storyboard_prompt_output()` 建议校验：
+`validate_clip_storyboard_prompt_output()` 建议校验：
 
 - 输出 clip 数量等于输入 `clip_segments` 数量。
 - 每个 `clip_id` 能对应输入 segment。
@@ -135,26 +135,26 @@
 - 每个 clip 至少有一个 `Camera Shot`。
 - 推荐每个 clip 包含 2 到 4 个 `Camera Shot`，但不要用硬错误阻断所有异常情况。
 
-## 四、新增 `storyboard_keyframe_generation` 节点
+## 四、新增 `clip_storyboard_keyframe_generation` 节点
 
 推荐新增节点名：
 
 ```text
-storyboard_keyframe_generation
+clip_storyboard_keyframe_generation
 ```
 
 原因：
 
-- 它紧跟 `storyboard_generation`。
+- 它紧跟 `clip_storyboard_image_generation`。
 - 它的输入依据是十二宫格 storyboard。
 - 它的职责是从 storyboard 中提取视频首尾关键帧。
 
 新流程顺序：
 
 ```text
-storyboard_prompt
--> storyboard_generation
--> storyboard_keyframe_generation
+clip_storyboard_prompt
+-> clip_storyboard_image_generation
+-> clip_storyboard_keyframe_generation
 -> shot_manifest_generation
 -> shot_video_generation
 ```
@@ -183,7 +183,7 @@ storyboard_prompt
 建议配置：
 
 ```yaml
-storyboard_keyframe_generation:
+clip_storyboard_keyframe_generation:
   provider: ...
   model: ...
   prompt_template: toapi_gpt_image_2
@@ -235,7 +235,7 @@ storyboard_keyframe_generation:
 - `autodrama/src/autodrama/workflows/nodes/storyboard_asset_nodes.py`
 - `autodrama/src/autodrama/core/schemas.py`
 
-`shot_manifest_generation` 需要依赖新增的 `storyboard_keyframe_generation` 输出。
+`shot_manifest_generation` 需要依赖新增的 `clip_storyboard_keyframe_generation` 输出。
 
 ### 首个 clip 的输入
 
@@ -399,7 +399,7 @@ prop
 - episode 时长只用于文本切分参考。
 - storyboard 十二宫格不是 1 秒 1 格。
 - 红色斜杠表示 clip 内部真实切镜。
-- `storyboard_keyframe_generation` 必须在 `shot_manifest_generation` 前运行。
+- `clip_storyboard_keyframe_generation` 必须在 `shot_manifest_generation` 前运行。
 - 非首个 clip 的首帧来自上一 clip 的尾帧。
 
 ## 九、兼容和失败策略
@@ -422,12 +422,12 @@ prop
 
 ### 流程失败策略
 
-新流程中，`shot_manifest_generation` 应要求存在 `storyboard_keyframe_generation` 输出。
+新流程中，`shot_manifest_generation` 应要求存在 `clip_storyboard_keyframe_generation` 输出。
 
 如果缺失，应明确报错：
 
 ```text
-storyboard_keyframe_generation output is missing; run pregen through storyboard_keyframe_generation first
+clip_storyboard_keyframe_generation output is missing; run pregen through clip_storyboard_keyframe_generation first
 ```
 
 不建议静默退回旧逻辑，否则很难判断视频为什么没有首尾帧连续性。
@@ -450,7 +450,7 @@ D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama
 | --- | --- |
 | `scripts/smoke/clip_segment_contract_smoke.py` | 8 到 15 秒提示生效，且不再按 episode 秒数强制 clip 数 |
 | `scripts/smoke/storyboard_clip_schema_smoke.py` | `clips` / `clip_id` schema 兼容旧 `shots` |
-| `scripts/smoke/storyboard_keyframe_generation_contract_smoke.py` | 首 clip 生成 start 和 end，后续 clip 只生成 end |
+| `scripts/smoke/clip_clip_storyboard_keyframe_generation_contract_smoke.py` | 首 clip 生成 start 和 end，后续 clip 只生成 end |
 | `scripts/smoke/shot_video_manifest_contract_smoke.py` | 视频输入顺序为 start、end、storyboard、roleboard 等 |
 | `scripts/smoke/non_first_clip_hard_cut_prompt_smoke.py` | 非首 clip prompt 包含从上一尾帧开始并立刻硬切到当前 P01 的约束 |
 
@@ -460,9 +460,9 @@ D:/miniforge3/envs/autodrama/python.exe -m compileall autodrama/src/autodrama
 
 ```text
 clip_segment
--> storyboard_prompt
--> storyboard_generation
--> storyboard_keyframe_generation
+-> clip_storyboard_prompt
+-> clip_storyboard_image_generation
+-> clip_storyboard_keyframe_generation
 -> shot_manifest_generation
 ```
 
@@ -479,8 +479,8 @@ clip_segment
 
 1. 修改 `clip_segment` 校验，先解决当前 clip 数量报错。
 2. 修改 `clip_segment` prompt，把 12 到 15 秒改为 8 到 15 秒，并明确 episode 时长只是参考。
-3. 修改 `storyboard_prompt`，让 storyboard 严格跟随 `clip_segment`，不再重新计算 clip 数。
-4. 新增 `storyboard_keyframe_generation` schema、prompt、node 和配置。
+3. 修改 `clip_storyboard_prompt`，让 storyboard 严格跟随 `clip_segment`，不再重新计算 clip 数。
+4. 新增 `clip_storyboard_keyframe_generation` schema、prompt、node 和配置。
 5. 修改 `shot_manifest_generation`，把首尾帧接入 `shot_video_inputs`。
 6. 修改 `shot_video_generation` prompt，区分首个 clip 和非首个 clip。
 7. 修改 provider 输入映射和 reference image 顺序校验。

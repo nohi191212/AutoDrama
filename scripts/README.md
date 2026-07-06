@@ -1,4 +1,4 @@
-# Scripts
+﻿# Scripts
 
 These Bash scripts wrap common AutoDrama commands.
 
@@ -124,4 +124,4 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/video_prompt_preview_smoke
 
 If `--project` is omitted, the script creates a temporary fake project under `.tmp/smoke/` and previews that fake storyboard prompt.
 
-Role visual provider probes should target `roleboard_generation`; the old role-style Seedance probes were removed with the retired role intro-video chain.
+Role visual provider probes should target `roleboard_image_generation`; the old role-style Seedance probes were removed with the retired role intro-video chain.

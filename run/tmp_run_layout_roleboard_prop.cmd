@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
@@ -100,10 +100,10 @@ echo   Re-run key visual, roleboard, prop, and layout pregen nodes in order.
 echo   --force is enabled by default.
 echo.
 echo Node sequence:
-echo   design_key_vision_prompt
-echo   design_key_vision_image
+echo   key_vision_prompt
+echo   key_vision_image_generation
 echo   roleboard_prompt
-echo   roleboard_generation
+echo   roleboard_image_generation
 echo   prop_extract
 echo   prop_prompt
 echo   prop_image_generation
@@ -120,13 +120,13 @@ echo   --fake                    Use fake providers.
 echo   --force                   Force rerun. This is the default.
 echo   --no-force                Do not force rerun completed nodes.
 echo   --skip-key-vision         Keep existing key visual prompt/image.
-echo   --skip-roleboard          Skip roleboard_prompt and roleboard_generation.
+echo   --skip-roleboard          Skip roleboard_prompt and roleboard_image_generation.
 echo   --skip-prop               Skip prop_extract, prop_prompt, and prop_image_generation.
 echo   --skip-layout             Skip layout_extract, layout_prompt, and layout_image_generation.
 echo.
 echo Notes:
 echo   --episodes is passed only to nodes that support episode filtering:
-echo   roleboard_prompt, roleboard_generation, prop_prompt, prop_image_generation,
+echo   roleboard_prompt, roleboard_image_generation, prop_prompt, prop_image_generation,
 echo   and layout_image_generation. Extract/project-level prompt nodes run without --episodes.
 goto end
 
@@ -161,11 +161,11 @@ if "%FORCE%"=="--force" (
 )
 
 if not "%RUN_KEY_VISION%"=="1" goto skip_key_vision
-echo [autodrama] node: design_key_vision_prompt
-call "%START_CMD%" --config "%CONFIG%" %PROJECT_ARGS% --only design_key_vision_prompt %PROVIDER_ARGS% %FORCE%
+echo [autodrama] node: key_vision_prompt
+call "%START_CMD%" --config "%CONFIG%" %PROJECT_ARGS% --only key_vision_prompt %PROVIDER_ARGS% %FORCE%
 if errorlevel 1 goto fail
-echo [autodrama] node: design_key_vision_image
-call "%START_CMD%" --config "%CONFIG%" %PROJECT_ARGS% --only design_key_vision_image %PROVIDER_ARGS% %FORCE%
+echo [autodrama] node: key_vision_image_generation
+call "%START_CMD%" --config "%CONFIG%" %PROJECT_ARGS% --only key_vision_image_generation %PROVIDER_ARGS% %FORCE%
 if errorlevel 1 goto fail
 goto after_key_vision
 
@@ -177,8 +177,8 @@ if not "%RUN_ROLEBOARD%"=="1" goto skip_roleboard
 echo [autodrama] node: roleboard_prompt
 call "%START_CMD%" --config "%CONFIG%" %PROJECT_ARGS% --only roleboard_prompt %EPISODE_ARGS% %PROVIDER_ARGS% %FORCE%
 if errorlevel 1 goto fail
-echo [autodrama] node: roleboard_generation
-call "%START_CMD%" --config "%CONFIG%" %PROJECT_ARGS% --only roleboard_generation %EPISODE_ARGS% %PROVIDER_ARGS% %FORCE%
+echo [autodrama] node: roleboard_image_generation
+call "%START_CMD%" --config "%CONFIG%" %PROJECT_ARGS% --only roleboard_image_generation %EPISODE_ARGS% %PROVIDER_ARGS% %FORCE%
 if errorlevel 1 goto fail
 goto after_roleboard
 

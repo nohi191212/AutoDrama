@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sys
 from inspect import signature
@@ -10,15 +10,13 @@ SRC = ROOT / "autodrama" / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from autodrama.config import load_settings
 from autodrama.workflows.pregen import PREGEN_NODES, PREGEN_ONLY_NODES, PregenWorkflow
 from autodrama.workflows.runner import node_is_completed
 
 
+
 REMOVED_FROM_DEFAULT = [
-    "role_extract",
-    "role_episode_key_audit",
-    "role_duplicate_audit",
-    "ambient_entity_extract",
     "role_subject_video_generation",
     "role_subject_element_generation",
     "role_voice_select",
@@ -26,9 +24,9 @@ REMOVED_FROM_DEFAULT = [
 
 INSERTED_AFTER_ROLEBOARD = [
     "prop_extract",
-    "prop_dedupe",
+    "prop_finalize",
     "layout_extract",
-    "layout_dedupe_review",
+    "layout_finalize",
     "clip_segment",
     "prop_prompt",
     "prop_image_generation",
@@ -38,9 +36,9 @@ INSERTED_AFTER_ROLEBOARD = [
 
 STORYBOARD_CHAIN = [
     "clip_prompt",
-    "storyboard_prompt",
-    "storyboard_generation",
-    "storyboard_keyframe_generation",
+    "clip_storyboard_prompt",
+    "clip_storyboard_image_generation",
+    "clip_storyboard_keyframe_generation",
     "clip_manifest_generation",
 ]
 
@@ -51,12 +49,39 @@ SCRIPT_DEFAULT_PREFIX = [
 
 SCRIPT_KEY_VISION_CHAIN = [
     "script_novel_extract",
+    "key_vision_prompt",
+    "key_vision_image_generation",
+]
+
+OLD_PREGEN_NODE_NAMES = {
     "design_key_vision_prompt",
     "design_key_vision_image",
-]
+    "roleboard_generation",
+    "prop_dedupe",
+    "layout_dedupe_review",
+    "storyboard_prompt",
+    "storyboard_generation",
+    "storyboard_keyframe_generation",
+    "storyboard_sheet_generation",
+}
 
 
 def main() -> None:
+    leaked_default = sorted(OLD_PREGEN_NODE_NAMES.intersection(PREGEN_NODES))
+    if leaked_default:
+        raise AssertionError(f"old pregen node name(s) leaked into PREGEN_NODES: {leaked_default}")
+    leaked_available = sorted(OLD_PREGEN_NODE_NAMES.intersection(PREGEN_ONLY_NODES))
+    if leaked_available:
+        raise AssertionError(f"old pregen node name(s) leaked into PREGEN_ONLY_NODES: {leaked_available}")
+    for config_name in ("config.yaml", "config.yaml.example"):
+        path = ROOT / config_name
+        if not path.exists():
+            continue
+        settings = load_settings(path)
+        leaked_config = sorted(OLD_PREGEN_NODE_NAMES.intersection(settings.nodes))
+        if leaked_config:
+            raise AssertionError(f"{config_name} contains old node key(s): {leaked_config}")
+
     if PREGEN_NODES[: len(SCRIPT_DEFAULT_PREFIX)] != SCRIPT_DEFAULT_PREFIX:
         raise AssertionError(
             f"default script chain should start with {SCRIPT_DEFAULT_PREFIX!r}, "
@@ -72,6 +97,7 @@ def main() -> None:
     if not node_is_completed("script_detail_expand", ["script_novel"]):
         raise AssertionError("script_novel completion should satisfy script_detail_expand")
 
+
     for node_name in REMOVED_FROM_DEFAULT:
         if node_name in PREGEN_NODES:
             raise AssertionError(f"{node_name} should not be in the default pregen chain")
@@ -83,12 +109,12 @@ def main() -> None:
     actual_role_chain = PREGEN_NODES[role_index : role_index + len(expected_role_chain)]
     if actual_role_chain != expected_role_chain:
         raise AssertionError(f"default role chain should be {expected_role_chain!r}, got {actual_role_chain!r}")
-    roleboard_index = PREGEN_NODES.index("roleboard_generation")
+    roleboard_index = PREGEN_NODES.index("roleboard_image_generation")
     expected_slice = INSERTED_AFTER_ROLEBOARD
     actual_slice = PREGEN_NODES[roleboard_index + 1 : roleboard_index + 1 + len(expected_slice)]
     if actual_slice != expected_slice:
         raise AssertionError(
-            "prop/layout nodes must run immediately after roleboard_generation; "
+            "prop/layout nodes must run immediately after roleboard_image_generation; "
             f"got {actual_slice!r}"
         )
 
@@ -104,7 +130,7 @@ def main() -> None:
             f"got {actual_script_key_vision_chain!r}"
         )
 
-    layout_dedupe_index = PREGEN_NODES.index("layout_dedupe_review")
+    layout_dedupe_index = PREGEN_NODES.index("layout_finalize")
     if PREGEN_NODES[layout_dedupe_index + 1] != "clip_segment":
         raise AssertionError("clip_segment should run immediately after prop/layout extraction and dedupe")
     if PREGEN_NODES[layout_dedupe_index + 2] != "prop_prompt":

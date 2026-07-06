@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import asyncio
@@ -27,8 +27,8 @@ from autodrama.workflows.selection import (
 
 SCRIPT_IMPORT_BOOTSTRAP_NODES = {"script_import", "script_detail_expand", "script_outline", "script_novel"}
 SCRIPT_IMPORT_INVALIDATE_ON_PRESERVE = {
-    "design_key_vision_prompt",
-    "design_key_vision_image",
+    "key_vision_prompt",
+    "key_vision_image_generation",
     "script_novel_extract",
     *GENERATION_NODES,
 }
@@ -123,9 +123,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--episode",
         dest="episodes",
         help=(
-            "Supported with pregen --only clip_segment, roleboard_prompt, roleboard_generation, "
-            "role_subject_video_generation, role_subject_element_generation, clip_prompt, storyboard_prompt, "
-            "storyboard_generation, storyboard_keyframe_generation, clip_manifest_generation, "
+            "Supported with pregen --only clip_segment, roleboard_prompt, roleboard_image_generation, "
+            "role_subject_video_generation, role_subject_element_generation, clip_prompt, clip_storyboard_prompt, "
+            "clip_storyboard_image_generation, clip_storyboard_keyframe_generation, clip_manifest_generation, "
             "role_voice_select, "
             "prop_prompt, prop_image_generation, or layout_image_generation "
             "(legacy aliases: prop_design, prop_generation)."
@@ -145,7 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--clip",
         dest="clips",
         help=(
-            "Comma-separated clip indexes or ids to regenerate with pregen --only storyboard_keyframe_generation. "
+            "Comma-separated clip indexes or ids to regenerate with pregen --only clip_storyboard_keyframe_generation. "
             "Supports ranges such as 2,5-7 or ids such as episode_001_clip_005."
         ),
     )

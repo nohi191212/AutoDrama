@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -690,8 +690,8 @@ class ClipSegmentNode(ScriptNodeBase):
         return result
 
     def role_index_context(self, project_dir: Path, state: ProjectState, episode_key: str) -> str:
-        payload = self._load_node_payload(project_dir, "role_extract")
-        items = self._list_items_index(payload.get("roles"), episode_key)
+        payload = self._load_node_payload(project_dir, "role_finalize")
+        items = self._list_items_index(payload.get("final_roles"), episode_key)
         if not items:
             items = self._state_assets_index(state.roles, episode_key, intro_attr="intro")
         return self._format_asset_index(items)
@@ -700,7 +700,7 @@ class ClipSegmentNode(ScriptNodeBase):
         items = self._state_assets_index(state.props, episode_key, intro_attr="desc")
         if items:
             return self._format_asset_index(items)
-        payload = self._load_first_node_payload(project_dir, ("prop_dedupe", "prop_extract"))
+        payload = self._load_first_node_payload(project_dir, ("prop_finalize", "prop_extract"))
         items = self._list_items_index(payload.get("props"), episode_key)
         if not items:
             items = self._mapping_index(payload.get("generated_prop_intro"))
@@ -710,7 +710,7 @@ class ClipSegmentNode(ScriptNodeBase):
         items = self._state_assets_index(state.layouts, episode_key, intro_attr="desc")
         if items:
             return self._format_asset_index(items)
-        payload = self._load_first_node_payload(project_dir, ("layout_dedupe_review", "layout_extract"))
+        payload = self._load_first_node_payload(project_dir, ("layout_finalize", "layout_extract"))
         items = self._list_items_index(payload.get("layouts"), episode_key)
         if not items:
             items = self._mapping_index(payload.get("generated_layout_intro"))

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -749,9 +749,9 @@ class RoleboardPromptNode(RoleNodeBase):
 
     def _roleboard_image_binding_context(self) -> dict[str, str]:
         try:
-            provider = self.router.image("role", node_name="roleboard_generation")
+            provider = self.router.image("role", node_name="roleboard_image_generation")
         except Exception as exc:
-            self.logger.warning("roleboard_prompt could not inspect roleboard_generation provider: %s", exc)
+            self.logger.warning("roleboard_prompt could not inspect roleboard_image_generation provider: %s", exc)
             return {"provider_name": "", "model_name": "", "model_id": ""}
         binding = getattr(provider, "model_binding", None)
         model_name = str(getattr(provider, "model", "") or "")
@@ -759,7 +759,7 @@ class RoleboardPromptNode(RoleNodeBase):
         purpose_model_resolver = getattr(provider, "_purpose_model", None)
         if callable(purpose_model_resolver):
             try:
-                purpose_model = purpose_model_resolver({"node_name": "roleboard_generation"})
+                purpose_model = purpose_model_resolver({"node_name": "roleboard_image_generation"})
             except Exception:
                 purpose_model = None
         if purpose_model:
@@ -771,7 +771,7 @@ class RoleboardPromptNode(RoleNodeBase):
         }
 
     def _roleboard_prompt_template_candidates(self, image_context: dict[str, str]) -> list[str]:
-        params = self._node_params("roleboard_generation")
+        params = self._node_params("roleboard_image_generation")
         configured = str(
             params.get("roleboard_prompt_template")
             or params.get("prompt_template")

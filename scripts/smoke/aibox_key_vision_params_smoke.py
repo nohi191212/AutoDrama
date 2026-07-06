@@ -1,12 +1,17 @@
+﻿import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "autodrama" / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 from autodrama.config import load_settings
 from autodrama.providers.router import ProviderRouter
 
-settings = load_settings(Path("config.yaml"))
-node = settings.nodes["design_key_vision_image"]
+settings = load_settings(ROOT / "config.yaml")
+node = settings.nodes["key_vision_image_generation"]
 if node.model != "aibox:gpt-image-2-guan":
-    raise SystemExit(f"nodes.design_key_vision_image.model={node.model!r}, expected 'aibox:gpt-image-2-guan'")
+    raise SystemExit(f"nodes.key_vision_image_generation.model={node.model!r}, expected 'aibox:gpt-image-2-guan'")
 
 expected_params = {
     "size": "3840x2160",
@@ -15,10 +20,10 @@ expected_params = {
 for key, value in expected_params.items():
     actual = node.params.get(key)
     if actual != value:
-        raise SystemExit(f"nodes.design_key_vision_image.params.{key}={actual!r}, expected {value!r}")
+        raise SystemExit(f"nodes.key_vision_image_generation.params.{key}={actual!r}, expected {value!r}")
 
-provider = ProviderRouter(settings).image("key_vision", node_name="design_key_vision_image")
-metadata = provider._metadata({"node_name": "design_key_vision_image", "asset_id": "smoke"})
+provider = ProviderRouter(settings).image("key_vision", node_name="key_vision_image_generation")
+metadata = provider._metadata({"node_name": "key_vision_image_generation", "asset_id": "smoke"})
 payload = provider.build_payload("smoke prompt", metadata=metadata)
 if payload.get("model") != "gpt-image-2-guan":
     raise SystemExit(f"payload.model={payload.get('model')!r}, expected 'gpt-image-2-guan'")

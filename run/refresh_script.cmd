@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 setlocal enabledelayedexpansion
 
 set "ROOT_DIR=%~dp0.."
@@ -180,10 +180,10 @@ if not "%RUN_EXTRACT%"=="" (
 )
 
 if not "%RUN_STORYBOARD%"=="" (
-  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only storyboard_prompt %EPISODE_ARGS% %PROVIDER_ARGS%
+  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only clip_storyboard_prompt %EPISODE_ARGS% %PROVIDER_ARGS%
   set "EXIT_CODE=!ERRORLEVEL!"
   if not "!EXIT_CODE!"=="0" goto fail
-  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only storyboard_generation %EPISODE_ARGS% %PROVIDER_ARGS%
+  "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only clip_storyboard_image_generation %EPISODE_ARGS% %PROVIDER_ARGS%
   set "EXIT_CODE=!ERRORLEVEL!"
   if not "!EXIT_CODE!"=="0" goto fail
   "%AUTODRAMA_PYTHON%" -m autodrama.cli run pregen --config "%CONFIG%" %PROJECT_ARGS% --only clip_manifest_generation %EPISODE_ARGS% %PROVIDER_ARGS%

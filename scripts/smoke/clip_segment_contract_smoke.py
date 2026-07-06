@@ -116,10 +116,10 @@ def main() -> None:
     index_dir = tmp_dir / "clip_segment_index_context"
     node_dir = index_dir / "assets" / "json" / "nodes"
     node_dir.mkdir(parents=True, exist_ok=True)
-    (node_dir / "role_extract.json").write_text(
+    (node_dir / "role_finalize.json").write_text(
         json.dumps(
             {
-                "roles": [
+                "final_roles": [
                     {"name": "林舟", "episode_keys": ["episode_001"], "brief": "被陷害后反击的职场青年。"},
                     {"name": "赵启", "episode_keys": ["episode_002"], "brief": "施压的反派。"},
                 ]

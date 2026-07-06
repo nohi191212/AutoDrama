@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 
@@ -69,7 +69,7 @@ class AssetService:
             },
         )
 
-    async def prop_dedupe(
+    async def prop_finalize(
         self,
         state: ProjectState,
         provider: TextLLM,
@@ -77,14 +77,14 @@ class AssetService:
         generated_prop_intro: dict[str, str],
     ) -> PropDedupeOutput:
         prompt = self.prompts.render(
-            "prop_dedupe",
+            "prop_finalize",
             generated_prop_intro=self.format_json(generated_prop_intro),
         )
         return await provider.generate_json(
             prompt,
             PropDedupeOutput,
             temperature=0.3,
-            metadata={"node_name": "prop_dedupe", "project_id": state.project_id},
+            metadata={"node_name": "prop_finalize", "project_id": state.project_id},
         )
 
     async def prop_prompt(
@@ -182,7 +182,7 @@ class AssetService:
             metadata={"node_name": "layout_prompt", "project_id": state.project_id},
         )
 
-    async def layout_dedupe_review(
+    async def layout_finalize(
         self,
         state: ProjectState,
         provider: TextLLM,
@@ -190,14 +190,14 @@ class AssetService:
         generated_layout_intro: dict[str, str],
     ) -> LayoutDedupeReviewOutput:
         prompt = self.prompts.render(
-            "layout_dedupe_review",
+            "layout_finalize",
             generated_layout_intro=self.format_json(generated_layout_intro),
         )
         return await provider.generate_json(
             prompt,
             LayoutDedupeReviewOutput,
             temperature=0.3,
-            metadata={"node_name": "layout_dedupe_review", "project_id": state.project_id},
+            metadata={"node_name": "layout_finalize", "project_id": state.project_id},
         )
 
     async def bgm_design(

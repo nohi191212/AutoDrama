@@ -1,4 +1,4 @@
-app:
+﻿app:
   env: dev
   default_quality_preset: cheap
   enable_human_review: false
@@ -27,13 +27,13 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
-  design_key_vision_prompt:
+  key_vision_prompt:
     model: rightcode:gpt-5.5
     params:
       reasoning_effort: xhigh
       temperature: 0.45
       response_format: json_object
-  design_key_vision_image:
+  key_vision_image_generation:
     model: aibox:gpt-image-2-guan
     params:
       size: 2160x3840
@@ -73,30 +73,30 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
-  roleboard_generation:
+  roleboard_image_generation:
     model: aibox:gpt-image-2-guan
     params:
       roleboard_prompt_template: roleboard_prompt/toapi_gpt_image_2
-      roleboard_generation_concurrency: 3
+      roleboard_image_generation_concurrency: 3
       size: 3840x2160
-  storyboard_prompt:
+  clip_storyboard_prompt:
     model: rightcode:gpt-5.5
     params:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
-  # Image binding used internally by pregen node storyboard_generation for the 12-panel storyboard sheet.
-  storyboard_sheet_generation:
+  # Image binding used internally by pregen node clip_storyboard_image_generation for the 12-panel storyboard sheet.
+  clip_storyboard_image_generation:
     model: aibox:gpt-image-2-guan
     params:
-      storyboard_generation_concurrency: 4
+      clip_storyboard_image_generation_concurrency: 4
       size: 2048x2048
-  storyboard_keyframe_generation:
+  clip_storyboard_keyframe_generation:
     model: aibox:gpt-image-2-guan
     params:
       prompt_template: toapi_gpt_image_2
       size: 1088x1920
-      concurrency: 4
+      clip_storyboard_keyframe_generation_concurrency: 4
       output_dir: assets/storyboard_keyframes
   prop_extract:
     model: rightcode:gpt-5.5
@@ -104,7 +104,7 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
-  prop_dedupe:
+  prop_finalize:
     model: rightcode:gpt-5.5
     params:
       reasoning_effort: xhigh
@@ -134,7 +134,7 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
-  layout_dedupe_review:
+  layout_finalize:
     model: rightcode:gpt-5.5
     params:
       reasoning_effort: xhigh
@@ -287,14 +287,14 @@ budget:
   max_text_calls: 200
 
 generation:
-  # Used by roleboard_generation as Image 2 style references.
+  # Used by roleboard_image_generation as Image 2 style references.
   roleboard_style_reference_dir: ./.assets/sample
-  # Global visual style prompt used by design_key_vision_prompt.
+  # Global visual style prompt used by key_vision_prompt.
   visual_style_prompt: >
     保持国漫CG/动画电影短剧主视觉质感，人物、场景、道具和光影属于同一美术体系；
     画面有明确戏剧冲突、纵深层次和电影镜头感，色彩克制但记忆点清晰。
     避免真人照片质感、可读文字、字幕、水印、logo和无关装饰。
-  # Unified role image style prompt used by roleboard_prompt and roleboard_generation.
+  # Unified role image style prompt used by roleboard_prompt and roleboard_image_generation.
   roleboard_style_prompt: >
     使用参考图片作为统一人物美术风格、材质质感、光影、色彩和画面气质参考。
     人物保持国漫CG/动画电影角色质感，明显非真人摄影，脸部为风格化CG美术表现，
@@ -370,19 +370,19 @@ providers:
       text: gpt-5.5
       storyboard: gpt-5.5
       image: gpt-image-2
-      # Used by design_key_vision_image for the global key visual original.
+      # Used by key_vision_image_generation for the global key visual original.
       key_vision: gpt-image-2
-      # Used by roleboard_generation for role identity boards.
+      # Used by roleboard_image_generation for role identity boards.
       roleboard: gpt-image-2-vip
     options:
       text_response_format: true
       reasoning_effort: xhigh
       storyboard_reasoning_effort: xhigh
       size: 1024x1024
-      # Used by roleboard_generation for role identity boards.
+      # Used by roleboard_image_generation for role identity boards.
       roleboard_size: 3840x2160
       roleboard_quality: high
-      # Used by design_key_vision_image for the global key visual original.
+      # Used by key_vision_image_generation for the global key visual original.
       key_vision_size: 1024x1536
       key_vision_quality: high
       n: 1
@@ -418,9 +418,9 @@ providers:
     api_key_env: TOAPI_API_KEY
     models:
       image: gpt-image-2
-      # Used by design_key_vision_image for the global key visual original.
+      # Used by key_vision_image_generation for the global key visual original.
       key_vision: gpt-image-2
-      # Used by roleboard_generation for the final 16:9 role identity board.
+      # Used by roleboard_image_generation for the final 16:9 role identity board.
       roleboard: gpt-image-2
     options:
       resolution: 4K

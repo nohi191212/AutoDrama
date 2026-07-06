@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 from pathlib import Path
@@ -38,11 +38,11 @@ from autodrama.services.script_service import ScriptService
 from autodrama.workflows.runner import WorkflowNode
 
 STATIC_ASSET_NODE_NAMES = [
-    "roleboard_generation",
+    "roleboard_image_generation",
     "prop_extract",
-    "prop_dedupe",
+    "prop_finalize",
     "layout_extract",
-    "layout_dedupe_review",
+    "layout_finalize",
     "prop_prompt",
     "prop_image_generation",
     "layout_prompt",
@@ -427,15 +427,15 @@ class StaticAssetNodeBase:
         path = self.layout.node_output_path(project_dir, "layout_extract")
         if not path.exists():
             raise FileNotFoundError(
-                "layout_extract output is missing; run pregen --only layout_extract before layout_dedupe_review"
+                "layout_extract output is missing; run pregen --only layout_extract before layout_finalize"
             )
         return LayoutExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
     def load_layout_dedupe_output(self, project_dir: Path) -> LayoutDedupeReviewOutput:
-        path = self.layout.node_output_path(project_dir, "layout_dedupe_review")
+        path = self.layout.node_output_path(project_dir, "layout_finalize")
         if not path.exists():
             raise FileNotFoundError(
-                "layout_dedupe_review output is missing; run pregen --only layout_dedupe_review before layout_prompt"
+                "layout_finalize output is missing; run pregen --only layout_finalize before layout_prompt"
             )
         return LayoutDedupeReviewOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
@@ -465,12 +465,12 @@ class StaticAssetNodeBase:
         }
 
     def existing_generated_layout_intro(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
-        for node_name in ("layout_dedupe_review", "layout_extract"):
+        for node_name in ("layout_finalize", "layout_extract"):
             path = self.layout.node_output_path(project_dir, node_name)
             if not path.exists():
                 continue
             try:
-                if node_name == "layout_dedupe_review":
+                if node_name == "layout_finalize":
                     output = LayoutDedupeReviewOutput.model_validate_json(path.read_text(encoding="utf-8"))
                 else:
                     output = LayoutExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
@@ -562,12 +562,12 @@ class StaticAssetNodeBase:
         }
 
     def existing_generated_prop_intro(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
-        for node_name in ("prop_dedupe", "prop_extract"):
+        for node_name in ("prop_finalize", "prop_extract"):
             path = self.layout.node_output_path(project_dir, node_name)
             if not path.exists():
                 continue
             try:
-                if node_name == "prop_dedupe":
+                if node_name == "prop_finalize":
                     output = PropDedupeOutput.model_validate_json(path.read_text(encoding="utf-8"))
                 else:
                     output = PropExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
@@ -583,15 +583,15 @@ class StaticAssetNodeBase:
         path = self.layout.node_output_path(project_dir, "prop_extract")
         if not path.exists():
             raise FileNotFoundError(
-                "prop_extract output is missing; run pregen --only prop_extract before prop_dedupe"
+                "prop_extract output is missing; run pregen --only prop_extract before prop_finalize"
             )
         return PropExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
-    def load_prop_dedupe_output(self, project_dir: Path) -> PropDedupeOutput:
-        path = self.layout.node_output_path(project_dir, "prop_dedupe")
+    def load_prop_finalize_output(self, project_dir: Path) -> PropDedupeOutput:
+        path = self.layout.node_output_path(project_dir, "prop_finalize")
         if not path.exists():
             raise FileNotFoundError(
-                "prop_dedupe output is missing; run pregen --only prop_dedupe before prop_prompt"
+                "prop_finalize output is missing; run pregen --only prop_finalize before prop_prompt"
             )
         return PropDedupeOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
@@ -642,7 +642,7 @@ class StaticAssetNodeBase:
                 prompt=prompt,
                 status=status,
                 episode_keys=list(expected_episode_keys),
-                source="prop_prompt" if prompt else "prop_dedupe",
+                source="prop_prompt" if prompt else "prop_finalize",
                 design_path=existing.design_path if existing else None,
                 asset_id=existing.asset_id if existing else None,
                 asset_path=existing.asset_path if existing else None,
@@ -660,7 +660,7 @@ class StaticAssetNodeBase:
                     prompt=prompt,
                     node_name="prop_prompt",
                     extra_payload={
-                        "source_prop_dedupe_path": "assets/json/nodes/prop_dedupe.json",
+                        "source_prop_finalize_path": "assets/json/nodes/prop_finalize.json",
                     },
                 )
             props[prop_id] = prop
@@ -895,8 +895,8 @@ class StaticAssetNodeBase:
 class RoleAppearanceGenerationBase(StaticAssetNodeBase):
     ROLEBOARD_STYLE_PROMPT_HEADER = "统一角色身份板风格要求（优先级高于角色身份板 prompt 中的画面风格）"
     STYLE_REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
-    DEFAULT_ROLEBOARD_GENERATION_CONCURRENCY = 1
-    MAX_ROLEBOARD_GENERATION_CONCURRENCY = 5
+    DEFAULT_ROLEBOARD_IMAGE_GENERATION_CONCURRENCY = 1
+    MAX_ROLEBOARD_IMAGE_GENERATION_CONCURRENCY = 5
 
     def roleboard_style_reference_refs(self) -> list[AssetRef]:
         ref_dir = self.repo.settings.generation.roleboard_style_reference_dir
@@ -1007,8 +1007,8 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             return [
                 generated_by_asset_id[asset_id]
                 for asset_id in ordered_asset_ids
-            if asset_id in generated_by_asset_id
-        ]
+                if asset_id in generated_by_asset_id
+            ]
         return generated
 
     @staticmethod
@@ -1035,7 +1035,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             name = state.metadata.get("key_vision_name") or "主视觉原图"
         if not asset_path and not asset_url:
             raise FileNotFoundError(
-                "roleboard_generation requires the key vision image; run design_key_vision_image first"
+                "roleboard_image_generation requires the key vision image; run key_vision_image_generation first"
             )
 
         path: str | None = None
@@ -1044,7 +1044,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             if existing is None:
                 if not asset_url:
                     raise FileNotFoundError(
-                        f"roleboard_generation key vision image is missing: {asset_path}"
+                        f"roleboard_image_generation key vision image is missing: {asset_path}"
                     )
             else:
                 path = str(project_dir / existing)
@@ -1124,7 +1124,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         )
 
     @classmethod
-    def roleboard_generation_concurrency(cls, provider: object) -> int:
+    def roleboard_image_generation_concurrency(cls, provider: object) -> int:
         binding = getattr(provider, "model_binding", None)
         params = getattr(binding, "params", {}) if binding is not None else {}
         settings = getattr(provider, "settings", None)
@@ -1134,7 +1134,6 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             if not isinstance(source, dict):
                 continue
             for name in (
-                "roleboard_generation_concurrency",
                 "roleboard_image_generation_concurrency",
                 "image_generation_concurrency",
                 "max_concurrent_images",
@@ -1147,7 +1146,6 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 break
         if value is None:
             for name in (
-                "roleboard_generation_concurrency",
                 "roleboard_image_generation_concurrency",
                 "image_generation_concurrency",
                 "max_concurrent_images",
@@ -1157,12 +1155,12 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 if value is not None:
                     break
         if value is None:
-            value = cls.DEFAULT_ROLEBOARD_GENERATION_CONCURRENCY
+            value = cls.DEFAULT_ROLEBOARD_IMAGE_GENERATION_CONCURRENCY
         try:
             resolved = int(value)
         except (TypeError, ValueError):
-            resolved = cls.DEFAULT_ROLEBOARD_GENERATION_CONCURRENCY
-        return max(1, min(cls.MAX_ROLEBOARD_GENERATION_CONCURRENCY, resolved))
+            resolved = cls.DEFAULT_ROLEBOARD_IMAGE_GENERATION_CONCURRENCY
+        return max(1, min(cls.MAX_ROLEBOARD_IMAGE_GENERATION_CONCURRENCY, resolved))
 
     async def generate_roleboard_asset(
         self,
@@ -1286,7 +1284,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         if not getattr(provider, "supports_reference_images", False):
             raise ValueError(f"{node_name} requires an image provider that supports reference images")
 
-        concurrency = self.roleboard_generation_concurrency(provider)
+        concurrency = self.roleboard_image_generation_concurrency(provider)
         self.logger.info(
             "%s total_images=%d concurrency=%d",
             node_name,
@@ -1322,12 +1320,12 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
 
 
 class RoleboardGenerationNode(RoleAppearanceGenerationBase):
-    name = "roleboard_generation"
+    name = "roleboard_image_generation"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("role", node_name=self.name)
         self.logger.info(
-            "node=roleboard_generation provider=%s model=%s",
+            "node=roleboard_image_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
@@ -1336,11 +1334,11 @@ class RoleboardGenerationNode(RoleAppearanceGenerationBase):
         appearances = self.target_role_appearances(state, active_episode_keys, label=self.name)
         if active_episode_keys:
             self.logger.info(
-                "node=roleboard_generation episode-scoped rerun episodes=%s target_images=%d",
+                "node=roleboard_image_generation episode-scoped rerun episodes=%s target_images=%d",
                 ",".join(active_episode_keys),
                 len(appearances),
             )
-        self.logger.info("node=roleboard_generation total_images=%d", len(appearances))
+        self.logger.info("node=roleboard_image_generation total_images=%d", len(appearances))
         generated_by_asset_id = self.load_existing_generation_items(project_dir, self.name, active_episode_keys)
         generated = await self.generate_roleboard_assets(
             provider=provider,
@@ -1395,7 +1393,7 @@ class PropExtractNode(StaticAssetNodeBase):
 
 
 class PropDedupeNode(StaticAssetNodeBase):
-    name = "prop_dedupe"
+    name = "prop_finalize"
     MAX_CONVERGENCE_ITERATIONS = 8
 
     @staticmethod
@@ -1411,7 +1409,7 @@ class PropDedupeNode(StaticAssetNodeBase):
         provider = self.router.text("prop", node_name=self.name)
         extract_provider = self.router.text("prop", node_name=PropExtractNode.name)
         self.logger.info(
-            "node=prop_dedupe provider=%s model=%s",
+            "node=prop_finalize provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
@@ -1423,7 +1421,7 @@ class PropDedupeNode(StaticAssetNodeBase):
         max_iterations = self._max_iterations(provider)
 
         for iteration in range(1, max_iterations + 1):
-            output = await self.asset_service.prop_dedupe(
+            output = await self.asset_service.prop_finalize(
                 state,
                 provider,
                 generated_prop_intro=current_intro,
@@ -1432,7 +1430,7 @@ class PropDedupeNode(StaticAssetNodeBase):
             state.budget.used_text_calls += 1
             final_output = output
             self.logger.info(
-                "node=prop_dedupe iteration=%d props=%d",
+                "node=prop_finalize iteration=%d props=%d",
                 iteration,
                 len(output.generated_prop_intro),
             )
@@ -1442,16 +1440,16 @@ class PropDedupeNode(StaticAssetNodeBase):
                 and self.canonical_prop_intro(previous_review_intro)
                 == self.canonical_prop_intro(output.generated_prop_intro)
             ):
-                output.merge_notes.append(f"prop_extract/prop_dedupe converged after {iteration} dedupe pass(es).")
+                output.merge_notes.append(f"prop_extract/prop_finalize converged after {iteration} dedupe pass(es).")
                 break
 
             previous_review_intro = dict(output.generated_prop_intro)
             if iteration >= max_iterations:
                 output.merge_notes.append(
-                    f"prop_extract/prop_dedupe reached max_iterations={max_iterations}; using latest dedupe output."
+                    f"prop_extract/prop_finalize reached max_iterations={max_iterations}; using latest dedupe output."
                 )
                 self.logger.warning(
-                    "node=prop_dedupe reached max_iterations=%d without exact convergence",
+                    "node=prop_finalize reached max_iterations=%d without exact convergence",
                     max_iterations,
                 )
                 break
@@ -1468,7 +1466,7 @@ class PropDedupeNode(StaticAssetNodeBase):
             current_intro = extract_output.generated_prop_intro
 
         if final_output is None:
-            raise ValueError("prop_dedupe produced no output")
+            raise ValueError("prop_finalize produced no output")
         owner_role_props = {
             prop_id: prop
             for prop_id, prop in state.props.items()
@@ -1533,10 +1531,10 @@ class PropPromptNode(StaticAssetNodeBase):
             getattr(provider, "model", "-"),
             prompt_template,
         )
-        dedupe_output = self.load_prop_dedupe_output(project_dir)
+        dedupe_output = self.load_prop_finalize_output(project_dir)
         generated_prop_intro = self.normalize_generated_prop_intro(dedupe_output.generated_prop_intro)
         if not generated_prop_intro:
-            raise ValueError("prop_prompt requires non-empty generated_prop_intro from prop_dedupe")
+            raise ValueError("prop_prompt requires non-empty generated_prop_intro from prop_finalize")
         output = await self.asset_service.prop_prompt(
             state,
             provider,
@@ -1796,7 +1794,7 @@ class LayoutExtractNode(StaticAssetNodeBase):
 
 
 class LayoutDedupeReviewNode(StaticAssetNodeBase):
-    name = "layout_dedupe_review"
+    name = "layout_finalize"
     MAX_CONVERGENCE_ITERATIONS = 8
 
     @staticmethod
@@ -1812,7 +1810,7 @@ class LayoutDedupeReviewNode(StaticAssetNodeBase):
         provider = self.router.text("layout", node_name=self.name)
         extract_provider = self.router.text("layout", node_name=LayoutExtractNode.name)
         self.logger.info(
-            "node=layout_dedupe_review provider=%s model=%s",
+            "node=layout_finalize provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
@@ -1824,7 +1822,7 @@ class LayoutDedupeReviewNode(StaticAssetNodeBase):
         max_iterations = self._max_iterations(provider)
 
         for iteration in range(1, max_iterations + 1):
-            output = await self.asset_service.layout_dedupe_review(
+            output = await self.asset_service.layout_finalize(
                 state,
                 provider,
                 generated_layout_intro=current_intro,
@@ -1833,7 +1831,7 @@ class LayoutDedupeReviewNode(StaticAssetNodeBase):
             state.budget.used_text_calls += 1
             final_output = output
             self.logger.info(
-                "node=layout_dedupe_review iteration=%d layouts=%d",
+                "node=layout_finalize iteration=%d layouts=%d",
                 iteration,
                 len(output.generated_layout_intro),
             )
@@ -1843,16 +1841,16 @@ class LayoutDedupeReviewNode(StaticAssetNodeBase):
                 and self.canonical_layout_intro(previous_review_intro)
                 == self.canonical_layout_intro(output.generated_layout_intro)
             ):
-                output.merge_notes.append(f"layout_extract/layout_dedupe_review converged after {iteration} dedupe pass(es).")
+                output.merge_notes.append(f"layout_extract/layout_finalize converged after {iteration} dedupe pass(es).")
                 break
 
             previous_review_intro = dict(output.generated_layout_intro)
             if iteration >= max_iterations:
                 output.merge_notes.append(
-                    f"layout_extract/layout_dedupe_review reached max_iterations={max_iterations}; using latest dedupe output."
+                    f"layout_extract/layout_finalize reached max_iterations={max_iterations}; using latest dedupe output."
                 )
                 self.logger.warning(
-                    "node=layout_dedupe_review reached max_iterations=%d without exact convergence",
+                    "node=layout_finalize reached max_iterations=%d without exact convergence",
                     max_iterations,
                 )
                 break
@@ -1869,7 +1867,7 @@ class LayoutDedupeReviewNode(StaticAssetNodeBase):
             current_intro = extract_output.generated_layout_intro
 
         if final_output is None:
-            raise ValueError("layout_dedupe_review produced no output")
+            raise ValueError("layout_finalize produced no output")
         state.layouts = self.layouts_from_intro_and_prompts(
             final_output.generated_layout_intro,
             {},
@@ -1929,7 +1927,7 @@ class LayoutPromptNode(StaticAssetNodeBase):
         dedupe_output = self.load_layout_dedupe_output(project_dir)
         generated_layout_intro = self.normalize_generated_layout_intro(dedupe_output.generated_layout_intro)
         if not generated_layout_intro:
-            raise ValueError("layout_prompt requires non-empty generated_layout_intro from layout_dedupe_review")
+            raise ValueError("layout_prompt requires non-empty generated_layout_intro from layout_finalize")
         output = await self.asset_service.layout_prompt(
             state,
             provider,

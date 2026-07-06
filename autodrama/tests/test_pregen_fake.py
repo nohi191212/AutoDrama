@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 from pathlib import Path
 
 from autodrama.config import load_settings
@@ -60,16 +60,15 @@ def test_pregen_runs_integrated_role_pipeline(tmp_path: Path) -> None:
     assert state.roles["role_林舟"].appearances["base"].asset_path
     assert state.props
     assert state.layouts
-    assert (project_dir / "assets" / "json" / "nodes" / "role_extract.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "role_finalize.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "roleboard_prompt.json").exists()
-    assert (project_dir / "assets" / "json" / "nodes" / "roleboard_generation.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "roleboard_image_generation.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "prop_extract.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "prop_image_generation.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "layout_extract.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "layout_image_generation.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "clip_prompt.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "clip_manifest_generation.json").exists()
-    assert not (project_dir / "assets" / "json" / "nodes" / "ambient_entity_extract.json").exists()
     assert not (project_dir / "assets" / "json" / "nodes" / "role_subject_video_generation.json").exists()
     assert not (project_dir / "assets" / "json" / "nodes" / "role_subject_element_generation.json").exists()
     assert not (project_dir / "assets" / "json" / "nodes" / "role_voice_select.json").exists()

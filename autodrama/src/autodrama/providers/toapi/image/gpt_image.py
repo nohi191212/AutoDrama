@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 from io import BytesIO
@@ -164,23 +164,23 @@ class ToAPIImageProvider:
 
     def _purpose_model(self, metadata: dict[str, Any]) -> str | None:
         node_name = self._purpose_node_name(metadata)
-        if node_name == "storyboard_sheet_generation":
+        if node_name == "clip_storyboard_image_generation":
             return self.settings.models.get("storyboard")
-        if node_name == "roleboard_generation":
+        if node_name == "roleboard_image_generation":
             return self.settings.models.get("roleboard")
         if node_name in {"prop_generation", "prop_image_generation"}:
             return self.settings.models.get("prop")
         if node_name == "layout_image_generation":
             return self.settings.models.get("layout")
-        if node_name == "design_key_vision_image":
+        if node_name == "key_vision_image_generation":
             return self.settings.models.get("key_vision")
         return None
 
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
         node_name = self._purpose_node_name(metadata)
-        if node_name == "storyboard_sheet_generation":
+        if node_name == "clip_storyboard_image_generation":
             return self.settings.options.get("storyboard_size") or "16:9"
-        if node_name == "roleboard_generation":
+        if node_name == "roleboard_image_generation":
             return (
                 self.settings.options.get("roleboard_size")
                 or "16:9"
@@ -189,21 +189,21 @@ class ToAPIImageProvider:
             return self.settings.options.get("prop_size") or "1:1"
         if node_name == "layout_image_generation":
             return self.settings.options.get("layout_size") or "16:9"
-        if node_name == "design_key_vision_image":
+        if node_name == "key_vision_image_generation":
             return self.settings.options.get("key_vision_size") or "9:16"
         return None
 
     def _purpose_resolution(self, metadata: dict[str, Any]) -> object | None:
         node_name = self._purpose_node_name(metadata)
-        if node_name == "storyboard_sheet_generation":
+        if node_name == "clip_storyboard_image_generation":
             return self.settings.options.get("storyboard_resolution")
-        if node_name == "roleboard_generation":
+        if node_name == "roleboard_image_generation":
             return self.settings.options.get("roleboard_resolution")
         if node_name in {"prop_generation", "prop_image_generation"}:
             return self.settings.options.get("prop_resolution")
         if node_name == "layout_image_generation":
             return self.settings.options.get("layout_resolution")
-        if node_name == "design_key_vision_image":
+        if node_name == "key_vision_image_generation":
             return self.settings.options.get("key_vision_resolution")
         return None
 

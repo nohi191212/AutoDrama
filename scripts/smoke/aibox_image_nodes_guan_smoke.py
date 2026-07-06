@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -11,10 +11,10 @@ if str(SRC) not in sys.path:
 from autodrama.config import load_settings
 
 IMAGE_NODES = {
-    "design_key_vision_image",
-    "roleboard_generation",
-    "storyboard_sheet_generation",
-    "storyboard_keyframe_generation",
+    "key_vision_image_generation",
+    "roleboard_image_generation",
+    "clip_storyboard_image_generation",
+    "clip_storyboard_keyframe_generation",
     "prop_image_generation",
     "layout_image_generation",
 }

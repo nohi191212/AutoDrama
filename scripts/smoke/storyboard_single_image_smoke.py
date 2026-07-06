@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import asyncio
@@ -38,7 +38,7 @@ DEFAULT_CONFIG = "huyao.yaml" if (ROOT_DIR / "huyao.yaml").exists() else "config
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate exactly one storyboard sheet image from an existing storyboard_prompt clip. "
+            "Generate exactly one storyboard sheet image from an existing clip_storyboard_prompt clip. "
             "Outputs prompt, refs, payload, response JSON, and the generated image under .tmp by default."
         )
     )
@@ -121,9 +121,9 @@ def find_clip(
                 matches.append((episode, clip))
     if not matches:
         suffix = f" in {episode_key}" if episode_key else ""
-        raise ValueError(f"storyboard_prompt clip not found: {clip_id}{suffix}")
+        raise ValueError(f"clip_storyboard_prompt clip not found: {clip_id}{suffix}")
     if len(matches) > 1:
-        raise ValueError(f"storyboard_prompt clip id is ambiguous: {clip_id}")
+        raise ValueError(f"clip_storyboard_prompt clip id is ambiguous: {clip_id}")
     return matches[0]
 
 
@@ -270,7 +270,7 @@ async def main_async(args: argparse.Namespace) -> int:
     node = make_storyboard_node(repo, router)
 
     prompt_output = StoryboardPromptOutput.model_validate_json(
-        repo.layout.node_output_path(project_dir, "storyboard_prompt").read_text(encoding="utf-8")
+        repo.layout.node_output_path(project_dir, "clip_storyboard_prompt").read_text(encoding="utf-8")
     )
     episode, clip = find_clip(prompt_output, clip_id=args.clip_id, episode_key=args.episode_key)
 

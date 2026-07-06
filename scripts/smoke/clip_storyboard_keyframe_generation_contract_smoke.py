@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sys
 from pathlib import Path
@@ -94,8 +94,8 @@ def main() -> None:
 
     tmp_dir = ROOT / ".tmp"
     tmp_dir.mkdir(exist_ok=True)
-    (tmp_dir / "storyboard_keyframe_generation_contract_smoke.ok").write_text("ok\n", encoding="utf-8")
-    print("storyboard_keyframe_generation_contract_smoke: ok")
+    (tmp_dir / "clip_storyboard_keyframe_generation_contract_smoke.ok").write_text("ok\n", encoding="utf-8")
+    print("clip_storyboard_keyframe_generation_contract_smoke: ok")
 
 
 if __name__ == "__main__":

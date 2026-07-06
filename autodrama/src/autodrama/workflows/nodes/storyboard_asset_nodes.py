@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -40,12 +40,12 @@ from autodrama.workflows.runner import WorkflowNode
 
 STORYBOARD_ASSET_NODE_NAMES = [
     "clip_prompt",
-    "storyboard_prompt",
-    "storyboard_generation",
-    "storyboard_keyframe_generation",
+    "clip_storyboard_prompt",
+    "clip_storyboard_image_generation",
+    "clip_storyboard_keyframe_generation",
     "clip_manifest_generation",
 ]
-STORYBOARD_IMAGE_PROVIDER_NODE_NAME = "storyboard_sheet_generation"
+STORYBOARD_IMAGE_PROVIDER_NODE_NAME = "clip_storyboard_image_generation"
 
 
 class StoryboardAssetNodeBase(StaticAssetNodeBase):
@@ -114,7 +114,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
     def final_aspect_ratio(self) -> str:
         for node_name, param_name in (
             ("clip_video_generation", "ratio"),
-            ("storyboard_sheet_generation", "size"),
+            ("clip_storyboard_image_generation", "size"),
         ):
             node_settings = self.repo.settings.nodes.get(node_name)
             if node_settings is None:
@@ -184,7 +184,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
             project_dir,
             refs,
             episode_keys,
-            label="storyboard_prompt.episode_stories",
+            label="clip_storyboard_prompt.episode_stories",
             allow_missing=True,
         )
 
@@ -241,23 +241,23 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
             for prop in state.props.values()
         ]
 
-    def load_storyboard_prompt_output(self, project_dir: Path) -> StoryboardPromptOutput:
-        path = self.layout.node_output_path(project_dir, "storyboard_prompt")
+    def load_clip_storyboard_prompt_output(self, project_dir: Path) -> StoryboardPromptOutput:
+        path = self.layout.node_output_path(project_dir, "clip_storyboard_prompt")
         if not path.exists():
-            raise FileNotFoundError("storyboard_prompt output is missing; run pregen through storyboard_prompt first")
+            raise FileNotFoundError("clip_storyboard_prompt output is missing; run pregen through clip_storyboard_prompt first")
         return StoryboardPromptOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
     def load_storyboard_sheet_output(self, project_dir: Path) -> StoryboardSheetGenerationOutput:
-        path = self.layout.node_output_path(project_dir, "storyboard_generation")
+        path = self.layout.node_output_path(project_dir, "clip_storyboard_image_generation")
         if not path.exists():
-            raise FileNotFoundError("storyboard_generation output is missing; run pregen through storyboard_generation first")
+            raise FileNotFoundError("clip_storyboard_image_generation output is missing; run pregen through clip_storyboard_image_generation first")
         return StoryboardSheetGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
     def load_storyboard_keyframe_output(self, project_dir: Path) -> StoryboardKeyframeGenerationOutput:
-        path = self.layout.node_output_path(project_dir, "storyboard_keyframe_generation")
+        path = self.layout.node_output_path(project_dir, "clip_storyboard_keyframe_generation")
         if not path.exists():
             raise FileNotFoundError(
-                "storyboard_keyframe_generation output is missing; run pregen through storyboard_keyframe_generation first"
+                "clip_storyboard_keyframe_generation output is missing; run pregen through clip_storyboard_keyframe_generation first"
             )
         return StoryboardKeyframeGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
@@ -313,7 +313,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 continue
             expected[episode_key] = dict(clips)  # type: ignore[arg-type]
         if missing:
-            raise ValueError(f"storyboard_prompt missing clip_segment episode(s): {', '.join(missing)}")
+            raise ValueError(f"clip_storyboard_prompt missing clip_segment episode(s): {', '.join(missing)}")
         return expected
 
     @staticmethod
@@ -347,7 +347,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
         matches = re.findall(r"Camera\s+Shot\s+\d+", clip.video_prompt or "", flags=re.IGNORECASE)
         return len(set(match.lower() for match in matches))
 
-    def validate_storyboard_prompt_output(
+    def validate_clip_storyboard_prompt_output(
         self,
         output: StoryboardPromptOutput,
         *,
@@ -363,11 +363,11 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
             episode.episode_key = str(episode.episode_key or "").strip()
             if episode.episode_key not in expected:
                 raise ValueError(
-                    f"storyboard_prompt returned unexpected episode_key {episode.episode_key!r}; "
+                    f"clip_storyboard_prompt returned unexpected episode_key {episode.episode_key!r}; "
                     f"expected one of {', '.join(expected_episode_keys)}"
                 )
             if episode.episode_key in seen:
-                raise ValueError(f"storyboard_prompt returned duplicate episode_key: {episode.episode_key}")
+                raise ValueError(f"clip_storyboard_prompt returned duplicate episode_key: {episode.episode_key}")
             seen.add(episode.episode_key)
             source_clips = expected_clip_segments.get(episode.episode_key) or {}
             ordered_source_keys = self._sorted_clip_segment_keys(source_clips)
@@ -383,7 +383,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 )
             if require_complete and len(episode.clips) != len(ordered_source_keys):
                 raise ValueError(
-                    f"storyboard_prompt must return {len(ordered_source_keys)} clips for {episode.episode_key}; "
+                    f"clip_storyboard_prompt must return {len(ordered_source_keys)} clips for {episode.episode_key}; "
                     f"got {len(episode.clips)}"
                 )
             validated_clips: list[StoryboardPromptClip] = []
@@ -393,23 +393,23 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 expected_item = expected_by_id.get(candidate_clip_id)
                 if expected_item is None:
                     raise ValueError(
-                        f"storyboard_prompt returned clip_id outside requested batch for {episode.episode_key}: "
+                        f"clip_storyboard_prompt returned clip_id outside requested batch for {episode.episode_key}: "
                         f"got {clip.clip_id or '-'}; expected one of {', '.join(expected_by_id) or '-'}"
                     )
                 source_key, expected_index = expected_item
                 expected_clip_id = self.clip_id_for_episode_index(episode.episode_key, expected_index)
                 clip.clip_id = expected_clip_id
                 if clip.clip_id in seen_clips:
-                    raise ValueError(f"storyboard_prompt returned duplicate clip_id: {clip.clip_id}")
+                    raise ValueError(f"clip_storyboard_prompt returned duplicate clip_id: {clip.clip_id}")
                 seen_clips.add(clip.clip_id)
                 returned_clip_ids.add(clip.clip_id)
                 try:
                     clip.duration_seconds = float(clip.duration_seconds)
                 except (TypeError, ValueError) as exc:
-                    raise ValueError(f"storyboard_prompt invalid duration_seconds for {clip.clip_id}") from exc
+                    raise ValueError(f"clip_storyboard_prompt invalid duration_seconds for {clip.clip_id}") from exc
                 if not 8 <= clip.duration_seconds <= 15 and getattr(self, "logger", None) is not None:
                     self.logger.warning(
-                        "storyboard_prompt duration_seconds for %s is outside 8-15s guidance: %s",
+                        "clip_storyboard_prompt duration_seconds for %s is outside 8-15s guidance: %s",
                         clip.clip_id,
                         clip.duration_seconds,
                     )
@@ -417,10 +417,10 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 clip.layout_ids = self._dedupe_nonempty_texts(clip.layout_ids)
                 clip.prop_ids = self._dedupe_nonempty_texts(clip.prop_ids)
                 if not clip.layout_ids:
-                    raise ValueError(f"storyboard_prompt layout_ids is empty for {clip.clip_id}")
+                    raise ValueError(f"clip_storyboard_prompt layout_ids is empty for {clip.clip_id}")
                 clip.video_prompt = sanitize_video_prompt_text(str(clip.video_prompt or "").strip())
                 if not clip.video_prompt:
-                    raise ValueError(f"storyboard_prompt returned empty video_prompt for {clip.clip_id}")
+                    raise ValueError(f"clip_storyboard_prompt returned empty video_prompt for {clip.clip_id}")
                 source_clip = source_clips[source_key]
                 source_text = self._clip_segment_text(source_clip)
                 if not clip.clip_text:
@@ -435,15 +435,15 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 missing_panels = sorted(required_panels.difference(panel_refs))
                 if missing_panels:
                     raise ValueError(
-                        f"storyboard_prompt panel_plan for {clip.clip_id} must cover P01-P12; "
+                        f"clip_storyboard_prompt panel_plan for {clip.clip_id} must cover P01-P12; "
                         f"missing {', '.join(missing_panels)}"
                     )
                 camera_shot_count = self._camera_shot_count(clip)
                 if camera_shot_count < 1:
-                    raise ValueError(f"storyboard_prompt {clip.clip_id} must include at least one Camera Shot")
+                    raise ValueError(f"clip_storyboard_prompt {clip.clip_id} must include at least one Camera Shot")
                 if not 2 <= camera_shot_count <= 4 and getattr(self, "logger", None) is not None:
                     self.logger.warning(
-                        "storyboard_prompt %s has %d Camera Shot(s); recommended range is 2-4",
+                        "clip_storyboard_prompt %s has %d Camera Shot(s); recommended range is 2-4",
                         clip.clip_id,
                         camera_shot_count,
                     )
@@ -452,14 +452,14 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 missing_clip_ids = sorted(set(expected_by_id).difference(returned_clip_ids))
                 if missing_clip_ids:
                     raise ValueError(
-                        f"storyboard_prompt missing clip(s) for {episode.episode_key}: "
+                        f"clip_storyboard_prompt missing clip(s) for {episode.episode_key}: "
                         f"{', '.join(missing_clip_ids)}"
                     )
             episode.clips = validated_clips
             cleaned.append(episode)
         missing = [episode_key for episode_key in expected_episode_keys if episode_key not in seen]
         if missing and require_complete:
-            raise ValueError(f"storyboard_prompt missing episode(s): {', '.join(missing)}")
+            raise ValueError(f"clip_storyboard_prompt missing episode(s): {', '.join(missing)}")
         for episode_key in missing:
             cleaned.append(StoryboardPromptEpisode(episode_key=episode_key, clips=[]))
         return StoryboardPromptOutput(
@@ -469,7 +469,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
             ]
         )
 
-    def merge_storyboard_prompt_outputs(
+    def merge_clip_storyboard_prompt_outputs(
         self,
         *,
         project_dir: Path,
@@ -477,14 +477,14 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
         target_episode_keys: list[str],
         all_episode_keys: list[str],
     ) -> StoryboardPromptOutput:
-        existing_path = self.layout.node_output_path(project_dir, "storyboard_prompt")
+        existing_path = self.layout.node_output_path(project_dir, "clip_storyboard_prompt")
         by_episode: dict[str, StoryboardPromptEpisode] = {}
         if existing_path.exists():
             try:
                 existing = StoryboardPromptOutput.model_validate_json(existing_path.read_text(encoding="utf-8"))
                 by_episode.update({episode.episode_key: episode for episode in existing.storyboards})
             except Exception as exc:
-                self.logger.warning("storyboard_prompt ignored invalid existing output %s: %s", existing_path, exc)
+                self.logger.warning("clip_storyboard_prompt ignored invalid existing output %s: %s", existing_path, exc)
         by_episode.update({episode.episode_key: episode for episode in generated_output.storyboards})
         ordered_keys = all_episode_keys if not set(target_episode_keys).difference(all_episode_keys) else target_episode_keys
         return StoryboardPromptOutput(
@@ -617,7 +617,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 "标注颜色系统：红色箭头=身体运动，蓝色箭头=摄影机运动，绿色标记=取景/构图笔记，橙色标记=灯光方向，紫色标记=情绪/声音/叙事强调，黑色文本=简短镜头笔记和面板标签。每个宫格底部文字说明带必须额外写一行颜色图例文字，按本格实际使用的颜色逐项说明箭头作用，例如“红=角色动作，蓝=镜头运动，绿=构图，橙=灯光，紫=情绪/声音，黑=镜头注记”。标注必须少量、清晰、服务制作，不要遮挡主体。",
                 "宫格之间有清晰分隔和留白，不得重叠、裁脸或压住人物肢体。允许很小的面板编号 01-12 和极短制作注释；不要生成字幕、对白气泡、水印、logo、文件名、项目名、资产 ID、二维码或大段可读文字。整张图底部再留一条全局颜色图例说明带，重复说明各色箭头的含义，方便一眼识别。",
                 "输入参考图优先级：角色外观以传入的人物身份板/角色板为准；场景空间以传入的场景图/场景三视图为准；如有道具参考图，道具以传入的道具设计图为准。禁止使用主视觉图/key_vision 作为参考或构图依据。",
-                "storyboard_generation 的输入由当前 storyboard_prompt 的 clip.video_prompt、对应角色身份板图、对应场景图和本固定 12 宫格故事板模板组成；不要参考主视觉图，不要新增剧情事实、角色、场景或道具。",
+                "clip_storyboard_image_generation 的输入由当前 clip_storyboard_prompt 的 clip.video_prompt、对应角色身份板图、对应场景图和本固定 12 宫格故事板模板组成；不要参考主视觉图，不要新增剧情事实、角色、场景或道具。",
                 "当前 clip 视频提示词：",
                 clip.video_prompt,
             ]
@@ -625,7 +625,7 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
 
 
 class StoryboardPromptNode(StoryboardAssetNodeBase):
-    name = "storyboard_prompt"
+    name = "clip_storyboard_prompt"
     MAX_CLIPS_PER_BATCH = 8
     DEFAULT_BATCH_CONCURRENCY = 3
     MAX_BATCH_CONCURRENCY = 8
@@ -645,8 +645,8 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             if not isinstance(source, dict):
                 continue
             for name in (
-                "storyboard_prompt_concurrency",
-                "storyboard_prompt_batch_concurrency",
+                "clip_storyboard_prompt_concurrency",
+                "clip_storyboard_prompt_batch_concurrency",
                 "text_generation_concurrency",
                 "max_concurrent_text_calls",
                 "concurrency",
@@ -658,8 +658,8 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
                 break
         if value is None:
             for name in (
-                "storyboard_prompt_concurrency",
-                "storyboard_prompt_batch_concurrency",
+                "clip_storyboard_prompt_concurrency",
+                "clip_storyboard_prompt_batch_concurrency",
                 "text_generation_concurrency",
                 "max_concurrent_text_calls",
                 "concurrency",
@@ -738,7 +738,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             project_dir,
             state.script.novel_full,
             window_keys,
-            label="storyboard_prompt.episode_window_full",
+            label="clip_storyboard_prompt.episode_window_full",
             allow_missing=True,
         )
         if episode_key not in contents:
@@ -873,7 +873,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             if str(item.get("prop_id") or "") in wanted
         ]
 
-    def _storyboard_prompt_reference_refs(
+    def _clip_storyboard_prompt_reference_refs(
         self,
         project_dir: Path,
         state: ProjectState,
@@ -918,7 +918,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
                         "role_name": role.name,
                         "appearance_id": appearance.id,
                         "appearance_name": appearance.name,
-                        "reference_for": "storyboard_prompt",
+                        "reference_for": "clip_storyboard_prompt",
                     },
                 ),
                 {
@@ -947,7 +947,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
                         "asset_type": "layout",
                         "layout_id": layout.id,
                         "layout_name": layout.name,
-                        "reference_for": "storyboard_prompt",
+                        "reference_for": "clip_storyboard_prompt",
                     },
                 ),
                 {
@@ -958,7 +958,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             )
         return refs, context
 
-    async def _generate_storyboard_prompt_batch(
+    async def _generate_clip_storyboard_prompt_batch(
         self,
         *,
         provider: object,
@@ -978,7 +978,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
         role_ids = self._role_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
         layout_ids = self._layout_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
         prop_ids = self._prop_ids_for_batch(state, episode_key=episode_key, batch_clips=batch_clips)
-        refs, reference_image_context = self._storyboard_prompt_reference_refs(
+        refs, reference_image_context = self._clip_storyboard_prompt_reference_refs(
             project_dir,
             state,
             role_ids=role_ids,
@@ -1009,13 +1009,13 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             )
         if missing_clip_prompts:
             raise ValueError(
-                "storyboard_prompt requires clip_prompt output for: "
+                "clip_storyboard_prompt requires clip_prompt output for: "
                 + ", ".join(missing_clip_prompts)
             )
         first_key = batch_keys[0] if batch_keys else "-"
         last_key = batch_keys[-1] if batch_keys else "-"
         self.logger.info(
-            "node=storyboard_prompt episode=%s batch=%d/%d clips=%s-%s refs=%d",
+            "node=clip_storyboard_prompt episode=%s batch=%d/%d clips=%s-%s refs=%d",
             episode_key,
             batch_index,
             batch_total,
@@ -1024,7 +1024,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             len(refs),
         )
         prompt = self.workflow.prompts.render(
-            "storyboard_prompt",
+            "clip_storyboard_prompt",
             title=state.title,
             episode_keys=episode_key,
             clip_batch=(
@@ -1073,7 +1073,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             refs=refs,
         )
         state.budget.used_text_calls += 1
-        batch_output = self.validate_storyboard_prompt_output(
+        batch_output = self.validate_clip_storyboard_prompt_output(
             batch_output,
             expected_episode_keys=[episode_key],
             expected_clip_segments={episode_key: batch_clips},
@@ -1084,7 +1084,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("storyboard", node_name=self.name)
         self.logger.info(
-            "node=storyboard_prompt provider=%s model=%s",
+            "node=clip_storyboard_prompt provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
@@ -1109,12 +1109,12 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
 
         concurrency = self.batch_generation_concurrency(provider)
         self.logger.info(
-            "node=storyboard_prompt batches=%d concurrency=%d",
+            "node=clip_storyboard_prompt batches=%d concurrency=%d",
             len(batch_specs),
             concurrency,
         )
         print(
-            f"[autodrama] storyboard_prompt batches={len(batch_specs)} concurrency={concurrency}",
+            f"[autodrama] clip_storyboard_prompt batches={len(batch_specs)} concurrency={concurrency}",
             flush=True,
         )
         semaphore = asyncio.Semaphore(concurrency)
@@ -1126,7 +1126,7 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             batch_clips: dict[str, object],
         ) -> tuple[str, int, list[StoryboardPromptClip]]:
             async with semaphore:
-                return await self._generate_storyboard_prompt_batch(
+                return await self._generate_clip_storyboard_prompt_batch(
                     provider=provider,
                     project_dir=project_dir,
                     state=state,
@@ -1191,11 +1191,11 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
                 )
             ]
             self.logger.warning(
-                "node=storyboard_prompt retrying missing clips as single-clip batches: %s",
+                "node=clip_storyboard_prompt retrying missing clips as single-clip batches: %s",
                 ", ".join(missing_labels),
             )
             print(
-                "[autodrama] storyboard_prompt retry missing clips as single-clip batches: "
+                "[autodrama] clip_storyboard_prompt retry missing clips as single-clip batches: "
                 + ", ".join(missing_labels),
                 flush=True,
             )
@@ -1237,12 +1237,12 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
                 for episode_key in target_episode_keys
             ]
         )
-        output = self.validate_storyboard_prompt_output(
+        output = self.validate_clip_storyboard_prompt_output(
             output,
             expected_episode_keys=target_episode_keys,
             expected_clip_segments=expected_clip_segments,
         )
-        merged = self.merge_storyboard_prompt_outputs(
+        merged = self.merge_clip_storyboard_prompt_outputs(
             project_dir=project_dir,
             generated_output=output,
             target_episode_keys=target_episode_keys,
@@ -1659,7 +1659,7 @@ class ClipPromptNode(StoryboardPromptNode):
 
 
 class StoryboardGenerationNode(StoryboardAssetNodeBase):
-    name = "storyboard_generation"
+    name = "clip_storyboard_image_generation"
     DEFAULT_CONCURRENCY = 5
     MAX_CONCURRENCY = 5
 
@@ -1716,8 +1716,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
             if not isinstance(source, dict):
                 continue
             for name in (
-                "storyboard_generation_concurrency",
-                "storyboard_sheet_generation_concurrency",
+                "clip_storyboard_image_generation_concurrency",
                 "image_generation_concurrency",
                 "max_concurrent_images",
             ):
@@ -1728,8 +1727,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
                 break
         if value is None:
             for name in (
-                "storyboard_generation_concurrency",
-                "storyboard_sheet_generation_concurrency",
+                "clip_storyboard_image_generation_concurrency",
                 "image_generation_concurrency",
                 "max_concurrent_images",
             ):
@@ -1747,13 +1745,13 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("storyboard", node_name=STORYBOARD_IMAGE_PROVIDER_NODE_NAME)
         self.logger.info(
-            "node=storyboard_generation provider=%s model=%s image_binding=%s",
+            "node=clip_storyboard_image_generation provider=%s model=%s image_binding=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
             STORYBOARD_IMAGE_PROVIDER_NODE_NAME,
         )
         self.workflow._hydrate_roles_from_design_files(project_dir, state)
-        prompt_output = self.load_storyboard_prompt_output(project_dir)
+        prompt_output = self.load_clip_storyboard_prompt_output(project_dir)
         target_episode_keys = self.target_episode_keys(state)
         target_set = set(target_episode_keys)
         target_storyboards = [
@@ -1763,7 +1761,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
         ]
         missing = sorted(target_set.difference(episode.episode_key for episode in target_storyboards))
         if missing:
-            raise ValueError(f"storyboard_generation missing storyboard_prompt episode(s): {', '.join(missing)}")
+            raise ValueError(f"clip_storyboard_image_generation missing clip_storyboard_prompt episode(s): {', '.join(missing)}")
 
         existing_by_clip = self.load_existing_output(project_dir)
         force_pregen = bool(getattr(self.workflow, "_force_pregen", False))
@@ -1803,7 +1801,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
                         continue
                     print(
                         (
-                            "[autodrama] storyboard_generation skip existing "
+                            "[autodrama] clip_storyboard_image_generation skip existing "
                             f"source={reuse_source} clip={clip.clip_id} asset_id={asset_id} path={existing_item.asset_path}"
                         ),
                         flush=True,
@@ -1817,13 +1815,13 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
         concurrency = self.generation_concurrency(provider)
         print(
             (
-                "[autodrama] storyboard_generation "
+                "[autodrama] clip_storyboard_image_generation "
                 f"concurrency={concurrency} pending={len(pending)} skipped_existing={skipped_existing}"
             ),
             flush=True,
         )
         self.logger.info(
-            "node=storyboard_generation total_images=%d pending_images=%d concurrency=%d",
+            "node=clip_storyboard_image_generation total_images=%d pending_images=%d concurrency=%d",
             sum(len(episode.clips) for episode in target_storyboards),
             len(pending),
             concurrency,
@@ -1849,7 +1847,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
         for (_episode, clip), result in zip(pending, results, strict=False):
             if isinstance(result, BaseException):
                 failures.append((clip, result))
-                self.logger.error("storyboard_generation failed clip=%s: %s", clip.clip_id, result)
+                self.logger.error("clip_storyboard_image_generation failed clip=%s: %s", clip.clip_id, result)
                 continue
             generated_items.append(result)
         for item in generated_items:
@@ -1872,7 +1870,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
             if len(failures) > 5:
                 preview = f"{preview}; ..."
             raise ProviderBadResponseError(
-                "storyboard_generation failed for "
+                "clip_storyboard_image_generation failed for "
                 f"{len(failures)}/{len(pending)} pending storyboard image(s); "
                 f"saved {len(generated_items)} successful new image(s) and "
                 f"{len(ordered_items)} total storyboard record(s). "
@@ -1949,7 +1947,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
         self.logger.info("%s generated successfully, saved in %s", asset_id, asset_path)
         print(
             (
-                "[autodrama] storyboard_generation generated "
+                "[autodrama] clip_storyboard_image_generation generated "
                 f"clip={shot.clip_id} asset_id={asset_id} path={asset_path}"
             ),
             flush=True,
@@ -1958,7 +1956,7 @@ class StoryboardGenerationNode(StoryboardAssetNodeBase):
 
 
 class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
-    name = "storyboard_keyframe_generation"
+    name = "clip_storyboard_keyframe_generation"
     DEFAULT_CONCURRENCY = 4
     MAX_CONCURRENCY = 10
 
@@ -2166,8 +2164,7 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             if not isinstance(source, dict):
                 continue
             for name in (
-                "storyboard_keyframe_generation_concurrency",
-                "storyboard_keyframe_concurrency",
+                "clip_storyboard_keyframe_generation_concurrency",
                 "image_generation_concurrency",
                 "concurrency",
                 "max_concurrent_images",
@@ -2179,8 +2176,7 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
                 break
         if value is None:
             for name in (
-                "storyboard_keyframe_generation_concurrency",
-                "storyboard_keyframe_concurrency",
+                "clip_storyboard_keyframe_generation_concurrency",
                 "image_generation_concurrency",
                 "concurrency",
                 "max_concurrent_images",
@@ -2217,7 +2213,7 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
     ) -> tuple[str, str]:
         prompts = getattr(self.workflow, "prompts", None)
         if prompts is None:
-            raise ValueError("storyboard_keyframe_generation requires workflow prompt store")
+            raise ValueError("clip_storyboard_keyframe_generation requires workflow prompt store")
         frame_role_label = "start_frame" if frame_role == "start" else "end_frame"
         last_error: Exception | None = None
         for template_name in self._keyframe_template_candidates(provider):
@@ -2528,7 +2524,7 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
         self.logger.info("%s generated successfully, saved in %s", asset_id, asset_path)
         print(
             (
-                "[autodrama] storyboard_keyframe_generation generated "
+                "[autodrama] clip_storyboard_keyframe_generation generated "
                 f"clip={clip.clip_id} frame_role={frame_role} asset_id={asset_id} path={asset_path}"
             ),
             flush=True,
@@ -2538,11 +2534,11 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.image("storyboard", node_name=self.name)
         self.logger.info(
-            "node=storyboard_keyframe_generation provider=%s model=%s",
+            "node=clip_storyboard_keyframe_generation provider=%s model=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        prompt_output = self.load_storyboard_prompt_output(project_dir)
+        prompt_output = self.load_clip_storyboard_prompt_output(project_dir)
         sheet_output = self.load_storyboard_sheet_output(project_dir)
         target_episode_keys = self.target_episode_keys(state)
         target_set = set(target_episode_keys)
@@ -2561,7 +2557,7 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
         for episode_key in target_episode_keys:
             episode = prompt_by_episode.get(episode_key)
             if episode is None:
-                raise ValueError(f"storyboard_keyframe_generation missing storyboard_prompt episode: {episode_key}")
+                raise ValueError(f"clip_storyboard_keyframe_generation missing clip_storyboard_prompt episode: {episode_key}")
             for clip_index, clip in enumerate(episode.clips, start=1):
                 if not self._clip_matches_active_selectors(
                     episode_key=episode_key,
@@ -2573,7 +2569,7 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
                 selected_clip_count += 1
                 storyboard_sheet = sheet_by_clip.get(clip.clip_id)
                 if storyboard_sheet is None:
-                    raise ValueError(f"storyboard_keyframe_generation missing storyboard_generation image for {clip.clip_id}")
+                    raise ValueError(f"clip_storyboard_keyframe_generation missing clip_storyboard_image_generation image for {clip.clip_id}")
                 frame_specs = [("end", "P12")]
                 if clip_index == 1:
                     frame_specs.insert(0, ("start", "P01"))
@@ -2622,7 +2618,7 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
                             continue
                         print(
                             (
-                                "[autodrama] storyboard_keyframe_generation skip existing "
+                                "[autodrama] clip_storyboard_keyframe_generation skip existing "
                                 f"source={reuse_source} clip={clip.clip_id} frame_role={frame_role} "
                                 f"asset_id={asset_id} path={existing_item.asset_path}"
                             ),
@@ -2635,14 +2631,14 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
 
         if clip_selectors and selected_clip_count <= 0:
             raise ValueError(
-                "storyboard_keyframe_generation --clips matched no clips in selected episodes: "
+                "clip_storyboard_keyframe_generation --clips matched no clips in selected episodes: "
                 f"{', '.join(sorted(clip_selectors))}"
             )
 
         concurrency = self.generation_concurrency(provider)
         print(
             (
-                "[autodrama] storyboard_keyframe_generation "
+                "[autodrama] clip_storyboard_keyframe_generation "
                 f"concurrency={concurrency} pending={len(pending)} skipped_existing={skipped_existing} "
                 f"selected_clips={selected_clip_count}"
             ),
@@ -2679,7 +2675,7 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             if isinstance(result, BaseException):
                 failures.append((episode_key, clip.clip_id, frame_role, result))
                 self.logger.error(
-                    "storyboard_keyframe_generation failed clip=%s frame_role=%s: %s",
+                    "clip_storyboard_keyframe_generation failed clip=%s frame_role=%s: %s",
                     clip.clip_id,
                     frame_role,
                     result,
@@ -2717,7 +2713,7 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             if len(failures) > 5:
                 preview = f"{preview}; ..."
             raise ProviderBadResponseError(
-                "storyboard_keyframe_generation failed for "
+                "clip_storyboard_keyframe_generation failed for "
                 f"{len(failures)}/{len(pending)} pending keyframe image(s); "
                 f"saved {len(generated_items)} successful new keyframe(s) and "
                 f"{len(ordered_items)} total keyframe record(s). "
@@ -2770,7 +2766,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         item = keyframes.get((episode_key, clip_id, frame_role))
         if item is None:
             raise ValueError(
-                "clip_manifest_generation missing storyboard_keyframe_generation "
+                "clip_manifest_generation missing clip_storyboard_keyframe_generation "
                 f"{frame_role}_frame for {episode_key}/{clip_id}"
             )
         return item
@@ -3193,7 +3189,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
             asset_id=start_frame.asset_id,
             asset_path=start_frame.asset_path,
             asset_url=start_frame.asset_url,
-            source_node="storyboard_keyframe_generation",
+            source_node="clip_storyboard_keyframe_generation",
             label=(
                 "当前 clip 的首帧关键帧"
                 if is_first_clip
@@ -3211,7 +3207,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
             asset_id=end_frame.asset_id,
             asset_path=end_frame.asset_path,
             asset_url=end_frame.asset_url,
-            source_node="storyboard_keyframe_generation",
+            source_node="clip_storyboard_keyframe_generation",
             label="当前 clip 的尾帧关键帧",
             required=True,
             clip_id=end_frame.clip_id,
@@ -3225,7 +3221,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
             asset_id=storyboard_sheet.asset_id,
             asset_path=storyboard_sheet.asset_path,
             asset_url=storyboard_sheet.asset_url,
-            source_node="storyboard_generation",
+            source_node="clip_storyboard_image_generation",
             label="当前 clip 的 12 宫格故事板整图",
             required=True,
             clip_id=storyboard_sheet.clip_id,
@@ -3242,7 +3238,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
                     asset_id=None,
                     asset_path=None,
                     asset_url=None,
-                    source_node="roleboard_generation",
+                    source_node="roleboard_image_generation",
                     label=f"missing roleboard {role_id}",
                     role_id=role_id,
                 )
@@ -3263,7 +3259,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
                     asset_id=None,
                     asset_path=None,
                     asset_url=None,
-                    source_node="roleboard_generation",
+                    source_node="roleboard_image_generation",
                     label=f"{role.name} roleboard missing",
                     role_id=role.id,
                     role_name=role.name,
@@ -3280,7 +3276,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
                     asset_id=appearance.asset_id or appearance.design_image_asset_id or appearance.id,
                     asset_path=asset_path,
                     asset_url=asset_url,
-                    source_node="roleboard_generation",
+                    source_node="roleboard_image_generation",
                     label=f"{role.name} {appearance.name} 人物三视图/角色身份板",
                     role_id=role.id,
                     role_name=role.name,
@@ -3430,7 +3426,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
             episode_warnings.extend(f"{clip_id}: {warning}" for warning in prompt_warnings)
             storyboard_sheet = storyboard_sheets.get(clip_id)
             if storyboard_sheet is None:
-                raise ValueError(f"clip_manifest_generation missing storyboard_generation image for {clip_id}")
+                raise ValueError(f"clip_manifest_generation missing clip_storyboard_image_generation image for {clip_id}")
             current_end_frame = self._require_keyframe(
                 keyframes,
                 episode_key=storyboard.episode_key,
@@ -3539,7 +3535,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
             return None
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        prompt_output = self.load_storyboard_prompt_output(project_dir)
+        prompt_output = self.load_clip_storyboard_prompt_output(project_dir)
         sheet_output = self.load_storyboard_sheet_output(project_dir)
         keyframe_output = self.load_storyboard_keyframe_output(project_dir)
         target_episode_keys = self.target_episode_keys(state)
@@ -3551,7 +3547,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         for episode_key in target_episode_keys:
             storyboard = storyboard_by_episode.get(episode_key)
             if storyboard is None:
-                raise ValueError(f"clip_manifest_generation missing storyboard_prompt episode: {episode_key}")
+                raise ValueError(f"clip_manifest_generation missing clip_storyboard_prompt episode: {episode_key}")
             if not storyboard.clips:
                 raise ValueError(f"clip_manifest_generation requires at least one clip for {episode_key}")
             existing = self._load_existing_episode(project_dir, episode_key)

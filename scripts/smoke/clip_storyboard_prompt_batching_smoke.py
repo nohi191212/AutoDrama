@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -77,7 +77,7 @@ class _FakeStoryboardPromptProvider:
     model = "storyboard"
 
     def __init__(self) -> None:
-        self.model_binding = SimpleNamespace(params={"storyboard_prompt_concurrency": 2})
+        self.model_binding = SimpleNamespace(params={"clip_storyboard_prompt_concurrency": 2})
         self.settings = SimpleNamespace(options={})
         self.active_calls = 0
         self.max_active_calls = 0
@@ -143,36 +143,36 @@ async def _run_parallel_generation_smoke(
     node.clip_segments_by_episode = lambda _project_dir: {"episode_002": clips}
 
     if node.batch_generation_concurrency(provider) != 2:
-        raise AssertionError("storyboard_prompt should read configured batch concurrency")
+        raise AssertionError("clip_storyboard_prompt should read configured batch concurrency")
 
     state.metadata["episode_count"] = 3
     state.budget.used_text_calls = 0
     await node.run(tmp_project, state)
 
     if provider.max_active_calls < 2:
-        raise AssertionError("storyboard_prompt batches should run concurrently")
+        raise AssertionError("clip_storyboard_prompt batches should run concurrently")
     if len(provider.calls) != 10:
         raise AssertionError(f"expected 3 initial calls and 7 retry calls, got {len(provider.calls)}")
     single_clip_calls = [call for call in provider.calls if len(call["batch_keys"]) == 1]
     if len(single_clip_calls) != 8:
         raise AssertionError(f"expected 8 single-clip calls including the final initial batch, got {len(single_clip_calls)}")
     if any(call["ref_count"] != 2 for call in provider.calls):
-        raise AssertionError("each storyboard_prompt batch should receive roleboard and layout refs")
+        raise AssertionError("each clip_storyboard_prompt batch should receive roleboard and layout refs")
     if state.budget.used_text_calls != 10:
         raise AssertionError(f"expected 10 text calls, got {state.budget.used_text_calls}")
 
     saved = StoryboardPromptOutput.model_validate_json(
-        layout.node_output_path(tmp_project, "storyboard_prompt").read_text(encoding="utf-8")
+        layout.node_output_path(tmp_project, "clip_storyboard_prompt").read_text(encoding="utf-8")
     )
     episode = next(item for item in saved.storyboards if item.episode_key == "episode_002")
     actual_ids = [clip.clip_id for clip in episode.clips]
     expected_ids = [f"episode_002_clip_{index:03d}" for index in range(1, 18)]
     if actual_ids != expected_ids:
-        raise AssertionError("parallel storyboard_prompt output should be merged in original clip order")
+        raise AssertionError("parallel clip_storyboard_prompt output should be merged in original clip order")
 
 
 def main() -> None:
-    tmp_project = ROOT / ".tmp" / "storyboard_prompt_batching" / "project"
+    tmp_project = ROOT / ".tmp" / "clip_storyboard_prompt_batching" / "project"
     role_image = tmp_project / "assets" / "images" / "roles" / "role_jiang.png"
     layout_image = tmp_project / "assets" / "images" / "layouts" / "layout_hall.png"
     role_image.parent.mkdir(parents=True, exist_ok=True)
@@ -199,12 +199,12 @@ def main() -> None:
     }
     batches = node._clip_segment_batches(clips)
     if [len(batch) for batch in batches] != [8, 8, 1]:
-        raise AssertionError("storyboard_prompt batch sizes should be 8, 8, 1")
+        raise AssertionError("clip_storyboard_prompt batch sizes should be 8, 8, 1")
     if list(batches[1]) != [str(index) for index in range(9, 17)]:
-        raise AssertionError("second storyboard_prompt batch should preserve original clip keys 9-16")
+        raise AssertionError("second clip_storyboard_prompt batch should preserve original clip keys 9-16")
 
     state = ProjectState(
-        project_id="storyboard_prompt_batching",
+        project_id="clip_storyboard_prompt_batching",
         title="Smoke",
         raw_script="原始故事",
         script=ScriptBundle(
@@ -285,14 +285,14 @@ def main() -> None:
     if layout_ids != ["layout_古老殿宇"]:
         raise AssertionError(f"unexpected layout ids for batch: {layout_ids}")
 
-    refs, ref_context = node._storyboard_prompt_reference_refs(
+    refs, ref_context = node._clip_storyboard_prompt_reference_refs(
         tmp_project,
         state,
         role_ids=role_ids,
         layout_ids=layout_ids,
     )
     if len(refs) != 2:
-        raise AssertionError("storyboard_prompt should attach roleboard and layout image refs")
+        raise AssertionError("clip_storyboard_prompt should attach roleboard and layout image refs")
     if [item["input_slot"] for item in ref_context] != ["image_1", "image_2"]:
         raise AssertionError("reference image context should expose stable image slots")
 
@@ -303,7 +303,7 @@ def main() -> None:
         ["episode_001", "episode_002", "episode_003"],
     )
     if list(full_context) != ["episode_001", "episode_002", "episode_003"]:
-        raise AssertionError("storyboard_prompt should include previous/current/next full episode context")
+        raise AssertionError("clip_storyboard_prompt should include previous/current/next full episode context")
 
     batch_output = StoryboardPromptOutput.model_validate(
         {
@@ -315,16 +315,16 @@ def main() -> None:
             ]
         }
     )
-    validated = node.validate_storyboard_prompt_output(
+    validated = node.validate_clip_storyboard_prompt_output(
         batch_output,
         expected_episode_keys=["episode_002"],
         expected_clip_segments={"episode_002": batches[1]},
     )
     if validated.storyboards[0].clips[0].clip_id != "episode_002_clip_009":
-        raise AssertionError("partial storyboard_prompt batch should preserve original clip index")
+        raise AssertionError("partial clip_storyboard_prompt batch should preserve original clip index")
 
     rendered = PromptStore().render(
-        "storyboard_prompt",
+        "clip_storyboard_prompt",
         title=state.title,
         episode_keys="episode_002",
         clip_batch="episode_002 clip_segment keys 9-16; batch 2/3; max 8 clips per call",
@@ -348,7 +348,7 @@ def main() -> None:
         clip_segments=node._format_json({"episode_002": batches[1]}),
     )
     if re.search(r"\{\{[A-Za-z_][A-Za-z0-9_]*\}\}", rendered):
-        raise AssertionError("storyboard_prompt render left unresolved template variables")
+        raise AssertionError("clip_storyboard_prompt render left unresolved template variables")
 
     asyncio.run(
         _run_parallel_generation_smoke(
@@ -360,9 +360,9 @@ def main() -> None:
         )
     )
 
-    marker = ROOT / ".tmp" / "storyboard_prompt_batching_smoke.ok"
+    marker = ROOT / ".tmp" / "clip_storyboard_prompt_batching_smoke.ok"
     marker.write_text("ok\n", encoding="utf-8")
-    print("storyboard_prompt_batching_smoke: ok")
+    print("clip_storyboard_prompt_batching_smoke: ok")
 
 
 if __name__ == "__main__":

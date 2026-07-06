@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 from io import BytesIO
@@ -209,7 +209,7 @@ class FakeTextProvider:
                     "林舟没有立刻说话，他把证据一页页拍下，听着窗外雨声，第一次决定不再退让。"
                 ),
             }
-        elif schema is KeyVisionPromptOutput or node_name == "design_key_vision_prompt":
+        elif schema is KeyVisionPromptOutput or node_name == "key_vision_prompt":
             data = {
                 "prompt": (
                     "真人电影质感，短剧主视觉原图，9:16 竖版海报式构图，雨夜现代办公室与玻璃会议室空间交叠。"
@@ -245,9 +245,7 @@ class FakeTextProvider:
                 }
                 for index in range(1, max(1, (duration + segment_seconds - 1) // segment_seconds) + 1)
             }
-        elif schema is RoleExtractOutput or node_name in {
-            "role_extract",
-            "role_extract_primary",
+        elif schema is RoleExtractOutput or node_name in {            "role_extract_primary",
             "role_extract_functional",
         }:
             if node_name == "role_extract_functional":
@@ -327,7 +325,7 @@ class FakeTextProvider:
                 ),
                 "target_duration_seconds": 8,
             }
-        elif schema is StoryboardPromptOutput or node_name == "storyboard_prompt":
+        elif schema is StoryboardPromptOutput or node_name == "clip_storyboard_prompt":
             expected_keys = metadata.get("expected_keys") or episode_keys
             storyboard_episode_keys = [str(key) for key in expected_keys]
             expected_clip_counts = metadata.get("expected_clip_counts")
@@ -431,7 +429,7 @@ class FakeTextProvider:
                 },
                 "notes": ["fake provider prop extract fixture"],
             }
-        elif schema is PropDedupeOutput or node_name == "prop_dedupe":
+        elif schema is PropDedupeOutput or node_name == "prop_finalize":
             data = {
                 "generated_prop_intro": {
                     "被调包的合同": "林舟发现合同关键页异常的核心证据道具，A4商务合同中关键页纸张颜色略浅。",
@@ -487,7 +485,7 @@ class FakeTextProvider:
                     "会议室": "现代公司玻璃会议室空场景，长桌、投影屏、玻璃墙和冷色顶灯构成公开对峙空间，桌面可放合同证据，入口、座椅通道和投屏背景清晰，无人物、无可读文字、无水印。",
                 }
             }
-        elif schema is LayoutDedupeReviewOutput or node_name == "layout_dedupe_review":
+        elif schema is LayoutDedupeReviewOutput or node_name == "layout_finalize":
             data = {
                 "generated_layout_intro": {
                     "雨夜办公室": "林舟发现合同异常并与苏晚核对证据的深夜悬疑调查空间，冷白灯和窗外雨光交织。",

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -332,7 +332,7 @@ class RightCodeImageProvider:
                 self.settings.models.get("rightcode_roleboard")
                 or self.settings.models.get("roleboard")
             )
-        if str(metadata.get("node_name") or "") == "design_key_vision_image":
+        if str(metadata.get("node_name") or "") == "key_vision_image_generation":
             return self.settings.models.get("rightcode_key_vision") or self.settings.models.get("key_vision")
         return None
 
@@ -342,7 +342,7 @@ class RightCodeImageProvider:
                 self.settings.options.get("rightcode_roleboard_size")
                 or self.settings.options.get("roleboard_size")
             )
-        if str(metadata.get("node_name") or "") == "design_key_vision_image":
+        if str(metadata.get("node_name") or "") == "key_vision_image_generation":
             return self.settings.options.get("rightcode_key_vision_size") or self.settings.options.get("key_vision_size")
         return None
 
@@ -353,7 +353,7 @@ class RightCodeImageProvider:
                     self.settings.options.get("rightcode_roleboard_quality")
                     or self.settings.options.get("roleboard_quality")
                 )
-            if str(metadata.get("node_name") or "") == "design_key_vision_image":
+            if str(metadata.get("node_name") or "") == "key_vision_image_generation":
                 return (
                     self.settings.options.get("rightcode_key_vision_quality")
                     or self.settings.options.get("key_vision_quality")
@@ -362,7 +362,7 @@ class RightCodeImageProvider:
 
     @staticmethod
     def _is_roleboard_image(metadata: dict[str, Any]) -> bool:
-        return str(metadata.get("node_name") or "") == "roleboard_generation"
+        return str(metadata.get("node_name") or "") == "roleboard_image_generation"
 
     def _build_chat_payload(
         self,
