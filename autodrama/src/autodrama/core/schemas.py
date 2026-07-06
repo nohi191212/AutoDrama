@@ -197,6 +197,40 @@ class NodeRecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+class ScriptImportRoleOutput(BaseModel):
+    name: str
+    role_tier: Literal["primary", "functional"] | str = "primary"
+    intro: str
+    aliases: list[str] = Field(default_factory=list)
+    appearance_notes: list[str] = Field(default_factory=list)
+    has_dialogue: bool = True
+    visual_reuse_required: bool = True
+    evidence: str | None = None
+
+
+class ScriptImportPropOutput(BaseModel):
+    name: str
+    desc: str
+    status: str = "normal"
+    owner_role_name: str | None = None
+    evidence: str | None = None
+
+
+class ScriptImportLayoutOutput(BaseModel):
+    name: str
+    desc: str
+    prompt: str
+    evidence: str | None = None
+
+
+class ScriptImportOutput(BaseModel):
+    outline: str
+    episode_outlines: list[str] = Field(default_factory=list)
+    roles: list[ScriptImportRoleOutput] = Field(default_factory=list)
+    props: list[ScriptImportPropOutput] = Field(default_factory=list)
+    layouts: list[ScriptImportLayoutOutput] = Field(default_factory=list)
+    notes: str | None = None
+
 class ScriptOutlineOutput(BaseModel):
     outline: str
     episode_outlines: dict[str, str] = Field(default_factory=dict)

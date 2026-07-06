@@ -28,6 +28,7 @@ from autodrama.core.schemas import (
     RoleboardPromptModelOutput,
     SafeImagePromptRewriteOutput,
     ScriptDetailExpandOutput,
+    ScriptImportOutput,
     ScriptNovelExtractBatchOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
@@ -120,7 +121,68 @@ class FakeTextProvider:
             episode_keys = [str(key) for key in expected_keys]
             episode_count = len(episode_keys)
 
-        if schema is ScriptOutlineOutput or node_name == "script_outline":
+        if schema is ScriptImportOutput or node_name == "script_import":
+            data = {
+                "outline": "江未晞在破败殿宇中醒来，遇见由银白光点凝聚成形的乐园AI管家九韶，得知自己被乐园令牌选中，并可通过运营密室夺回被掠夺的气运与人生。九韶演示山海经主题新手区，九尾狐密室的真实触感和狐爪机关让江未晞第一次贡献恐惧与惊喜能量，也激起她开启密室的欲望。",
+                "episode_outlines": [
+                    "江未晞在破败殿宇醒来，确认自己进入万象神话乐园，并与AI管家九韶完成绑定。",
+                    "九韶演示异兽九尾狐密室，真实场景和机关惊吓让江未晞贡献情绪能量，决定开启第一个密室。",
+                ],
+                "roles": [
+                    {
+                        "name": "江未晞",
+                        "role_tier": "primary",
+                        "intro": "体弱多病、长期倒霉的少女，被万象神话乐园选中后决定运营密室夺回命运。",
+                        "aliases": [],
+                        "appearance_notes": ["校服狼狈", "脸色蜡黄", "颧骨有雀斑", "嘴唇干裂"],
+                        "has_dialogue": True,
+                        "visual_reuse_required": True,
+                        "evidence": "原文围绕江未晞醒来、绑定乐园并决定开启密室展开。",
+                    },
+                    {
+                        "name": "九韶",
+                        "role_tier": "primary",
+                        "intro": "万象神话乐园的AI管家，以少年形态出现并向江未晞说明规则。",
+                        "aliases": ["乐园AI管家"],
+                        "appearance_notes": ["银白长发", "黑袍", "瞳色极淡", "非人般精密完美"],
+                        "has_dialogue": True,
+                        "visual_reuse_required": True,
+                        "evidence": "原文写九韶由光点拼合成形并讲解乐园规则。",
+                    },
+                ],
+                "props": [
+                    {
+                        "name": "乐园令牌",
+                        "desc": "选中江未晞成为万象神话乐园继任者的关键物件。",
+                        "status": "normal",
+                        "owner_role_name": "江未晞",
+                        "evidence": "九韶说明宿主被乐园令牌选中。",
+                    },
+                    {
+                        "name": "石灯机关",
+                        "desc": "九尾狐密室中的机关，触碰后会迷惑游客并触发狐爪追捕。",
+                        "status": "normal",
+                        "owner_role_name": "",
+                        "evidence": "九韶指向庭院石灯讲解机关规则。",
+                    },
+                ],
+                "layouts": [
+                    {
+                        "name": "破败殿宇",
+                        "desc": "殿顶半塌、蛛网厚重、残垣断壁环绕的乐园初始空间。",
+                        "prompt": "半塌的古旧殿宇，断裂雕花木梁，厚蛛网，灰蒙天光，中央石台积满灰尘。",
+                        "evidence": "原文开场描写江未晞在破败殿宇中醒来。",
+                    },
+                    {
+                        "name": "九尾狐庭院密室",
+                        "desc": "山海经主题新手区中的庭院密室，假山、回廊、绣楼和红灯笼构成危险暧昧的空间。",
+                        "prompt": "中式庭院密室，假山林立，青石板小径，精致绣楼，红灯笼缓慢闪烁，紫红花丛。",
+                        "evidence": "九韶演示异兽九尾狐场景时庭院完整铺展。",
+                    },
+                ],
+                "notes": "fake script_import output",
+            }
+        elif schema is ScriptOutlineOutput or node_name == "script_outline":
             data = {
                 "outline": "林舟被赵启陷害丢掉晋升机会，苏晚提醒他查看旧邮件。林舟逐步发现合同被调包的证据，并在会议上反击。",
                 "episode_outlines": {

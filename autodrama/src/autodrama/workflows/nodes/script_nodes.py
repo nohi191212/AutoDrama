@@ -139,19 +139,42 @@ class ScriptImportNode(ScriptNodeBase):
         if not source_script:
             raise ValueError("script_import raw_script is empty")
 
+        provider = self.router.text("script", node_name=self.name)
+        self.logger.info(
+            "node=script_import provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        output = await self.script_service.script_import(
+            state,
+            provider,
+            raw_script=source_script,
+        )
+        outline = str(output.outline or "").strip()
+        if not outline:
+            raise ValueError("script_import outline is empty")
+        episode_outlines = [
+            str(value or "").strip()
+            for value in list(output.episode_outlines or [])
+            if str(value or "").strip()
+        ]
+        if not episode_outlines:
+            episode_outlines = [outline]
+        episode_outline_content = "\n\n".join(
+            f"第{index}集：{content}"
+            for index, content in enumerate(episode_outlines, start=1)
+        )
+
         state.raw_script = source_script
         state.script.raw_script = source_script
-        state.script.outline = "成熟剧本导入：以 locked novel_full 分场剧本文本作为后续资产抽取的唯一剧情依据。"
+        state.script.outline = outline
         state.script.episode_outlines = {
             episode_key: self.script_contents.write_content(
                 project_dir,
                 "outlines",
                 episode_key,
                 node_name=self.name,
-                content=(
-                    "成熟剧本导入，不进行大纲重写。后续剧情、角色、道具、场景均以 novel_full 为准。\n\n"
-                    + source_script[:1200]
-                ),
+                content=episode_outline_content,
             )
         }
         source_script_file = state.metadata.get("source_script_file")
@@ -167,12 +190,20 @@ class ScriptImportNode(ScriptNodeBase):
             )
         }
         state.script.novel_extract = {episode_key: state.script.novel_extract.get(episode_key) or False}
+        roles = [role.model_dump(mode="json") for role in output.roles]
+        props = [prop.model_dump(mode="json") for prop in output.props]
+        layouts = [layout.model_dump(mode="json") for layout in output.layouts]
         state.metadata.update(
             {
                 "script_mode": "mature_script",
                 "mature_script_imported_episode_key": episode_key,
                 "script_import_source_file": str(source_script_file) if source_script_file else None,
                 "script_import_episode_keys": [episode_key],
+                "script_import_episode_outlines": episode_outlines,
+                "script_import_roles": roles,
+                "script_import_props": props,
+                "script_import_layouts": layouts,
+                "script_import_notes": output.notes,
                 "script_novel_full_episode_paths": dict(state.script.novel_full),
             }
         )
@@ -180,11 +211,18 @@ class ScriptImportNode(ScriptNodeBase):
             project_dir,
             self.name,
             {
-                "imported_mature_script": True,
-                "episode_key": episode_key,
+                "outline": outline,
+                "episode_outlines": episode_outlines,
+                "episode_outline_paths": state.script.episode_outlines,
                 "novel_full": state.script.novel_full,
+                "roles": roles,
+                "props": props,
+                "layouts": layouts,
+                "notes": output.notes,
+                "imported_mature_script": True,
             },
         )
+        state.budget.used_text_calls += 1
         return state
 
 
@@ -206,6 +244,13 @@ class ScriptDetailExpandNode(ScriptNodeBase):
             episode_keys,
             label="script_import.novel_full",
         )
+        outline_contents = self.script_contents.load_contents(
+            project_dir,
+            state.script.episode_outlines,
+            episode_keys,
+            label="script_import.episode_outlines",
+            allow_missing=True,
+        )
 
         expanded_paths: dict[str, str] = {}
         expanded_outputs: dict[str, dict[str, object]] = {}
@@ -220,6 +265,7 @@ class ScriptDetailExpandNode(ScriptNodeBase):
                 provider,
                 episode_key=episode_key,
                 raw_script=raw_script,
+                episode_outline=outline_contents.get(episode_key, ""),
             )
             expanded_script = detail_expand_output.expanded_script.strip()
             if not expanded_script:

@@ -44,12 +44,15 @@ def main() -> None:
     prompt = PromptStore().render(
         "script_detail_expand",
         raw_script="第一集：\n1-1：破殿-夜-内\n人物：江未晞\n△江未晞醒来，看见石台上出现光。",
+        episode_outline="江未晞在破殿醒来，并看到石台上凝聚出AI管家九韶。",
     )
     for text in FORBIDDEN_PROMPT_TEXT:
         if text in prompt:
             raise AssertionError(f"script_detail_expand prompt contains forbidden metadata text: {text}")
-    if "{{raw_script}}" in prompt:
-        raise AssertionError("script_detail_expand prompt did not render raw_script")
+    if "{{raw_script}}" in prompt or "{{episode_outline}}" in prompt:
+        raise AssertionError("script_detail_expand prompt did not render raw_script or episode_outline")
+    if "当集剧情概要" not in prompt:
+        raise AssertionError("script_detail_expand prompt must include episode outline input")
     if "expanded_script" not in prompt:
         raise AssertionError("script_detail_expand prompt must request expanded_script")
 
