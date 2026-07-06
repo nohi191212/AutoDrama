@@ -233,28 +233,26 @@ $env:PYTHONPATH="autodrama/src"
 D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run pregen --config config.yaml --project <project_id>
 ```
 
-`pregen` 默认运行到 `clip_manifest_generation`。`script_outline`、`script_novel`、`ambient_entity_extract`、`role_subject_*`、`role_voice_select` 和 `bgm_*` 节点代码仍保留，但不在默认链路里，需要时可用 `--only` 手动运行。
+`pregen` 默认运行到 `clip_manifest_generation`。`script_outline`、`script_novel`、旧版 `role_extract` / `role_episode_key_audit` / `role_duplicate_audit`、`ambient_entity_extract`、`role_subject_*`、`role_voice_select` 和 `bgm_*` 节点代码仍保留，但不在默认链路里，需要时可用 `--only` 手动运行。
 
 ```text
 script_import
 script_detail_expand
 script_novel_extract
-clip_segment
 design_key_vision_prompt
 design_key_vision_image
 role_extract_primary
 role_extract_functional
-role_extract
-role_episode_key_audit
-role_duplicate_audit
+role_finalize
 roleboard_prompt
 roleboard_generation
 prop_extract
 prop_dedupe
-prop_prompt
-prop_image_generation
 layout_extract
 layout_dedupe_review
+clip_segment
+prop_prompt
+prop_image_generation
 layout_prompt
 layout_image_generation
 clip_prompt
@@ -273,16 +271,18 @@ run\start.cmd --config config.yaml --project <project_id> --until design_key_vis
 角色链的关键依赖顺序：
 
 ```text
-clip_segment
-role_extract
-role_episode_key_audit
-role_duplicate_audit
+role_extract_primary
+role_extract_functional
+role_finalize
 roleboard_prompt
 roleboard_generation
 prop_extract
+prop_dedupe
+layout_extract
+layout_dedupe_review
+clip_segment
 prop_prompt
 prop_image_generation
-layout_extract
 layout_prompt
 layout_image_generation
 clip_prompt
@@ -296,7 +296,7 @@ clip_manifest_generation
 
 `clip_segment` 在剧本正文和摘要之后运行，把每集文本切成建议 8-15 秒的 clip，并为每个 clip 提取 `role_names`、`prop_names`、`layout_names`；episode 时长只作为文本节奏参考，不再用来硬性校验 clip 数量。`clip_prompt` 在角色、道具、场景静态资产之后运行，为每个 clip 生成逐镜头视频提示词。`storyboard_prompt` 严格跟随 `clip_segment` 的 clip 数和顺序，把项目约束、完整正文、剧情摘要、clip 片段、`clip_prompt`、角色身份板摘要以及道具/场景摘要整理成 storyboard clip；每个 clip 的 `video_prompt` 内部再拆 1-4 个真实 `Camera Shot`，推荐 2-4 个，并写出 P01-P12 十二宫格面板规划。P01-P12 是视觉节奏帧，不是 1 秒 1 格；真实切镜边界会要求在故事板宫格之间用醒目的红色斜杠标出。pregen 的 `storyboard_generation` 会为每个 storyboard clip 生成一张黑白线稿 12 宫格故事板整图，保存到 `assets/images/storyboards/`。`storyboard_keyframe_generation` 紧随其后，从每集首个 clip 的 P01/P12 生成 start/end 关键帧，并从后续 clip 的 P12 生成 end 关键帧。`clip_manifest_generation` 是本地整理节点，会把故事板 prompt、12 宫格故事板整图、首尾关键帧、角色/道具/场景 ID 和融合后的 `video_prompt` 写入 `shots/<episode_key>.json`，同时保留已有视频/音频动态资产字段。这里的 `storyboard_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
 
-`role_episode_key_audit` 在 `role_extract` 之后运行，会以 30 并发逐个检查角色 JSON 的 `episode_keys` 覆盖情况；如果发现遗漏，只向 `role_extract*`、已有 `roleboard_prompt`、角色 JSON 和 state 角色记录追加缺失的 `episode_keys/source_chapters`，不会删除或重排原有条目。
+`role_finalize` 在 `role_extract_primary` 和 `role_extract_functional` 之后运行，合并主要/功能角色，执行一次批量收口审查，追加遗漏的 `episode_keys/source_chapters`，合并重复角色，并写出兼容下游的 `role_extract.json` 与角色 JSON。旧版 `role_extract`、`role_episode_key_audit`、`role_duplicate_audit` 仍可通过 `--only` 手动运行。
 
 ### 4. 运行动态资产生成流程
 

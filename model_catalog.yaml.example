@@ -148,29 +148,20 @@ models:
         min: 2
         max: 20
 
-  aibox:gpt-image-2:
+  aibox:gpt-image-2-guan:
     provider: aibox
     family: gpt-image
     capability: image
     input_modalities: [text, image]
     output_modalities: [image]
     limits:
-      max_reference_images: 10
+      max_reference_images: 14
       max_images: 4
     params_schema:
       size:
         type: string
         enum:
           - auto
-          - "1:1"
-          - "1:2"
-          - "2:1"
-          - "2:3"
-          - "3:2"
-          - "3:4"
-          - "4:3"
-          - "9:16"
-          - "16:9"
           - "1024x1024"
           - "1024x1536"
           - "1536x1024"
@@ -192,26 +183,13 @@ models:
           - "3200x2400"
           - "2160x3840"
           - "3840x2160"
-      resolution:
-        type: string
-        enum: [1K, 2K, 4K]
-      aspect_ratio:
-        type: string
-        enum: ["1:1", "1:2", "2:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9"]
       quality:
         type: string
         enum: [auto, high, medium, low]
-      n:
-        type: integer
-        min: 1
-        max: 4
-      response_format:
-        type: string
-        enum: [url, b64_json]
       max_reference_images:
         type: integer
         min: 0
-        max: 16
+        max: 14
       concurrency:
         type: integer
         min: 1

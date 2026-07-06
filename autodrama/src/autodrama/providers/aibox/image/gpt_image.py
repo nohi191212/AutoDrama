@@ -76,7 +76,7 @@ class AiboxImageProvider:
         self.settings = settings
         self.runtime = runtime
         self.base_url = (settings.base_url or "https://api.lk888.ai").rstrip("/")
-        self.model = settings.models.get("image", "gpt-image-2")
+        self.model = settings.models.get("image", "gpt-image-2-guan")
         self.api_key = settings.secret("api_key_env")
         self.size = str(settings.options.get("size") or settings.options.get("image_size") or "auto")
         self.quality = str(settings.options.get("quality") or "auto")
@@ -101,7 +101,7 @@ class AiboxImageProvider:
         self.max_reference_images = int(
             settings.options.get("aibox_max_reference_images")
             or settings.options.get("max_reference_images")
-            or 10
+            or 14
         )
         self.max_attempts = self._int_option(
             "aibox_max_attempts",
@@ -150,41 +150,33 @@ class AiboxImageProvider:
         params: dict[str, Any] = {
             "size": self._normalize_size(requested_size, requested_resolution),
             "quality": str(metadata.get("quality") or self._purpose_quality(metadata) or self.quality),
-            "n": int(metadata.get("n", self.n)),
-            "response_format": str(metadata.get("response_format") or self.response_format),
         }
-        if requested_resolution:
-            params["resolution"] = str(requested_resolution)
-        requested_aspect_ratio = metadata.get("aspect_ratio")
-        if requested_aspect_ratio:
-            params["aspect_ratio"] = str(requested_aspect_ratio)
-        elif aspect_ratio := self._aspect_ratio_parameter(requested_size):
-            params["aspect_ratio"] = aspect_ratio
 
         images = self._reference_images(refs or [], metadata=metadata)
         if images:
             params["images"] = images
 
-        for key in ("seed", "style", "background", "user"):
-            if key in self.settings.options:
-                params[key] = self.settings.options[key]
-            if key in metadata:
-                params[key] = metadata[key]
-
+        notify_url = metadata.get("notify_url") or self.settings.options.get("notify_url")
         extra_parameters = metadata.get("parameters")
         if isinstance(extra_parameters, dict):
             nested_params = extra_parameters.get("params")
             if isinstance(nested_params, dict):
-                params.update(nested_params)
-            for key, value in extra_parameters.items():
-                if key not in {"model", "prompt", "params"}:
-                    params[key] = value
+                for key in ("size", "quality", "images"):
+                    if key in nested_params:
+                        params[key] = nested_params[key]
+            for key in ("size", "quality", "images"):
+                if key in extra_parameters:
+                    params[key] = extra_parameters[key]
+            notify_url = extra_parameters.get("notify_url") or notify_url
 
-        return {
+        payload: dict[str, Any] = {
             "model": str(metadata.get("model") or self._purpose_model(metadata) or self.model),
             "prompt": prompt,
             "params": params,
         }
+        if notify_url:
+            payload["notify_url"] = str(notify_url)
+        return payload
 
     def _purpose_model(self, metadata: dict[str, Any]) -> str | None:
         node_name = self._purpose_node_name(metadata)
@@ -516,8 +508,8 @@ class AiboxImageProvider:
 
     @staticmethod
     def _is_completed(body: dict[str, Any]) -> bool:
-        if body.get("is_final") is True:
-            return True
+        if "is_final" in body:
+            return body.get("is_final") is True
         return str(body.get("state") or "").lower() in {"success", "failed"}
 
     @classmethod

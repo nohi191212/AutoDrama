@@ -3,13 +3,11 @@ from __future__ import annotations
 import json
 
 from autodrama.core.schemas import (
-    AmbientEntityOutput,
     ProjectState,
     RoleboardPromptModelOutput,
-    RoleDuplicateAuditReviewOutput,
-    RoleEpisodeKeyAuditReviewOutput,
     RoleExtractItem,
     RoleExtractOutput,
+    RoleFinalizeAuditReviewOutput,
 )
 from autodrama.providers.base import TextLLM
 from autodrama.services.director_service import DirectorService
@@ -23,6 +21,14 @@ class RoleService:
     @staticmethod
     def format_json(value: object) -> str:
         return json.dumps(value, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def format_novel_full_context(novel_full: dict[str, str]) -> str:
+        sections: list[str] = []
+        for episode_key, text in novel_full.items():
+            content = str(text or "").strip()
+            sections.append(f"【episode_key: {episode_key}】\n{content}")
+        return "\n\n".join(sections)
 
     @staticmethod
     def roleboard_style_prompt(state: ProjectState) -> str:
@@ -65,43 +71,13 @@ class RoleService:
             "所有视图必须统一同一脸、同一发型、同一服装、同一身体比例、同一姿势语言和同一视觉个性。"
         )
 
-    async def role_extract(
-        self,
-        state: ProjectState,
-        provider: TextLLM,
-        *,
-        novel_full: dict[str, str],
-        existing_roles: list[tuple[str, str]] | None = None,
-    ) -> RoleExtractOutput:
-        existing_roles = existing_roles or []
-        prompt = self.prompts.render(
-            "role_extract",
-            title=state.title,
-            raw_script=state.raw_script,
-            novel_full=self.format_json(novel_full),
-            clip_segments=self.clip_segments_context(state, list(novel_full)),
-            project_context=DirectorService.project_context(state, episode_keys=list(novel_full)),
-            existing_roles=self.format_json(existing_roles),
-            episode_keys=", ".join(novel_full),
-        )
-        return await provider.generate_json(
-            prompt,
-            RoleExtractOutput,
-            temperature=0.4,
-            metadata={
-                "node_name": "role_extract",
-                "project_id": state.project_id,
-                "expected_keys": list(novel_full),
-                "existing_roles": existing_roles,
-            },
-        )
 
     async def role_extract_primary(
         self,
         state: ProjectState,
         provider: TextLLM,
         *,
-        novel_full: dict[str, str],
+        novel_full_context: str,
         existing_primary_roles: list[tuple[str, str]] | None = None,
     ) -> RoleExtractOutput:
         existing_primary_roles = existing_primary_roles or []
@@ -109,11 +85,8 @@ class RoleService:
             "role_extract_primary",
             title=state.title,
             raw_script=state.raw_script,
-            novel_full=self.format_json(novel_full),
-            clip_segments=self.clip_segments_context(state, list(novel_full)),
-            project_context=DirectorService.project_context(state, episode_keys=list(novel_full)),
+            novel_full_context=novel_full_context,
             existing_primary_roles=self.format_json(existing_primary_roles),
-            episode_keys=", ".join(novel_full),
         )
         return await provider.generate_json(
             prompt,
@@ -122,7 +95,6 @@ class RoleService:
             metadata={
                 "node_name": "role_extract_primary",
                 "project_id": state.project_id,
-                "expected_keys": list(novel_full),
                 "existing_primary_roles": existing_primary_roles,
             },
         )
@@ -132,7 +104,7 @@ class RoleService:
         state: ProjectState,
         provider: TextLLM,
         *,
-        novel_full: dict[str, str],
+        novel_full_context: str,
         primary_roles: list[tuple[str, str]],
         existing_functional_roles: list[tuple[str, str]] | None = None,
     ) -> RoleExtractOutput:
@@ -141,12 +113,9 @@ class RoleService:
             "role_extract_functional",
             title=state.title,
             raw_script=state.raw_script,
-            novel_full=self.format_json(novel_full),
-            clip_segments=self.clip_segments_context(state, list(novel_full)),
-            project_context=DirectorService.project_context(state, episode_keys=list(novel_full)),
+            novel_full_context=novel_full_context,
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(existing_functional_roles),
-            episode_keys=", ".join(novel_full),
         )
         return await provider.generate_json(
             prompt,
@@ -155,100 +124,41 @@ class RoleService:
             metadata={
                 "node_name": "role_extract_functional",
                 "project_id": state.project_id,
-                "expected_keys": list(novel_full),
                 "primary_roles": primary_roles,
                 "functional_roles": existing_functional_roles,
             },
         )
 
-    async def role_episode_key_audit(
-        self,
-        state: ProjectState,
-        provider: TextLLM,
-        *,
-        role_json: dict[str, object],
-        novel_full: dict[str, str],
-        episode_keys: list[str],
-    ) -> RoleEpisodeKeyAuditReviewOutput:
-        prompt = self.prompts.render(
-            "role_episode_key_audit",
-            title=state.title,
-            role_json=self.format_json(role_json),
-            novel_full=self.format_json(novel_full),
-            episode_keys=", ".join(episode_keys),
-        )
-        return await provider.generate_json(
-            prompt,
-            RoleEpisodeKeyAuditReviewOutput,
-            temperature=0.2,
-            metadata={
-                "node_name": "role_episode_key_audit",
-                "project_id": state.project_id,
-                "expected_keys": episode_keys,
-                "role_name": role_json.get("role_name") or role_json.get("name"),
-            },
-        )
 
-    async def role_duplicate_audit(
+    async def role_finalize_audit(
         self,
         state: ProjectState,
         provider: TextLLM,
         *,
-        novel_full: dict[str, str],
-        role_index: list[dict[str, object]],
-    ) -> RoleDuplicateAuditReviewOutput:
+        novel_full_context: str,
+        primary_roles: list[dict[str, object]],
+        functional_roles: list[dict[str, object]],
+    ) -> RoleFinalizeAuditReviewOutput:
         prompt = self.prompts.render(
-            "role_duplicate_audit",
-            title=state.title,
-            novel_full=self.format_json(novel_full),
-            clip_segments=self.clip_segments_context(state, list(novel_full)),
-            project_context=DirectorService.project_context(state, episode_keys=list(novel_full)),
-            role_index=self.format_json(role_index),
-        )
-        return await provider.generate_json(
-            prompt,
-            RoleDuplicateAuditReviewOutput,
-            temperature=0.2,
-            metadata={
-                "node_name": "role_duplicate_audit",
-                "project_id": state.project_id,
-                "expected_keys": list(novel_full),
-                "role_count": len(role_index),
-            },
-        )
-
-    async def ambient_entity_extract(
-        self,
-        state: ProjectState,
-        provider: TextLLM,
-        *,
-        novel_full: dict[str, str],
-        primary_roles: list[tuple[str, str]],
-        functional_roles: list[tuple[str, str]],
-    ) -> AmbientEntityOutput:
-        prompt = self.prompts.render(
-            "ambient_entity_extract",
+            "role_finalize_audit",
             title=state.title,
             raw_script=state.raw_script,
-            novel_full=self.format_json(novel_full),
-            clip_segments=self.clip_segments_context(state, list(novel_full)),
-            project_context=DirectorService.project_context(state, episode_keys=list(novel_full)),
+            novel_full_context=novel_full_context,
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(functional_roles),
-            episode_keys=", ".join(novel_full),
         )
         return await provider.generate_json(
             prompt,
-            AmbientEntityOutput,
-            temperature=0.35,
+            RoleFinalizeAuditReviewOutput,
+            temperature=0.2,
             metadata={
-                "node_name": "ambient_entity_extract",
+                "node_name": "role_finalize",
                 "project_id": state.project_id,
-                "expected_keys": list(novel_full),
-                "primary_roles": primary_roles,
-                "functional_roles": functional_roles,
+                "primary_role_count": len(primary_roles),
+                "functional_role_count": len(functional_roles),
             },
         )
+
 
     async def roleboard_prompt(
         self,

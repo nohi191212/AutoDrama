@@ -387,7 +387,7 @@ class PregenWorkflow:
         raw_keys = self._dedupe_texts(item.episode_keys)
         if not raw_keys:
             raise ValueError(
-                f"role_extract missing episode_keys for {item.name}; "
+                f"role_finalize missing episode_keys for {item.name}; "
                 "roleboard_prompt requires role-scoped episode_keys and will not load all novel_full episodes"
             )
         for key in raw_keys:
@@ -401,14 +401,14 @@ class PregenWorkflow:
                 keys.append(text)
         if invalid_keys:
             get_logger().warning(
-                "role_extract ignored invalid episode_keys for %s: %s",
+                "role_finalize ignored invalid episode_keys for %s: %s",
                 item.name,
                 ", ".join(invalid_keys),
             )
         if keys:
             return keys
         raise ValueError(
-            f"role_extract episode_keys for {item.name} do not match existing episodes; "
+            f"role_finalize episode_keys for {item.name} do not match existing episodes; "
             f"got {', '.join(raw_keys) or '-'}"
         )
 
@@ -735,17 +735,8 @@ class PregenWorkflow:
     async def _run_role_extract_functional(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._role_node_runner("role_extract_functional").run(project_dir, state)
 
-    async def _run_role_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._role_node_runner("role_extract").run(project_dir, state)
-
-    async def _run_role_episode_key_audit(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._role_node_runner("role_episode_key_audit").run(project_dir, state)
-
-    async def _run_role_duplicate_audit(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._role_node_runner("role_duplicate_audit").run(project_dir, state)
-
-    async def _run_ambient_entity_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._role_node_runner("ambient_entity_extract").run(project_dir, state)
+    async def _run_role_finalize(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._role_node_runner("role_finalize").run(project_dir, state)
 
     async def _run_roleboard_prompt(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._role_node_runner("roleboard_prompt").run(project_dir, state)

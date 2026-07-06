@@ -9,7 +9,6 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from autodrama.core.schemas import (
-    AmbientEntityOutput,
     BGMDesignOutput,
     ClipPromptModelOutput,
     ClipSegmentOutput,
@@ -21,9 +20,8 @@ from autodrama.core.schemas import (
     PropDesignOutput,
     PropExtractOutput,
     PropPromptOutput,
-    RoleDuplicateAuditReviewOutput,
-    RoleEpisodeKeyAuditReviewOutput,
     RoleExtractOutput,
+    RoleFinalizeAuditReviewOutput,
     RoleSubjectVideoIntroTextOutput,
     RoleboardPromptModelOutput,
     SafeImagePromptRewriteOutput,
@@ -295,19 +293,8 @@ class FakeTextProvider:
                         },
                     ]
                 }
-        elif schema is RoleEpisodeKeyAuditReviewOutput or node_name == "role_episode_key_audit":
-            role_name = str(metadata.get("role_name") or "角色")
-            data = {
-                "role_name": role_name,
-                "missing_episode_keys": [],
-                "missing_source_chapters": [],
-                "evidence": "fake provider found no missing role episode keys.",
-                "confidence": 1.0,
-            }
-        elif schema is RoleDuplicateAuditReviewOutput or node_name == "role_duplicate_audit":
-            data = {"duplicate_groups": []}
-        elif schema is AmbientEntityOutput or node_name == "ambient_entity_extract":
-            data = {"entities": []}
+        elif schema is RoleFinalizeAuditReviewOutput or node_name == "role_finalize":
+            data = {"episode_updates": [], "duplicate_groups": [], "drop_roles": [], "notes": []}
         elif schema is RoleboardPromptModelOutput or node_name == "roleboard_prompt":
             role_name = str(metadata.get("role_name") or "林舟").strip() or "林舟"
             data = {

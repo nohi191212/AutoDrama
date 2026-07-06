@@ -291,75 +291,46 @@ class RoleExtractItem(BaseModel):
     visual_reuse_required: bool = False
 
 
-class AmbientEntityItem(BaseModel):
-    name: str
-    entity_type: Literal["crowd", "faction_presence", "background_actor_group"] | str
-    episode_keys: list[str] = Field(default_factory=list)
-    description: str
-    visual_notes: list[str] = Field(default_factory=list)
-    usage: str | None = None
-
-
-class AmbientEntityOutput(BaseModel):
-    entities: list[AmbientEntityItem]
-
 
 class RoleExtractOutput(BaseModel):
     roles: list[RoleExtractItem]
 
 
-class RoleEpisodeKeyAuditReviewOutput(BaseModel):
+
+class RoleFinalizeEpisodeUpdate(BaseModel):
     role_name: str
-    missing_episode_keys: list[str] = Field(default_factory=list)
-    missing_source_chapters: list[str] = Field(default_factory=list)
+    add_episode_keys: list[str] = Field(default_factory=list)
+    add_source_chapters: list[str] = Field(default_factory=list)
     evidence: str | None = None
     confidence: float | None = None
 
 
-class RoleEpisodeKeyAuditItem(BaseModel):
-    role_id: str
-    role_name: str
-    role_json_path: str | None = None
-    original_episode_keys: list[str] = Field(default_factory=list)
-    missing_episode_keys: list[str] = Field(default_factory=list)
-    added_episode_keys: list[str] = Field(default_factory=list)
-    final_episode_keys: list[str] = Field(default_factory=list)
-    original_source_chapters: list[str] = Field(default_factory=list)
-    added_source_chapters: list[str] = Field(default_factory=list)
-    final_source_chapters: list[str] = Field(default_factory=list)
-    ignored_episode_keys: list[str] = Field(default_factory=list)
-    evidence: str | None = None
-    confidence: float | None = None
-
-
-class RoleEpisodeKeyAuditOutput(BaseModel):
-    concurrency: int
-    audited_roles: list[RoleEpisodeKeyAuditItem] = Field(default_factory=list)
-
-
-class RoleDuplicateGroupReviewOutput(BaseModel):
+class RoleFinalizeDuplicateGroup(BaseModel):
     role_names: list[str] = Field(default_factory=list)
+    kept_role_name: str | None = None
     evidence: str | None = None
     confidence: float | None = None
 
 
-class RoleDuplicateAuditReviewOutput(BaseModel):
-    duplicate_groups: list[RoleDuplicateGroupReviewOutput] = Field(default_factory=list)
+class RoleFinalizeDropItem(BaseModel):
+    role_name: str
+    reason: str
 
 
-class RoleDuplicateMergeItem(BaseModel):
-    kept_role_name: str
-    removed_role_names: list[str] = Field(default_factory=list)
-    original_episode_keys_by_role: dict[str, list[str]] = Field(default_factory=dict)
-    final_episode_keys: list[str] = Field(default_factory=list)
-    evidence: str | None = None
-    confidence: float | None = None
+class RoleFinalizeAuditReviewOutput(BaseModel):
+    episode_updates: list[RoleFinalizeEpisodeUpdate] = Field(default_factory=list)
+    duplicate_groups: list[RoleFinalizeDuplicateGroup] = Field(default_factory=list)
+    drop_roles: list[RoleFinalizeDropItem] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
-class RoleDuplicateAuditOutput(BaseModel):
-    checked_roles: int
-    merged_groups: list[RoleDuplicateMergeItem] = Field(default_factory=list)
-    remaining_role_names: list[str] = Field(default_factory=list)
+class RoleFinalizeOutput(BaseModel):
+    final_roles: list[RoleExtractItem] = Field(default_factory=list)
+    role_refs: dict[str, str] = Field(default_factory=dict)
+    episode_updates: list[RoleFinalizeEpisodeUpdate] = Field(default_factory=list)
+    duplicate_groups: list[RoleFinalizeDuplicateGroup] = Field(default_factory=list)
+    dropped_roles: list[RoleFinalizeDropItem] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class RoleboardPromptModelOutput(BaseModel):

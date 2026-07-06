@@ -1,6 +1,4 @@
-from autodrama.core.schemas import (
-    AmbientEntityOutput,
-    BGMDesignOutput,
+from autodrama.core.schemas import (    BGMDesignOutput,
     DynamicAssetSolidificationOutput,
     LayoutDedupeReviewOutput,
     LayoutExtractOutput,
@@ -25,9 +23,7 @@ from autodrama.core.schemas import (
     StoryboardKeyframeGenerationOutput,
 )
 
-__all__ = [
-    "AmbientEntityOutput",
-    "BGMDesignOutput",
+__all__ = [    "BGMDesignOutput",
     "DynamicAssetSolidificationOutput",
     "LayoutDedupeReviewOutput",
     "LayoutExtractOutput",

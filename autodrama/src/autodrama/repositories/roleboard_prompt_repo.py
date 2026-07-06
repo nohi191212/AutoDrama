@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from autodrama.core.ids import normalize_id
-from autodrama.core.schemas import Role, RoleExtractItem, RoleExtractOutput, RoleboardPromptItem, RoleboardPromptOutput
+from autodrama.core.schemas import Role, RoleExtractItem, RoleExtractOutput, RoleFinalizeOutput, RoleboardPromptItem, RoleboardPromptOutput
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
@@ -19,8 +19,8 @@ class RoleboardPromptRepository:
         self.repo = repo
         self.layout = layout
 
-    def extract_output_path(self, project_dir: Path) -> Path:
-        return self.layout.node_output_path(project_dir, "role_extract")
+    def finalize_output_path(self, project_dir: Path) -> Path:
+        return self.layout.node_output_path(project_dir, "role_finalize")
 
     def prompt_output_path(self, project_dir: Path) -> Path:
         return self.layout.node_output_path(project_dir, "roleboard_prompt")
@@ -35,12 +35,13 @@ class RoleboardPromptRepository:
         return self.item_relative_path(project_dir, normalize_id("role", role_name))
 
     def load_extract_output(self, project_dir: Path) -> RoleExtractOutput:
-        path = self.extract_output_path(project_dir)
+        path = self.finalize_output_path(project_dir)
         if not path.exists():
             raise FileNotFoundError(
-                "role_extract output is missing; run pregen --only role_extract before roleboard_prompt"
+                "role_finalize output is missing; run pregen until role_finalize before roleboard_prompt"
             )
-        return RoleExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        output = RoleFinalizeOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        return RoleExtractOutput(roles=output.final_roles)
 
     def load_existing_output(self, project_dir: Path) -> RoleboardPromptOutput | None:
         role_items: list[RoleboardPromptItem] = []
@@ -73,7 +74,7 @@ class RoleboardPromptRepository:
                 "roleboard_prompt": None,
                 "state_role": None,
                 "source": {
-                    "role_extract_path": self.layout.project_relative(project_dir, self.extract_output_path(project_dir)),
+                    "role_finalize_path": self.layout.project_relative(project_dir, self.finalize_output_path(project_dir)),
                     "roleboard_prompt_path": None,
                 },
             },
@@ -102,7 +103,7 @@ class RoleboardPromptRepository:
                 "roleboard_prompt": prompt_item.model_dump(mode="json"),
                 "state_role": role.model_dump(mode="json"),
                 "source": {
-                    "role_extract_path": self.layout.project_relative(project_dir, self.extract_output_path(project_dir)),
+                    "role_finalize_path": self.layout.project_relative(project_dir, self.finalize_output_path(project_dir)),
                     "roleboard_prompt_path": self.layout.project_relative(project_dir, self.prompt_output_path(project_dir)),
                 },
             },

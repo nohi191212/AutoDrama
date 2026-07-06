@@ -29,7 +29,10 @@ from autodrama.workflows.nodes.voice_nodes import VOICE_NODE_NAMES, build_voice_
 from autodrama.workflows.runner import EpisodeWorkflowNode, WorkflowNode
 
 DEFAULT_PREGEN_ROLE_NODE_NAMES = [
-    node_name for node_name in ROLE_NODE_NAMES if node_name != "ambient_entity_extract"
+    "role_extract_primary",
+    "role_extract_functional",
+    "role_finalize",
+    "roleboard_prompt",
 ]
 MANUAL_PREGEN_ROLE_NODE_NAMES = [
     node_name for node_name in ROLE_NODE_NAMES if node_name not in DEFAULT_PREGEN_ROLE_NODE_NAMES

@@ -15,6 +15,9 @@ from autodrama.workflows.runner import node_is_completed
 
 
 REMOVED_FROM_DEFAULT = [
+    "role_extract",
+    "role_episode_key_audit",
+    "role_duplicate_audit",
     "ambient_entity_extract",
     "role_subject_video_generation",
     "role_subject_element_generation",
@@ -75,6 +78,11 @@ def main() -> None:
         if node_name not in PREGEN_ONLY_NODES:
             raise AssertionError(f"{node_name} should remain available through pregen --only")
 
+    expected_role_chain = ["role_extract_primary", "role_extract_functional", "role_finalize", "roleboard_prompt"]
+    role_index = PREGEN_NODES.index("role_extract_primary")
+    actual_role_chain = PREGEN_NODES[role_index : role_index + len(expected_role_chain)]
+    if actual_role_chain != expected_role_chain:
+        raise AssertionError(f"default role chain should be {expected_role_chain!r}, got {actual_role_chain!r}")
     roleboard_index = PREGEN_NODES.index("roleboard_generation")
     expected_slice = INSERTED_AFTER_ROLEBOARD
     actual_slice = PREGEN_NODES[roleboard_index + 1 : roleboard_index + 1 + len(expected_slice)]
