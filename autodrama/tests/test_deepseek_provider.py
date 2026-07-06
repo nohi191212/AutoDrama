@@ -1,7 +1,7 @@
 import asyncio
 
 from autodrama.config import ProviderSettings, RuntimeSettings
-from autodrama.core.schemas import RoleboardPromptModelOutput, ScriptNovelExtractBatchOutput
+from autodrama.core.schemas import RoleboardPromptModelOutput, ScriptNovelExtractModelOutput
 from autodrama.logging import setup_logging
 from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
 
@@ -99,8 +99,8 @@ def test_deepseek_writes_prompt_and_output_detail_log(tmp_path, monkeypatch) -> 
 def test_deepseek_repairs_invalid_json_response(tmp_path, monkeypatch) -> None:
     calls = []
     responses = [
-        '{"novel_extract":{"episode_001":"第一集内容"}',
-        '{"novel_extract":{"episode_001":"第一集内容"}}',
+        '{"script_novel_extract":"第一集内容"',
+        '{"script_novel_extract":"第一集内容"}',
     ]
 
     class FakeCompletions:
@@ -139,12 +139,12 @@ def test_deepseek_repairs_invalid_json_response(tmp_path, monkeypatch) -> None:
     output = asyncio.run(
         provider.generate_json(
             "请打磨剧本。",
-            ScriptNovelExtractBatchOutput,
+            ScriptNovelExtractModelOutput,
             metadata={"node_name": "script_novel_extract", "project_id": "test_project"},
         )
     )
 
-    assert output.novel_extract["episode_001"] == "第一集内容"
+    assert output.script_novel_extract == "第一集内容"
     assert len(calls) == 2
     assert "Return only the repaired JSON object" in calls[1]["messages"][1]["content"]
 

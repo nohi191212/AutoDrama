@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import Any, Callable
@@ -16,7 +17,6 @@ from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.repositories.script_content_repo import ScriptContentRepository
-from autodrama.services.director_service import DirectorService
 from autodrama.services.script_service import ScriptService
 from autodrama.workflows.runner import WorkflowNode
 
@@ -35,7 +35,6 @@ SCRIPT_COMPLETION_ALIASES = {
     "script_detail_expand": ("script_novel",),
 }
 
-SCRIPT_NOVEL_EXTRACT_BATCH_SIZE = 5
 
 
 class ScriptNodeBase:
@@ -474,13 +473,65 @@ class ScriptNovelNode(ScriptNodeBase):
 
 class ScriptNovelExtractNode(ScriptNodeBase):
     name = "script_novel_extract"
+    DEFAULT_CONCURRENCY = 5
+
+    @staticmethod
+    def _concurrency(provider: Any) -> int:
+        binding = getattr(provider, "model_binding", None)
+        params = getattr(binding, "params", {}) if binding is not None else {}
+        settings = getattr(provider, "settings", None)
+        options = getattr(settings, "options", {}) if settings is not None else {}
+        for source in (params, options):
+            for key in ("script_novel_extract_concurrency", "concurrency", "text_concurrency"):
+                try:
+                    value = int(source.get(key) or 0)
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                if value > 0:
+                    return max(1, value)
+        return ScriptNovelExtractNode.DEFAULT_CONCURRENCY
+
+    async def _extract_one_episode(
+        self,
+        *,
+        provider: Any,
+        project_dir: Path,
+        state: ProjectState,
+        episode_key: str,
+        script_novel_full: str,
+        semaphore: asyncio.Semaphore,
+    ) -> tuple[str, str]:
+        async with semaphore:
+            output = await self.script_service.script_novel_extract(
+                state,
+                provider,
+                episode_key=episode_key,
+                script_novel_full=script_novel_full,
+            )
+        extracted_text = str(output.script_novel_extract or "").strip()
+        if not extracted_text:
+            raise ValueError(f"script_novel_extract output is empty for {episode_key}")
+        episode_path = self.script_contents.content_path(project_dir, "novel_extract", episode_key)
+        self.repo.write_json(
+            episode_path,
+            self.script_contents.content_payload(
+                node_name=self.name,
+                episode_key=episode_key,
+                content=extracted_text,
+                dependency_field="source_novel_full_path",
+                dependency_path=state.script.novel_full.get(episode_key),
+            ),
+        )
+        return episode_key, self.script_contents.project_relative(project_dir, episode_path)
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("script", node_name=self.name)
+        concurrency = self._concurrency(provider)
         self.logger.info(
-            "node=script_novel_extract provider=%s model=%s",
+            "node=script_novel_extract provider=%s model=%s concurrency=%d",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
+            concurrency,
         )
         episode_keys = self.expected_episode_keys(state)
         self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
@@ -490,13 +541,6 @@ class ScriptNovelExtractNode(ScriptNodeBase):
             episode_keys,
             label="script_novel.novel_full",
         )
-        outline_contents = self.script_contents.load_contents(
-            project_dir,
-            state.script.episode_outlines,
-            episode_keys,
-            label="script_outline.episode_outlines",
-            allow_missing=True,
-        )
         force_pregen = self.force_getter()
         if force_pregen:
             state.script.novel_extract = {episode_key: False for episode_key in episode_keys}
@@ -505,7 +549,7 @@ class ScriptNovelExtractNode(ScriptNodeBase):
                 episode_key: state.script.novel_extract.get(episode_key) or False
                 for episode_key in episode_keys
             }
-        state.metadata["script_novel_extract_batch_size"] = SCRIPT_NOVEL_EXTRACT_BATCH_SIZE
+        state.metadata["script_novel_extract_concurrency"] = concurrency
 
         extract_contents = (
             {}
@@ -518,72 +562,35 @@ class ScriptNovelExtractNode(ScriptNodeBase):
                 allow_missing=True,
             )
         )
-        for batch_start in range(0, len(episode_keys), SCRIPT_NOVEL_EXTRACT_BATCH_SIZE):
-            batch_keys = episode_keys[batch_start : batch_start + SCRIPT_NOVEL_EXTRACT_BATCH_SIZE]
-            if not force_pregen and all(extract_contents.get(episode_key) for episode_key in batch_keys):
-                self.logger.info(
-                    "script_novel_extract batch %s already exists, skipped",
-                    ",".join(batch_keys),
-                )
-                continue
-
-            previous_keys = episode_keys[:batch_start]
-            previous_extract = {
-                episode_key: extract_contents[episode_key]
-                for episode_key in previous_keys
-                if extract_contents.get(episode_key)
-            }
-            extract_hints = {
-                episode_key: outline_contents.get(episode_key, "")
-                for episode_key in batch_keys
-            }
-            output = await self.script_service.script_novel_extract_batch(
-                state,
-                provider,
-                batch_episode_keys=batch_keys,
-                novel_full=novel_contents,
-                previous_extract=previous_extract,
-                extract_hints=extract_hints,
-                project_context=DirectorService.project_context(state, episode_keys=batch_keys),
-            )
-            actual_keys = set(output.novel_extract)
-            expected_keys = set(batch_keys)
-            if actual_keys != expected_keys:
-                raise ValueError(
-                    "script_novel_extract.novel_extract must contain exactly "
-                    f"{', '.join(batch_keys)}; got {', '.join(sorted(actual_keys)) or '-'}"
-                )
-            for episode_key in batch_keys:
-                extracted_text = str(output.novel_extract.get(episode_key) or "").strip()
-                if not extracted_text:
-                    raise ValueError(f"script_novel_extract novel_extract is empty for {episode_key}")
-                episode_path = self.script_contents.content_path(project_dir, "novel_extract", episode_key)
-                self.repo.write_json(
-                    episode_path,
-                    self.script_contents.content_payload(
-                        node_name=self.name,
+        pending_keys = [episode_key for episode_key in episode_keys if not extract_contents.get(episode_key)]
+        if pending_keys:
+            self.logger.info("script_novel_extract pending episodes=%s", ",".join(pending_keys))
+            semaphore = asyncio.Semaphore(concurrency)
+            results = await asyncio.gather(
+                *[
+                    self._extract_one_episode(
+                        provider=provider,
+                        project_dir=project_dir,
+                        state=state,
                         episode_key=episode_key,
-                        content=extracted_text,
-                        dependency_field="source_novel_full_path",
-                        dependency_path=state.script.novel_full.get(episode_key),
-                    ),
-                )
-                extract_contents[episode_key] = extracted_text
-                state.script.novel_extract[episode_key] = self.script_contents.project_relative(project_dir, episode_path)
-
-            state.budget.used_text_calls += 1
-            self.repo.save_state(project_dir, state)
-            self.logger.info(
-                "script_novel_extract batch %s generated saved_count=%d",
-                ",".join(batch_keys),
-                len(batch_keys),
+                        script_novel_full=novel_contents[episode_key],
+                        semaphore=semaphore,
+                    )
+                    for episode_key in pending_keys
+                ]
             )
+            for episode_key, episode_path in results:
+                state.script.novel_extract[episode_key] = episode_path
+            state.budget.used_text_calls += len(results)
+            self.repo.save_state(project_dir, state)
+            self.logger.info("script_novel_extract generated episodes=%d", len(results))
+        else:
+            self.logger.info("script_novel_extract all episodes already exist, skipped")
 
         self.validate_episode_keys("script_novel_extract.novel_extract", state.script.novel_extract, state)
         output = ScriptNovelExtractOutput(novel_extract=state.script.novel_extract)
         self.repo.save_node_output(project_dir, self.name, output)
         return state
-
 
 class ClipSegmentNode(ScriptNodeBase):
     name = "clip_segment"
@@ -777,7 +784,6 @@ __all__ = [
     "MANUAL_SCRIPT_NODE_NAMES",
     "SCRIPT_COMPLETION_ALIASES",
     "SCRIPT_NODE_NAMES",
-    "SCRIPT_NOVEL_EXTRACT_BATCH_SIZE",
     "ClipSegmentNode",
     "ScriptDetailExpandNode",
     "ScriptImportNode",

@@ -29,7 +29,7 @@ from autodrama.core.schemas import (
     SafeImagePromptRewriteOutput,
     ScriptDetailExpandOutput,
     ScriptImportOutput,
-    ScriptNovelExtractBatchOutput,
+    ScriptNovelExtractModelOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
     StoryboardEpisodeOutput,
@@ -221,18 +221,14 @@ class FakeTextProvider:
                     "低饱和蓝灰色调，克制悬疑张力，稳定电影镜头感，细节清晰，无可读文字、字幕、水印、logo和无关人物。"
                 )
             }
-        elif schema is ScriptNovelExtractBatchOutput or node_name == "script_novel_extract":
-            batch_episode_keys = metadata.get("batch_episode_keys") or expected_keys or episode_keys
-            batch_keys = [str(key) for key in batch_episode_keys]
+        elif schema is ScriptNovelExtractModelOutput or node_name == "script_novel_extract":
+            episode_key = str(metadata.get("episode_key") or episode_keys[0])
             data = {
-                "novel_extract": {
-                    key: (
-                        f"第{index}集，时间是雨夜到次日会议前后，地点在公司办公室和会议室。"
-                        "林舟发现合同关键页被调包，苏晚递来旧邮件截图作为证据。"
-                        "赵启持续施压，林舟保留证据并准备在会议上反击。"
-                    )
-                    for index, key in enumerate(batch_keys, start=1)
-                }
+                "script_novel_extract": (
+                    f"{episode_key}，时间是雨夜到次日会议前后，地点在公司办公室和会议室。"
+                    "林舟发现合同关键页被调包，苏晚递来旧邮件截图作为证据。"
+                    "赵启持续施压，林舟保留证据并准备在会议上反击。"
+                )
             }
         elif schema is ClipSegmentOutput or node_name == "clip_segment":
             segment_seconds = int(metadata.get("segment_seconds") or 15)

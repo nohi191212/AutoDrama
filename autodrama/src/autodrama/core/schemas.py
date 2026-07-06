@@ -244,8 +244,8 @@ class ScriptDetailExpandOutput(BaseModel):
     expanded_script: str = Field(validation_alias=AliasChoices("expanded_script", "script", "novel_full"))
 
 
-class ScriptNovelExtractBatchOutput(BaseModel):
-    novel_extract: dict[str, str]
+class ScriptNovelExtractModelOutput(BaseModel):
+    script_novel_extract: str
 
 
 class ScriptNovelExtractOutput(BaseModel):

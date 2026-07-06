@@ -8,7 +8,7 @@ from autodrama.core.schemas import (
     ScriptDetailExpandOutput,
     ScriptImportOutput,
     ProjectState,
-    ScriptNovelExtractBatchOutput,
+    ScriptNovelExtractModelOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
 )
@@ -129,41 +129,26 @@ class ScriptService:
             },
         )
 
-    async def script_novel_extract_batch(
+    async def script_novel_extract(
         self,
         state: ProjectState,
         provider: TextLLM,
         *,
-        batch_episode_keys: list[str],
-        novel_full: dict[str, str],
-        previous_extract: dict[str, str],
-        extract_hints: dict[str, str],
-        project_context: str | None = None,
-    ) -> ScriptNovelExtractBatchOutput:
-        episode_keys = self.state_episode_keys(state)
-        episode_count = len(episode_keys)
-        episode_duration_seconds = self.episode_duration_seconds(state)
+        episode_key: str,
+        script_novel_full: str,
+    ) -> ScriptNovelExtractModelOutput:
         prompt = self.prompts.render(
             "script_novel_extract",
-            title=state.title,
-            novel_full=self.format_json(novel_full),
-            previous_extract=self.format_json(previous_extract) if previous_extract else "（暂无，当前是第一批。）",
-            extract_hints=self.format_json(extract_hints),
-            project_context=project_context or "（暂无项目约束。）",
-            batch_episode_keys=", ".join(batch_episode_keys),
-            episode_count=episode_count,
-            episode_duration_seconds=episode_duration_seconds,
+            script_novel_full=script_novel_full,
         )
         return await provider.generate_json(
             prompt,
-            ScriptNovelExtractBatchOutput,
+            ScriptNovelExtractModelOutput,
             temperature=0.5,
             metadata={
                 "node_name": "script_novel_extract",
                 "project_id": state.project_id,
-                "required_mapping_field": "novel_extract",
-                "expected_keys": batch_episode_keys,
-                "batch_episode_keys": batch_episode_keys,
+                "episode_key": episode_key,
             },
         )
 
