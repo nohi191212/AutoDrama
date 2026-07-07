@@ -20,6 +20,9 @@
 当前角色抽取结果：
 {{role_extract_item}}
 
+当前造型资产（本次只为这个 appearance 生成角色板 prompt）：
+{{appearance_asset}}
+
 全角色索引（只用于确认角色边界、别名、层级和关系，不要把索引当作完整剧情）：
 {{role_index}}
 
@@ -50,6 +53,13 @@
 - `roleboard_negative_prompt` 写短而明确的避免项。
 - `voice_profile_prompt` 如果角色有台词，写 1 段稳定声音画像；无台词则为空字符串。
 - `design_notes` 简短说明制作注意事项，可以为空字符串。
+
+# 多造型资产规则
+
+- 本次只生成 `appearance_asset.appearance_name` 对应的造型，不要混入同角色其他造型。
+- `asset_role=base` 时，把它作为同一角色的主身份资产，锁定脸、身形、发型基底、肤色、基础服装体系和关键视觉标志。
+- `asset_role=variant` 时，它是同一角色的从属造型：保持同一脸、同一身形比例、同一发型基底、肤色和核心视觉标志，只改变 `appearance_asset` 中明确写出的服装、妆造、发型变化或状态。
+- 如果角色抽取结果和当前造型资产冲突，优先服从当前造型资产；在 design_notes 简短说明冲突。
 
 # 角色身份板内容要求
 

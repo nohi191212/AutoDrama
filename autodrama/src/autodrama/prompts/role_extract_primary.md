@@ -49,6 +49,25 @@
 
 只允许使用正文分段标题里真实出现的 episode_key。不要自造 key，不要使用中文章节名，不要输出空数组或 null。
 
+# 视觉资产与多造型规则
+
+本节点输出的是“人物视觉资产”的角色根，不是每套衣服一个角色。
+
+- 只抽当前完整小说正文中实际出镜、可视化出现，或明确需要后续画面复用的人物；纯被提及、纯背景关系、只存在于未来设定但当前没有画面需求的人，不进入本节点。
+- 同一自然人只输出一个角色：正式名写入 `name`，昵称、小名、旧称、身份称呼、亲属称呼、误认称呼放入 `aliases`。
+- 不要因为换装、妆造、发型变化、受伤、血污、脏污、湿透、破损、身份伪装等脸和身形不变的差异拆成新角色；这些差异写入 `appearance_assets`。
+- 如果同一自然人存在童年/成年、年轻/年迈、转生、附身、毁容前后等脸或身体识别根会明显变化的阶段，也仍保持同一个角色 `name`；若确实需要独立身份板，在 `appearance_assets` 中用另一个 `asset_role="base"` 的命名造型资产表达，不使用 variant。
+- `appearance_notes` 只写全角色层面的稳定客观外观摘要；不要把心理、情绪、剧情评价当外貌。
+
+# appearance_assets 规则
+
+每个主要角色都必须输出 `appearance_assets`，至少包含 1 个 `name="base"`、`asset_role="base"` 的基础身份造型。
+
+- `base` 是该角色最稳定、最常复用的定妆锚点，用于锁定脸、身形、发型基底、肤色、基础服装体系和关键视觉标志。
+- 同一脸和身形下的服装/妆造/状态变化输出为 `asset_role="variant"`，`reference_asset_name` 通常填 `base`。
+- 重大年龄阶段、转生/附身/毁容前后等需要单独身份板的阶段，输出为另一个 `asset_role="base"` 的命名造型资产，`reference_asset_name` 为空或 null。
+- 每个 appearance 的 `episode_keys` 只写该造型实际出镜或延续出现的 episode_key；没有明确造型变化时，后续场次延续上一个已确认造型。
+- `appearance_desc` 写该造型的完整客观可画描述；`clothing` 写服饰；`visual_features` 写脸、身形、发型、肤色、伤痕/标志等可复用识别点；`prompt_hint` 写给后续角色板 prompt 的简短注意事项。
 # 输出要求
 
 只输出结构化 JSON。不要 Markdown，不要解释。
@@ -57,7 +76,7 @@
 - 如果没有新增主要角色，输出空 `roles`。
 - `name` 使用正文中的原名；稳定称号、别名、身份称呼放入 `aliases`。
 - `brief` 用一句话说明人物身份、剧情功能和主要关系。
-- `appearance_notes` 只写正文明确或可稳妥推断出的稳定外观、服装、道具、气质信息。
+- `appearance_notes` 只写正文明确或可稳妥推断出的稳定客观外观、服装、道具和可视标志。`appearance_assets` 写具体 base / variant 造型资产。
 - `source_chapters` 只填写正文中明确出现的源章节范围；无法判断时留空数组。
 - `has_dialogue` 表示此角色在正文中是否有明确对白、喊话、传音或旁白式台词。
 - 主要角色的 `visual_reuse_required` 应为 true。

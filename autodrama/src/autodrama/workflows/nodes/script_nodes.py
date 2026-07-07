@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import json
@@ -712,8 +712,6 @@ class ClipSegmentNode(ScriptNodeBase):
             return self._format_asset_index(items)
         payload = self._load_first_node_payload(project_dir, ("layout_finalize", "layout_extract"))
         items = self._list_items_index(payload.get("layouts"), episode_key)
-        if not items:
-            items = self._mapping_index(payload.get("generated_layout_intro"))
         return self._format_asset_index(items)
 
     @staticmethod

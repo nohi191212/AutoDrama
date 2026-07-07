@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import sys
@@ -79,15 +79,22 @@ async def main() -> None:
 
     final_state = repo.load_state(project_dir)
     global_props = [prop for prop in final_state.props.values() if not prop.owner_role_id]
-    if len(global_props) < 3:
-        raise AssertionError(f"expected at least 3 generated props, got {len(global_props)}")
-    missing_images = [prop.id for prop in global_props if not prop.asset_path or not (project_dir / prop.asset_path).exists()]
+    if len(global_props) < 2:
+        raise AssertionError(f"expected at least 2 generated prop groups, got {len(global_props)}")
+    global_prop_assets = [asset for prop in global_props for asset in prop.assets.values()]
+    if len(global_prop_assets) < 3:
+        raise AssertionError(f"expected at least 3 generated prop assets, got {len(global_prop_assets)}")
+    missing_images = [
+        asset.id
+        for asset in global_prop_assets
+        if not asset.asset_path or not (project_dir / asset.asset_path).exists()
+    ]
     if missing_images:
         raise AssertionError(f"prop images were not written: {missing_images}")
 
-    variant_props = [prop for prop in global_props if "_" in prop.name]
-    if not variant_props:
-        raise AssertionError("expected at least one state variant prop")
+    variant_assets = [asset for asset in global_prop_assets if asset.asset_role == "variant"]
+    if not variant_assets:
+        raise AssertionError("expected at least one state variant prop asset")
 
 
 if __name__ == "__main__":

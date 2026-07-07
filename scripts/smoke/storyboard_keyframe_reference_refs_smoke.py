@@ -13,6 +13,7 @@ from autodrama.core.schemas import (  # noqa: E402
     Layout,
     ProjectState,
     Prop,
+    PropAsset,
     Role,
     RoleAppearance,
     ScriptBundle,
@@ -82,9 +83,17 @@ def main() -> None:
             "prop_keycard": Prop(
                 id="prop_keycard",
                 name="Keycard",
-                desc="Access keycard",
-                asset_id="prop_keycard",
-                asset_path=prop_path,
+                intro="Access keycard",
+                assets={
+                    "base": PropAsset(
+                        id="prop_keycard__base",
+                        prop_id="prop_keycard",
+                        name="base",
+                        desc="Access keycard",
+                        asset_id="prop_keycard__base",
+                        asset_path=prop_path,
+                    )
+                },
             )
         },
     )
@@ -151,3 +160,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+

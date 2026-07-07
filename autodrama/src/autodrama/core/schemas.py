@@ -23,7 +23,7 @@ class RoleAudio(BaseModel):
     id: str
     role_id: str
     emotion: str
-    desc: str | None = Field(default=None, exclude=True)
+    desc: str | None = None
     sample_text: str | None = Field(default=None, exclude=True)
     generation_status: str = "pending"
     asset_id: str | None = None
@@ -43,8 +43,14 @@ class RoleAppearance(BaseModel):
     id: str
     role_id: str
     name: str = "base"
-    desc: str | None = Field(default=None, exclude=True)
-    prompt: str | None = Field(default=None, exclude=True)
+    asset_role: Literal["base", "variant"] = "base"
+    reference_asset_name: str | None = None
+    episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    clothing: str | None = Field(default=None, exclude=True)
+    visual_features: str | None = None
+    desc: str | None = None
+    prompt: str | None = None
     roleboard_prompt: str | None = Field(default=None, exclude=True)
     roleboard_negative_prompt: str | None = Field(default=None, exclude=True)
     voice_profile_prompt: str | None = Field(default=None, exclude=True)
@@ -105,32 +111,110 @@ class Role(BaseModel):
     audio: dict[str, RoleAudio] = Field(default_factory=dict)
 
 
+class PropAsset(BaseModel):
+    id: str
+    prop_id: str
+    name: str = "base"
+    asset_role: Literal["base", "variant"] = "base"
+    reference_asset_name: str | None = None
+    status: str = "normal"
+    episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    desc: str | None = None
+    visual_features: str | None = None
+    state_change: str | None = None
+    prompt_hint: str | None = None
+    prompt_type: Literal["text_to_image", "image_edit"] | str | None = None
+    prompt: str | None = None
+    design_path: str | None = None
+    asset_id: str | None = None
+    asset_path: str | None = None
+    asset_url: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+
+
 class Prop(BaseModel):
     id: str
     name: str
-    desc: str
-    status: str = "normal"
+    intro: str
+    aliases: list[str] = Field(default_factory=list)
     episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
     owner_role_id: str | None = None
     owner_role_name: str | None = None
     source: str | None = None
     design_path: str | None = None
-    asset_path: str | None = None
-    asset_url: str | None = None
-    prompt: str | None = Field(default=None, exclude=True)
-    asset_id: str | None = Field(default=None, exclude=True)
-    provider: str | None = Field(default=None, exclude=True)
-    model: str | None = Field(default=None, exclude=True)
-    request_id: str | None = Field(default=None, exclude=True)
-    usage: dict[str, Any] = Field(default_factory=dict, exclude=True)
+    assets: dict[str, PropAsset] = Field(default_factory=dict)
+
+    @property
+    def base_asset(self) -> PropAsset | None:
+        return self.assets.get("base") or next(iter(self.assets.values()), None)
+
+    @property
+    def desc(self) -> str:
+        return self.intro
+
+    @property
+    def status(self) -> str:
+        asset = self.base_asset
+        return asset.status if asset is not None else "normal"
+
+    @property
+    def prompt(self) -> str | None:
+        asset = self.base_asset
+        return asset.prompt if asset is not None else None
+
+    @property
+    def asset_id(self) -> str | None:
+        asset = self.base_asset
+        return asset.asset_id if asset is not None else None
+
+    @property
+    def asset_path(self) -> str | None:
+        asset = self.base_asset
+        return asset.asset_path if asset is not None else None
+
+    @property
+    def asset_url(self) -> str | None:
+        asset = self.base_asset
+        return asset.asset_url if asset is not None else None
+
+    @property
+    def provider(self) -> str | None:
+        asset = self.base_asset
+        return asset.provider if asset is not None else None
+
+    @property
+    def model(self) -> str | None:
+        asset = self.base_asset
+        return asset.model if asset is not None else None
+
+    @property
+    def request_id(self) -> str | None:
+        asset = self.base_asset
+        return asset.request_id if asset is not None else None
+
+    @property
+    def usage(self) -> dict[str, Any]:
+        asset = self.base_asset
+        return dict(asset.usage) if asset is not None else {}
 
 
 class Layout(BaseModel):
     id: str
     name: str
+    group: str = ""
+    asset_role: Literal["base", "variant"] = "base"
+    reference_asset_name: str | None = None
     desc: str
     prompt: str
     episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    space_features: list[str] = Field(default_factory=list)
+    state_delta: str = ""
     asset_id: str | None = None
     asset_path: str | None = None
     asset_url: str | None = None
@@ -279,6 +363,28 @@ class ScriptNovelEpisodeOutput(BaseModel):
     novel_full: str
 
 
+class RoleAppearanceExtractItem(BaseModel):
+    name: str = "base"
+    asset_role: Literal["base", "variant"] = Field(
+        default="base",
+        description=(
+            "base for an independently generated stable asset; variant for clothing, makeup, hairstyle, "
+            "injury, dirt, wet, disguise, or other visual states that reuse a reference asset."
+        ),
+    )
+    reference_asset_name: str | None = Field(
+        default=None,
+        description="For variant assets, the same-role reference asset to lock face/body/hair from; usually base.",
+    )
+    episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    brief: str | None = None
+    clothing: str | None = None
+    visual_features: str | None = None
+    appearance_desc: str | None = None
+    prompt_hint: str | None = None
+
+
 class RoleExtractItem(BaseModel):
     name: str
     role_tier: Literal["primary", "functional"] | str = "primary"
@@ -287,6 +393,7 @@ class RoleExtractItem(BaseModel):
     source_chapters: list[str] = Field(default_factory=list)
     brief: str | None = None
     appearance_notes: list[str] = Field(default_factory=list)
+    appearance_assets: list[RoleAppearanceExtractItem] = Field(default_factory=list)
     has_dialogue: bool = False
     visual_reuse_required: bool = False
 
@@ -345,6 +452,8 @@ class RoleboardPromptItem(BaseModel):
     role_name: str
     appearance_id: str
     appearance_name: str = "base"
+    asset_role: Literal["base", "variant"] = "base"
+    reference_asset_name: str | None = None
     role_tier: Literal["primary", "functional"] | str | None = None
     has_dialogue: bool = True
     visual_reuse_required: bool = True
@@ -352,6 +461,8 @@ class RoleboardPromptItem(BaseModel):
     source_chapters: list[str] = Field(default_factory=list)
     role_brief: str | None = None
     appearance_desc: str | None = None
+    clothing: str | None = None
+    visual_features: str | None = None
     roleboard_prompt: str
     roleboard_negative_prompt: str | None = None
     voice_profile_prompt: str | None = None
@@ -508,67 +619,49 @@ class StoryboardKeyframeGenerationOutput(BaseModel):
     generated_keyframes: list[StoryboardKeyframeGenerationItem]
 
 
-class PropExtractItem(BaseModel):
-    name: str
+class PropAssetExtractItem(BaseModel):
+    name: str = "base"
+    asset_role: Literal["base", "variant"] = "base"
     status: str = "normal"
+    reference_asset_name: str | None = None
     episode_keys: list[str] = Field(default_factory=list)
     source_chapters: list[str] = Field(default_factory=list)
-    brief: str | None = None
-    appearance_notes: list[str] = Field(default_factory=list)
+    desc: str
+    visual_features: str | None = None
+    state_change: str | None = None
+    prompt_hint: str | None = None
+
+
+class PropExtractItem(BaseModel):
+    name: str
+    aliases: list[str] = Field(default_factory=list)
+    intro: str
+    episode_keys: list[str] = Field(default_factory=list)
+    source_chapters: list[str] = Field(default_factory=list)
+    owner_role_name: str | None = None
+    assets: list[PropAssetExtractItem] = Field(default_factory=list)
 
 
 class PropExtractOutput(BaseModel):
-    generated_prop_intro: dict[str, str] = Field(default_factory=dict)
+    props: list[PropExtractItem] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _from_legacy_props(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        if "generated_prop_intro" in value:
-            return value
-        props = value.get("props")
-        if not isinstance(props, list):
-            return value
-        generated_prop_intro: dict[str, str] = {}
-        for item in props:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            if not name:
-                continue
-            intro = str(item.get("brief") or item.get("desc") or "").strip()
-            notes = item.get("appearance_notes")
-            if not intro and isinstance(notes, list):
-                intro = "；".join(str(note).strip() for note in notes if str(note).strip())
-            generated_prop_intro[name] = intro
-        return {**value, "generated_prop_intro": generated_prop_intro}
 
 
 class PropDedupeOutput(BaseModel):
-    generated_prop_intro: dict[str, str] = Field(default_factory=dict)
+    props: list[PropExtractItem] = Field(default_factory=list)
     merge_notes: list[str] = Field(default_factory=list)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _from_legacy_props(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        if "generated_prop_intro" in value:
-            return value
-        props = value.get("props")
-        if not isinstance(props, list):
-            return value
-        generated_prop_intro: dict[str, str] = {}
-        for item in props:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            intro = str(item.get("desc") or item.get("brief") or "").strip()
-            if name:
-                generated_prop_intro[name] = intro
-        return {**value, "generated_prop_intro": generated_prop_intro}
+
+class PropAssetPromptItem(BaseModel):
+    prop_name: str
+    asset_name: str = "base"
+    prompt_type: Literal["text_to_image", "image_edit"] | str
+    reference_asset_name: str | None = None
+    prompt: str
+
+
+class PropPromptOutput(BaseModel):
+    prop_asset_prompts: list[PropAssetPromptItem] = Field(default_factory=list)
 
 
 class PropDesignItem(BaseModel):
@@ -582,115 +675,39 @@ class PropDesignItem(BaseModel):
 class PropDesignOutput(BaseModel):
     props: list[PropDesignItem]
 
-
-class PropPromptOutput(BaseModel):
-    prop_prompts: dict[str, str] = Field(default_factory=dict)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _from_legacy_props(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        if "prop_prompts" in value:
-            return value
-        props = value.get("props")
-        if not isinstance(props, list):
-            return value
-        prop_prompts: dict[str, str] = {}
-        for item in props:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            prompt = str(item.get("prompt") or "").strip()
-            if name and prompt:
-                prop_prompts[name] = prompt
-        return {**value, "prop_prompts": prop_prompts}
-
-
 class LayoutExtractItem(BaseModel):
     name: str
+    group: str
+    asset_role: Literal["base", "variant"]
+    reference_asset_name: str | None = None
     episode_keys: list[str] = Field(default_factory=list)
     source_chapters: list[str] = Field(default_factory=list)
-    brief: str | None = None
-    appearance_notes: list[str] = Field(default_factory=list)
+    brief: str
+    space_features: list[str] = Field(default_factory=list)
+    state_delta: str = ""
 
 
 class LayoutExtractOutput(BaseModel):
-    generated_layout_intro: dict[str, str] = Field(default_factory=dict)
+    layouts: list[LayoutExtractItem] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _from_legacy_layouts(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        if "generated_layout_intro" in value:
-            return value
-        layouts = value.get("layouts")
-        if not isinstance(layouts, list):
-            return value
-        generated_layout_intro: dict[str, str] = {}
-        for item in layouts:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            if not name:
-                continue
-            intro = str(item.get("brief") or item.get("desc") or "").strip()
-            notes = item.get("appearance_notes")
-            if not intro and isinstance(notes, list):
-                intro = "；".join(str(note).strip() for note in notes if str(note).strip())
-            generated_layout_intro[name] = intro
-        return {**value, "generated_layout_intro": generated_layout_intro}
+
+class LayoutPromptItem(BaseModel):
+    name: str
+    group: str
+    asset_role: Literal["base", "variant"]
+    reference_asset_name: str | None = None
+    prompt_type: Literal["text_to_image", "image_edit"]
+    prompt: str
 
 
 class LayoutPromptOutput(BaseModel):
-    layout_prompts: dict[str, str] = Field(default_factory=dict)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _from_legacy_layouts(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        if "layout_prompts" in value:
-            return value
-        layouts = value.get("layouts")
-        if not isinstance(layouts, list):
-            return value
-        layout_prompts: dict[str, str] = {}
-        for item in layouts:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            prompt = str(item.get("prompt") or "").strip()
-            if name and prompt:
-                layout_prompts[name] = prompt
-        return {**value, "layout_prompts": layout_prompts}
+    layout_prompts: list[LayoutPromptItem] = Field(default_factory=list)
 
 
 class LayoutDedupeReviewOutput(BaseModel):
-    generated_layout_intro: dict[str, str] = Field(default_factory=dict)
+    layouts: list[LayoutExtractItem] = Field(default_factory=list)
     merge_notes: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _from_legacy_layouts(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        if "generated_layout_intro" in value:
-            return value
-        layouts = value.get("layouts")
-        if not isinstance(layouts, list):
-            return value
-        generated_layout_intro: dict[str, str] = {}
-        for item in layouts:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name") or "").strip()
-            intro = str(item.get("desc") or item.get("brief") or "").strip()
-            if name:
-                generated_layout_intro[name] = intro
-        return {**value, "generated_layout_intro": generated_layout_intro}
 
 
 class BGMDesignItem(BaseModel):

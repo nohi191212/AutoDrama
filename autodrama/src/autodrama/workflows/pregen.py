@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -432,12 +432,19 @@ class PregenWorkflow:
         ordered: list[RoleboardPromptItem] = []
         emitted: set[str] = set()
         for extract_item in extract_roles:
-            key = self._role_name_key(extract_item.name)
-            item = prompt_by_key.get(key)
-            if item is None:
-                continue
-            ordered.append(item)
-            emitted.add(key)
+            appearance_names = [str(asset.name or "base").strip() or "base" for asset in extract_item.appearance_assets]
+            if not appearance_names:
+                appearance_names = ["base"]
+            base_seen = any(name.casefold() == "base" for name in appearance_names)
+            if extract_item.appearance_assets and not base_seen:
+                appearance_names.insert(0, "base")
+            for appearance_name in appearance_names:
+                key = self._role_appearance_key(extract_item.name, appearance_name)
+                item = prompt_by_key.get(key)
+                if item is None:
+                    continue
+                ordered.append(item)
+                emitted.add(key)
         for key, item in prompt_by_key.items():
             if key not in emitted:
                 ordered.append(item)
@@ -474,13 +481,19 @@ class PregenWorkflow:
         role.role_tier = item.role_tier or role.role_tier
         role.has_dialogue = item.has_dialogue
         role.visual_reuse_required = item.visual_reuse_required
-        role.episode_keys = self._dedupe_texts(item.episode_keys)
-        role.source_chapters = self._dedupe_texts(item.source_chapters)
+        role.episode_keys = self._dedupe_texts([*role.episode_keys, *item.episode_keys])
+        role.source_chapters = self._dedupe_texts([*role.source_chapters, *item.source_chapters])
         role.voice_summary = item.voice_profile_prompt or role.voice_summary
         appearance = RoleAppearance(
             id=item.appearance_id,
             role_id=item.role_id,
             name=item.appearance_name,
+            asset_role=item.asset_role,
+            reference_asset_name=item.reference_asset_name,
+            episode_keys=self._dedupe_texts(item.episode_keys),
+            source_chapters=self._dedupe_texts(item.source_chapters),
+            clothing=item.clothing,
+            visual_features=item.visual_features,
             desc=item.appearance_desc,
             prompt=item.roleboard_prompt,
             roleboard_prompt=item.roleboard_prompt,
@@ -519,7 +532,7 @@ class PregenWorkflow:
             appearance.subject_element_request_id = existing_appearance.subject_element_request_id
             appearance.subject_element_usage = existing_appearance.subject_element_usage
             appearance.subject_element_raw_response = existing_appearance.subject_element_raw_response
-        role.appearances = {item.appearance_name: appearance}
+        role.appearances[item.appearance_name] = appearance
         state.roles[item.role_id] = role
         if self._role_needs_voice(role):
             self._ensure_normal_role_audio(role)
@@ -704,21 +717,26 @@ class PregenWorkflow:
     def _role_name_key(name: object) -> str:
         return str(name or "").strip().casefold()
 
+    @staticmethod
+    def _role_appearance_key(role_name: object, appearance_name: object) -> str:
+        return f"{str(role_name or '').strip().casefold()}::{str(appearance_name or '').strip().casefold()}"
+
     def _hydrate_roles_from_design_files(
         self,
         project_dir: Path,
         state: ProjectState,
     ) -> None:
         for role in list(state.roles.values()):
-            item = self._load_roleboard_prompt_item_for_role(project_dir, role)
-            if item is None:
+            items = self.roleboard_prompts.load_items_for_role(project_dir, role)
+            if not items:
                 continue
-            self._apply_roleboard_prompt_item(
-                state,
-                item,
-                prompt_path=role.design_path or self._roleboard_prompt_relative_path(project_dir, role.id),
-                preserve_assets=True,
-            )
+            for item in items:
+                self._apply_roleboard_prompt_item(
+                    state,
+                    item,
+                    prompt_path=role.design_path or self._roleboard_prompt_relative_path(project_dir, role.id),
+                    preserve_assets=True,
+                )
 
     def _role_node_runner(self, node_name: str) -> RoleNodeBase:
         return build_role_node_runners(self)[node_name]

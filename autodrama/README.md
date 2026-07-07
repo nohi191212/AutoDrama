@@ -1,4 +1,4 @@
-﻿# AutoDrama
+# AutoDrama
 
 AutoDrama builds short-drama projects in two stages: pre-generation for script/static assets/BGM, then generation for per-episode dynamic shot assets.
 
@@ -51,7 +51,7 @@ Each per-episode file keeps only `node_name`, `episode_key`, `content`, and at m
 
 `prop_extract` reads all complete episode text as `novel_full_all_episodes` plus the existing `generated_prop_intro` map and maintains reusable prop introductions without image prompts. `prop_finalize` receives only `generated_prop_intro`, merges duplicate props, and is rerun with `prop_extract` until two consecutive dedupe outputs converge. `prop_prompt` then turns each one-line prop intro plus configured `visual_tone` into pure text prompts; state variants such as `道具名_状态` produce reference-image change prompts. `prop_image_generation` renders base props first, then renders state variants with the base prop image as reference when the provider supports reference images.
 
-`layout_extract` reads all complete episode text as `novel_full_all_episodes` plus the existing `generated_layout_intro` map and maintains reusable scene introductions without image prompts. `layout_finalize` receives only `generated_layout_intro`, merges duplicate spaces, and is rerun with `layout_extract` until two consecutive dedupe outputs converge. `layout_prompt` then turns each one-line scene intro plus configured `visual_tone` into pure text prompts; state variants such as `场景名_状态` produce reference-image change prompts. `layout_image_generation` renders the final layout images and can use the base scene image as a reference for state variants.
+`layout_extract` reads all complete episode text as `novel_full_all_episodes` plus existing structured `layouts` and maintains reusable scene visual assets without image prompts. Each layout is now explicit `base` or `variant`: base assets lock the reusable space structure, while variants point to `reference_layout_name` and describe only the state delta. `layout_finalize` receives structured `layouts`, merges duplicate spaces, fixes base/variant relationships, and is rerun with `layout_extract` until two consecutive dedupe outputs converge. `layout_prompt` then turns each structured layout plus configured `visual_tone` into prompt items: base layouts use `prompt_type=text_to_image`, and variants use `prompt_type=image_edit`. `layout_image_generation` renders base layouts before variants and requires variant layouts to use their referenced base scene image.
 
 `run pregen --only clip_segment --episodes ...` reruns only selected episode clip maps and merges them into the existing `clip_segment.json`. `run pregen --only roleboard_prompt --episodes ...` and `run pregen --only roleboard_image_generation --episodes ...` rerun only roles whose `role_finalize.final_roles[].episode_keys` include the selected episode(s), preserving existing roleboard prompts/assets outside that episode unless `--force` targets them. `clip_prompt`, `clip_storyboard_prompt`, pregen `clip_storyboard_image_generation`, `clip_storyboard_keyframe_generation`, and `clip_manifest_generation` also support `--episodes` and rerun only the selected episode storyboard scripts/sheets/keyframes/manifests. `role_voice_select`, `prop_prompt`, `prop_image_generation`, and `layout_image_generation` also support `--episodes`; they rerun only roles/props/layouts whose `episode_keys` intersect the selected episode(s). The legacy `--only prop_design` and `--only prop_generation` names are accepted as aliases for `prop_prompt` and `prop_image_generation`.
 
@@ -373,3 +373,4 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/shot_selector_smoke.py
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_payload_smoke.py --config config.yaml.example
 D:/miniforge3/envs/autodrama/python.exe scripts/smoke/seedance_router_smoke.py
 ```
+

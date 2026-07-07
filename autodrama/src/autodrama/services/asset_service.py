@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 
@@ -51,12 +51,12 @@ class AssetService:
         provider: TextLLM,
         *,
         novel_full_all_episodes: dict[str, str],
-        generated_prop_intro: dict[str, str] | None = None,
+        existing_props: list[dict[str, object]] | None = None,
     ) -> PropExtractOutput:
         prompt = self.prompts.render(
             "prop_extract",
             novel_full_all_episodes=self.format_json(novel_full_all_episodes),
-            generated_prop_intro=self.format_json(generated_prop_intro or {}),
+            existing_props=self.format_json(existing_props or []),
         )
         return await provider.generate_json(
             prompt,
@@ -74,11 +74,11 @@ class AssetService:
         state: ProjectState,
         provider: TextLLM,
         *,
-        generated_prop_intro: dict[str, str],
+        props: list[dict[str, object]],
     ) -> PropDedupeOutput:
         prompt = self.prompts.render(
             "prop_finalize",
-            generated_prop_intro=self.format_json(generated_prop_intro),
+            props=self.format_json(props),
         )
         return await provider.generate_json(
             prompt,
@@ -92,13 +92,18 @@ class AssetService:
         state: ProjectState,
         provider: TextLLM,
         *,
-        generated_prop_intro: dict[str, str],
+        props: list[dict[str, object]],
         prompt_template: str = "prop_prompt",
     ) -> PropPromptOutput:
+        prop_style_prompt = (
+            self.prop_design_style_prompt(state)
+            or self.visual_tone(state)
+            or "（暂无道具风格约束，请只依据道具资产描述输出中性、可复用的道具提示词。）"
+        )
         prompt = self.prompts.render(
             prompt_template,
-            generated_prop_intro=self.format_json(generated_prop_intro),
-            visual_tone=self.visual_tone(state) or "（暂无导演 visual_tone，请只依据道具一句话介绍输出中性、可复用的道具提示词。）",
+            props=self.format_json(props),
+            prop_style_prompt=prop_style_prompt,
         )
         return await provider.generate_json(
             prompt,
@@ -121,35 +126,38 @@ class AssetService:
         prompt_output = await self.prop_prompt(
             state,
             provider,
-            generated_prop_intro={prop_item.name: str(prop_item.brief or "").strip()},
+            props=[prop_item.model_dump(mode="json")],
             prompt_template="prop_prompt",
         )
+        prompt_by_asset = {
+            (item.prop_name, item.asset_name): item.prompt
+            for item in prompt_output.prop_asset_prompts
+        }
         return PropDesignOutput(
             props=[
                 {
-                    "name": prop_item.name,
-                    "desc": str(prop_item.brief or "").strip(),
-                    "prompt": prompt,
-                    "status": prop_item.status,
-                    "episode_keys": prop_item.episode_keys,
+                    "name": prop_item.name if asset.name == "base" else f"{prop_item.name}_{asset.name}",
+                    "desc": asset.desc,
+                    "prompt": prompt_by_asset.get((prop_item.name, asset.name), ""),
+                    "status": asset.status,
+                    "episode_keys": asset.episode_keys or prop_item.episode_keys,
                 }
-                for name, prompt in prompt_output.prop_prompts.items()
-                if name == prop_item.name
+                for asset in prop_item.assets
+                if prompt_by_asset.get((prop_item.name, asset.name), "")
             ]
         )
-
     async def layout_extract(
         self,
         state: ProjectState,
         provider: TextLLM,
         *,
         novel_full_all_episodes: dict[str, str],
-        generated_layout_intro: dict[str, str] | None = None,
+        existing_layouts: list[dict[str, object]] | None = None,
     ) -> LayoutExtractOutput:
         prompt = self.prompts.render(
             "layout_extract",
             novel_full_all_episodes=self.format_json(novel_full_all_episodes),
-            generated_layout_intro=self.format_json(generated_layout_intro or {}),
+            existing_layouts=self.format_json(existing_layouts or []),
         )
         return await provider.generate_json(
             prompt,
@@ -167,13 +175,13 @@ class AssetService:
         state: ProjectState,
         provider: TextLLM,
         *,
-        generated_layout_intro: dict[str, str],
+        layouts: list[dict[str, object]],
         prompt_template: str = "layout_prompt",
     ) -> LayoutPromptOutput:
         prompt = self.prompts.render(
             prompt_template,
-            generated_layout_intro=self.format_json(generated_layout_intro),
-            visual_tone=self.visual_tone(state) or "（暂无导演 visual_tone，请只依据场景一句话介绍输出中性、可复用的场景提示词。）",
+            layouts=self.format_json(layouts),
+            visual_tone=self.visual_tone(state) or "（暂无导演 visual_tone，请只依据场景结构化资产输出中性、可复用的场景提示词。）",
         )
         return await provider.generate_json(
             prompt,
@@ -187,11 +195,11 @@ class AssetService:
         state: ProjectState,
         provider: TextLLM,
         *,
-        generated_layout_intro: dict[str, str],
+        layouts: list[dict[str, object]],
     ) -> LayoutDedupeReviewOutput:
         prompt = self.prompts.render(
             "layout_finalize",
-            generated_layout_intro=self.format_json(generated_layout_intro),
+            layouts=self.format_json(layouts),
         )
         return await provider.generate_json(
             prompt,

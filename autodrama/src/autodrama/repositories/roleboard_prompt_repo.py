@@ -4,7 +4,14 @@ import json
 from pathlib import Path
 
 from autodrama.core.ids import normalize_id
-from autodrama.core.schemas import Role, RoleExtractItem, RoleExtractOutput, RoleFinalizeOutput, RoleboardPromptItem, RoleboardPromptOutput
+from autodrama.core.schemas import (
+    Role,
+    RoleExtractItem,
+    RoleExtractOutput,
+    RoleFinalizeOutput,
+    RoleboardPromptItem,
+    RoleboardPromptOutput,
+)
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
@@ -13,7 +20,7 @@ from autodrama.repositories.project_repo import ProjectRepository
 class RoleboardPromptRepository:
     """Persistence helper for per-role extract and roleboard prompt records."""
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 3
 
     def __init__(self, repo: ProjectRepository, layout: ProjectLayout) -> None:
         self.repo = repo
@@ -52,9 +59,9 @@ class RoleboardPromptRepository:
                     payload = json.loads(path.read_text(encoding="utf-8"))
                     if not isinstance(payload, dict):
                         raise ValueError(f"Invalid role JSON: {path}")
-                    if payload.get("roleboard_prompt") is None:
+                    if payload.get("roleboard_prompts") is None:
                         continue
-                    role_items.append(self.load_item(path))
+                    role_items.extend(self.load_items(path))
                 except Exception as exc:
                     get_logger().warning("roleboard_prompt ignored invalid role JSON %s: %s", path, exc)
             if role_items:
@@ -71,7 +78,7 @@ class RoleboardPromptRepository:
                 "role_id": role_id,
                 "role_name": item.name,
                 "extract": item.model_dump(mode="json"),
-                "roleboard_prompt": None,
+                "roleboard_prompts": [],
                 "state_role": None,
                 "source": {
                     "role_finalize_path": self.layout.project_relative(project_dir, self.finalize_output_path(project_dir)),
@@ -81,18 +88,19 @@ class RoleboardPromptRepository:
         )
         return self.layout.project_relative(project_dir, path)
 
-    def save_prompt_item(
+    def save_prompt_items(
         self,
         project_dir: Path,
         *,
         extract_item: RoleExtractItem,
-        prompt_item: RoleboardPromptItem,
+        prompt_items: list[RoleboardPromptItem],
         role: Role,
     ) -> str:
         role_id = normalize_id("role", extract_item.name)
         path = self.item_path(project_dir, role_id)
         relative_path = self.layout.project_relative(project_dir, path)
         role.design_path = relative_path
+        dumped_items = [item.model_dump(mode="json") for item in prompt_items]
         self.repo.write_json(
             path,
             {
@@ -100,7 +108,7 @@ class RoleboardPromptRepository:
                 "role_id": role_id,
                 "role_name": extract_item.name,
                 "extract": extract_item.model_dump(mode="json"),
-                "roleboard_prompt": prompt_item.model_dump(mode="json"),
+                "roleboard_prompts": dumped_items,
                 "state_role": role.model_dump(mode="json"),
                 "source": {
                     "role_finalize_path": self.layout.project_relative(project_dir, self.finalize_output_path(project_dir)),
@@ -110,17 +118,39 @@ class RoleboardPromptRepository:
         )
         return relative_path
 
+    def save_prompt_item(
+        self,
+        project_dir: Path,
+        *,
+        extract_item: RoleExtractItem,
+        prompt_item: RoleboardPromptItem,
+        role: Role,
+    ) -> str:
+        return self.save_prompt_items(
+            project_dir,
+            extract_item=extract_item,
+            prompt_items=[prompt_item],
+            role=role,
+        )
+
     @staticmethod
-    def load_item(path: Path) -> RoleboardPromptItem:
+    def load_items(path: Path) -> list[RoleboardPromptItem]:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError(f"Invalid roleboard prompt JSON: {path}")
-        content = payload.get("roleboard_prompt")
-        if not isinstance(content, dict):
-            raise ValueError(f"Invalid roleboard prompt content JSON: {path}")
-        return RoleboardPromptItem.model_validate(content)
+        contents = payload.get("roleboard_prompts")
+        if isinstance(contents, list):
+            return [RoleboardPromptItem.model_validate(item) for item in contents if isinstance(item, dict)]
+        raise ValueError(f"Invalid roleboard prompt content JSON: {path}")
 
-    def load_item_for_role(self, project_dir: Path, role: Role) -> RoleboardPromptItem | None:
+    @staticmethod
+    def load_item(path: Path) -> RoleboardPromptItem:
+        items = RoleboardPromptRepository.load_items(path)
+        if not items:
+            raise ValueError(f"Roleboard prompt JSON has no items: {path}")
+        return items[0]
+
+    def load_items_for_role(self, project_dir: Path, role: Role) -> list[RoleboardPromptItem]:
         candidates: list[Path] = []
         if role.design_path:
             path = Path(role.design_path)
@@ -128,8 +158,12 @@ class RoleboardPromptRepository:
         candidates.append(self.item_path(project_dir, role.id))
         for path in candidates:
             if path.exists():
-                return self.load_item(path)
-        return None
+                return self.load_items(path)
+        return []
+
+    def load_item_for_role(self, project_dir: Path, role: Role) -> RoleboardPromptItem | None:
+        items = self.load_items_for_role(project_dir, role)
+        return items[0] if items else None
 
 
 __all__ = ["RoleboardPromptRepository"]

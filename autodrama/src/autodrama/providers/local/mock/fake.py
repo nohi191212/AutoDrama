@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 from io import BytesIO
@@ -262,6 +262,29 @@ class FakeTextProvider:
                             "source_chapters": ["第1章-第2章"],
                             "brief": "二十八岁职场青年，合同调包事件中的被陷害者和反击者。",
                             "appearance_notes": ["青年男性", "短发", "身形偏瘦", "眼神疲惫但冷静"],
+                            "appearance_assets": [
+                                {
+                                    "name": "base",
+                                    "asset_role": "base",
+                                    "episode_keys": episode_keys,
+                                    "source_chapters": ["第1章-第2章"],
+                                    "brief": "林舟稳定基础身份造型。",
+                                    "clothing": "简洁深色通勤装",
+                                    "visual_features": "青年男性，短发，身形偏瘦，眼神疲惫但冷静",
+                                    "appearance_desc": "青年男性，短发，身形偏瘦，简洁深色通勤装。",
+                                },
+                                {
+                                    "name": "雨夜办公室",
+                                    "asset_role": "variant",
+                                    "reference_asset_name": "base",
+                                    "episode_keys": episode_keys,
+                                    "source_chapters": ["第1章-第2章"],
+                                    "brief": "雨夜办公室场景造型。",
+                                    "clothing": "被雨水打湿的深色衬衫和外套",
+                                    "visual_features": "保持林舟同一脸、短发和偏瘦身形，衣料微湿",
+                                    "appearance_desc": "同一林舟，短发偏瘦，深色衬衫外套被雨水打湿。",
+                                },
+                            ],
                             "has_dialogue": True,
                             "visual_reuse_required": True,
                         },
@@ -422,29 +445,153 @@ class FakeTextProvider:
             }
         elif schema is PropExtractOutput or node_name == "prop_extract":
             data = {
-                "generated_prop_intro": {
-                    "被调包的合同": "林舟发现合同关键页异常的核心证据道具，A4商务合同中关键页纸张颜色略浅。",
-                    "被调包的合同_破损": "相比原合同，边角被撕裂并带有明显折痕和污渍。",
-                    "邮件截图": "苏晚提供的旧邮件附件时间线证据，以屏幕截图形式在镜头中展示。",
-                },
+                "props": [
+                    {
+                        "name": "被调包的合同",
+                        "aliases": ["异常合同", "合同证据"],
+                        "intro": "林舟发现合同关键页异常的核心证据道具。",
+                        "episode_keys": episode_keys,
+                        "source_chapters": [],
+                        "owner_role_name": None,
+                        "assets": [
+                            {
+                                "name": "base",
+                                "asset_role": "base",
+                                "status": "normal",
+                                "reference_asset_name": None,
+                                "episode_keys": episode_keys,
+                                "source_chapters": [],
+                                "desc": "A4商务合同，装订整齐，关键页纸张颜色略浅，页码和边缘纹理与其他页不一致。",
+                                "visual_features": "A4纸张、商务合同装订、关键页浅色差、纸张边缘纹理",
+                                "state_change": "",
+                                "prompt_hint": "锁定合同装订与关键页色差。",
+                            },
+                            {
+                                "name": "破损",
+                                "asset_role": "variant",
+                                "status": "damaged",
+                                "reference_asset_name": "base",
+                                "episode_keys": episode_keys,
+                                "source_chapters": [],
+                                "desc": "合同被撕扯后的状态。",
+                                "visual_features": "",
+                                "state_change": "边角撕裂，纸面增加折痕、灰尘和轻微污渍。",
+                                "prompt_hint": "基于 base 图编辑，只改变破损和污渍状态。",
+                            },
+                        ],
+                    },
+                    {
+                        "name": "邮件截图",
+                        "aliases": ["旧邮件截图"],
+                        "intro": "苏晚提供的旧邮件附件时间线证据，以屏幕截图形式在镜头中展示。",
+                        "episode_keys": episode_keys,
+                        "source_chapters": [],
+                        "owner_role_name": None,
+                        "assets": [
+                            {
+                                "name": "base",
+                                "asset_role": "base",
+                                "status": "normal",
+                                "reference_asset_name": None,
+                                "episode_keys": episode_keys,
+                                "source_chapters": [],
+                                "desc": "电脑或手机屏幕上的旧邮件截图，界面中有附件时间线和邮件列表版式。",
+                                "visual_features": "屏幕界面、邮件列表版式、附件时间线色块、冷蓝屏幕光",
+                                "state_change": "",
+                                "prompt_hint": "不要依赖可读小字，用版式和色块表达证据属性。",
+                            }
+                        ],
+                    },
+                ],
                 "notes": ["fake provider prop extract fixture"],
             }
         elif schema is PropDedupeOutput or node_name == "prop_finalize":
             data = {
-                "generated_prop_intro": {
-                    "被调包的合同": "林舟发现合同关键页异常的核心证据道具，A4商务合同中关键页纸张颜色略浅。",
-                    "被调包的合同_破损": "相比原合同，边角被撕裂并带有明显折痕和污渍。",
-                    "邮件截图": "苏晚提供的旧邮件附件时间线证据，以屏幕截图形式在镜头中展示。",
-                },
+                "props": [
+                    {
+                        "name": "被调包的合同",
+                        "aliases": ["异常合同", "合同证据"],
+                        "intro": "林舟发现合同关键页异常的核心证据道具。",
+                        "episode_keys": episode_keys,
+                        "source_chapters": [],
+                        "owner_role_name": None,
+                        "assets": [
+                            {
+                                "name": "base",
+                                "asset_role": "base",
+                                "status": "normal",
+                                "reference_asset_name": None,
+                                "episode_keys": episode_keys,
+                                "source_chapters": [],
+                                "desc": "A4商务合同，装订整齐，关键页纸张颜色略浅，页码和边缘纹理与其他页不一致。",
+                                "visual_features": "A4纸张、商务合同装订、关键页浅色差、纸张边缘纹理",
+                                "state_change": "",
+                                "prompt_hint": "锁定合同装订与关键页色差。",
+                            },
+                            {
+                                "name": "破损",
+                                "asset_role": "variant",
+                                "status": "damaged",
+                                "reference_asset_name": "base",
+                                "episode_keys": episode_keys,
+                                "source_chapters": [],
+                                "desc": "合同被撕扯后的状态。",
+                                "visual_features": "",
+                                "state_change": "边角撕裂，纸面增加折痕、灰尘和轻微污渍。",
+                                "prompt_hint": "基于 base 图编辑，只改变破损和污渍状态。",
+                            },
+                        ],
+                    },
+                    {
+                        "name": "邮件截图",
+                        "aliases": ["旧邮件截图"],
+                        "intro": "苏晚提供的旧邮件附件时间线证据，以屏幕截图形式在镜头中展示。",
+                        "episode_keys": episode_keys,
+                        "source_chapters": [],
+                        "owner_role_name": None,
+                        "assets": [
+                            {
+                                "name": "base",
+                                "asset_role": "base",
+                                "status": "normal",
+                                "reference_asset_name": None,
+                                "episode_keys": episode_keys,
+                                "source_chapters": [],
+                                "desc": "电脑或手机屏幕上的旧邮件截图，界面中有附件时间线和邮件列表版式。",
+                                "visual_features": "屏幕界面、邮件列表版式、附件时间线色块、冷蓝屏幕光",
+                                "state_change": "",
+                                "prompt_hint": "不要依赖可读小字，用版式和色块表达证据属性。",
+                            }
+                        ],
+                    },
+                ],
                 "merge_notes": ["fake provider prop dedupe fixture"],
             }
         elif schema is PropPromptOutput or node_name == "prop_prompt":
             data = {
-                "prop_prompts": {
-                    "被调包的合同": "真人电影质感，无人物道具参考图，A4商务合同平放在深色办公桌上，关键页纸张颜色略浅，页码和纸张边缘纹理差异清楚，冷白台灯从左上照射，背景干净虚化，无可读大段文字、无水印。",
-                    "被调包的合同_破损": "基于参考图保持合同页数、装订位置、纸张材质和关键页色差不变，只将边角改为撕裂破损状态，增加折痕、灰尘和轻微污渍，无人物、无手持、无水印。",
-                    "邮件截图": "真人电影质感，无人物道具参考图，电脑屏幕或手机屏幕上的旧邮件截图特写，附件时间线和界面布局可见但不生成可读小字，冷蓝屏幕光和桌面反射自然，背景干净。",
-                }
+                "prop_asset_prompts": [
+                    {
+                        "prop_name": "被调包的合同",
+                        "asset_name": "base",
+                        "prompt_type": "text_to_image",
+                        "reference_asset_name": None,
+                        "prompt": "真人电影质感，无人物道具参考图，A4商务合同平放在干净深色办公桌面，装订整齐，关键页纸张颜色略浅，纸张边缘纹理差异清楚，冷白台灯从左上照射，背景简洁，无可读大段文字、无水印。",
+                    },
+                    {
+                        "prop_name": "被调包的合同",
+                        "asset_name": "破损",
+                        "prompt_type": "image_edit",
+                        "reference_asset_name": "base",
+                        "prompt": "以 base 对应的基准合同图为参考，保持合同页数、装订位置、纸张材质、关键页色差和桌面接触关系不变，只将边角改为撕裂破损状态，增加折痕、灰尘和轻微污渍，无人物、无手持、无水印。",
+                    },
+                    {
+                        "prop_name": "邮件截图",
+                        "asset_name": "base",
+                        "prompt_type": "text_to_image",
+                        "reference_asset_name": None,
+                        "prompt": "真人电影质感，无人物道具参考图，电脑屏幕或手机屏幕上的旧邮件截图特写，附件时间线和界面布局可见但不生成可读小字，冷蓝屏幕光和桌面反射自然，背景干净。",
+                    },
+                ]
             }
         elif schema is PropDesignOutput or node_name == "prop_design":
             prop_name = str(metadata.get("prop_name") or "").strip()
@@ -457,14 +604,7 @@ class FakeTextProvider:
                         "prompt": "真人电影质感，商务合同特写，装订整齐，关键页纸张颜色略浅，页码和纸张边缘细节清晰，办公室桌面，自然冷色光。",
                         "status": "normal",
                         "episode_keys": prop_episode_keys,
-                    },
-                    {
-                        "name": "邮件截图",
-                        "desc": "手机或电脑上的旧邮件截图，能看到时间线和附件记录，是反击证据。",
-                        "prompt": "真人电影质感，电脑屏幕上的邮件截图特写，时间线和附件记录清晰但不过度曝光，办公室环境反光自然。",
-                        "status": "normal",
-                        "episode_keys": prop_episode_keys,
-                    },
+                    }
                 ]
             }
             if prop_name:
@@ -472,25 +612,109 @@ class FakeTextProvider:
                 data["props"] = selected_props or data["props"][:1]
         elif schema is LayoutExtractOutput or node_name == "layout_extract":
             data = {
-                "generated_layout_intro": {
-                    "雨夜办公室": "林舟发现合同异常并与苏晚核对证据的深夜悬疑调查空间，冷白灯和窗外雨光交织。",
-                    "会议室": "林舟公开投屏证据并反击赵启的玻璃会议室对峙空间，长桌、投影屏和冷色顶灯稳定可复用。",
-                },
+                "layouts": [
+                    {
+                        "name": "办公室",
+                        "group": "办公室",
+                        "asset_role": "base",
+                        "reference_asset_name": "",
+                        "episode_keys": episode_keys,
+                        "source_chapters": [],
+                        "brief": "现代公司办公室，工位、玻璃窗、文件桌和入口通道构成稳定调查空间。",
+                        "space_features": ["现代办公室", "工位区", "玻璃窗", "文件桌", "入口通道"],
+                        "state_delta": "",
+                    },
+                    {
+                        "name": "办公室_雨夜",
+                        "group": "办公室",
+                        "asset_role": "variant",
+                        "reference_asset_name": "办公室",
+                        "episode_keys": episode_keys,
+                        "source_chapters": [],
+                        "brief": "保持办公室空间结构不变，只改为深夜冷白灯与窗外雨光交织的悬疑调查状态。",
+                        "space_features": [],
+                        "state_delta": "深夜冷白灯与窗外雨光交织，玻璃窗有雨痕反射。",
+                    },
+                    {
+                        "name": "会议室",
+                        "group": "会议室",
+                        "asset_role": "base",
+                        "reference_asset_name": "",
+                        "episode_keys": episode_keys,
+                        "source_chapters": [],
+                        "brief": "现代公司玻璃会议室，长桌、投影屏、玻璃墙、座椅通道和冷色顶灯稳定可复用。",
+                        "space_features": ["玻璃会议室", "长桌", "投影屏", "玻璃墙", "座椅通道"],
+                        "state_delta": "",
+                    },
+                ],
                 "notes": ["fake provider layout extract fixture"],
             }
         elif schema is LayoutPromptOutput or node_name == "layout_prompt":
             data = {
-                "layout_prompts": {
-                    "雨夜办公室": "深夜现代办公室空场景，冷白办公灯与窗外雨光交织，桌面散落合同和打开的电脑，玻璃窗有雨痕反射，入口、工位通道和可取景区域清晰，无人物、无可读文字、无水印。",
-                    "会议室": "现代公司玻璃会议室空场景，长桌、投影屏、玻璃墙和冷色顶灯构成公开对峙空间，桌面可放合同证据，入口、座椅通道和投屏背景清晰，无人物、无可读文字、无水印。",
-                }
+                "layout_prompts": [
+                    {
+                        "name": "办公室",
+                        "group": "办公室",
+                        "asset_role": "base",
+                        "reference_asset_name": "",
+                        "prompt_type": "text_to_image",
+                        "prompt": "现代公司办公室无人空场景资产图，工位区、玻璃窗、文件桌和入口通道清晰，桌面可放合同和电脑，冷色办公灯，材质与可行动线稳定，无人物、无可读文字、无水印。",
+                    },
+                    {
+                        "name": "办公室_雨夜",
+                        "group": "办公室",
+                        "asset_role": "variant",
+                        "reference_asset_name": "办公室",
+                        "prompt_type": "image_edit",
+                        "prompt": "以办公室基准图为参考，保持工位区、玻璃窗、文件桌、入口通道和材质关系不变，仅改为深夜冷白灯与窗外雨光交织，玻璃窗出现雨痕反射，无人物、无可读文字、无水印。",
+                    },
+                    {
+                        "name": "会议室",
+                        "group": "会议室",
+                        "asset_role": "base",
+                        "reference_asset_name": "",
+                        "prompt_type": "text_to_image",
+                        "prompt": "现代公司玻璃会议室无人空场景资产图，长桌、投影屏、玻璃墙、座椅通道和冷色顶灯构成公开对峙空间，桌面可放合同证据，无人物、无可读文字、无水印。",
+                    },
+                ]
             }
         elif schema is LayoutDedupeReviewOutput or node_name == "layout_finalize":
             data = {
-                "generated_layout_intro": {
-                    "雨夜办公室": "林舟发现合同异常并与苏晚核对证据的深夜悬疑调查空间，冷白灯和窗外雨光交织。",
-                    "会议室": "林舟公开投屏证据并反击赵启的玻璃会议室对峙空间，长桌、投影屏和冷色顶灯稳定可复用。",
-                },
+                "layouts": [
+                    {
+                        "name": "办公室",
+                        "group": "办公室",
+                        "asset_role": "base",
+                        "reference_asset_name": "",
+                        "episode_keys": episode_keys,
+                        "source_chapters": [],
+                        "brief": "现代公司办公室，工位、玻璃窗、文件桌和入口通道构成稳定调查空间。",
+                        "space_features": ["现代办公室", "工位区", "玻璃窗", "文件桌", "入口通道"],
+                        "state_delta": "",
+                    },
+                    {
+                        "name": "办公室_雨夜",
+                        "group": "办公室",
+                        "asset_role": "variant",
+                        "reference_asset_name": "办公室",
+                        "episode_keys": episode_keys,
+                        "source_chapters": [],
+                        "brief": "保持办公室空间结构不变，只改为深夜冷白灯与窗外雨光交织的悬疑调查状态。",
+                        "space_features": [],
+                        "state_delta": "深夜冷白灯与窗外雨光交织，玻璃窗有雨痕反射。",
+                    },
+                    {
+                        "name": "会议室",
+                        "group": "会议室",
+                        "asset_role": "base",
+                        "reference_asset_name": "",
+                        "episode_keys": episode_keys,
+                        "source_chapters": [],
+                        "brief": "现代公司玻璃会议室，长桌、投影屏、玻璃墙、座椅通道和冷色顶灯稳定可复用。",
+                        "space_features": ["玻璃会议室", "长桌", "投影屏", "玻璃墙", "座椅通道"],
+                        "state_delta": "",
+                    },
+                ],
                 "merge_notes": ["未发现需要合并的重复场景。"],
             }
         elif schema is BGMDesignOutput or node_name == "bgm_design":

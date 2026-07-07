@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 import sys
@@ -27,6 +27,7 @@ def render_roleboard_templates() -> None:
             '"has_dialogue":true}'
         ),
         "key_vision_asset": "{}",
+        "appearance_asset": '{"appearance_name":"base","asset_role":"base","appearance_desc":"稳定基础造型","clothing":"素色日常装","visual_features":"清晰脸型和发型"}',
         "roleboard_style_prompt": "统一角色板风格",
         "roleboard_view_requirement": "角色板视图要求",
         "roleboard_image_provider": "toapi",

@@ -15,6 +15,9 @@
 人物介绍：
 {{character_intro}}
 
+当前造型资产（本次只为这个 appearance 生成角色板 prompt）：
+{{appearance_asset}}
+
 # 生成原则
 
 - `roleboard_prompt` 是最终要直接传给 GPT-Image-2 的图像提示词，不是分析稿、不是剧情复述、不是中间设计说明。
@@ -22,6 +25,13 @@
 - `visual_tone` 只用于继承项目的摄影、美术、材质、光线、表演质感和整体审美气质；不要把剧情环境、场景、事件、氛围道具带进背景。角色板背景始终保持纯白色、柔和米白色或干净浅灰色。
 - 如果人物介绍里没有明确年龄、服装或视觉标志，只能做保守推断，并在 `design_notes` 里说明；不要编造会影响长期复用的复杂设定。
 - 不要在 `roleboard_prompt` 里提到 GPT-Image-2、provider、模型名、路径、文件名、节点名或项目 ID。
+
+# 多造型资产规则
+
+- 本次只生成 `appearance_asset.appearance_name` 对应的造型，不要混入同角色其他造型。
+- `asset_role=base` 时，把它作为同一角色的主身份资产，锁定脸、身形、发型基底、肤色、基础服装体系和关键视觉标志。
+- `asset_role=variant` 时，它是同一角色的从属造型：保持同一脸、同一身形比例、同一发型基底、肤色和核心视觉标志，只改变 `appearance_asset` 中明确写出的服装、妆造、发型变化或状态。
+- 如果人物介绍和当前造型资产冲突，优先服从当前造型资产；在 design_notes 简短说明冲突。
 
 # roleboard_prompt 写法
 
