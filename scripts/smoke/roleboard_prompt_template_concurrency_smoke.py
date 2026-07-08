@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+
+
 ROOT = Path(__file__).resolve().parents[2]
+
 SRC = ROOT / "autodrama" / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -11,6 +14,7 @@ if str(SRC) not in sys.path:
 from autodrama.config import load_settings
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.nodes.static_asset_nodes import RoleAppearanceGenerationBase
+
 
 def render_roleboard_templates() -> None:
     prompts = PromptStore()
@@ -30,13 +34,14 @@ def render_roleboard_templates() -> None:
         "appearance_asset": '{"appearance_name":"base","asset_role":"base","appearance_desc":"稳定基础造型","clothing":"素色日常装","visual_features":"清晰脸型和发型"}',
         "roleboard_style_prompt": "统一角色板风格",
         "roleboard_view_requirement": "角色板视图要求",
-        "roleboard_image_provider": "toapi",
-        "roleboard_image_model": "gpt-image-2-high",
+        "roleboard_image_provider": "aibox",
+        "roleboard_image_model": "gpt-image-2-guan",
     }
     template_names = [
         "roleboard_prompt/default",
         "roleboard_prompt/toapi_gpt_image_2",
         "roleboard_prompt/toapi_gpt_image_2_high",
+        "roleboard_prompt/aibox_gpt_image_2_guan",
         "roleboard_prompt/rightcode_gpt_image_2",
         "roleboard_prompt/rightcode_gpt_image_2_vip",
         "roleboard_prompt/volcengine_doubao_seedream_5_0_260128",

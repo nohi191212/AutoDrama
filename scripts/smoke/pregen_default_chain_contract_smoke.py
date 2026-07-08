@@ -96,6 +96,12 @@ def main() -> None:
         raise AssertionError("script_outline completion should satisfy script_import")
     if not node_is_completed("script_detail_expand", ["script_novel"]):
         raise AssertionError("script_novel completion should satisfy script_detail_expand")
+    if not node_is_completed("key_vision_prompt", ["design_key_vision_prompt"]):
+        raise AssertionError("design_key_vision_prompt completion should satisfy key_vision_prompt")
+    if not node_is_completed("key_vision_image_generation", ["key_vision_image"]):
+        raise AssertionError("key_vision_image completion should satisfy key_vision_image_generation")
+    if not node_is_completed("key_vision_image_generation", ["design_key_vision_image"]):
+        raise AssertionError("design_key_vision_image completion should satisfy key_vision_image_generation")
 
 
     for node_name in REMOVED_FROM_DEFAULT:

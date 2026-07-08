@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import re
@@ -12,7 +12,7 @@ from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError
 from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef, ImageGenerationResult
 from autodrama.providers.http import request_id_from_response
-from autodrama.providers.media_refs import ref_url_or_data
+from autodrama.providers.toapi.image.gpt_image import ToAPIImageProvider
 
 
 class AiboxImageProvider:
@@ -72,7 +72,13 @@ class AiboxImageProvider:
         "2:1": {"1k": "1920x1088", "2k": "1920x1088", "4k": "3840x2160"},
     }
 
-    def __init__(self, settings: ProviderSettings, runtime: RuntimeSettings) -> None:
+    def __init__(
+        self,
+        settings: ProviderSettings,
+        runtime: RuntimeSettings,
+        *,
+        reference_uploader_settings: ProviderSettings | None = None,
+    ) -> None:
         self.settings = settings
         self.runtime = runtime
         self.base_url = (settings.base_url or "https://api.lk888.ai").rstrip("/")
@@ -107,6 +113,11 @@ class AiboxImageProvider:
             "aibox_max_attempts",
             "max_attempts",
             default=self.DEFAULT_MAX_ATTEMPTS,
+        )
+        self.reference_uploader = (
+            ToAPIImageProvider(reference_uploader_settings, runtime)
+            if reference_uploader_settings is not None
+            else None
         )
 
     @property
@@ -143,6 +154,7 @@ class AiboxImageProvider:
         *,
         size: str | None = None,
         metadata: dict[str, Any] | None = None,
+        reference_images: list[str] | None = None,
     ) -> dict[str, Any]:
         metadata = metadata or {}
         requested_size = metadata.get("size") or size or self._purpose_size(metadata) or self.size
@@ -152,7 +164,11 @@ class AiboxImageProvider:
             "quality": str(metadata.get("quality") or self._purpose_quality(metadata) or self.quality),
         }
 
-        images = self._reference_images(refs or [], metadata=metadata)
+        images = (
+            reference_images
+            if reference_images is not None
+            else self._reference_images(refs or [], metadata=metadata)
+        )
         if images:
             params["images"] = images
 
@@ -328,13 +344,70 @@ class AiboxImageProvider:
         for ref in refs:
             if ref.type != "image":
                 continue
-            value = ref_url_or_data(ref, expected_type="image", default_mime="image/png", allow_asset_uri=False)
+            value = self._ref_url(ref)
             if not value:
                 continue
             images.append(value)
             if len(images) >= max_reference_images:
                 break
         return images
+
+    async def _resolve_reference_images(
+        self,
+        client: httpx.AsyncClient,
+        refs: list[AssetRef],
+        *,
+        metadata: dict[str, Any],
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        images: list[str] = []
+        uploaded: list[dict[str, Any]] = []
+        max_reference_images = int(metadata.get("max_reference_images") or self.max_reference_images)
+        for ref in refs:
+            if ref.type != "image":
+                continue
+
+            if url := self._ref_url(ref):
+                images.append(url)
+            elif local_path := self._local_ref_path(ref):
+                if self.reference_uploader is None:
+                    raise ProviderBadResponseError(
+                        "AIBOX reference image requires a public URL; "
+                        f"local reference has no upload provider configured: {local_path}"
+                    )
+                uploaded_item = await self.reference_uploader._upload_reference_image(client, local_path)
+                url = str(uploaded_item["url"])
+                ref.url = url
+                ref.metadata["uploaded_reference_image_url"] = url
+                ref.metadata["uploaded_reference_image_provider"] = self.reference_uploader.name
+                images.append(url)
+                uploaded.append(uploaded_item)
+            elif ref.path and str(ref.path).startswith("data:image/"):
+                raise ProviderBadResponseError(
+                    "AIBOX reference image requires a public URL; inline base64 data is not supported"
+                )
+
+            if len(images) >= max_reference_images:
+                break
+        return images, uploaded
+
+    @staticmethod
+    def _ref_url(ref: AssetRef) -> str | None:
+        for value in (ref.url, ref.path):
+            if isinstance(value, str) and value.startswith(("http://", "https://")):
+                return value
+        return None
+
+    @staticmethod
+    def _local_ref_path(ref: AssetRef) -> Path | None:
+        if not ref.path:
+            return None
+        value = str(ref.path)
+        if value.startswith(("http://", "https://", "data:image/", "asset://")):
+            return None
+        path = Path(value).expanduser()
+        if path.exists() and path.is_file():
+            return path
+        return None
 
     async def generate_image(
         self,
@@ -395,16 +468,28 @@ class AiboxImageProvider:
         metadata: dict[str, Any] | None = None,
     ) -> ImageGenerationResult:
         metadata = metadata or {}
-        payload = self.build_payload(prompt, refs=refs, size=size, metadata=metadata)
         async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
+            reference_images, uploaded_refs = await self._resolve_reference_images(
+                client,
+                refs or [],
+                metadata=metadata,
+            )
+            payload = self.build_payload(
+                prompt,
+                refs=refs,
+                size=size,
+                metadata=metadata,
+                reference_images=reference_images,
+            )
             get_logger().info(
-                "AIBOX image request node=%s asset=%s model=%s size=%s quality=%s refs=%d prompt_chars=%d",
+                "AIBOX image request node=%s asset=%s model=%s size=%s quality=%s refs=%d uploaded_refs=%d prompt_chars=%d",
                 metadata.get("node_name") or "-",
                 metadata.get("asset_id") or "-",
                 payload.get("model") or "-",
                 payload.get("params", {}).get("size") or "-",
                 payload.get("params", {}).get("quality") or "-",
                 len(payload.get("params", {}).get("images") or []),
+                len(uploaded_refs),
                 len(prompt),
             )
             create_response = await client.post(
@@ -424,22 +509,26 @@ class AiboxImageProvider:
                 image_urls, image_data = self._extract_images(final_body)
                 status = self._status(final_body)
 
-        if not image_urls and not image_data:
+        if not image_urls:
             raise ProviderBadResponseError(f"AIBOX image response has no image URL or base64 data: {final_body}")
+
+        raw_response = {
+            "create_response": create_body,
+            "final_response": final_body,
+        }
+        if uploaded_refs:
+            raw_response["uploaded_reference_images"] = uploaded_refs
 
         return ImageGenerationResult(
             provider=self.name,
             model=str(payload["model"]),
             image_urls=self._dedupe(image_urls),
-            image_data=self._dedupe(image_data),
+            image_data=[],
             task_id=task_id,
             task_status=status,
             request_id=self._request_id(final_body, create_response),
             usage=self._usage(final_body, create_body),
-            raw_response={
-                "create_response": create_body,
-                "final_response": final_body,
-            },
+            raw_response=raw_response,
         )
 
     async def _wait_for_task(self, client: httpx.AsyncClient, task_id: str) -> dict[str, Any]:
@@ -645,6 +734,8 @@ class AiboxImageProvider:
     def _is_retryable_provider_error(cls, exc: ProviderBadResponseError) -> bool:
         text = str(exc).lower()
         if "missing aibox api key" in text:
+            return False
+        if "requires a public url" in text or "inline base64 data is not supported" in text:
             return False
         for status_code in cls.RETRYABLE_HTTP_STATUS_CODES:
             if f"http {status_code}" in text:

@@ -58,8 +58,7 @@ class DirectorService:
             "key_vision_prompt",
             title=state.title,
             raw_script=state.raw_script,
-            visual_style_prompt=self.visual_style_prompt(state) or "（未单独配置。请以原始故事和项目约束为准。）",
-            project_context=self.project_context(state),
+            visual_style_prompt=self.visual_style_prompt(state) or "（未单独配置。请以原始故事为准。）",
         )
         output = await provider.generate_json(
             prompt,

@@ -716,6 +716,107 @@ class RoleFinalizeNode(RoleNodeBase):
 
 class RoleboardPromptNode(RoleNodeBase):
     name = "roleboard_prompt"
+    ROLEBOARD_STYLE_PROMPT_HEADER = "统一角色身份板风格要求（优先级高于角色身份板 prompt 中的画面风格）"
+    STYLE_REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+    def roleboard_style_reference_count(self) -> int:
+        ref_dir = self.repo.settings.generation.roleboard_style_reference_dir
+        if ref_dir is None:
+            return 0
+        if not ref_dir.exists() or not ref_dir.is_dir():
+            raise FileNotFoundError(f"roleboard_style_reference_dir does not exist or is not a directory: {ref_dir}")
+        count = sum(
+            1
+            for path in ref_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in self.STYLE_REFERENCE_EXTENSIONS
+        )
+        if count <= 0:
+            raise ValueError(f"roleboard_style_reference_dir contains no supported image files: {ref_dir}")
+        return count
+
+    def roleboard_style_prefix(
+        self,
+        *,
+        style_reference_count: int,
+        identity_reference_index: int | None = None,
+    ) -> str:
+        parts: list[str] = []
+        style_prompt = str(self.repo.settings.generation.roleboard_style_prompt or "").strip()
+        if style_prompt:
+            parts.append(f"{self.ROLEBOARD_STYLE_PROMPT_HEADER}：{style_prompt}")
+        if style_reference_count > 0:
+            style_ref_text = "参考图片1" if style_reference_count == 1 else f"参考图片1-{style_reference_count}"
+            parts.append(
+                f"{style_ref_text}只作为角色身份板的整体美术风格、材质质感、光影、色彩和画面气质参考；"
+                "不要照搬参考图中的人物身份、脸、服装或构图。"
+            )
+        if identity_reference_index is not None:
+            parts.append(
+                f"参考图片{identity_reference_index}是同一角色的全身身份参考，必须保持人物脸型、发型、服装、"
+                "随身道具、体型比例和身份特征一致。"
+            )
+        if parts:
+            parts.append("下方角色提示词中的人物身份、服装、道具和结构要求仍需保留；若画面风格冲突，以上方统一风格要求和参考图片风格为准。")
+        return "\n".join(parts)
+
+    def final_roleboard_prompt(
+        self,
+        *,
+        role_name: str,
+        appearance_name: str,
+        asset_role: str,
+        core_prompt: str,
+        negative_prompt: str | None,
+        style_reference_count: int,
+        identity_reference_index: int | None,
+        key_vision_reference_index: int,
+    ) -> str:
+        style_prefix = self.roleboard_style_prefix(
+            style_reference_count=style_reference_count,
+            identity_reference_index=identity_reference_index,
+        )
+        key_vision_note = (
+            f"参考图片{key_vision_reference_index}是本剧主视觉原图，只作为世界观、真人剧质感、"
+            "光影色彩、摄影审美和美术气质参考；不要照搬其中人物、服装、脸或构图。"
+        )
+        variant_requirement = ""
+        if identity_reference_index is not None:
+            variant_requirement = (
+                "这是同一角色的多造型资产；必须以身份参考图锁定同一张脸、同一身形比例、"
+                "同一发型基底、肤色和核心视觉标志，只改变本造型提示词明确要求的服装、妆造、发型变化或状态。"
+            )
+        roleboard_requirement = (
+            variant_requirement
+            + "生成一张角色身份板：同一角色必须包含正面全身、侧面全身、背面全身、头部近景、"
+            "表情组、常用动作姿态、服装材质细节和可复用配饰/道具细节。所有视图必须统一年龄感、"
+            "脸型、五官、发型、服装、身高比例、体型和材质，不得变脸、换衣服或年龄漂移。"
+            f"画面应是清晰可复用的设计板，必须在左上角或底部边缘以小号清晰文字标注"
+            f"“角色：{role_name} | {appearance_name}”。"
+            "各视图区边缘可添加小号功能性标签：正面、侧面、背面、头部、表情、动作、"
+            "服装细节、配饰细节。所有文字必须远离人物脸部、身体轮廓、服装和道具，"
+            "不得遮挡任何可复用视觉细节。除指定角色名和视图标签外，不得出现字幕、水印、"
+            "logo、片段编号、项目编号、文件名、ID、剧情台词、乱码文字或错误角色名。"
+        )
+        label_negative_prompt = (
+            "除指定角色名和视图标签外的可读文字，字幕，水印，logo，片段编号，项目编号，"
+            "文件名，ID，剧情台词，乱码文字，错误角色名，文字遮挡人物脸部或服装细节"
+        )
+        combined_negative_prompt = "；".join(
+            part for part in (str(negative_prompt or "").strip(), label_negative_prompt) if part
+        )
+        return "\n\n".join(
+            part
+            for part in (
+                style_prefix,
+                key_vision_note,
+                f"角色：{role_name}",
+                f"造型：{appearance_name}（{asset_role or 'base'}）",
+                core_prompt,
+                roleboard_requirement,
+                f"负向约束：{combined_negative_prompt}",
+            )
+            if part
+        )
 
     @staticmethod
     def _appearance_desc(extract_item: RoleExtractItem) -> str:
@@ -938,10 +1039,12 @@ class RoleboardPromptNode(RoleNodeBase):
         appearance_asset: RoleAppearanceExtractItem,
         output: Any,
         state: ProjectState,
+        *,
+        style_reference_count: int,
     ) -> RoleboardPromptItem:
-        prompt = str(getattr(output, "roleboard_prompt", "") or "").strip()
+        core_prompt = str(getattr(output, "roleboard_prompt", "") or "").strip()
         appearance_name = self._appearance_name(appearance_asset)
-        if not prompt:
+        if not core_prompt:
             raise ValueError(
                 f"roleboard_prompt returned an empty roleboard_prompt for {extract_item.name}/{appearance_name}"
             )
@@ -951,8 +1054,23 @@ class RoleboardPromptNode(RoleNodeBase):
         reference_name = str(appearance_asset.reference_asset_name or "").strip() or None
         if asset_role == "base":
             reference_name = None
+            identity_reference_index = None
         elif not reference_name:
             raise ValueError(f"role variant {extract_item.name}/{appearance_name} requires reference_asset_name")
+        else:
+            identity_reference_index = style_reference_count + 1
+        key_vision_reference_index = style_reference_count + (1 if identity_reference_index is not None else 0) + 1
+        negative_prompt = str(getattr(output, "roleboard_negative_prompt", "") or "").strip() or None
+        final_prompt = self.final_roleboard_prompt(
+            role_name=extract_item.name,
+            appearance_name=appearance_name,
+            asset_role=asset_role,
+            core_prompt=core_prompt,
+            negative_prompt=negative_prompt,
+            style_reference_count=style_reference_count,
+            identity_reference_index=identity_reference_index,
+            key_vision_reference_index=key_vision_reference_index,
+        )
         return RoleboardPromptItem(
             role_id=role_id,
             role_name=extract_item.name,
@@ -969,8 +1087,9 @@ class RoleboardPromptNode(RoleNodeBase):
             appearance_desc=self._appearance_desc_for_asset(extract_item, appearance_asset),
             clothing=str(appearance_asset.clothing or "").strip() or None,
             visual_features=str(appearance_asset.visual_features or "").strip() or None,
-            roleboard_prompt=prompt,
-            roleboard_negative_prompt=str(getattr(output, "roleboard_negative_prompt", "") or "").strip() or None,
+            core_roleboard_prompt=core_prompt,
+            roleboard_prompt=final_prompt,
+            roleboard_negative_prompt=negative_prompt,
             voice_profile_prompt=str(getattr(output, "voice_profile_prompt", "") or "").strip() or None,
             design_notes=str(getattr(output, "design_notes", "") or "").strip() or None,
         )
@@ -1083,6 +1202,13 @@ class RoleboardPromptNode(RoleNodeBase):
                         existing_item.appearance_name,
                     )
                     continue
+                if not existing_item.core_roleboard_prompt:
+                    self.logger.info(
+                        "roleboard_prompt %s/%s will be regenerated to add final image prompt preset",
+                        existing_item.role_name,
+                        existing_item.appearance_name,
+                    )
+                    continue
                 extract_item = extract_by_key.get(existing_role_key)
                 if extract_item is None:
                     continue
@@ -1103,11 +1229,13 @@ class RoleboardPromptNode(RoleNodeBase):
         key_vision_asset = self._key_vision_asset_for_prompt(state)
         roleboard_image_context = self._roleboard_image_binding_context()
         prompt_template = self._resolve_roleboard_prompt_template(roleboard_image_context)
+        style_reference_count = self.roleboard_style_reference_count()
         self.logger.info(
-            "roleboard_prompt template=%s image_provider=%s image_model=%s",
+            "roleboard_prompt template=%s image_provider=%s image_model=%s style_refs=%d",
             prompt_template,
             roleboard_image_context.get("provider_name") or "-",
             roleboard_image_context.get("model_name") or "-",
+            style_reference_count,
         )
 
         for extract_item in target_extract_roles:
@@ -1152,7 +1280,13 @@ class RoleboardPromptNode(RoleNodeBase):
                     roleboard_image_provider=roleboard_image_context.get("provider_name"),
                     roleboard_image_model=roleboard_image_context.get("model_name"),
                 )
-                item = self._prompt_item_from_model_output(extract_item, appearance_asset, output, state)
+                item = self._prompt_item_from_model_output(
+                    extract_item,
+                    appearance_asset,
+                    output,
+                    state,
+                    style_reference_count=style_reference_count,
+                )
                 prompt_path = self.roleboard_prompts.item_relative_path_for_name(project_dir, item.role_name)
                 self._apply_roleboard_prompt_item(state, item, prompt_path=prompt_path)
                 prompt_by_key[prompt_key] = item

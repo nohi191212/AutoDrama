@@ -322,6 +322,7 @@ class ProviderRouter:
             lambda provider_name, **_: AiboxImageProvider(
                 self._settings_for("aibox" if provider_name == "ai_box" else provider_name),
                 self.settings.runtime,
+                reference_uploader_settings=self.settings.providers.get("toapi"),
             ),
         )
         self.registry.register(

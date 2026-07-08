@@ -995,7 +995,7 @@ class StaticAssetNodeBase:
             )
         ]
 class RoleAppearanceGenerationBase(StaticAssetNodeBase):
-    ROLEBOARD_STYLE_PROMPT_HEADER = "统一角色身份板风格要求（优先级高于角色身份板 prompt 中的画面风格）"
+    ROLEBOARD_STYLE_PROMPT_HEADER = ""
     STYLE_REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
     DEFAULT_ROLEBOARD_IMAGE_GENERATION_CONCURRENCY = 1
     MAX_ROLEBOARD_IMAGE_GENERATION_CONCURRENCY = 5
@@ -1167,63 +1167,18 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         *,
         role: Role,
         appearance: RoleAppearance,
-        style_reference_count: int,
-        identity_reference_index: int | None,
-        key_vision_reference_index: int,
     ) -> str:
         base_prompt = str(appearance.roleboard_prompt or appearance.prompt or "").strip()
         if not base_prompt:
             raise ValueError(
                 f"Cannot generate roleboard for {role.name}/{appearance.name}: missing roleboard_prompt"
             )
-        style_prefix = self.roleboard_style_prefix(
-            style_reference_count=style_reference_count,
-            identity_reference_index=identity_reference_index,
-            output_kind="角色身份板",
-        )
-        key_vision_note = (
-            f"参考图片{key_vision_reference_index}是本剧主视觉原图，只作为世界观、真人剧质感、"
-            "光影色彩、摄影审美和美术气质参考；不要照搬其中人物、服装、脸或构图。"
-        )
-        variant_requirement = ""
-        if identity_reference_index is not None:
-            variant_requirement = (
-                "这是同一角色的多造型资产；必须以身份参考图锁定同一张脸、同一身形比例、"
-                "同一发型基底、肤色和核心视觉标志，只改变本造型提示词明确要求的服装、妆造、发型变化或状态。"
+        if "本剧主视觉原图" not in base_prompt:
+            raise ValueError(
+                f"Cannot generate roleboard for {role.name}/{appearance.name}: roleboard_prompt is stale; "
+                "rerun pregen --only roleboard_prompt first"
             )
-        roleboard_requirement = (
-            variant_requirement
-            + "生成一张角色身份板：同一角色必须包含正面全身、侧面全身、背面全身、头部近景、"
-            "表情组、常用动作姿态、服装材质细节和可复用配饰/道具细节。所有视图必须统一年龄感、"
-            "脸型、五官、发型、服装、身高比例、体型和材质，不得变脸、换衣服或年龄漂移。"
-            f"画面应是清晰可复用的设计板，必须在左上角或底部边缘以小号清晰文字标注"
-            f"“角色：{role.name} | {appearance.name}”。"
-            "各视图区边缘可添加小号功能性标签：正面、侧面、背面、头部、表情、动作、"
-            "服装细节、配饰细节。所有文字必须远离人物脸部、身体轮廓、服装和道具，"
-            "不得遮挡任何可复用视觉细节。除指定角色名和视图标签外，不得出现字幕、水印、"
-            "logo、片段编号、项目编号、文件名、ID、剧情台词、乱码文字或错误角色名。"
-        )
-        negative_prompt = str(appearance.roleboard_negative_prompt or "").strip()
-        label_negative_prompt = (
-            "除指定角色名和视图标签外的可读文字，字幕，水印，logo，片段编号，项目编号，"
-            "文件名，ID，剧情台词，乱码文字，错误角色名，文字遮挡人物脸部或服装细节"
-        )
-        combined_negative_prompt = "；".join(
-            part for part in (negative_prompt, label_negative_prompt) if part
-        )
-        return "\n\n".join(
-            part
-            for part in (
-                style_prefix,
-                key_vision_note,
-                f"角色：{role.name}",
-                f"造型：{appearance.name}（{appearance.asset_role or 'base'}）",
-                base_prompt,
-                roleboard_requirement,
-                f"负向约束：{combined_negative_prompt}",
-            )
-            if part
-        )
+        return base_prompt
 
     def existing_roleboard_path(self, project_dir: Path, appearance: RoleAppearance) -> str | None:
         for value in (appearance.asset_path, appearance.design_image_asset_path):
@@ -1338,9 +1293,6 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         prompt = self.roleboard_prompt_for_generation(
             role=role,
             appearance=appearance,
-            style_reference_count=len(style_refs),
-            identity_reference_index=identity_reference_index,
-            key_vision_reference_index=key_vision_reference_index,
         )
         output_path = self.layout.image_asset_path(project_dir, "roles", asset_id)
         existing_path = self.existing_roleboard_path(project_dir, appearance)

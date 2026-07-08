@@ -463,6 +463,7 @@ class RoleboardPromptItem(BaseModel):
     appearance_desc: str | None = None
     clothing: str | None = None
     visual_features: str | None = None
+    core_roleboard_prompt: str | None = None
     roleboard_prompt: str
     roleboard_negative_prompt: str | None = None
     voice_profile_prompt: str | None = None
