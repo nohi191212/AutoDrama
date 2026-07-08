@@ -25,13 +25,13 @@ REMOVED_FROM_DEFAULT = [
 INSERTED_AFTER_ROLEBOARD = [
     "prop_extract",
     "prop_finalize",
-    "layout_extract",
-    "layout_finalize",
-    "clip_segment",
     "prop_prompt",
     "prop_image_generation",
+    "layout_extract",
+    "layout_finalize",
     "layout_prompt",
     "layout_image_generation",
+    "clip_segment",
 ]
 
 STORYBOARD_CHAIN = [
@@ -136,14 +136,17 @@ def main() -> None:
             f"got {actual_script_key_vision_chain!r}"
         )
 
-    layout_dedupe_index = PREGEN_NODES.index("layout_finalize")
-    if PREGEN_NODES[layout_dedupe_index + 1] != "clip_segment":
-        raise AssertionError("clip_segment should run immediately after prop/layout extraction and dedupe")
-    if PREGEN_NODES[layout_dedupe_index + 2] != "prop_prompt":
-        raise AssertionError("prop_prompt should run after clip_segment")
+    prop_finalize_index = PREGEN_NODES.index("prop_finalize")
+    if PREGEN_NODES[prop_finalize_index + 1] != "prop_prompt":
+        raise AssertionError("prop_prompt should run immediately after prop_finalize")
+    prop_image_index = PREGEN_NODES.index("prop_image_generation")
+    if PREGEN_NODES[prop_image_index + 1] != "layout_extract":
+        raise AssertionError("layout_extract should run after prop_image_generation")
     layout_image_index = PREGEN_NODES.index("layout_image_generation")
-    if PREGEN_NODES[layout_image_index + 1] != "clip_prompt":
-        raise AssertionError("clip_prompt should run after static asset prompts/images")
+    if PREGEN_NODES[layout_image_index + 1] != "clip_segment":
+        raise AssertionError("clip_segment should run after prop/layout prompts/images")
+    if PREGEN_NODES[layout_image_index + 2] != "clip_prompt":
+        raise AssertionError("clip_prompt should run after clip_segment")
     storyboard_index = PREGEN_NODES.index("clip_prompt")
     actual_storyboard_chain = PREGEN_NODES[storyboard_index : storyboard_index + len(STORYBOARD_CHAIN)]
     if actual_storyboard_chain != STORYBOARD_CHAIN:

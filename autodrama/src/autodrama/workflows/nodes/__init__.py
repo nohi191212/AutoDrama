@@ -56,16 +56,12 @@ def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
         name="clip_segment",
         run=script_runners["clip_segment"].run,
     )
-    static_and_clip_nodes: list[WorkflowNode] = []
-    for node in build_static_asset_nodes(workflow):
-        static_and_clip_nodes.append(node)
-        if node.name == "layout_finalize":
-            static_and_clip_nodes.append(clip_segment_node)
     return [
         *build_script_nodes(workflow),
         *build_director_nodes(workflow),
         *default_role_nodes,
-        *static_and_clip_nodes,
+        *build_static_asset_nodes(workflow),
+        clip_segment_node,
         *build_storyboard_asset_nodes(workflow),
     ]
 
@@ -89,17 +85,12 @@ def build_manual_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
     ]
 
 
-STATIC_ASSET_AND_CLIP_NODE_NAMES: list[str] = []
-for node_name in STATIC_ASSET_NODE_NAMES:
-    STATIC_ASSET_AND_CLIP_NODE_NAMES.append(node_name)
-    if node_name == "layout_finalize":
-        STATIC_ASSET_AND_CLIP_NODE_NAMES.append("clip_segment")
-
 PREGEN_NODE_NAMES = [
     *SCRIPT_NODE_NAMES,
     *DIRECTOR_NODE_NAMES,
     *DEFAULT_PREGEN_ROLE_NODE_NAMES,
-    *STATIC_ASSET_AND_CLIP_NODE_NAMES,
+    *STATIC_ASSET_NODE_NAMES,
+    "clip_segment",
     *STORYBOARD_ASSET_NODE_NAMES,
 ]
 AVAILABLE_PREGEN_NODE_NAMES = [

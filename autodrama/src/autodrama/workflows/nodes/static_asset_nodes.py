@@ -44,10 +44,10 @@ STATIC_ASSET_NODE_NAMES = [
     "roleboard_image_generation",
     "prop_extract",
     "prop_finalize",
-    "layout_extract",
-    "layout_finalize",
     "prop_prompt",
     "prop_image_generation",
+    "layout_extract",
+    "layout_finalize",
     "layout_prompt",
     "layout_image_generation",
 ]
