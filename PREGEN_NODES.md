@@ -1,4 +1,4 @@
-﻿# Pregen Nodes
+# Pregen Nodes
 
 Last updated: 2026-07-08
 
@@ -28,12 +28,13 @@ Default stop node:
 10. `roleboard_image_generation`
 11. `prop_extract`
 12. `prop_finalize`
-13. `prop_prompt`
-14. `prop_image_generation`
-15. `layout_extract`
-16. `layout_finalize`
+13. `layout_extract`
+14. `layout_finalize`
+15. `layout_prop_boundary_review`
+16. `prop_prompt`
 17. `layout_prompt`
-18. `layout_image_generation`
+18. `prop_image_generation`
+19. `layout_image_generation`
 19. `clip_segment`
 20. `clip_prompt`
 21. `clip_storyboard_prompt`

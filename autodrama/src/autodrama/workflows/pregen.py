@@ -2342,6 +2342,9 @@ class PregenWorkflow:
     async def _run_layout_finalize(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("layout_finalize").run(project_dir, state)
 
+    async def _run_layout_prop_boundary_review(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._static_asset_node_runner("layout_prop_boundary_review").run(project_dir, state)
+
     async def _run_layout_prompt(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._static_asset_node_runner("layout_prompt").run(project_dir, state)
 

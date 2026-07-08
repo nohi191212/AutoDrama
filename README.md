@@ -1,4 +1,4 @@
-﻿# 🐙 AutoDrama
+# 🐙 AutoDrama
 
 AutoDrama 是一个短剧自动生成工作流项目。它把输入故事大纲拆成剧集，生成脚本、角色、道具、场景、BGM 和 12 宫格故事板等可复用静态资产，再按剧集生成镜头视频和动态资产固化记录。
 
@@ -248,11 +248,12 @@ roleboard_prompt
 roleboard_image_generation
 prop_extract
 prop_finalize
-prop_prompt
-prop_image_generation
 layout_extract
 layout_finalize
+layout_prop_boundary_review
+prop_prompt
 layout_prompt
+prop_image_generation
 layout_image_generation
 clip_segment
 clip_prompt
@@ -278,11 +279,12 @@ roleboard_prompt
 roleboard_image_generation
 prop_extract
 prop_finalize
-prop_prompt
-prop_image_generation
 layout_extract
 layout_finalize
+layout_prop_boundary_review
+prop_prompt
 layout_prompt
+prop_image_generation
 layout_image_generation
 clip_segment
 clip_prompt

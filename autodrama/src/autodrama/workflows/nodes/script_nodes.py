@@ -700,7 +700,7 @@ class ClipSegmentNode(ScriptNodeBase):
         items = self._state_assets_index(state.props, episode_key, intro_attr="desc")
         if items:
             return self._format_asset_index(items)
-        payload = self._load_first_node_payload(project_dir, ("prop_finalize", "prop_extract"))
+        payload = self._load_first_node_payload(project_dir, ("layout_prop_boundary_review", "prop_finalize", "prop_extract"))
         items = self._list_items_index(payload.get("props"), episode_key)
         if not items:
             items = self._mapping_index(payload.get("generated_prop_intro"))
@@ -710,7 +710,7 @@ class ClipSegmentNode(ScriptNodeBase):
         items = self._state_assets_index(state.layouts, episode_key, intro_attr="desc")
         if items:
             return self._format_asset_index(items)
-        payload = self._load_first_node_payload(project_dir, ("layout_finalize", "layout_extract"))
+        payload = self._load_first_node_payload(project_dir, ("layout_prop_boundary_review", "layout_finalize", "layout_extract"))
         items = self._list_items_index(payload.get("layouts"), episode_key)
         return self._format_asset_index(items)
 

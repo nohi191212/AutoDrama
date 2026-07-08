@@ -7,6 +7,7 @@ from autodrama.core.schemas import (
     LayoutDedupeReviewOutput,
     LayoutExtractOutput,
     LayoutPromptOutput,
+    LayoutPropBoundaryReviewOutput,
     ProjectState,
     PropDedupeOutput,
     PropDesignOutput,
@@ -206,6 +207,26 @@ class AssetService:
             LayoutDedupeReviewOutput,
             temperature=0.3,
             metadata={"node_name": "layout_finalize", "project_id": state.project_id},
+        )
+
+    async def layout_prop_boundary_review(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        props: list[dict[str, object]],
+        layouts: list[dict[str, object]],
+    ) -> LayoutPropBoundaryReviewOutput:
+        prompt = self.prompts.render(
+            "layout_prop_boundary_review",
+            props=self.format_json(props),
+            layouts=self.format_json(layouts),
+        )
+        return await provider.generate_json(
+            prompt,
+            LayoutPropBoundaryReviewOutput,
+            temperature=0.2,
+            metadata={"node_name": "layout_prop_boundary_review", "project_id": state.project_id},
         )
 
     async def bgm_design(

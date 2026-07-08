@@ -13,6 +13,7 @@ from autodrama.core.schemas import (
     LayoutExtractOutput,
     LayoutPromptItem,
     LayoutPromptOutput,
+    LayoutPropBoundaryReviewOutput,
     ProjectState,
     Prop,
     PropAsset,
@@ -44,11 +45,12 @@ STATIC_ASSET_NODE_NAMES = [
     "roleboard_image_generation",
     "prop_extract",
     "prop_finalize",
-    "prop_prompt",
-    "prop_image_generation",
     "layout_extract",
     "layout_finalize",
+    "layout_prop_boundary_review",
+    "prop_prompt",
     "layout_prompt",
+    "prop_image_generation",
     "layout_image_generation",
 ]
 
@@ -442,9 +444,17 @@ class StaticAssetNodeBase:
         path = self.layout.node_output_path(project_dir, "layout_finalize")
         if not path.exists():
             raise FileNotFoundError(
-                "layout_finalize output is missing; run pregen --only layout_finalize before layout_prompt"
+                "layout_finalize output is missing; run pregen --only layout_finalize before layout_prop_boundary_review"
             )
         return LayoutDedupeReviewOutput.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def load_layout_prop_boundary_review_output(self, project_dir: Path) -> LayoutPropBoundaryReviewOutput:
+        path = self.layout.node_output_path(project_dir, "layout_prop_boundary_review")
+        if not path.exists():
+            raise FileNotFoundError(
+                "layout_prop_boundary_review output is missing; run pregen --only layout_prop_boundary_review before prop_prompt/layout_prompt"
+            )
+        return LayoutPropBoundaryReviewOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
     @staticmethod
     def _clean_string_list(values: object) -> list[str]:
@@ -571,12 +581,14 @@ class StaticAssetNodeBase:
         return self.normalize_layout_items(items, state)
 
     def existing_layout_items(self, project_dir: Path, state: ProjectState) -> list[LayoutExtractItem]:
-        for node_name in ("layout_finalize", "layout_extract"):
+        for node_name in ("layout_prop_boundary_review", "layout_finalize", "layout_extract"):
             path = self.layout.node_output_path(project_dir, node_name)
             if not path.exists():
                 continue
             try:
-                if node_name == "layout_finalize":
+                if node_name == "layout_prop_boundary_review":
+                    output = LayoutPropBoundaryReviewOutput.model_validate_json(path.read_text(encoding="utf-8"))
+                elif node_name == "layout_finalize":
                     output = LayoutDedupeReviewOutput.model_validate_json(path.read_text(encoding="utf-8"))
                 else:
                     output = LayoutExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
@@ -715,7 +727,7 @@ class StaticAssetNodeBase:
         return self.prop_episode_keys(f"{prop_name}/{asset_name}", selected, state, label=label)
 
     @staticmethod
-    def prop_output_payload(output: PropExtractOutput | PropDedupeOutput) -> list[dict[str, object]]:
+    def prop_output_payload(output: PropExtractOutput | PropDedupeOutput | LayoutPropBoundaryReviewOutput) -> list[dict[str, object]]:
         return [item.model_dump(mode="json") for item in output.props]
 
     @classmethod
@@ -789,12 +801,14 @@ class StaticAssetNodeBase:
         return [prop.model_dump(mode="json") for prop in state.props.values() if not prop.owner_role_id]
 
     def existing_prop_payload(self, project_dir: Path, state: ProjectState) -> list[dict[str, object]]:
-        for node_name in ("prop_finalize", "prop_extract"):
+        for node_name in ("layout_prop_boundary_review", "prop_finalize", "prop_extract"):
             path = self.layout.node_output_path(project_dir, node_name)
             if not path.exists():
                 continue
             try:
-                if node_name == "prop_finalize":
+                if node_name == "layout_prop_boundary_review":
+                    output = LayoutPropBoundaryReviewOutput.model_validate_json(path.read_text(encoding="utf-8"))
+                elif node_name == "prop_finalize":
                     output = PropDedupeOutput.model_validate_json(path.read_text(encoding="utf-8"))
                 else:
                     output = PropExtractOutput.model_validate_json(path.read_text(encoding="utf-8"))
@@ -818,7 +832,7 @@ class StaticAssetNodeBase:
         path = self.layout.node_output_path(project_dir, "prop_finalize")
         if not path.exists():
             raise FileNotFoundError(
-                "prop_finalize output is missing; run pregen --only prop_finalize before prop_prompt"
+                "prop_finalize output is missing; run pregen --only prop_finalize before layout_prop_boundary_review"
             )
         return PropDedupeOutput.model_validate_json(path.read_text(encoding="utf-8"))
 
@@ -919,6 +933,8 @@ class StaticAssetNodeBase:
         project_dir: Path,
         output: PropPromptOutput,
         state: ProjectState,
+        *,
+        source_prop_assets_path: str = "assets/json/nodes/prop_finalize.json",
     ) -> dict[str, Prop]:
         props = {prop_id: prop.model_copy(deep=True) for prop_id, prop in state.props.items()}
         prop_by_name = {self.prop_name_key(prop.name): prop for prop in props.values()}
@@ -942,7 +958,7 @@ class StaticAssetNodeBase:
                 project_dir,
                 prop,
                 node_name="prop_prompt",
-                extra_payload={"source_prop_finalize_path": "assets/json/nodes/prop_finalize.json"},
+                extra_payload={"source_prop_assets_path": source_prop_assets_path},
             )
             asset.design_path = prop.design_path
             seen.add((prop.id, asset_name))
@@ -1715,13 +1731,18 @@ class PropPromptNode(StaticAssetNodeBase):
             getattr(provider, "model", "-"),
             prompt_template,
         )
-        dedupe_output = self.load_prop_finalize_output(project_dir)
-        if not dedupe_output.props:
-            raise ValueError("prop_prompt requires non-empty props from prop_finalize")
+        source_prop_assets_path = "assets/json/nodes/prop_finalize.json"
+        try:
+            prop_source_output = self.load_layout_prop_boundary_review_output(project_dir)
+            source_prop_assets_path = "assets/json/nodes/layout_prop_boundary_review.json"
+        except FileNotFoundError:
+            prop_source_output = self.load_prop_finalize_output(project_dir)
+        if not prop_source_output.props:
+            raise ValueError("prop_prompt requires non-empty props from layout_prop_boundary_review or prop_finalize")
         output = await self.asset_service.prop_prompt(
             state,
             provider,
-            props=self.prop_output_payload(dedupe_output),
+            props=self.prop_output_payload(prop_source_output),
             prompt_template=prompt_template,
         )
         owner_role_props = {
@@ -1731,7 +1752,12 @@ class PropPromptNode(StaticAssetNodeBase):
         }
         state.props = {
             **owner_role_props,
-            **self.prop_prompt_output_to_state(project_dir, output, state),
+            **self.prop_prompt_output_to_state(
+                project_dir,
+                output,
+                state,
+                source_prop_assets_path=source_prop_assets_path,
+            ),
         }
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, self.name, output)
@@ -2026,6 +2052,52 @@ class LayoutDedupeReviewNode(StaticAssetNodeBase):
         return state
 
 
+class LayoutPropBoundaryReviewNode(StaticAssetNodeBase):
+    name = "layout_prop_boundary_review"
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("layout", node_name=self.name)
+        self.logger.info(
+            "node=layout_prop_boundary_review provider=%s model=%s",
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+        )
+        prop_output = self.load_prop_finalize_output(project_dir)
+        layout_output = self.load_layout_dedupe_output(project_dir)
+        output = await self.asset_service.layout_prop_boundary_review(
+            state,
+            provider,
+            props=self.prop_output_payload(prop_output),
+            layouts=[item.model_dump(mode="json") for item in self.normalize_layout_items(layout_output.layouts, state)],
+        )
+        finalized_props = self.props_from_extract_items(
+            project_dir,
+            output.props,
+            state,
+            existing_props=state.props,
+            source="layout_prop_boundary_review",
+            save_records=True,
+        )
+        output.props = self.prop_items_from_props(finalized_props)
+        output.layouts = self.normalize_layout_items(output.layouts, state)
+
+        owner_role_props = {
+            prop_id: prop
+            for prop_id, prop in state.props.items()
+            if prop.owner_role_id
+        }
+        state.props = {**owner_role_props, **finalized_props}
+        state.layouts = self.layouts_from_items_and_prompts(
+            output.layouts,
+            [],
+            state,
+            existing_layouts=state.layouts,
+        )
+        state.budget.used_text_calls += 1
+        self.repo.save_node_output(project_dir, self.name, output)
+        return state
+
+
 class LayoutPromptNode(StaticAssetNodeBase):
     name = "layout_prompt"
 
@@ -2072,10 +2144,14 @@ class LayoutPromptNode(StaticAssetNodeBase):
             getattr(provider, "model", "-"),
             prompt_template,
         )
-        dedupe_output = self.load_layout_dedupe_output(project_dir)
-        layout_items = self.normalize_layout_items(dedupe_output.layouts, state)
+        try:
+            layout_source_output = self.load_layout_prop_boundary_review_output(project_dir)
+            layout_items = self.normalize_layout_items(layout_source_output.layouts, state)
+        except FileNotFoundError:
+            dedupe_output = self.load_layout_dedupe_output(project_dir)
+            layout_items = self.normalize_layout_items(dedupe_output.layouts, state)
         if not layout_items:
-            raise ValueError("layout_prompt requires non-empty layouts from layout_finalize")
+            raise ValueError("layout_prompt requires non-empty layouts from layout_prop_boundary_review or layout_finalize")
         output = await self.asset_service.layout_prompt(
             state,
             provider,
@@ -2335,6 +2411,7 @@ def build_static_asset_node_runners(workflow: Any) -> dict[str, StaticAssetNodeB
         PropGenerationNode.name: PropGenerationNode(**deps),
         LayoutExtractNode.name: LayoutExtractNode(**deps),
         LayoutDedupeReviewNode.name: LayoutDedupeReviewNode(**deps),
+        LayoutPropBoundaryReviewNode.name: LayoutPropBoundaryReviewNode(**deps),
         LayoutPromptNode.name: LayoutPromptNode(**deps),
         LayoutImageGenerationNode.name: LayoutImageGenerationNode(**deps),
     }
@@ -2354,6 +2431,7 @@ __all__ = [
     "LayoutExtractNode",
     "LayoutImageGenerationNode",
     "LayoutPromptNode",
+    "LayoutPropBoundaryReviewNode",
     "PropDedupeNode",
     "PropDesignNode",
     "PropExtractNode",

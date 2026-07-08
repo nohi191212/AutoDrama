@@ -711,6 +711,12 @@ class LayoutDedupeReviewOutput(BaseModel):
     merge_notes: list[str] = Field(default_factory=list)
 
 
+class LayoutPropBoundaryReviewOutput(BaseModel):
+    props: list[PropExtractItem] = Field(default_factory=list)
+    layouts: list[LayoutExtractItem] = Field(default_factory=list)
+    review_notes: list[str] = Field(default_factory=list)
+
+
 class BGMDesignItem(BaseModel):
     name: str
     mood: str

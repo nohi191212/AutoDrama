@@ -142,6 +142,12 @@ nodes:
       temperature: 0.2
       response_format: json_object
       max_iterations: 1
+  layout_prop_boundary_review:
+    model: rightcode:gpt-5.5
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
   layout_image_generation:
     model: aibox:gpt-image-2-guan
     params:
