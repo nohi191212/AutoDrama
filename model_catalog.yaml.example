@@ -19,7 +19,7 @@
         type: string
       max_iterations:
         type: integer
-        min: 2
+        min: 1
         max: 20
 
   rightcode:gpt-5.5:
@@ -67,7 +67,7 @@
         max: 8
       max_iterations:
         type: integer
-        min: 2
+        min: 1
         max: 20
 
   deepseek:deepseek-v4-pro:
@@ -92,7 +92,7 @@
         type: string
       max_iterations:
         type: integer
-        min: 2
+        min: 1
         max: 20
 
   deepseek:deepseek-v4-flash:
@@ -117,7 +117,7 @@
         type: string
       max_iterations:
         type: integer
-        min: 2
+        min: 1
         max: 20
 
   google:gemini-3.5-flash:
@@ -145,7 +145,7 @@
         type: string
       max_iterations:
         type: integer
-        min: 2
+        min: 1
         max: 20
 
   aibox:gpt-image-2-guan:
@@ -190,6 +190,10 @@
         type: integer
         min: 0
         max: 14
+      max_attempts:
+        type: integer
+        min: 1
+        max: 10
       concurrency:
         type: integer
         min: 1

@@ -529,20 +529,23 @@ class StaticAssetNodeBase:
     def canonical_layout_items(cls, items: list[LayoutExtractItem] | None) -> str:
         import json
 
-        payload = [
-            {
-                "name": item.name,
-                "group": item.group,
-                "asset_role": item.asset_role,
-                "reference_asset_name": item.reference_asset_name,
-                "episode_keys": sorted(item.episode_keys),
-                "source_chapters": item.source_chapters,
-                "brief": item.brief,
-                "space_features": item.space_features,
-                "state_delta": item.state_delta,
-            }
-            for item in items or []
-        ]
+        payload = sorted(
+            [
+                {
+                    "name": item.name,
+                    "group": item.group,
+                    "asset_role": item.asset_role,
+                    "reference_asset_name": item.reference_asset_name,
+                    "episode_keys": sorted(item.episode_keys),
+                    "source_chapters": sorted(item.source_chapters),
+                    "brief": item.brief,
+                    "space_features": sorted(item.space_features),
+                    "state_delta": item.state_delta,
+                }
+                for item in items or []
+            ],
+            key=lambda item: str(item["name"]),
+        )
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     def current_layout_items(self, state: ProjectState) -> list[LayoutExtractItem]:
@@ -714,6 +717,42 @@ class StaticAssetNodeBase:
     @staticmethod
     def prop_output_payload(output: PropExtractOutput | PropDedupeOutput) -> list[dict[str, object]]:
         return [item.model_dump(mode="json") for item in output.props]
+
+    @classmethod
+    def canonical_prop_items(cls, items: list[PropExtractItem] | None) -> str:
+        import json
+
+        payload = [
+            {
+                "name": item.name,
+                "aliases": sorted(item.aliases),
+                "intro": item.intro,
+                "episode_keys": sorted(item.episode_keys),
+                "source_chapters": sorted(item.source_chapters),
+                "owner_role_name": item.owner_role_name,
+                "assets": sorted(
+                    [
+                        {
+                            "name": asset.name,
+                            "asset_role": asset.asset_role,
+                            "status": asset.status,
+                            "reference_asset_name": asset.reference_asset_name,
+                            "episode_keys": sorted(asset.episode_keys),
+                            "source_chapters": sorted(asset.source_chapters),
+                            "desc": asset.desc,
+                            "visual_features": asset.visual_features,
+                            "state_change": asset.state_change,
+                            "prompt_hint": asset.prompt_hint,
+                        }
+                        for asset in item.assets
+                    ],
+                    key=lambda asset: (str(asset["asset_role"]), str(asset["name"]), str(asset["status"])),
+                ),
+            }
+            for item in items or []
+        ]
+        payload = sorted(payload, key=lambda item: str(item["name"]))
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     @staticmethod
     def prop_items_from_props(props: dict[str, Prop]) -> list[PropExtractItem]:
@@ -1529,16 +1568,16 @@ class PropExtractNode(StaticAssetNodeBase):
 
 class PropDedupeNode(StaticAssetNodeBase):
     name = "prop_finalize"
-    MAX_CONVERGENCE_ITERATIONS = 8
+    DEFAULT_MAX_ITERATIONS = 1
 
     @staticmethod
     def _max_iterations(provider: Any) -> int:
         binding = getattr(provider, "model_binding", None)
         params = getattr(binding, "params", {}) if binding is not None else {}
         try:
-            return max(2, int(params.get("max_iterations") or PropDedupeNode.MAX_CONVERGENCE_ITERATIONS))
+            return max(1, int(params.get("max_iterations") or PropDedupeNode.DEFAULT_MAX_ITERATIONS))
         except (TypeError, ValueError):
-            return PropDedupeNode.MAX_CONVERGENCE_ITERATIONS
+            return PropDedupeNode.DEFAULT_MAX_ITERATIONS
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("prop", node_name=self.name)
@@ -1571,8 +1610,12 @@ class PropDedupeNode(StaticAssetNodeBase):
             output.props = self.prop_items_from_props(normalized_props)
             state.budget.used_text_calls += 1
             final_output = output
-            review_key = self.asset_service.format_json(self.prop_output_payload(output))
+            review_key = self.canonical_prop_items(output.props)
             self.logger.info("node=prop_finalize iteration=%d props=%d", iteration, len(output.props))
+
+            if max_iterations <= 1:
+                output.merge_notes.append("prop_finalize completed as a single-pass audit.")
+                break
 
             if previous_review_props is not None and previous_review_props == review_key:
                 output.merge_notes.append(f"prop_extract/prop_finalize converged after {iteration} dedupe pass(es).")
@@ -1896,16 +1939,16 @@ class LayoutExtractNode(StaticAssetNodeBase):
 
 class LayoutDedupeReviewNode(StaticAssetNodeBase):
     name = "layout_finalize"
-    MAX_CONVERGENCE_ITERATIONS = 8
+    DEFAULT_MAX_ITERATIONS = 1
 
     @staticmethod
     def _max_iterations(provider: Any) -> int:
         binding = getattr(provider, "model_binding", None)
         params = getattr(binding, "params", {}) if binding is not None else {}
         try:
-            return max(2, int(params.get("max_iterations") or LayoutDedupeReviewNode.MAX_CONVERGENCE_ITERATIONS))
+            return max(1, int(params.get("max_iterations") or LayoutDedupeReviewNode.DEFAULT_MAX_ITERATIONS))
         except (TypeError, ValueError):
-            return LayoutDedupeReviewNode.MAX_CONVERGENCE_ITERATIONS
+            return LayoutDedupeReviewNode.DEFAULT_MAX_ITERATIONS
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("layout", node_name=self.name)
@@ -1936,6 +1979,10 @@ class LayoutDedupeReviewNode(StaticAssetNodeBase):
                 iteration,
                 len(output.layouts),
             )
+
+            if max_iterations <= 1:
+                output.merge_notes.append("layout_finalize completed as a single-pass audit.")
+                break
 
             if (
                 previous_review_items is not None

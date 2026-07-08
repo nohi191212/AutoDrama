@@ -22,7 +22,7 @@ def main() -> None:
     assert "layout_prompt" in settings.nodes
     assert "layout_design" not in settings.nodes
     assert settings.nodes["layout_image_generation"].params["concurrency"] == 3
-    assert settings.nodes["layout_finalize"].params["max_iterations"] == 8
+    assert settings.nodes["layout_finalize"].params["max_iterations"] == 1
     example_settings = load_settings(ROOT / "config.yaml.example")
     assert "layout_prompt" in example_settings.nodes
     assert example_settings.nodes["layout_image_generation"].params["concurrency"] == 3

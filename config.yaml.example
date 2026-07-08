@@ -110,7 +110,7 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
-      max_iterations: 8
+      max_iterations: 1
   prop_prompt:
     model: rightcode:gpt-5.5
     params:
@@ -121,7 +121,8 @@ nodes:
     model: aibox:gpt-image-2-guan
     params:
       size: 2048x2048
-      prop_image_generation_concurrency: 3
+      prop_image_generation_concurrency: 1
+      max_attempts: 5
   layout_extract:
     model: rightcode:gpt-5.5
     params:
@@ -140,7 +141,7 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
-      max_iterations: 8
+      max_iterations: 1
   layout_image_generation:
     model: aibox:gpt-image-2-guan
     params:

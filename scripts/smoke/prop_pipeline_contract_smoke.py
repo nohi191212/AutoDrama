@@ -17,9 +17,12 @@ from autodrama.workflows.pregen import PregenWorkflow
 
 
 async def main() -> None:
-    load_settings(ROOT / "config.yaml")
-    load_settings(ROOT / "config.yaml.example")
     settings = load_settings(ROOT / "config.yaml")
+    example_settings = load_settings(ROOT / "config.yaml.example")
+    for loaded_settings in (settings, example_settings):
+        assert loaded_settings.nodes["prop_finalize"].params["max_iterations"] == 1
+        assert loaded_settings.nodes["prop_image_generation"].params["prop_image_generation_concurrency"] == 1
+        assert loaded_settings.nodes["prop_image_generation"].params["max_attempts"] == 5
     settings.output.root_dir = (ROOT / ".tmp" / "prop_pipeline_smoke").resolve()
     settings.project.id = "prop_pipeline_smoke"
     settings.project.episode_count = 1
