@@ -792,14 +792,25 @@ class ClipSegmentNode(ScriptNodeBase):
         target_episode_keys: list[str],
         all_episode_keys: list[str],
     ) -> ClipSegmentNodeOutput:
-        existing_path = self.layout.node_output_path(project_dir, self.name)
         by_episode: dict[str, dict[str, object]] = {}
-        if existing_path.exists():
+        episode_dir = self.layout.node_episode_output_path(project_dir, self.name, "_").parent
+        if episode_dir.exists():
+            for episode_path in sorted(episode_dir.glob("episode_*.json")):
+                try:
+                    episode_output = ClipSegmentOutput.model_validate_json(episode_path.read_text(encoding="utf-8"))
+                    by_episode[episode_path.stem] = dict(episode_output.root)
+                except Exception as exc:
+                    self.logger.warning("clip_segment ignored invalid episode output %s: %s", episode_path, exc)
+
+        # Read the old aggregate file only as a migration fallback. New runs never write it.
+        legacy_path = self.layout.node_output_path(project_dir, self.name)
+        if legacy_path.exists():
             try:
-                existing = ClipSegmentNodeOutput.model_validate_json(existing_path.read_text(encoding="utf-8"))
-                by_episode.update(dict(existing.root))
+                existing = ClipSegmentNodeOutput.model_validate_json(legacy_path.read_text(encoding="utf-8"))
+                for episode_key, clips in existing.root.items():
+                    by_episode.setdefault(episode_key, clips)
             except Exception as exc:
-                self.logger.warning("clip_segment ignored invalid existing output %s: %s", existing_path, exc)
+                self.logger.warning("clip_segment ignored invalid legacy output %s: %s", legacy_path, exc)
         by_episode.update(dict(generated_output.root))
         ordered_keys = all_episode_keys if not set(target_episode_keys).difference(all_episode_keys) else target_episode_keys
         return ClipSegmentNodeOutput({episode_key: by_episode[episode_key] for episode_key in ordered_keys if episode_key in by_episode})
@@ -842,19 +853,26 @@ class ClipSegmentNode(ScriptNodeBase):
             )
             generated[episode_key] = self.validate_clip_segments(output, state, episode_key=episode_key)
             state.budget.used_text_calls += 1
-        output = ClipSegmentNodeOutput(generated)
+        for episode_key, clips in generated.items():
+            self.repo.write_json(
+                self.layout.node_episode_output_path(project_dir, self.name, episode_key),
+                ClipSegmentOutput(clips),
+            )
         merged = self.merge_clip_segment_outputs(
             project_dir=project_dir,
-            generated_output=output,
+            generated_output=ClipSegmentNodeOutput(generated),
             target_episode_keys=episode_keys,
             all_episode_keys=all_episode_keys,
         )
-        self.repo.save_node_output(project_dir, self.name, merged)
         state.metadata["clip_segments"] = merged.model_dump(mode="json")
-        state.metadata["clip_segment_path"] = self.layout.project_relative(
-            project_dir,
-            self.layout.node_output_path(project_dir, self.name),
-        )
+        state.metadata.pop("clip_segment_path", None)
+        state.metadata["clip_segment_episode_paths"] = {
+            episode_key: self.layout.project_relative(
+                project_dir,
+                self.layout.node_episode_output_path(project_dir, self.name, episode_key),
+            )
+            for episode_key in merged.root
+        }
         state.metadata["clip_segment_episode_keys"] = list(merged.root)
         return state
 

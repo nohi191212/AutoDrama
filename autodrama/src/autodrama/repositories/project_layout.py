@@ -31,6 +31,9 @@ class ProjectLayout:
     def node_output_path(self, project_dir: Path, node_name: str) -> Path:
         return project_dir / "assets" / "json" / "nodes" / f"{node_name}.json"
 
+    def node_episode_output_path(self, project_dir: Path, node_name: str, episode_key: str) -> Path:
+        return project_dir / "assets" / "json" / "nodes" / node_name / f"{episode_key}.json"
+
     def dynamic_assets_index_path(self, project_dir: Path) -> Path:
         return project_dir / "assets" / "json" / "assets" / "dynamic_assets.json"
 
@@ -109,6 +112,7 @@ class ProjectLayout:
         configured = [project_dir / subdir for subdir in self.settings.output.subdirs.values()]
         fixed = [
             project_dir / "assets" / "json" / "nodes",
+            project_dir / "assets" / "json" / "nodes" / "clip_segment",
             project_dir / "assets" / "json" / "scripts",
             project_dir / "assets" / "json" / "scripts" / "outlines",
             project_dir / "assets" / "json" / "scripts" / "novel_full",

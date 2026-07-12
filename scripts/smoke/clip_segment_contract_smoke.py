@@ -18,6 +18,7 @@ from autodrama.services.script_service import ScriptService
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.nodes import AVAILABLE_PREGEN_NODE_NAMES, PREGEN_NODE_NAMES
 from autodrama.workflows.nodes.script_nodes import ClipSegmentNode, SCRIPT_NODE_NAMES
+from autodrama.workflows.nodes.storyboard_asset_nodes import StoryboardAssetNodeBase
 
 
 async def fake_provider_clip_segment() -> ClipSegmentOutput:
@@ -144,6 +145,38 @@ def main() -> None:
         raise AssertionError("prop index should include generated prop intro")
     if "雨夜办公室: 发现证据的主要空间。" not in node.layout_index_context(index_dir, indexed_state, "episode_001"):
         raise AssertionError("layout index should include current episode layout")
+
+    episode_output_dir = tmp_dir / "clip_segment_episode_outputs"
+    episode_node_dir = episode_output_dir / "assets" / "json" / "nodes" / "clip_segment"
+    episode_node_dir.mkdir(parents=True, exist_ok=True)
+    for episode_key, episode_text in (("episode_001", "第一集片段。"), ("episode_002", "第二集片段。")):
+        (episode_node_dir / f"{episode_key}.json").write_text(
+            json.dumps(
+                {
+                    "1": {
+                        "text": episode_text,
+                        "role_names": [],
+                        "prop_names": [],
+                        "layout_names": [],
+                    }
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    episode_layout = SimpleNamespace(
+        node_episode_output_path=lambda project_dir, node_name, episode_key: (
+            project_dir / "assets" / "json" / "nodes" / node_name / f"{episode_key}.json"
+        ),
+        node_output_path=lambda project_dir, node_name: project_dir / "assets" / "json" / "nodes" / f"{node_name}.json",
+    )
+    storyboard_node = StoryboardAssetNodeBase.__new__(StoryboardAssetNodeBase)
+    storyboard_node.layout = episode_layout
+    loaded = storyboard_node.clip_segments_by_episode(episode_output_dir)
+    if list(loaded) != ["episode_001", "episode_002"]:
+        raise AssertionError("clip_segment should load one output file per episode")
+    if loaded["episode_002"]["1"].text != "第二集片段。":
+        raise AssertionError("clip_segment episode output content was not loaded")
 
     tmp_dir.mkdir(exist_ok=True)
     (tmp_dir / "clip_segment_contract_smoke.ok").write_text("ok\n", encoding="utf-8")

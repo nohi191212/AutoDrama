@@ -16,6 +16,7 @@ from autodrama.core.schemas import (
     ClipPromptItem,
     ClipPromptModelOutput,
     ClipPromptOutput,
+    ClipSegmentOutput,
     ClipSegmentNodeOutput,
     ProjectState,
     ClipManifestGenerationEpisodeItem,
@@ -155,10 +156,19 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
         return len(episode.clips)
 
     def load_clip_segment_output(self, project_dir: Path) -> ClipSegmentNodeOutput:
-        path = self.layout.node_output_path(project_dir, "clip_segment")
-        if not path.exists():
-            raise FileNotFoundError("clip_segment output is missing; run pregen through clip_segment first")
-        return ClipSegmentNodeOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        episode_dir = self.layout.node_episode_output_path(project_dir, "clip_segment", "_").parent
+        by_episode: dict[str, dict[str, object]] = {}
+        if episode_dir.exists():
+            for path in sorted(episode_dir.glob("episode_*.json")):
+                output = ClipSegmentOutput.model_validate_json(path.read_text(encoding="utf-8"))
+                by_episode[path.stem] = dict(output.root)
+        if by_episode:
+            return ClipSegmentNodeOutput(by_episode)
+
+        legacy_path = self.layout.node_output_path(project_dir, "clip_segment")
+        if legacy_path.exists():
+            return ClipSegmentNodeOutput.model_validate_json(legacy_path.read_text(encoding="utf-8"))
+        raise FileNotFoundError("clip_segment episode outputs are missing; run pregen through clip_segment first")
 
     def clip_segments_by_episode(self, project_dir: Path) -> dict[str, object]:
         return dict(self.load_clip_segment_output(project_dir).root)
