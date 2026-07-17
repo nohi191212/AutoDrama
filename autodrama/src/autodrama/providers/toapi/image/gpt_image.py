@@ -1,7 +1,9 @@
 ﻿from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
+import json
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -16,7 +18,7 @@ from autodrama.providers.http import request_id_from_response
 from autodrama.providers.media_refs import (
     is_remote_url_expired,
     local_ref_path,
-    refresh_expired_image_ref_urls,
+    signed_url_expiration,
 )
 
 
@@ -27,6 +29,7 @@ class ToAPIImageProvider:
     supports_reference_images = True
     DEFAULT_MAX_REFERENCE_UPLOAD_BYTES = 10_000_000
     DEFAULT_MIN_REFERENCE_UPLOAD_BYTES = 5_000_000
+    DEFAULT_REFERENCE_URL_CACHE_TTL_SECONDS = 86_400
     DEFAULT_MAX_ATTEMPTS = 10
     RETRYABLE_HTTP_STATUS_CODES = {
         408,
@@ -98,6 +101,14 @@ class ToAPIImageProvider:
         )
         if self.min_reference_upload_bytes >= self.max_reference_upload_bytes:
             self.min_reference_upload_bytes = self.max_reference_upload_bytes // 2
+        self.reference_url_cache_ttl_seconds = max(
+            1,
+            int(
+                settings.options.get("toapi_reference_url_cache_ttl_seconds")
+                or settings.options.get("reference_url_cache_ttl_seconds")
+                or self.DEFAULT_REFERENCE_URL_CACHE_TTL_SECONDS
+            ),
+        )
         self.max_attempts = self._int_option(
             "toapi_max_attempts",
             "max_attempts",
@@ -108,6 +119,8 @@ class ToAPIImageProvider:
             tuple[str, int, int],
             asyncio.Task[dict[str, Any]],
         ] = {}
+        self._reference_cache_lock = asyncio.Lock()
+        self._expired_reference_warnings: set[tuple[str, str]] = set()
 
     @property
     def generation_endpoint(self) -> str:
@@ -250,24 +263,14 @@ class ToAPIImageProvider:
         return None
 
     async def _reference_images(self, client: httpx.AsyncClient, refs: list[AssetRef]) -> tuple[list[str], list[dict[str, Any]]]:
-        refresh_expired_image_ref_urls(refs)
+        uploaded = await self.ensure_reference_image_urls(refs)
         images: list[str] = []
-        uploaded: list[dict[str, Any]] = []
         for ref in refs:
             if ref.type != "image":
                 continue
 
             if url := self._ref_url(ref):
                 images.append(url)
-            elif local_path := self._local_ref_path(ref):
-                uploaded_item = await self._upload_reference_image(client, local_path)
-                url = str(uploaded_item["url"])
-                ref.url = url
-                ref.metadata.pop("expired_url_cleared_for_local_refresh", None)
-                ref.metadata["uploaded_reference_image_url"] = url
-                ref.metadata["uploaded_reference_image_provider"] = self.name
-                images.append(url)
-                uploaded.append(uploaded_item)
             elif ref.path:
                 uploaded_item = await self._upload_reference_image(client, Path(ref.path))
                 images.append(str(uploaded_item["url"]))
@@ -276,40 +279,81 @@ class ToAPIImageProvider:
                 break
         return images, uploaded
 
+    async def ensure_reference_image_urls(
+        self,
+        refs: list[AssetRef] | None,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        resolved: list[dict[str, Any]] = []
+        for ref in refs or []:
+            if ref.type != "image":
+                continue
+            path = local_ref_path(ref)
+            url = str(ref.url or "").strip()
+            expired = bool(url and is_remote_url_expired(url))
+            if url and not expired and not force:
+                continue
+            if path is None:
+                continue
+
+            old_url = url or None
+            uploaded_item = await self._coalesced_reference_reupload(path)
+            if expired and not uploaded_item.get("persistent_cache"):
+                self._warn_expired_reference(ref, path, url)
+            new_url = str(uploaded_item["url"])
+            ref.url = new_url
+            if old_url:
+                ref.metadata["expired_asset_url"] = old_url
+            ref.metadata["expired_url_reuploaded"] = bool(old_url)
+            ref.metadata.pop("expired_url_cleared_for_local_refresh", None)
+            ref.metadata["uploaded_reference_image_url"] = new_url
+            ref.metadata["uploaded_reference_image_provider"] = self.name
+            ref.metadata["uploaded_reference_image_persistent_cache"] = bool(
+                uploaded_item.get("persistent_cache")
+            )
+            resolved.append(dict(uploaded_item))
+        return resolved
+
     async def reupload_expired_reference_images(
         self,
         refs: list[AssetRef] | None,
         *,
         force: bool = False,
     ) -> list[dict[str, Any]]:
-        targets: list[tuple[AssetRef, str, Path]] = []
+        targets: list[AssetRef] = []
         for ref in refs or []:
             if ref.type != "image" or not ref.url:
                 continue
             path = local_ref_path(ref)
             if path is None or (not force and not is_remote_url_expired(ref.url)):
                 continue
-            targets.append((ref, ref.url, path))
+            targets.append(ref)
         if not targets:
             return []
 
-        uploaded: list[dict[str, Any]] = []
-        for ref, old_url, path in targets:
-            uploaded_item = await self._coalesced_reference_reupload(path)
-            new_url = str(uploaded_item["url"])
-            ref.url = new_url
-            ref.metadata["expired_asset_url"] = old_url
-            ref.metadata["expired_url_reuploaded"] = True
-            ref.metadata.pop("expired_url_cleared_for_local_refresh", None)
-            ref.metadata["uploaded_reference_image_url"] = new_url
-            ref.metadata["uploaded_reference_image_provider"] = self.name
-            uploaded.append(dict(uploaded_item))
+        uploaded = await self.ensure_reference_image_urls(targets, force=force)
+        for ref in targets:
             get_logger().info(
                 "ToAPI refreshed expired reference image ref=%s path=%s",
                 ref.id or "-",
-                path,
+                local_ref_path(ref),
             )
         return uploaded
+
+    def _warn_expired_reference(self, ref: AssetRef, path: Path, url: str) -> None:
+        key = (str(path.resolve()), url)
+        if key in self._expired_reference_warnings:
+            return
+        self._expired_reference_warnings.add(key)
+        expires_at = signed_url_expiration(url)
+        get_logger().warning(
+            "Reference image URL expired; refreshing through ToAPI ref=%s path=%s expired_at=%s",
+            ref.id or "-",
+            path,
+            expires_at.isoformat() if expires_at is not None else "unknown",
+            extra={"console_color": "light_red"},
+        )
 
     @staticmethod
     def _reference_reupload_key(path: Path) -> tuple[str, int, int]:
@@ -319,6 +363,10 @@ class ToAPIImageProvider:
     async def _coalesced_reference_reupload(self, path: Path) -> dict[str, Any]:
         key = self._reference_reupload_key(path)
         if cached := self._reference_reupload_cache.get(key):
+            return dict(cached)
+
+        if cached := await self._load_persistent_reference_upload(path):
+            self._reference_reupload_cache[key] = dict(cached)
             return dict(cached)
 
         task = self._reference_reupload_tasks.get(key)
@@ -334,9 +382,107 @@ class ToAPIImageProvider:
             raise
 
         self._reference_reupload_cache[key] = dict(uploaded_item)
+        await self._save_persistent_reference_upload(path, uploaded_item)
         if self._reference_reupload_tasks.get(key) is task:
             self._reference_reupload_tasks.pop(key, None)
         return dict(uploaded_item)
+
+    @staticmethod
+    def _persistent_reference_cache_location(path: Path) -> tuple[Path, str] | None:
+        resolved = path.resolve()
+        parts = resolved.parts
+        for index in range(len(parts) - 1):
+            if parts[index].casefold() != "assets" or parts[index + 1].casefold() != "images":
+                continue
+            project_dir = Path(*parts[:index])
+            if not project_dir:
+                return None
+            cache_path = project_dir / "assets" / "json" / "cache" / "reference_image_urls.json"
+            cache_key = resolved.relative_to(project_dir).as_posix()
+            return cache_path, cache_key
+        return None
+
+    async def _load_persistent_reference_upload(self, path: Path) -> dict[str, Any] | None:
+        location = self._persistent_reference_cache_location(path)
+        if location is None:
+            return None
+        cache_path, cache_key = location
+        stat = path.stat()
+        async with self._reference_cache_lock:
+            try:
+                payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                return None
+            entries = payload.get("references") if isinstance(payload, dict) else None
+            entry = entries.get(cache_key) if isinstance(entries, dict) else None
+            if not isinstance(entry, dict):
+                return None
+            url = str(entry.get("url") or "").strip()
+            expires_at_text = str(entry.get("expires_at") or "").strip()
+            try:
+                expires_at = datetime.fromisoformat(expires_at_text.replace("Z", "+00:00"))
+                expires_at = expires_at.replace(tzinfo=expires_at.tzinfo or timezone.utc).astimezone(timezone.utc)
+            except ValueError:
+                expires_at = None
+            if (
+                not url
+                or is_remote_url_expired(url)
+                or expires_at is None
+                or datetime.now(timezone.utc) >= expires_at
+                or int(entry.get("size") or -1) != stat.st_size
+                or int(entry.get("mtime_ns") or -1) != stat.st_mtime_ns
+            ):
+                return None
+            return {
+                "path": str(path),
+                "url": url,
+                "id": entry.get("id"),
+                "mime_type": entry.get("mime_type"),
+                "size": entry.get("upload_size"),
+                "original_size": stat.st_size,
+                "upload_size": entry.get("upload_size"),
+                "persistent_cache": True,
+            }
+
+    async def _save_persistent_reference_upload(self, path: Path, uploaded_item: dict[str, Any]) -> None:
+        location = self._persistent_reference_cache_location(path)
+        url = str(uploaded_item.get("url") or "").strip()
+        if location is None or not url:
+            return
+        cache_path, cache_key = location
+        stat = path.stat()
+        updated_at = datetime.now(timezone.utc)
+        signed_expires_at = signed_url_expiration(url)
+        effective_expires_at = signed_expires_at or (
+            updated_at + timedelta(seconds=self.reference_url_cache_ttl_seconds)
+        )
+        async with self._reference_cache_lock:
+            try:
+                payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            entries = payload.get("references")
+            if not isinstance(entries, dict):
+                entries = {}
+            entries[cache_key] = {
+                "url": url,
+                "provider": self.name,
+                "id": uploaded_item.get("id"),
+                "mime_type": uploaded_item.get("mime_type"),
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+                "upload_size": uploaded_item.get("upload_size") or uploaded_item.get("size"),
+                "expires_at": effective_expires_at.isoformat(),
+                "updated_at": updated_at.isoformat(),
+            }
+            payload["version"] = 1
+            payload["references"] = entries
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = cache_path.with_suffix(".tmp")
+            temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            temp_path.replace(cache_path)
 
     async def _upload_reference_image_with_client(self, path: Path) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=self._http_timeout()) as client:

@@ -12,7 +12,7 @@ from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError
 from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef, ImageGenerationResult
 from autodrama.providers.http import request_id_from_response
-from autodrama.providers.media_refs import refresh_expired_image_ref_urls
+from autodrama.providers.media_refs import is_remote_url_expired
 from autodrama.providers.toapi.image.gpt_image import ToAPIImageProvider
 
 
@@ -360,10 +360,32 @@ class AiboxImageProvider:
         *,
         metadata: dict[str, Any],
     ) -> tuple[list[str], list[dict[str, Any]]]:
-        refresh_expired_image_ref_urls(refs)
+        del client
         images: list[str] = []
         uploaded: list[dict[str, Any]] = []
         max_reference_images = int(metadata.get("max_reference_images") or self.max_reference_images)
+        unresolved_local_refs = [
+            ref
+            for ref in refs
+            if ref.type == "image"
+            and self._local_ref_path(ref) is not None
+            and not self._ref_url(ref)
+        ]
+        expired_local_refs = [
+            ref
+            for ref in refs
+            if ref.type == "image"
+            and self._local_ref_path(ref) is not None
+            and ref.url
+            and is_remote_url_expired(ref.url)
+        ]
+        refs_requiring_upload = [*expired_local_refs, *unresolved_local_refs]
+        if refs_requiring_upload:
+            if self.reference_uploader is None:
+                raise ProviderBadResponseError(
+                    "AIBOX reference image requires a public URL, but no upload provider is configured"
+                )
+            uploaded.extend(await self.reference_uploader.ensure_reference_image_urls(refs_requiring_upload))
         for ref in refs:
             if ref.type != "image":
                 continue
@@ -371,19 +393,9 @@ class AiboxImageProvider:
             if url := self._ref_url(ref):
                 images.append(url)
             elif local_path := self._local_ref_path(ref):
-                if self.reference_uploader is None:
-                    raise ProviderBadResponseError(
-                        "AIBOX reference image requires a public URL; "
-                        f"local reference has no upload provider configured: {local_path}"
-                    )
-                uploaded_item = await self.reference_uploader._upload_reference_image(client, local_path)
-                url = str(uploaded_item["url"])
-                ref.url = url
-                ref.metadata.pop("expired_url_cleared_for_local_refresh", None)
-                ref.metadata["uploaded_reference_image_url"] = url
-                ref.metadata["uploaded_reference_image_provider"] = self.reference_uploader.name
-                images.append(url)
-                uploaded.append(uploaded_item)
+                raise ProviderBadResponseError(
+                    f"AIBOX reference image upload did not produce a public URL: {local_path}"
+                )
             elif ref.path and str(ref.path).startswith("data:image/"):
                 raise ProviderBadResponseError(
                     "AIBOX reference image requires a public URL; inline base64 data is not supported"

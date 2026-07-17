@@ -66,9 +66,11 @@ class _SmokeLogger:
 
 
 class _SmokeWorkflow:
-    def __init__(self) -> None:
+    def __init__(self, clip_selectors: set[str] | None = None) -> None:
         self.prompts = PromptStore()
         self._active_episode_keys = {"episode_002"}
+        if clip_selectors:
+            self._active_clip_selectors = clip_selectors
 
     def _hydrate_roles_from_design_files(self, _project_dir: Path, _state: ProjectState) -> None:
         return
@@ -245,6 +247,85 @@ async def _run_parallel_generation_smoke(
     }
     if not expected_raw_names.issubset({path.name for path in raw_dir.glob("*.json")}):
         raise AssertionError("each model batch response should have a raw minimal-response snapshot")
+
+
+async def _run_clip_selection_smoke(
+    *,
+    settings: Settings,
+    layout: ProjectLayout,
+    tmp_project: Path,
+    state: ProjectState,
+    clips: dict[str, ClipSegment],
+) -> None:
+    existing_clips = []
+    for index in range(1, 6):
+        payload = _clip_payload("episode_002", index)
+        payload["clip_title"] = f"sentinel title {index}"
+        payload["video_prompt"] = f"sentinel video prompt {index}"
+        payload["storyboard_image_prompt"] = f"sentinel image prompt {index}"
+        existing_clips.append(payload)
+    ProjectRepository(settings).save_node_output(
+        tmp_project,
+        "clip_storyboard_prompt",
+        StoryboardPromptOutput.model_validate(
+            {
+                "storyboards": [
+                    {
+                        "episode_key": "episode_002",
+                        "clips": existing_clips,
+                    }
+                ]
+            }
+        ),
+    )
+
+    provider = _FakeStoryboardPromptProvider()
+    node = object.__new__(StoryboardPromptNode)
+    node.workflow = _SmokeWorkflow({"2", "4"})
+    node.repo = ProjectRepository(settings)
+    node.layout = layout
+    node.router = SimpleNamespace(text=lambda _purpose, node_name=None: provider)
+    node.script_service = ScriptService(PromptStore())
+    node.asset_service = SimpleNamespace(visual_tone=lambda _state: "电影级冷灰视觉调性")
+    node.script_contents = ScriptContentRepository.__new__(ScriptContentRepository)
+    node.script_contents.layout = layout
+    node.logger = _SmokeLogger()
+    node.clip_segments_by_episode = lambda _project_dir: {"episode_002": dict(list(clips.items())[:5])}
+
+    await node.run(tmp_project, state)
+    submitted_batch_keys = [call["batch_keys"] for call in provider.calls]
+    if submitted_batch_keys[0] != [2, 4] or any(
+        not set(batch_keys).issubset({2, 4}) for batch_keys in submitted_batch_keys
+    ):
+        raise AssertionError(f"selected prompt generation should only submit clips 2 and 4: {provider.calls}")
+
+    saved = StoryboardPromptOutput.model_validate_json(
+        layout.node_output_path(tmp_project, "clip_storyboard_prompt").read_text(encoding="utf-8")
+    )
+    episode = next(item for item in saved.storyboards if item.episode_key == "episode_002")
+    if [clip.clip_id for clip in episode.clips] != [
+        f"episode_002_clip_{index:03d}" for index in range(1, 6)
+    ]:
+        raise AssertionError("selected prompt generation must retain all existing clips in source order")
+    by_id = {clip.clip_id: clip for clip in episode.clips}
+    for index in (1, 3, 5):
+        if by_id[f"episode_002_clip_{index:03d}"].video_prompt != f"sentinel video prompt {index}":
+            raise AssertionError(f"unselected clip {index} should remain unchanged")
+    for index in (2, 4):
+        if by_id[f"episode_002_clip_{index:03d}"].video_prompt == f"sentinel video prompt {index}":
+            raise AssertionError(f"selected clip {index} should be regenerated")
+
+    node.workflow = _SmokeWorkflow({"99"})
+    provider.calls.clear()
+    try:
+        await node.run(tmp_project, state)
+    except ValueError as exc:
+        if "--clips matched no clips" not in str(exc):
+            raise AssertionError(f"unexpected unmatched selector error: {exc}") from exc
+    else:
+        raise AssertionError("an unmatched clip selector should fail before provider submission")
+    if provider.calls:
+        raise AssertionError("an unmatched clip selector must not call the provider")
 
 
 def main() -> None:
@@ -493,6 +574,15 @@ def main() -> None:
 
     asyncio.run(
         _run_parallel_generation_smoke(
+            settings=settings,
+            layout=layout,
+            tmp_project=tmp_project,
+            state=state,
+            clips=clips,
+        )
+    )
+    asyncio.run(
+        _run_clip_selection_smoke(
             settings=settings,
             layout=layout,
             tmp_project=tmp_project,

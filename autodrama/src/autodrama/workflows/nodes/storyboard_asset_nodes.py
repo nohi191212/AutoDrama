@@ -368,6 +368,49 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
             raise ValueError(f"clip_storyboard_prompt missing clip_segment episode(s): {', '.join(missing)}")
         return expected
 
+    @classmethod
+    def _select_expected_clip_segments(
+        cls,
+        expected_clip_segments: dict[str, dict[str, object]],
+        selectors: set[str],
+    ) -> tuple[dict[str, dict[str, object]], set[str]]:
+        if not selectors:
+            return expected_clip_segments, set()
+
+        selected_by_episode: dict[str, dict[str, object]] = {}
+        selected_clip_ids: set[str] = set()
+        for episode_key, source_clips in expected_clip_segments.items():
+            selected_clips: dict[str, object] = {}
+            for offset, source_key in enumerate(cls._sorted_clip_segment_keys(source_clips)):
+                try:
+                    clip_index = int(str(source_key).strip())
+                except ValueError:
+                    clip_index = offset + 1
+                clip_id = cls.clip_id_for_episode_index(episode_key, clip_index)
+                if not clip_matches_selectors(episode_key, clip_id, clip_index, selectors):
+                    continue
+                selected_clips[source_key] = source_clips[source_key]
+                selected_clip_ids.add(clip_id)
+            selected_by_episode[episode_key] = selected_clips
+        return selected_by_episode, selected_clip_ids
+
+    @classmethod
+    def _expected_clip_ids_by_episode(
+        cls,
+        expected_clip_segments: dict[str, dict[str, object]],
+    ) -> dict[str, list[str]]:
+        ordered: dict[str, list[str]] = {}
+        for episode_key, source_clips in expected_clip_segments.items():
+            clip_ids: list[str] = []
+            for offset, source_key in enumerate(cls._sorted_clip_segment_keys(source_clips)):
+                try:
+                    clip_index = int(str(source_key).strip())
+                except ValueError:
+                    clip_index = offset + 1
+                clip_ids.append(cls.clip_id_for_episode_index(episode_key, clip_index))
+            ordered[episode_key] = clip_ids
+        return ordered
+
     @staticmethod
     def _normalize_panel_ref(value: object) -> str:
         text = str(value or "").strip().upper()
@@ -524,6 +567,8 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
         generated_output: StoryboardPromptOutput,
         target_episode_keys: list[str],
         all_episode_keys: list[str],
+        selected_clip_ids: set[str] | None = None,
+        expected_clip_ids_by_episode: dict[str, list[str]] | None = None,
     ) -> StoryboardPromptOutput:
         existing_path = self.layout.node_output_path(project_dir, "clip_storyboard_prompt")
         by_episode: dict[str, StoryboardPromptEpisode] = {}
@@ -533,7 +578,39 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 by_episode.update({episode.episode_key: episode for episode in existing.storyboards})
             except Exception as exc:
                 self.logger.warning("clip_storyboard_prompt ignored invalid existing output %s: %s", existing_path, exc)
-        by_episode.update({episode.episode_key: episode for episode in generated_output.storyboards})
+        if selected_clip_ids is None:
+            by_episode.update({episode.episode_key: episode for episode in generated_output.storyboards})
+        else:
+            expected_clip_ids_by_episode = expected_clip_ids_by_episode or {}
+            for generated_episode in generated_output.storyboards:
+                generated_clips = [
+                    clip for clip in generated_episode.clips if clip.clip_id in selected_clip_ids
+                ]
+                existing_episode = by_episode.get(generated_episode.episode_key)
+                if existing_episode is None:
+                    if generated_clips:
+                        by_episode[generated_episode.episode_key] = StoryboardPromptEpisode(
+                            episode_key=generated_episode.episode_key,
+                            clips=generated_clips,
+                        )
+                    continue
+
+                clips_by_id = {clip.clip_id: clip for clip in existing_episode.clips}
+                clips_by_id.update({clip.clip_id: clip for clip in generated_clips})
+                ordered_clip_ids: list[str] = []
+                seen_clip_ids: set[str] = set()
+                for clip_id in expected_clip_ids_by_episode.get(generated_episode.episode_key, []):
+                    if clip_id in clips_by_id and clip_id not in seen_clip_ids:
+                        ordered_clip_ids.append(clip_id)
+                        seen_clip_ids.add(clip_id)
+                for clip in [*existing_episode.clips, *generated_clips]:
+                    if clip.clip_id not in seen_clip_ids:
+                        ordered_clip_ids.append(clip.clip_id)
+                        seen_clip_ids.add(clip.clip_id)
+                by_episode[generated_episode.episode_key] = StoryboardPromptEpisode(
+                    episode_key=generated_episode.episode_key,
+                    clips=[clips_by_id[clip_id] for clip_id in ordered_clip_ids],
+                )
         ordered_keys = all_episode_keys if not set(target_episode_keys).difference(all_episode_keys) else target_episode_keys
         return StoryboardPromptOutput(
             storyboards=[by_episode[episode_key] for episode_key in ordered_keys if episode_key in by_episode]
@@ -1561,7 +1638,17 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
         all_episode_keys = self.expected_episode_keys(state)
         final_aspect_ratio = self.final_aspect_ratio()
         clip_segments_by_episode = self.clip_segments_by_episode(project_dir)
-        expected_clip_segments = self._expected_clip_segments(clip_segments_by_episode, target_episode_keys)
+        all_expected_clip_segments = self._expected_clip_segments(clip_segments_by_episode, target_episode_keys)
+        clip_selectors = self.active_clip_selectors()
+        expected_clip_segments, selected_clip_ids = self._select_expected_clip_segments(
+            all_expected_clip_segments,
+            clip_selectors,
+        )
+        if clip_selectors and not selected_clip_ids:
+            raise ValueError(
+                "clip_storyboard_prompt --clips matched no clips in selected episodes: "
+                + ", ".join(sorted(clip_selectors))
+            )
         clip_prompt_items_by_episode = self.clip_prompts_by_episode(self.load_clip_prompt_output(project_dir))
         batch_specs: list[tuple[str, int, int, dict[str, object]]] = []
         for episode_key in target_episode_keys:
@@ -1738,6 +1825,8 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             generated_output=output,
             target_episode_keys=target_episode_keys,
             all_episode_keys=all_episode_keys,
+            selected_clip_ids=selected_clip_ids if clip_selectors else None,
+            expected_clip_ids_by_episode=self._expected_clip_ids_by_episode(all_expected_clip_segments),
         )
         self.repo.save_node_output(project_dir, self.name, merged)
         return state

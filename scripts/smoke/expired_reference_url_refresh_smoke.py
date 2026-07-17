@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from autodrama.core.model_catalog import ModelBinding, ModelSpec  # noqa: E402
+from autodrama.logging import AutoDramaFormatter, LIGHT_RED, RESET  # noqa: E402
 from autodrama.providers.base import AssetRef, ImageGenerationResult  # noqa: E402
 from autodrama.providers.media_refs import (  # noqa: E402
     is_remote_url_expired,
@@ -57,8 +59,25 @@ class _FakeToAPIUploader:
             uploaded.append({"url": new_url})
         return uploaded
 
+    async def ensure_reference_image_urls(
+        self,
+        refs: list[AssetRef] | None,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, str]]:
+        return await self.reupload_expired_reference_images(refs, force=force)
+
 
 def main() -> None:
+    record = logging.LogRecord("autodrama", logging.WARNING, __file__, 1, "expired image", (), None)
+    record.console_color = "light_red"
+    colored = AutoDramaFormatter(color=True).format(record)
+    plain = AutoDramaFormatter(color=False).format(record)
+    if not colored.startswith(LIGHT_RED) or not colored.endswith(RESET):
+        raise AssertionError("expired reference warning is not rendered in light red")
+    if "\033[" in plain:
+        raise AssertionError("file logging must not contain console ANSI colors")
+
     now = datetime(2026, 7, 17, tzinfo=timezone.utc)
     expired_urls = [
         (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -106,12 +107,51 @@ async def _run() -> None:
             for ref in concurrent_refs
         )
     )
-    if refresh_provider.uploaded_paths != [local_ref, local_ref]:
+    if refresh_provider.uploaded_paths != [local_ref]:
         raise AssertionError("concurrent expired refs for one local image were uploaded more than once")
     if any(ref.url != expected_refreshed_url for ref in concurrent_refs):
         raise AssertionError("concurrent expired refs did not share the refreshed ToAPI URL")
     if any(len(result) != 1 for result in concurrent_results):
         raise AssertionError("coalesced ToAPI re-upload did not return one record per reference")
+
+    persistent_project = tmp_dir / "toapi_reference_url_persistence" / "project"
+    persistent_ref_path = persistent_project / "assets" / "images" / "layouts" / "layout.png"
+    persistent_ref_path.parent.mkdir(parents=True, exist_ok=True)
+    persistent_ref_path.write_bytes(b"persistent reference placeholder")
+    persistent_cache_path = (
+        persistent_project / "assets" / "json" / "cache" / "reference_image_urls.json"
+    )
+    if persistent_cache_path.exists():
+        persistent_cache_path.unlink()
+
+    first_provider = RecordingToAPIImageProvider(
+        ProviderSettings(models={"image": "gpt-image-2"}),
+        RuntimeSettings(),
+    )
+    first_ref = AssetRef(id="persistent", type="image", path=str(persistent_ref_path))
+    await first_provider.ensure_reference_image_urls([first_ref])
+    if len(first_provider.uploaded_paths) != 1 or not persistent_cache_path.exists():
+        raise AssertionError("first ToAPI upload did not persist its refreshed URL")
+    persistent_payload = json.loads(persistent_cache_path.read_text(encoding="utf-8"))
+    persistent_entry = persistent_payload["references"]["assets/images/layouts/layout.png"]
+    if not persistent_entry.get("expires_at"):
+        raise AssertionError("persisted ToAPI URL is missing its effective cache expiry")
+
+    second_provider = RecordingToAPIImageProvider(
+        ProviderSettings(models={"image": "gpt-image-2"}),
+        RuntimeSettings(),
+    )
+    second_ref = AssetRef(
+        id="persistent",
+        type="image",
+        path=str(persistent_ref_path),
+        url=expired_url,
+    )
+    second_result = await second_provider.ensure_reference_image_urls([second_ref])
+    if second_provider.uploaded_paths:
+        raise AssertionError("a new provider process did not reuse the persisted ToAPI URL")
+    if second_ref.url != first_ref.url or not second_result[0].get("persistent_cache"):
+        raise AssertionError("persisted ToAPI URL did not override the expired asset URL")
 
     (tmp_dir / "toapi_reference_url_preference_smoke.ok").write_text("ok\n", encoding="utf-8")
     print("toapi_reference_url_preference_smoke: ok")

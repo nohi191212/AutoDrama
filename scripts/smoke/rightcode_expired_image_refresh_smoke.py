@@ -14,9 +14,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from autodrama.config import ProviderSettings, RuntimeSettings
+from autodrama.core.model_catalog import ModelBinding, ModelSpec
 from autodrama.core.errors import ProviderBadResponseError
 from autodrama.providers.base import AssetRef
 from autodrama.providers.rightcode.text.gpt import RightCodeTextProvider
+from autodrama.providers.router import BoundProviderProxy
 
 
 class SmokeOutput(BaseModel):
@@ -27,7 +29,7 @@ class _FakeToAPIUploader:
     def __init__(self) -> None:
         self.calls: list[tuple[list[AssetRef], bool]] = []
 
-    async def reupload_expired_reference_images(
+    async def ensure_reference_image_urls(
         self,
         refs: list[AssetRef] | None,
         *,
@@ -60,7 +62,6 @@ async def main() -> None:
     )
     provider = RightCodeTextProvider(settings, RuntimeSettings(max_text_retry=3), model_key="storyboard")
     uploader = _FakeToAPIUploader()
-    provider.reference_image_uploader = uploader
     calls = 0
     payloads: list[dict[str, Any]] = []
 
@@ -68,11 +69,6 @@ async def main() -> None:
         nonlocal calls
         calls += 1
         payloads.append(payload)
-        if calls == 1:
-            raise ProviderBadResponseError(
-                "RightCode text streaming request failed with HTTP 500: "
-                "failed to download file, status code: 403; code=count_token_failed"
-            )
         return {"output": [{"content": [{"type": "output_text", "text": '{"value":"ok"}'}]}]}
 
     provider._post_responses = fake_post  # type: ignore[method-assign]
@@ -80,25 +76,57 @@ async def main() -> None:
         id="layout_001",
         type="image",
         path=str(image_path),
-        url="https://expired.example/image.png",
+        url=(
+            "https://bucket.example.test/image.png?"
+            "X-Amz-Date=20200101T000000Z&X-Amz-Expires=60&X-Amz-Signature=expired"
+        ),
         metadata={"asset_type": "layout", "layout_id": "layout_001"},
     )
-    result = await provider.generate_json("smoke", SmokeOutput, refs=[ref])
-    if result.value != "ok" or calls != 2:
-        raise AssertionError("request was not retried successfully after URL refresh")
+    proxy = BoundProviderProxy(
+        provider,
+        ModelBinding(
+            node_name="clip_storyboard_prompt",
+            model_id="rightcode:gpt-5.6-terra",
+            provider="rightcode",
+            capability="text",
+            spec=ModelSpec(
+                id="rightcode:gpt-5.6-terra",
+                provider="rightcode",
+                capability="text",
+                input_modalities=["text", "image"],
+                output_modalities=["text"],
+            ),
+        ),
+        reference_image_uploader=uploader,  # type: ignore[arg-type]
+    )
+    result = await proxy.generate_json("smoke", SmokeOutput, refs=[ref])
+    if result.value != "ok" or calls != 1:
+        raise AssertionError("RightCode should receive one request after URL resolution")
     expected_url = f"https://files.toapis.com/tmp/{image_path.name}"
     if ref.url != expected_url:
         raise AssertionError("AssetRef URL was not refreshed through ToAPI")
-    if ref.metadata.get("expired_asset_url") != "https://expired.example/image.png":
+    if "X-Amz-Date=20200101" not in str(ref.metadata.get("expired_asset_url")):
         raise AssertionError("old URL was not retained in metadata")
-    if len(uploader.calls) != 1 or uploader.calls[0] != ([ref], True):
-        raise AssertionError("RightCode retry did not force exactly one shared ToAPI re-upload")
+    if len(uploader.calls) != 1 or uploader.calls[0] != ([ref], False):
+        raise AssertionError("bound provider did not resolve the image URL exactly once")
     if ref.metadata.get("uploaded_reference_image_provider") != "toapi":
         raise AssertionError("RightCode retry was not marked as a ToAPI upload")
-    if "data:image" in str(payloads[1]):
-        raise AssertionError("RightCode retry unexpectedly used an inline base64 reference")
-    if expected_url not in str(payloads[1]):
-        raise AssertionError("RightCode retry payload did not use the refreshed ToAPI URL")
+    if "data:image" in str(payloads[0]):
+        raise AssertionError("RightCode unexpectedly used an inline base64 reference")
+    if expected_url not in str(payloads[0]):
+        raise AssertionError("RightCode payload did not use the refreshed ToAPI URL")
+
+    try:
+        provider.build_payload(
+            "smoke",
+            SmokeOutput,
+            refs=[AssetRef(id="local_only", type="image", path=str(image_path))],
+        )
+    except ProviderBadResponseError as exc:
+        if "requires a public URL" not in str(exc):
+            raise AssertionError(f"unexpected local image error: {exc}") from exc
+    else:
+        raise AssertionError("RightCode must reject local/base64 image references")
     print("rightcode_expired_image_refresh_smoke: ok")
 
 

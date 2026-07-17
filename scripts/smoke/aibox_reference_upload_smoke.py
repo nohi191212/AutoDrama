@@ -30,6 +30,19 @@ class FakeReferenceUploader:
             "id": "upload_1",
         }
 
+    async def ensure_reference_image_urls(self, refs: list[AssetRef]) -> list[dict[str, Any]]:
+        uploaded: list[dict[str, Any]] = []
+        for ref in refs:
+            path = Path(str(ref.path))
+            item = await self._upload_reference_image(None, path)
+            old_url = ref.url
+            ref.url = str(item["url"])
+            if old_url:
+                ref.metadata["expired_asset_url"] = old_url
+            ref.metadata["uploaded_reference_image_provider"] = self.name
+            uploaded.append(item)
+        return uploaded
+
 
 async def _run() -> None:
     tmp_dir = ROOT / ".tmp"

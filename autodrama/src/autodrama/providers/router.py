@@ -124,29 +124,31 @@ class BoundProviderProxy:
             effective_duration = metadata.get("duration", metadata.get("duration_seconds"))
         self.model_binding.spec.validate_duration(effective_duration, context=context)
 
-    async def _refresh_expired_reference_images(self, refs: list[Any] | None) -> None:
+    async def _resolve_reference_image_urls(self, refs: list[Any] | None) -> None:
         targets = [
             ref
             for ref in refs or []
             if str(getattr(ref, "type", "") or "") == "image"
-            and bool(getattr(ref, "url", None))
-            and is_remote_url_expired(str(ref.url))
             and local_ref_path(ref) is not None
+            and (
+                not bool(getattr(ref, "url", None))
+                or is_remote_url_expired(str(ref.url))
+            )
         ]
         if not targets:
             return
         if self._reference_image_uploader is None:
             raise ProviderBadResponseError(
-                f"node {self.model_binding.node_name} has expired reference image URL(s), "
+                f"node {self.model_binding.node_name} has local or expired reference image URL(s), "
                 "but the shared ToAPI reference uploader is not configured"
             )
-        await self._reference_image_uploader.reupload_expired_reference_images(targets)
+        await self._reference_image_uploader.ensure_reference_image_urls(targets)
 
     async def generate_json(self, prompt, schema, *, temperature: float = 0.7, metadata=None, refs=None):
         temperature = self.model_binding.params.get("temperature", temperature)
         merged_metadata = self._metadata(metadata)
         if refs:
-            await self._refresh_expired_reference_images(refs)
+            await self._resolve_reference_image_urls(refs)
             self._validate_media_request(refs=refs, metadata=merged_metadata)
         return await self._provider.generate_json(
             prompt,
@@ -158,7 +160,7 @@ class BoundProviderProxy:
 
     async def judge_audio_json(self, prompt, schema, *, refs, temperature: float = 0.2, metadata=None):
         temperature = self.model_binding.params.get("temperature", temperature)
-        await self._refresh_expired_reference_images(refs)
+        await self._resolve_reference_image_urls(refs)
         self._validate_media_request(refs=refs, metadata=metadata)
         return await self._provider.judge_audio_json(
             prompt,
@@ -170,7 +172,7 @@ class BoundProviderProxy:
 
     async def generate_image(self, prompt, refs=None, *, size=None, metadata=None):
         merged_metadata = self._metadata(metadata)
-        await self._refresh_expired_reference_images(refs)
+        await self._resolve_reference_image_urls(refs)
         self._validate_media_request(refs=refs, metadata=merged_metadata)
         return await self._provider.generate_image(
             prompt,
@@ -186,7 +188,7 @@ class BoundProviderProxy:
 
     async def submit_video(self, prompt, refs=None, *, duration=None, metadata=None):
         merged_metadata = self._metadata(metadata)
-        await self._refresh_expired_reference_images(refs)
+        await self._resolve_reference_image_urls(refs)
         self._validate_media_request(refs=refs, duration=duration, metadata=merged_metadata)
         return await self._provider.submit_video(prompt, refs=refs, duration=duration, metadata=merged_metadata)
 
@@ -195,7 +197,7 @@ class BoundProviderProxy:
 
     async def generate_video(self, prompt, refs=None, *, duration=None, wait: bool = False, metadata=None):
         merged_metadata = self._metadata(metadata)
-        await self._refresh_expired_reference_images(refs)
+        await self._resolve_reference_image_urls(refs)
         self._validate_media_request(refs=refs, duration=duration, metadata=merged_metadata)
         return await self._provider.generate_video(
             prompt,
@@ -215,7 +217,7 @@ class BoundProviderProxy:
         image_refs=None,
         metadata=None,
     ):
-        await self._refresh_expired_reference_images(image_refs)
+        await self._resolve_reference_image_urls(image_refs)
         return await self._provider.create_subject_element(
             element_name=element_name,
             element_description=element_description,
@@ -247,7 +249,7 @@ class BoundProviderProxy:
         wait: bool = True,
         metadata=None,
     ):
-        await self._refresh_expired_reference_images(image_refs)
+        await self._resolve_reference_image_urls(image_refs)
         return await self._provider.generate_subject_element(
             element_name=element_name,
             element_description=element_description,
@@ -485,8 +487,6 @@ class ProviderRouter:
         if factory is None:
             raise ValueError(f"Unsupported {capability} provider: {provider_name}")
         provider = factory(provider_name=provider_name, purpose=purpose)
-        if isinstance(provider, RightCodeTextProvider):
-            provider.reference_image_uploader = self._reference_image_uploader
         if binding is None:
             return provider
         return BoundProviderProxy(

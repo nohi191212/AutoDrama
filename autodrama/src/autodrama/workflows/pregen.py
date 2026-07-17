@@ -592,11 +592,15 @@ class PregenWorkflow:
         if selected_clip_selectors and (
             len(target_nodes) != 1
             or target_nodes[0]
-            not in {"clip_storyboard_image_generation", "clip_storyboard_keyframe_generation"}
+            not in {
+                "clip_storyboard_prompt",
+                "clip_storyboard_image_generation",
+                "clip_storyboard_keyframe_generation",
+            }
         ):
             raise ValueError(
-                "--clips is only supported for pregen --only clip_storyboard_image_generation "
-                "or clip_storyboard_keyframe_generation."
+                "--clips is only supported for pregen --only clip_storyboard_prompt, "
+                "clip_storyboard_image_generation, or clip_storyboard_keyframe_generation."
             )
         logger.info(
             "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s completed=%s",

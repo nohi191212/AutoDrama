@@ -11,6 +11,7 @@ from typing import Iterator
 LOGGER_NAME = "autodrama"
 PREGEN_DETAIL_LOGGER_NAME = "autodrama.pregen_detail"
 BLUE = "\033[34m"
+LIGHT_RED = "\033[91m"
 RESET = "\033[0m"
 _LOG_CONTEXT: ContextVar[dict[str, str]] = ContextVar("autodrama_log_context", default={})
 
@@ -33,11 +34,19 @@ def enable_windows_ansi() -> None:
 
 class AutoDramaFormatter(logging.Formatter):
     def __init__(self, *, color: bool) -> None:
+        self.color = color
         prefix = f"{BLUE}[autodrama]{RESET}" if color else "[autodrama]"
         super().__init__(
             fmt=f"{prefix} %(asctime)s %(levelname)s %(message)s",
             datefmt="%H:%M:%S",
         )
+
+    def format(self, record: logging.LogRecord) -> str:
+        message = super().format(record)
+        if self.color and getattr(record, "console_color", None) == "light_red":
+            message = message.replace(f"{BLUE}[autodrama]{RESET}", "[autodrama]", 1)
+            return f"{LIGHT_RED}{message}{RESET}"
+        return message
 
 
 def get_logger() -> logging.Logger:

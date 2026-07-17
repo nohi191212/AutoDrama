@@ -134,6 +134,8 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 
 所有图片生成默认通过 ToAPI GPT-Image-2：主视觉原图、角色身份板、12 宫格故事板、storyboard 首尾关键帧、道具图和场景图都会本地保存图片文件，并尽量保存 provider 返回的图片 URL。`clip_manifest_generation` 会为每个 storyboard clip 准备固定 `shot_video_inputs` 和模型专属 `final_video_prompt`：`image_1` 是实际使用的 clip_start_frame，`image_2` 是 clip_end_frame，`image_3` 是当前 clip 的 12 宫格故事板整图，后面依次是一个或多个 roleboard、layout 和 prop。首个 clip 的 start/end 都来自自己；非首个 clip 的 start 来自上一 clip 的 end，并要求视频开头立刻 hard cut 到当前 clip 的 P01。`clip_video_generation` 不再渲染提示词或推断素材，只读取 `shots/<episode_key>.json` 里已经准备好的 `final_video_prompt + shot_video_inputs` 并提交给视频 provider。每个模型的负向规则通过 `nodes.clip_video_generation.params.negative_rules` 绑定到具体模型。
 
+参考图片统一以公网 URL 提交。签名 URL 过期时，控制台会以淡红色提示，框架通过 ToAPI 上传本地图片，并把新 URL 按本地文件路径、大小和修改时间缓存到项目的 `assets/json/cache/reference_image_urls.json`。默认有效缓存时间为 86400 秒，可通过 `providers.toapi.options.toapi_reference_url_cache_ttl_seconds` 调整；缓存有效时后续 CLI 运行不会重复上传。RightCode 不接收本地图片或 inline base64。
+
 本地验证或演示可以使用 `--fake`，不会调用真实外部服务。
 
 ## 快速开始
@@ -385,6 +387,7 @@ run\start.cmd --config config.yaml --project <project_id> --only clip_segment --
 run\start.cmd --config config.yaml --project <project_id> --only roleboard_prompt --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only roleboard_image_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_prompt --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_prompt --episodes 1 --clips 1-3 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_image_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_image_generation --episodes 1 --clips 1-3 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_keyframe_generation --episodes 1 --force
@@ -396,7 +399,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --episode
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
 
-`clip_storyboard_image_generation` 和 `clip_storyboard_keyframe_generation` 还支持 `--clips`，可使用 `1-3`、`2,5-7` 或完整 clip ID，只处理选中的 clip 并保留其他已有输出。
+`clip_storyboard_prompt`、`clip_storyboard_image_generation` 和 `clip_storyboard_keyframe_generation` 还支持 `--clips`，可使用 `1-3`、`2,5-7` 或完整 clip ID，只处理选中的 clip 并保留其他已有输出。
 
 `clip_storyboard_prompt` 会为每个 clip 同时落盘视频用 `video_prompt` 和仅供生图使用的 `storyboard_image_prompt`；后者只包含固定故事板模板和 P01-P12 逐格画面内容，不包含 `video_prompt`、episode/clip 标识或工作流说明。`clip_storyboard_image_generation` 只读取并原样提交 `storyboard_image_prompt`、附加参考图和保存图片，不再组装或安全重写提示词。旧输出缺少该字段时需要先重跑 `clip_storyboard_prompt`。
 
