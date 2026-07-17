@@ -12,6 +12,7 @@ from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError
 from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef, ImageGenerationResult
 from autodrama.providers.http import request_id_from_response
+from autodrama.providers.media_refs import refresh_expired_image_ref_urls
 from autodrama.providers.toapi.image.gpt_image import ToAPIImageProvider
 
 
@@ -359,6 +360,7 @@ class AiboxImageProvider:
         *,
         metadata: dict[str, Any],
     ) -> tuple[list[str], list[dict[str, Any]]]:
+        refresh_expired_image_ref_urls(refs)
         images: list[str] = []
         uploaded: list[dict[str, Any]] = []
         max_reference_images = int(metadata.get("max_reference_images") or self.max_reference_images)
@@ -377,6 +379,7 @@ class AiboxImageProvider:
                 uploaded_item = await self.reference_uploader._upload_reference_image(client, local_path)
                 url = str(uploaded_item["url"])
                 ref.url = url
+                ref.metadata.pop("expired_url_cleared_for_local_refresh", None)
                 ref.metadata["uploaded_reference_image_url"] = url
                 ref.metadata["uploaded_reference_image_provider"] = self.reference_uploader.name
                 images.append(url)
@@ -762,8 +765,16 @@ class AiboxImageProvider:
 
     @staticmethod
     def _format_exception(exc: Exception) -> str:
-        text = str(exc).strip()
-        return text or exc.__class__.__name__
+        parts: list[str] = []
+        current: BaseException | None = exc
+        while current is not None and len(parts) < 8:
+            exception_type = type(current).__name__
+            detail = str(current).strip()
+            if not detail and current.args:
+                detail = repr(current.args)
+            parts.append(f"{exception_type}: {detail}" if detail else exception_type)
+            current = current.__cause__ or current.__context__
+        return " <- ".join(parts)
 
 
 def _gcd(left: int, right: int) -> int:

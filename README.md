@@ -103,7 +103,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 
 - `key_vision`: 项目主视觉原图，由 `key_vision_image_generation` 生成，默认建议竖版比例，例如 `key_vision_size: "9:16"`。
 - `roleboard`: 角色身份板图，由 `roleboard_image_generation` 基于主视觉原图和角色身份板 prompt 生成，包含正面、侧面、背面、表情、动作和服装细节，并在边缘保留小号“角色：<角色名> | <形象名>”及可选视图标签，默认走支持参考图的图像 provider，建议 16:9 横幅比例，例如 `roleboard_size: "16:9"`。
-- `clip_storyboard_image_generation`: pregen 内部用于 `clip_storyboard_image_generation` 的图像绑定，按输入 clip 输出黑白线稿 12 宫格故事板整图到 `assets/images/storyboards/`。`clip_storyboard_keyframe_generation` 会在每集首个 clip 生成 start/end 两张关键帧、后续 clip 只生成自己的 end 关键帧到 `assets/images/storyboard_keyframes/`。`clip_manifest_generation` 再把 clip 脚本、12 宫格故事板和首尾关键帧整理成 `shots/episode_XXX.json`，供 generation 阶段逐 clip 读取。generation 阶段不再提供同名 `clip_storyboard_image_generation` 节点；保留的 `clip_storyboard_image_generation` 仅指 pregen 的 12 宫格故事板图像节点。
+- `clip_storyboard_image_generation`: pregen 内部用于 `clip_storyboard_image_generation` 的图像绑定，按输入 clip 输出 3840×2160、16:9 的黑白线稿 12 宫格故事板整图到 `assets/images/storyboards/`；4×3 网格中的每格为 4:3，并由代码覆盖黑色宫格号、红色镜头号和红色切镜斜杠。`clip_storyboard_keyframe_generation` 会在每集首个 clip 生成 start/end 两张关键帧、后续 clip 只生成自己的 end 关键帧到 `assets/images/storyboard_keyframes/`。`clip_manifest_generation` 再把 clip 脚本、12 宫格故事板和首尾关键帧整理成 `shots/episode_XXX.json`，供 generation 阶段逐 clip 读取。generation 阶段不再提供同名 `clip_storyboard_image_generation` 节点；保留的 `clip_storyboard_image_generation` 仅指 pregen 的 12 宫格故事板图像节点。
 
 旧的分散式角色视觉链路已移除；当前角色视觉资产以 roleboard 身份板为准。
 
@@ -296,7 +296,7 @@ clip_manifest_generation
 
 `roleboard_prompt` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并结合主视觉原图信息输出 prompt-only 的角色身份板提示词；代码负责生成 `role_id`、`appearance_id` 等内部 ID。`roleboard_prompt` 的模板按后续 `roleboard_image_generation` 绑定的生图 provider/model 自动选择，也可通过 `nodes.roleboard_image_generation.params.roleboard_prompt_template` 显式指定，便于为 GPT-Image、Seedream 等不同模型维护不同调性的角色板提示词。`roleboard_image_generation` 使用身份板提示词和 `key_vision_image_generation` 产出的主视觉原图作为参考图，生成正面、侧面、背面、表情、动作、服装细节等角色身份板，并要求图片边缘带小号“角色：<角色名> | <形象名>”以及可选的“正面/侧面/背面/头部/表情/动作/服装细节/配饰细节”视图标签，方便后续把图片单独作为参考图时直接识别角色；除这些指定标签外仍禁止字幕、水印、logo、编号、ID、文件名、项目名、剧情台词或乱码文字。`roleboard_image_generation` 支持按 `nodes.roleboard_image_generation.params.roleboard_image_generation_concurrency` 并发生成多张角色板。`role_voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，参考角色身份板并按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；后续 `shot_dialogue_audio_generation` 会直接使用该 `voice_type` 生成逐镜头对白音频。功能角色如果 `has_dialogue=false` 不选择声音。
 
-`clip_segment` 在剧本正文和摘要之后运行，把每集文本切成建议 8-15 秒的 clip，并为每个 clip 提取 `role_names`、`prop_names`、`layout_names`；episode 时长只作为文本节奏参考，不再用来硬性校验 clip 数量。`clip_prompt` 在角色、道具、场景静态资产之后运行，为每个 clip 生成逐镜头视频提示词。`clip_storyboard_prompt` 严格跟随 `clip_segment` 的 clip 数和顺序，把项目约束、完整正文、剧情摘要、clip 片段、`clip_prompt`、角色身份板摘要以及道具/场景摘要整理成 storyboard clip；每个 clip 的 `video_prompt` 内部再拆 1-4 个真实 `Camera Shot`，推荐 2-4 个，并写出 P01-P12 十二宫格面板规划。P01-P12 是视觉节奏帧，不是 1 秒 1 格；真实切镜边界会要求在故事板宫格之间用醒目的红色斜杠标出。pregen 的 `clip_storyboard_image_generation` 会为每个 storyboard clip 生成一张黑白线稿 12 宫格故事板整图，保存到 `assets/images/storyboards/`。`clip_storyboard_keyframe_generation` 紧随其后，从每集首个 clip 的 P01/P12 生成 start/end 关键帧，并从后续 clip 的 P12 生成 end 关键帧。`clip_manifest_generation` 是本地整理节点，会把故事板 prompt、12 宫格故事板整图、首尾关键帧、角色/道具/场景 ID 和融合后的 `video_prompt` 写入 `shots/<episode_key>.json`，同时保留已有视频/音频动态资产字段。这里的 `clip_storyboard_image_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
+`clip_segment` 在剧本正文和摘要之后运行，把每集文本切成建议 8-15 秒的 clip，并为每个 clip 提取 `role_names`、`prop_names`、`layout_names`；episode 时长只作为文本节奏参考，不再用来硬性校验 clip 数量。`clip_prompt` 在角色、道具、场景静态资产之后运行，为每个 clip 生成逐镜头视频提示词。`clip_storyboard_prompt` 严格跟随 `clip_segment` 的 clip 数和顺序，把项目约束、完整正文、剧情摘要、clip 片段、`clip_prompt`、角色身份板摘要以及道具/场景摘要整理成 storyboard clip；每个 clip 的 `video_prompt` 内部再拆 1-4 个真实 `Camera Shot`，推荐 2-4 个，并写出 P01-P12 十二宫格面板规划。P01-P12 是视觉节奏帧，不是 1 秒 1 格；真实切镜边界会要求在故事板宫格之间用醒目的红色斜杠标出。pregen 的 `clip_storyboard_image_generation` 会为每个 storyboard clip 生成一张 3840×2160、16:9 的黑白线稿 12 宫格故事板整图，4×3 网格中的每格为 4:3，并由代码覆盖黑色宫格号、红色镜头号和红色切镜斜杠，保存到 `assets/images/storyboards/`。`clip_storyboard_keyframe_generation` 紧随其后，从每集首个 clip 的 P01/P12 生成 start/end 关键帧，并从后续 clip 的 P12 生成 end 关键帧。`clip_manifest_generation` 是本地整理节点，会把故事板 prompt、12 宫格故事板整图、首尾关键帧、角色/道具/场景 ID 和融合后的 `video_prompt` 写入 `shots/<episode_key>.json`，同时保留已有视频/音频动态资产字段。这里的 `clip_storyboard_image_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
 
 `role_finalize` 在 `role_extract_primary` 和 `role_extract_functional` 之后运行，合并主要/功能角色，执行一次批量收口审查，追加遗漏的 `episode_keys/source_chapters`，合并重复角色，并写出 `role_finalize.json` 与角色 JSON。
 
@@ -386,6 +386,7 @@ run\start.cmd --config config.yaml --project <project_id> --only roleboard_promp
 run\start.cmd --config config.yaml --project <project_id> --only roleboard_image_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_prompt --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_image_generation --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_image_generation --episodes 1 --clips 1-3 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_keyframe_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_manifest_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_select --episodes 1 --force
@@ -394,6 +395,10 @@ run\start.cmd --generation --config config.yaml --project <project_id> --episode
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1-3
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
+
+`clip_storyboard_image_generation` 和 `clip_storyboard_keyframe_generation` 还支持 `--clips`，可使用 `1-3`、`2,5-7` 或完整 clip ID，只处理选中的 clip 并保留其他已有输出。
+
+`clip_storyboard_prompt` 会为每个 clip 同时落盘视频用 `video_prompt` 和仅供生图使用的 `storyboard_image_prompt`；后者只包含固定故事板模板和 P01-P12 逐格画面内容，不包含 `video_prompt`、episode/clip 标识或工作流说明。`clip_storyboard_image_generation` 只读取并原样提交 `storyboard_image_prompt`、附加参考图和保存图片，不再组装或安全重写提示词。旧输出缺少该字段时需要先重跑 `clip_storyboard_prompt`。
 
 `pregen --episodes` 只支持配合 `--only` 使用，当前支持 `clip_segment`、`roleboard_prompt`、`roleboard_image_generation`、`clip_storyboard_prompt`、`clip_storyboard_image_generation`、`clip_storyboard_keyframe_generation`、`clip_manifest_generation`、`role_voice_select`、`prop_prompt`、`prop_image_generation` 和 `layout_image_generation`。clip、角色、故事板、关键帧、道具和场景图相关节点会按各自的 `episode_keys` 或目标集过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。`prop_design`、`prop_generation` 是旧别名，会分别转到 `prop_prompt`、`prop_image_generation`。
 

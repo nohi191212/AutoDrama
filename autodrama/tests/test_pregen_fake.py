@@ -67,7 +67,7 @@ def test_pregen_runs_integrated_role_pipeline(tmp_path: Path) -> None:
     assert (project_dir / "assets" / "json" / "nodes" / "prop_image_generation.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "layout_extract.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "layout_image_generation.json").exists()
-    assert (project_dir / "assets" / "json" / "nodes" / "clip_prompt.json").exists()
+    assert (project_dir / "assets" / "json" / "nodes" / "clip_prompt" / "episode_001.json").exists()
     assert (project_dir / "assets" / "json" / "nodes" / "clip_manifest_generation.json").exists()
     assert not (project_dir / "assets" / "json" / "nodes" / "role_subject_video_generation.json").exists()
     assert not (project_dir / "assets" / "json" / "nodes" / "role_subject_element_generation.json").exists()

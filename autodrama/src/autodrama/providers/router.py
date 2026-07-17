@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from autodrama.config import Settings
+from autodrama.core.errors import ProviderBadResponseError
 from autodrama.core.model_catalog import ModelBinding, ModelCapability
 from autodrama.providers.aibox.image.gpt_image import AiboxImageProvider
 from autodrama.providers.aliyun.audio.qwen_tts import QwenVoiceDesignProvider
@@ -32,6 +33,7 @@ from autodrama.providers.local.mock.fake import (
     FakeVideoProvider,
     FakeVoiceDesignProvider,
 )
+from autodrama.providers.media_refs import is_remote_url_expired, local_ref_path
 from autodrama.providers.minimax.music.music_26 import MiniMaxMusicProvider
 from autodrama.providers.registry import ProviderRegistry
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
@@ -57,8 +59,15 @@ GOOGLE_TEXT_PROVIDER_NAMES = {"google", "gemini"}
 
 
 class BoundProviderProxy:
-    def __init__(self, provider: Any, binding: ModelBinding) -> None:
+    def __init__(
+        self,
+        provider: Any,
+        binding: ModelBinding,
+        *,
+        reference_image_uploader: ToAPIImageProvider | None = None,
+    ) -> None:
         self._provider = provider
+        self._reference_image_uploader = reference_image_uploader
         self.model_binding = binding
         self.name = getattr(provider, "name", binding.provider)
         self.model = binding.provider_model_name
@@ -115,10 +124,29 @@ class BoundProviderProxy:
             effective_duration = metadata.get("duration", metadata.get("duration_seconds"))
         self.model_binding.spec.validate_duration(effective_duration, context=context)
 
+    async def _refresh_expired_reference_images(self, refs: list[Any] | None) -> None:
+        targets = [
+            ref
+            for ref in refs or []
+            if str(getattr(ref, "type", "") or "") == "image"
+            and bool(getattr(ref, "url", None))
+            and is_remote_url_expired(str(ref.url))
+            and local_ref_path(ref) is not None
+        ]
+        if not targets:
+            return
+        if self._reference_image_uploader is None:
+            raise ProviderBadResponseError(
+                f"node {self.model_binding.node_name} has expired reference image URL(s), "
+                "but the shared ToAPI reference uploader is not configured"
+            )
+        await self._reference_image_uploader.reupload_expired_reference_images(targets)
+
     async def generate_json(self, prompt, schema, *, temperature: float = 0.7, metadata=None, refs=None):
         temperature = self.model_binding.params.get("temperature", temperature)
         merged_metadata = self._metadata(metadata)
         if refs:
+            await self._refresh_expired_reference_images(refs)
             self._validate_media_request(refs=refs, metadata=merged_metadata)
         return await self._provider.generate_json(
             prompt,
@@ -130,6 +158,7 @@ class BoundProviderProxy:
 
     async def judge_audio_json(self, prompt, schema, *, refs, temperature: float = 0.2, metadata=None):
         temperature = self.model_binding.params.get("temperature", temperature)
+        await self._refresh_expired_reference_images(refs)
         self._validate_media_request(refs=refs, metadata=metadata)
         return await self._provider.judge_audio_json(
             prompt,
@@ -141,6 +170,7 @@ class BoundProviderProxy:
 
     async def generate_image(self, prompt, refs=None, *, size=None, metadata=None):
         merged_metadata = self._metadata(metadata)
+        await self._refresh_expired_reference_images(refs)
         self._validate_media_request(refs=refs, metadata=merged_metadata)
         return await self._provider.generate_image(
             prompt,
@@ -156,6 +186,7 @@ class BoundProviderProxy:
 
     async def submit_video(self, prompt, refs=None, *, duration=None, metadata=None):
         merged_metadata = self._metadata(metadata)
+        await self._refresh_expired_reference_images(refs)
         self._validate_media_request(refs=refs, duration=duration, metadata=merged_metadata)
         return await self._provider.submit_video(prompt, refs=refs, duration=duration, metadata=merged_metadata)
 
@@ -164,6 +195,7 @@ class BoundProviderProxy:
 
     async def generate_video(self, prompt, refs=None, *, duration=None, wait: bool = False, metadata=None):
         merged_metadata = self._metadata(metadata)
+        await self._refresh_expired_reference_images(refs)
         self._validate_media_request(refs=refs, duration=duration, metadata=merged_metadata)
         return await self._provider.generate_video(
             prompt,
@@ -183,6 +215,7 @@ class BoundProviderProxy:
         image_refs=None,
         metadata=None,
     ):
+        await self._refresh_expired_reference_images(image_refs)
         return await self._provider.create_subject_element(
             element_name=element_name,
             element_description=element_description,
@@ -214,6 +247,7 @@ class BoundProviderProxy:
         wait: bool = True,
         metadata=None,
     ):
+        await self._refresh_expired_reference_images(image_refs)
         return await self._provider.generate_subject_element(
             element_name=element_name,
             element_description=element_description,
@@ -257,6 +291,12 @@ class ProviderRouter:
         self._fake_video = FakeVideoProvider()
         self._fake_voice = FakeVoiceDesignProvider()
         self._fake_judge = FakeAudioJudgeProvider()
+        toapi_settings = self.settings.providers.get("toapi")
+        self._reference_image_uploader = (
+            ToAPIImageProvider(toapi_settings, self.settings.runtime)
+            if toapi_settings is not None
+            else None
+        )
         self.registry = ProviderRegistry()
         self._register_provider_factories()
 
@@ -445,9 +485,15 @@ class ProviderRouter:
         if factory is None:
             raise ValueError(f"Unsupported {capability} provider: {provider_name}")
         provider = factory(provider_name=provider_name, purpose=purpose)
+        if isinstance(provider, RightCodeTextProvider):
+            provider.reference_image_uploader = self._reference_image_uploader
         if binding is None:
             return provider
-        return BoundProviderProxy(provider, binding)
+        return BoundProviderProxy(
+            provider,
+            binding,
+            reference_image_uploader=self._reference_image_uploader,
+        )
 
     def _binding_for_node(self, capability: ModelCapability, node_name: str | None) -> ModelBinding | None:
         if self.provider_override or not node_name:

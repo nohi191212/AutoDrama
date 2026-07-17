@@ -10,25 +10,25 @@ model_catalog_file: ./model_catalog.yaml.example
 # Params are validated against model_catalog_file when the config is loaded.
 nodes:
   script_outline:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
   script_novel:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.7
       response_format: json_object
   script_novel_extract:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   key_vision_prompt:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.45
@@ -38,37 +38,37 @@ nodes:
     params:
       size: 2160x3840
   role_extract_primary:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   role_extract_functional:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   role_episode_key_audit:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
   role_duplicate_audit:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
   ambient_entity_extract:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   roleboard_prompt:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.4
@@ -80,7 +80,7 @@ nodes:
       roleboard_image_generation_concurrency: 3
       size: 3840x2160
   clip_storyboard_prompt:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.4
@@ -90,7 +90,8 @@ nodes:
     model: aibox:gpt-image-2-guan
     params:
       clip_storyboard_image_generation_concurrency: 4
-      size: 2048x2048
+      size: 3840x2160
+      storyboard_panel_aspect_ratio: "4:3"
   clip_storyboard_keyframe_generation:
     model: aibox:gpt-image-2-guan
     params:
@@ -99,20 +100,20 @@ nodes:
       clip_storyboard_keyframe_generation_concurrency: 4
       output_dir: assets/storyboard_keyframes
   prop_extract:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   prop_finalize:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
       max_iterations: 1
   prop_prompt:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.4
@@ -124,26 +125,26 @@ nodes:
       prop_image_generation_concurrency: 1
       max_attempts: 5
   layout_extract:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   layout_prompt:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
   layout_finalize:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
       max_iterations: 1
   layout_prop_boundary_review:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.2
@@ -154,7 +155,7 @@ nodes:
       size: 2160x3840
       concurrency: 3
   bgm_design:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.4
@@ -194,7 +195,7 @@ nodes:
   #     max_reference_elements: 3
   #     role_subject_video_generation_concurrency: 5
   # role_subject_video_intro_text:
-  #   model: rightcode:gpt-5.5
+  #   model: rightcode:gpt-5.6-terra
   #   params:
   #     reasoning_effort: low
   #     temperature: 0.5
@@ -226,7 +227,7 @@ nodes:
       response_format: mp3
       max_generated_audio_duration_seconds: 10
   role_voice_select:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: low
       temperature: 0.2
@@ -236,7 +237,7 @@ nodes:
     params:
       temperature: 0.2
   image_prompt_safety_rewrite:
-    model: rightcode:gpt-5.5
+    model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: low
       temperature: 0.2
@@ -374,8 +375,8 @@ providers:
     base_url: https://www.right.codes/draw
     api_key_env: RIGHTCODE_API_KEY
     models:
-      text: gpt-5.5
-      storyboard: gpt-5.5
+      text: gpt-5.6-terra
+      storyboard: gpt-5.6-terra
       image: gpt-image-2
       # Used by key_vision_image_generation for the global key visual original.
       key_vision: gpt-image-2

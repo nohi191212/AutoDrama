@@ -509,6 +509,15 @@ class ClipPromptOutput(BaseModel):
     clip_prompts: list[ClipPromptEpisode]
 
 
+class ClipStoryboardPromptModelItem(BaseModel):
+    clip_id: str
+    clip_storyboard_prompt: str
+
+
+class ClipStoryboardPromptModelOutput(BaseModel):
+    clips: list[ClipStoryboardPromptModelItem] = Field(min_length=1)
+
+
 class StoryboardPromptClip(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -523,7 +532,16 @@ class StoryboardPromptClip(BaseModel):
     camera_shots: list[dict[str, Any]] = Field(default_factory=list)
     panel_plan: dict[str, Any] = Field(default_factory=dict)
     video_prompt: str
+    storyboard_image_prompt: str | None = None
     negative_prompt: str | None = None
+
+    @property
+    def clip_storyboard_prompt(self) -> str:
+        return self.video_prompt
+
+    @clip_storyboard_prompt.setter
+    def clip_storyboard_prompt(self, value: str) -> None:
+        self.video_prompt = value
 
     @property
     def shot_id(self) -> str:
@@ -566,7 +584,9 @@ class StoryboardSheetGenerationItem(BaseModel):
     duration_seconds: float | None = None
     panel_count: int = 12
     grid: str = "4x3"
-    panel_aspect_ratio: str = "3:4"
+    sheet_aspect_ratio: str = "16:9"
+    panel_aspect_ratio: str = "4:3"
+    size: str | None = None
     asset_path: str | None = None
     asset_url: str | None = None
     provider: str

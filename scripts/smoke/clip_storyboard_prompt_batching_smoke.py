@@ -14,8 +14,10 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from autodrama.config import Settings
+from autodrama.core.model_catalog import NodeModelSettings
 from autodrama.core.schemas import (
     ClipSegment,
+    ClipStoryboardPromptModelOutput,
     Layout,
     ProjectState,
     Role,
@@ -82,20 +84,22 @@ class _FakeStoryboardPromptProvider:
         self.active_calls = 0
         self.max_active_calls = 0
         self.calls: list[dict[str, object]] = []
+        self.deferred_single_clip_once = False
 
     async def generate_json(
         self,
-        _prompt: str,
-        _schema: type[StoryboardPromptOutput],
+        prompt: str,
+        _schema: type[ClipStoryboardPromptModelOutput],
         *,
         temperature: float = 0.7,
         metadata: dict[str, object] | None = None,
         refs: list[object] | None = None,
-    ) -> StoryboardPromptOutput:
+    ) -> ClipStoryboardPromptModelOutput:
         metadata = metadata or {}
         self.active_calls += 1
         self.max_active_calls = max(self.max_active_calls, self.active_calls)
         batch_index = int(metadata["clip_batch_index"])
+        retry_round = int(metadata["clip_retry_round"])
         batch_keys = [int(str(value)) for value in metadata["clip_batch_keys"]]  # type: ignore[index]
         self.calls.append(
             {
@@ -103,18 +107,50 @@ class _FakeStoryboardPromptProvider:
                 "batch_keys": batch_keys,
                 "ref_count": len(refs or []),
                 "temperature": temperature,
+                "prompt": prompt,
+                "retry_round": retry_round,
             }
         )
+        if retry_round == 0 and batch_keys == [13, 14, 15, 16]:
+            try:
+                await asyncio.sleep(0.03 * (4 - batch_index))
+                return ClipStoryboardPromptModelOutput.model_validate(
+                    {
+                        "clips": [
+                            {
+                                "clip_id": "clip_1",
+                                "clip_storyboard_prompt": "მოახია",
+                            }
+                        ]
+                    }
+                )
+            finally:
+                self.active_calls -= 1
         returned_keys = batch_keys[:1] if batch_index == 1 and len(batch_keys) > 1 else batch_keys
+        invalid_single_clip = False
+        if batch_keys == [2] and not self.deferred_single_clip_once:
+            invalid_single_clip = True
+            self.deferred_single_clip_once = True
         try:
             await asyncio.sleep(0.03 * (4 - batch_index))
-            return StoryboardPromptOutput.model_validate(
+            return ClipStoryboardPromptModelOutput.model_validate(
                 {
-                    "storyboards": [
+                    "clips": [
                         {
-                            "episode_key": str(metadata["episode_key"]),
-                            "clips": [_clip_payload(str(metadata["episode_key"]), index) for index in returned_keys],
+                            "clip_id": f"{metadata['episode_key']}_clip_{index:03d}",
+                            "clip_storyboard_prompt": (
+                                "<CAMERA_SHOTS>\n"
+                                f"Camera Shot 1（0-{'4' if invalid_single_clip else '5'}秒）：\n连续动作开始。\n"
+                                "Camera Shot 2（5-10秒）：\n连续动作完成。\n"
+                                "</CAMERA_SHOTS>\n<PANEL_PLAN>\n"
+                                + "\n".join(
+                                    f'<P{panel:02d} camera_shot="{1 if panel <= 6 else 2}">第 {panel} 格。</P{panel:02d}>'
+                                    for panel in range(1, 13)
+                                )
+                                + "\n</PANEL_PLAN>"
+                            ),
                         }
+                        for index in returned_keys
                     ]
                 }
             )
@@ -137,6 +173,7 @@ async def _run_parallel_generation_smoke(
     node.layout = layout
     node.router = SimpleNamespace(text=lambda _purpose, node_name=None: provider)
     node.script_service = ScriptService(PromptStore())
+    node.asset_service = SimpleNamespace(visual_tone=lambda _state: "电影级冷灰视觉调性")
     node.script_contents = ScriptContentRepository.__new__(ScriptContentRepository)
     node.script_contents.layout = layout
     node.logger = _SmokeLogger()
@@ -151,15 +188,25 @@ async def _run_parallel_generation_smoke(
 
     if provider.max_active_calls < 2:
         raise AssertionError("clip_storyboard_prompt batches should run concurrently")
-    if len(provider.calls) != 10:
-        raise AssertionError(f"expected 3 initial calls and 7 retry calls, got {len(provider.calls)}")
+    if len(provider.calls) != 13:
+        raise AssertionError(f"expected 5 initial calls and 8 retry calls, got {len(provider.calls)}")
     single_clip_calls = [call for call in provider.calls if len(call["batch_keys"]) == 1]
-    if len(single_clip_calls) != 8:
-        raise AssertionError(f"expected 8 single-clip calls including the final initial batch, got {len(single_clip_calls)}")
+    if len(single_clip_calls) != 9:
+        raise AssertionError(f"expected 9 single-clip calls including the final initial batch, got {len(single_clip_calls)}")
     if any(call["ref_count"] != 2 for call in provider.calls):
         raise AssertionError("each clip_storyboard_prompt batch should receive roleboard and layout refs")
-    if state.budget.used_text_calls != 10:
-        raise AssertionError(f"expected 10 text calls, got {state.budget.used_text_calls}")
+    expected_reference_prefix = "图1是【江未晞：主角】，图2是【古老殿宇：残破殿宇】。"
+    if any(not str(call["prompt"]).startswith(expected_reference_prefix) for call in provider.calls):
+        raise AssertionError("clip_storyboard_prompt must prepend the ordered reference image descriptions")
+    if state.budget.used_text_calls != 13:
+        raise AssertionError(f"expected 13 text calls, got {state.budget.used_text_calls}")
+    for call in provider.calls:
+        expected_ids = [f"episode_002_clip_{index:03d}" for index in call["batch_keys"]]
+        prompt = str(call["prompt"])
+        if any(clip_id not in prompt for clip_id in expected_ids):
+            raise AssertionError(f"allowed clip_id list is missing from rendered prompt: {expected_ids}")
+        if "禁止缩写为 `clip_1`" not in prompt:
+            raise AssertionError("rendered prompt does not forbid shorthand clip IDs")
 
     saved = StoryboardPromptOutput.model_validate_json(
         layout.node_output_path(tmp_project, "clip_storyboard_prompt").read_text(encoding="utf-8")
@@ -169,6 +216,35 @@ async def _run_parallel_generation_smoke(
     expected_ids = [f"episode_002_clip_{index:03d}" for index in range(1, 18)]
     if actual_ids != expected_ids:
         raise AssertionError("parallel clip_storyboard_prompt output should be merged in original clip order")
+    if any(len(clip.camera_shots) != 2 for clip in episode.clips):
+        raise AssertionError("camera shots should be parsed from the minimal prompt response")
+    if any(set(clip.panel_plan) != {f"P{index:02d}" for index in range(1, 13)} for clip in episode.clips):
+        raise AssertionError("P01-P12 should be parsed from the minimal prompt response")
+    if any(not clip.storyboard_image_prompt for clip in episode.clips):
+        raise AssertionError("clip_storyboard_prompt must persist the complete storyboard image prompt")
+    forbidden_image_prompt_text = (
+        "当前 clip 视频提示词",
+        "clip_storyboard_image_generation",
+        "episode_002_clip_",
+        "最终图会由系统并排覆盖",
+        "生图阶段不要自行绘制数字",
+    )
+    if any(
+        forbidden in (clip.storyboard_image_prompt or "")
+        for clip in episode.clips
+        for forbidden in forbidden_image_prompt_text
+    ):
+        raise AssertionError("storyboard image prompts must not include video prompts or workflow metadata")
+    if any("【逐格画面】" not in (clip.storyboard_image_prompt or "") for clip in episode.clips):
+        raise AssertionError("storyboard image prompts must include the image-only panel plan")
+    raw_dir = layout.node_episode_output_path(tmp_project, "clip_storyboard_prompt_raw", "_").parent
+    expected_raw_names = {
+        *(f"episode_002_batch_{index:03d}_of_005.json" for index in range(1, 6)),
+        *(f"episode_002_retry_001_batch_{index:03d}_of_007.json" for index in range(1, 8)),
+        "episode_002_retry_002_batch_001_of_001.json",
+    }
+    if not expected_raw_names.issubset({path.name for path in raw_dir.glob("*.json")}):
+        raise AssertionError("each model batch response should have a raw minimal-response snapshot")
 
 
 def main() -> None:
@@ -187,6 +263,57 @@ def main() -> None:
     node.script_contents = ScriptContentRepository.__new__(ScriptContentRepository)
     node.script_contents.layout = layout
     node.logger = None
+    ratio_settings = Settings(
+        nodes={
+            "clip_video_generation": NodeModelSettings(
+                model="fake:video",
+                params={"aspect_ratio": "9:16"},
+            ),
+            "clip_storyboard_image_generation": NodeModelSettings(
+                model="fake:image",
+                params={"size": "3840x2160", "storyboard_panel_aspect_ratio": "4:3"},
+            ),
+        }
+    )
+    node.repo = ProjectRepository(ratio_settings)
+    if node.final_aspect_ratio() != "9:16":
+        raise AssertionError("storyboard square sheet size must not override final video aspect ratio")
+    if node.storyboard_sheet_aspect_ratio() != "16:9":
+        raise AssertionError("storyboard sheet must follow its configured image size")
+    if node.storyboard_panel_aspect_ratio() != "4:3":
+        raise AssertionError("each storyboard panel must use the configured 4:3 ratio")
+    split_dialogue_prompt = (
+        "<CAMERA_SHOTS>\n"
+        "Camera Shot 1（0-5秒）：说出「甲，乙。」\n"
+        "Camera Shot 2（5-10秒）：继续说出「丙。」\n"
+        "</CAMERA_SHOTS>\n<PANEL_PLAN>\n"
+        + "\n".join(
+            f'<P{panel:02d} camera_shot="{1 if panel <= 6 else 2}">动作。</P{panel:02d}>'
+            for panel in range(1, 13)
+        )
+        + "\n</PANEL_PLAN>"
+    )
+    split_shots = node._camera_shots_from_storyboard_prompt(split_dialogue_prompt)
+    split_panels = node._panel_plan_from_storyboard_prompt(split_dialogue_prompt)
+    split_errors = node._clip_storyboard_prompt_errors(
+        prompt=split_dialogue_prompt,
+        source_text="角色：「甲，乙。丙。」",
+        target_duration_seconds=10,
+        camera_shots=split_shots,
+        panel_plan=split_panels,
+    )
+    if split_errors:
+        raise AssertionError(f"dialogue split across camera shots should remain valid: {split_errors}")
+    alternate_quote_prompt = split_dialogue_prompt.replace("「", "『").replace("」", "』")
+    alternate_quote_errors = node._clip_storyboard_prompt_errors(
+        prompt=alternate_quote_prompt,
+        source_text="角色：「甲，乙。丙。」",
+        target_duration_seconds=10,
+        camera_shots=node._camera_shots_from_storyboard_prompt(alternate_quote_prompt),
+        panel_plan=node._panel_plan_from_storyboard_prompt(alternate_quote_prompt),
+    )
+    if alternate_quote_errors:
+        raise AssertionError(f"alternate paired dialogue quotes should remain valid: {alternate_quote_errors}")
 
     clips = {
         str(index): ClipSegment(
@@ -198,10 +325,10 @@ def main() -> None:
         for index in range(1, 18)
     }
     batches = node._clip_segment_batches(clips)
-    if [len(batch) for batch in batches] != [8, 8, 1]:
-        raise AssertionError("clip_storyboard_prompt batch sizes should be 8, 8, 1")
-    if list(batches[1]) != [str(index) for index in range(9, 17)]:
-        raise AssertionError("second clip_storyboard_prompt batch should preserve original clip keys 9-16")
+    if [len(batch) for batch in batches] != [4, 4, 4, 4, 1]:
+        raise AssertionError("clip_storyboard_prompt batch sizes should be 4, 4, 4, 4, 1")
+    if list(batches[1]) != [str(index) for index in range(5, 9)]:
+        raise AssertionError("second clip_storyboard_prompt batch should preserve original clip keys 5-8")
 
     state = ProjectState(
         project_id="clip_storyboard_prompt_batching",
@@ -290,11 +417,15 @@ def main() -> None:
         state,
         role_ids=role_ids,
         layout_ids=layout_ids,
+        prop_ids=[],
     )
     if len(refs) != 2:
         raise AssertionError("clip_storyboard_prompt should attach roleboard and layout image refs")
     if [item["input_slot"] for item in ref_context] != ["image_1", "image_2"]:
         raise AssertionError("reference image context should expose stable image slots")
+    reference_prefix = node._reference_image_prompt_prefix(ref_context)
+    if reference_prefix != "图1是【江未晞：主角】，图2是【古老殿宇：残破殿宇】。":
+        raise AssertionError(f"unexpected reference image prompt prefix: {reference_prefix}")
 
     full_context = node._episode_window_full_context(
         tmp_project,
@@ -310,7 +441,7 @@ def main() -> None:
             "storyboards": [
                 {
                     "episode_key": "episode_002",
-                    "clips": [_clip_payload("episode_002", index) for index in range(9, 17)],
+                    "clips": [_clip_payload("episode_002", index) for index in range(5, 9)],
                 }
             ]
         }
@@ -320,35 +451,45 @@ def main() -> None:
         expected_episode_keys=["episode_002"],
         expected_clip_segments={"episode_002": batches[1]},
     )
-    if validated.storyboards[0].clips[0].clip_id != "episode_002_clip_009":
+    if validated.storyboards[0].clips[0].clip_id != "episode_002_clip_005":
         raise AssertionError("partial clip_storyboard_prompt batch should preserve original clip index")
 
     rendered = PromptStore().render(
         "clip_storyboard_prompt",
-        title=state.title,
-        episode_keys="episode_002",
-        clip_batch="episode_002 clip_segment keys 9-16; batch 2/3; max 8 clips per call",
-        clip_count=node._format_json({"episode_002": 8}),
-        shot_count=node._format_json({"episode_002": 8}),
-        clip_count_by_episode=node._format_json({"episode_002": 8}),
-        total_clip_count_by_episode=node._format_json({"episode_002": 17}),
         final_aspect_ratio="9:16",
         storyboard_panel_count=node.STORYBOARD_PANEL_COUNT,
         storyboard_grid=node.storyboard_grid(),
+        storyboard_sheet_aspect_ratio=node.storyboard_sheet_aspect_ratio(),
         storyboard_panel_aspect_ratio=node.storyboard_panel_aspect_ratio(),
-        raw_script=state.raw_script,
         novel_extract=node._format_json({"episode_002": "本集摘要"}),
-        novel_full=node._format_json(full_context),
-        project_context="visual_style_prompt/visual_tone",
+        current_episode_full=full_context["episode_002"],
+        adjacent_episode_summaries=node._format_json(
+            {"episode_001": "上一集摘要", "episode_003": "下一集摘要"}
+        ),
+        visual_tone="电影级冷灰视觉调性",
         roleboard_context=node._format_json(node._roleboard_context_for_ids(tmp_project, state, role_ids)),
         layout_context=node._format_json(node._layout_context_for_ids(state, layout_ids)),
         prop_context=node._format_json([]),
-        reference_image_context=node._format_json(ref_context),
         clip_prompt_context=node._format_json({"episode_002_clip_009": {"clip_prompt": "镜头提示", "target_duration_seconds": 10}}),
+        allowed_clip_ids=node._format_json(["episode_002_clip_005", "episode_002_clip_006", "episode_002_clip_007", "episode_002_clip_008"]),
         clip_segments=node._format_json({"episode_002": batches[1]}),
     )
     if re.search(r"\{\{[A-Za-z_][A-Za-z0-9_]*\}\}", rendered):
         raise AssertionError("clip_storyboard_prompt render left unresolved template variables")
+    if "所有对白原文统一放在中文直角引号 `「……」` 中" not in rendered:
+        raise AssertionError("clip_storyboard_prompt must require stable dialogue quote formatting")
+    for removed_field in (
+        "clip_batch",
+        "clip_count_by_episode",
+        "total_clip_count_by_episode",
+        "目标集：",
+        "项目标题",
+        "project_context",
+        "原始故事：",
+        "随请求附加的参考图片顺序",
+    ):
+        if removed_field in rendered:
+            raise AssertionError(f"removed prompt field remains rendered: {removed_field}")
 
     asyncio.run(
         _run_parallel_generation_smoke(

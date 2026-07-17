@@ -37,11 +37,11 @@ def base_input(text: str) -> list[dict[str, Any]]:
 
 def payload_for(variant: str, *, stream: bool) -> dict[str, Any]:
     if variant == "plain":
-        return {"model": "gpt-5.5", "input": base_input("你好"), "stream": stream}
+        return {"model": "gpt-5.6-terra", "input": base_input("你好"), "stream": stream}
 
     prompt = f"问题：1+1等于几？只输出 JSON，answer 字段填数字字符串。\n\n{SCHEMA_TEXT}"
     payload: dict[str, Any] = {
-        "model": "gpt-5.5",
+        "model": "gpt-5.6-terra",
         "instructions": (
             "You are a structured JSON generation engine. Return only valid JSON that matches the requested schema. "
             "Do not wrap the answer in Markdown."

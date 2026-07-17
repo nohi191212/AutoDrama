@@ -278,7 +278,7 @@ async def main_async(args: argparse.Namespace) -> int:
         prompt_path = resolve_repo_path(args.prompt_file)
         image_prompt = prompt_path.read_text(encoding="utf-8")
     else:
-        image_prompt = node.storyboard_image_prompt(episode.episode_key, clip)
+        image_prompt = node.required_storyboard_image_prompt(clip)
 
     provider_max_refs = max(0, int(getattr(provider, "max_reference_images", 12) or 12))
     max_refs = provider_max_refs if args.max_refs is None else max(0, args.max_refs)

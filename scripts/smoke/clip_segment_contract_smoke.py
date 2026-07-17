@@ -64,6 +64,8 @@ def main() -> None:
         raise AssertionError("clip_segment prompt should treat episode duration as reference only")
     if "该集完整正文" not in prompt or "全剧集摘要" not in prompt or "当前集角色索引" not in prompt:
         raise AssertionError("clip_segment prompt is missing revised input labels")
+    if "不要包含标题名" not in prompt or "人物：江未晞、九韶" not in prompt:
+        raise AssertionError("clip_segment prompt must exclude titles and cast-list text")
     for removed_text in ("单集目标时长", "原始故事", "\n完整正文：", "分集摘要", "项目约束", "Required JSON schema"):
         if removed_text in prompt:
             raise AssertionError(f"clip_segment prompt still contains removed text: {removed_text}")

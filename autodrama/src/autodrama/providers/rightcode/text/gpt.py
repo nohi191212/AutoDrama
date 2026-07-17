@@ -29,7 +29,7 @@ class RightCodeTextProvider:
         self.settings = settings
         self.runtime = runtime
         self.model_key = model_key
-        self.model = settings.models.get(model_key) or settings.models.get("text", "gpt-5.5")
+        self.model = settings.models.get(model_key) or settings.models.get("text", "gpt-5.6-terra")
         self.base_url = str(settings.base_url or "https://www.right.codes").rstrip("/")
         self.endpoint = self._resolve_endpoint(self.base_url)
         self.api_key = settings.secret("api_key_env")
@@ -63,6 +63,7 @@ class RightCodeTextProvider:
             ),
             default=False,
         )
+        self.reference_image_uploader: Any | None = None
 
     def refresh_endpoint(self) -> None:
         self.endpoint = self._resolve_endpoint(self.base_url)
@@ -78,6 +79,51 @@ class RightCodeTextProvider:
             default_base_path="/codex",
             api_path="/v1/responses",
         )
+
+    @staticmethod
+    def _is_expired_remote_file_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "failed to download file" in message
+            and ("status code: 403" in message or "http 403" in message)
+        )
+
+    async def _refresh_expired_image_refs(
+        self,
+        refs: list[AssetRef],
+        *,
+        cleared_only: bool = False,
+    ) -> int:
+        candidates: list[AssetRef] = []
+        for ref in refs:
+            was_cleared = bool(ref.metadata.get("expired_url_cleared_for_local_refresh"))
+            if ref.type != "image" or not ref.path or (cleared_only and not was_cleared):
+                continue
+            old_url = ref.url or ref.metadata.get("expired_asset_url")
+            if not old_url:
+                continue
+            path = Path(ref.path)
+            if not path.exists() or not path.is_file():
+                continue
+            ref.url = str(old_url)
+            candidates.append(ref)
+        if not candidates:
+            raise ProviderBadResponseError(
+                "RightCode rejected an expired image URL, but no matching local image was available for ToAPI re-upload"
+            )
+        if self.reference_image_uploader is None:
+            raise ProviderBadResponseError(
+                "RightCode rejected an expired image URL, but the shared ToAPI reference uploader is not configured"
+            )
+        uploaded = await self.reference_image_uploader.reupload_expired_reference_images(
+            candidates,
+            force=True,
+        )
+        if len(uploaded) != len(candidates):
+            raise ProviderBadResponseError(
+                "RightCode expired image refresh did not re-upload every local reference through ToAPI"
+            )
+        return len(uploaded)
 
     @staticmethod
     def _bool_option(value: object, *, default: bool) -> bool:
@@ -692,9 +738,13 @@ class RightCodeTextProvider:
         if not self.api_key:
             raise ProviderAuthError("Missing RightCode API key environment variable")
 
+        if any(ref.metadata.get("expired_url_cleared_for_local_refresh") for ref in refs):
+            await self._refresh_expired_image_refs(refs, cleared_only=True)
+
         call_id = uuid4().hex[:12]
         max_attempts = max(1, int(self.runtime.max_text_retry))
         last_error: Exception | None = None
+        refreshed_expired_refs = False
 
         for attempt in range(1, max_attempts + 1):
             content = ""
@@ -767,6 +817,16 @@ class RightCodeTextProvider:
                         ("RAW RIGHTCODE MESSAGE CONTENT", content or "<unavailable>"),
                     ],
                 )
+
+            if (
+                not refreshed_expired_refs
+                and refs
+                and last_error is not None
+                and self._is_expired_remote_file_error(last_error)
+            ):
+                await self._refresh_expired_image_refs(refs)
+                refreshed_expired_refs = True
+                continue
 
             if not content:
                 continue

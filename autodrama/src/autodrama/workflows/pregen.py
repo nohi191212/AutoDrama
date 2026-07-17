@@ -590,9 +590,14 @@ class PregenWorkflow:
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError("--roles is only supported for pregen --only role_voice_select.")
         if selected_clip_selectors and (
-            len(target_nodes) != 1 or target_nodes[0] != "clip_storyboard_keyframe_generation"
+            len(target_nodes) != 1
+            or target_nodes[0]
+            not in {"clip_storyboard_image_generation", "clip_storyboard_keyframe_generation"}
         ):
-            raise ValueError("--clips is only supported for pregen --only clip_storyboard_keyframe_generation.")
+            raise ValueError(
+                "--clips is only supported for pregen --only clip_storyboard_image_generation "
+                "or clip_storyboard_keyframe_generation."
+            )
         logger.info(
             "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s completed=%s",
             state.project_id,
@@ -1781,7 +1786,7 @@ class PregenWorkflow:
                 "source_shot_id": shot.shot_id,
                 "panel_count": 12,
                 "grid": "4x3",
-                "panel_aspect_ratio": "3:4",
+                "panel_aspect_ratio": "4:3",
                 "name": f"{shot.shot_id} 12宫格故事板",
             },
         )

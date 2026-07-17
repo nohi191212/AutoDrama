@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from autodrama.core.schemas import (
     BGMDesignOutput,
     ClipPromptModelOutput,
+    ClipStoryboardPromptModelOutput,
     ClipSegmentOutput,
     KeyVisionPromptOutput,
     LayoutDedupeReviewOutput,
@@ -32,7 +33,6 @@ from autodrama.core.schemas import (
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
     StoryboardEpisodeOutput,
-    StoryboardPromptOutput,
 )
 from autodrama.core.voice_catalog import (
     VoiceCatalogProfile,
@@ -349,7 +349,7 @@ class FakeTextProvider:
                 ),
                 "target_duration_seconds": 8,
             }
-        elif schema is StoryboardPromptOutput or node_name == "clip_storyboard_prompt":
+        elif schema is ClipStoryboardPromptModelOutput or node_name == "clip_storyboard_prompt":
             expected_keys = metadata.get("expected_keys") or episode_keys
             storyboard_episode_keys = [str(key) for key in expected_keys]
             expected_clip_counts = metadata.get("expected_clip_counts")
@@ -369,50 +369,32 @@ class FakeTextProvider:
 
             def fake_video_prompt(index: int) -> str:
                 return (
-                    "内部 Camera Shots："
-                    "Camera Shot 1（0-5秒）：雨夜办公室冷白顶灯下，50mm 斜侧近景贴着桌面建立合同，"
-                    "林舟以半侧脸低头检查合同页码，雨声和空调低频压住空间。"
-                    "Camera Shot 2（5-10秒）：轨道车轻微横移，林舟把邮件截图推向桌面中央，"
-                    "说：“这份合同被换过，时间线就在这里。”他说话时口型清晰匹配台词。"
-                    "十二宫格面板规划 P01-P12："
-                    + " ".join(fake_panel_plan(index).values())
-                    + "画面不出现字幕、对白气泡、可读文字、水印、logo、片段编号或无关商标。"
+                    "<CAMERA_SHOTS>\n"
+                    "Camera Shot 1（0-4秒）：\n雨夜办公室冷白顶灯下，50mm 斜侧近景贴着桌面建立合同，"
+                    "林舟以半侧脸低头检查合同页码，雨声和空调低频压住空间。\n"
+                    "Camera Shot 2（4-8秒）：\n轨道车轻微横移，林舟把邮件截图推向桌面中央，"
+                    "说：“这份合同被换过，时间线就在这里。”他说话时口型清晰匹配台词。\n"
+                    "</CAMERA_SHOTS>\n<PANEL_PLAN>\n"
+                    + "\n".join(
+                        f'<P{panel_index:02d} camera_shot="{1 if panel_index <= 6 else 2}">'
+                        f'clip {index} 的关键动作阶段。</P{panel_index:02d}>'
+                        for panel_index in range(1, 13)
+                    )
+                    + "\n</PANEL_PLAN>"
                 )
 
+            batch_keys = metadata.get("clip_batch_keys")
+            if not isinstance(batch_keys, list) or not batch_keys:
+                batch_keys = list(range(1, int(expected_clip_counts.get(storyboard_episode_keys[0], fallback_clip_count)) + 1))
+            indices = [int(key) for key in batch_keys]
+            episode_key = storyboard_episode_keys[0]
             data = {
-                "storyboards": [
+                "clips": [
                     {
-                        "episode_key": key,
-                        "clips": [
-                            {
-                                "clip_id": f"{key}_clip_{index:03d}",
-                                "clip_title": f"Clip {index:03d}",
-                                "clip_duration_hint": "10s",
-                                "clip_text": f"{key} fake clip {index} text",
-                                "duration_seconds": 10.0 if index % 2 else 12.0,
-                                "role_ids": ["role_林舟", "role_赵启"] if index == 2 else ["role_林舟"],
-                                "layout_ids": ["layout_会议室"] if index == 2 else ["layout_雨夜办公室"],
-                                "prop_ids": ["prop_邮件截图"] if index == 2 else ["prop_被调包的合同"],
-                                "camera_shots": [
-                                    {
-                                        "camera_shot_id": "Camera Shot 1",
-                                        "time_range": "0-5秒",
-                                        "description": "林舟在雨夜办公室检查合同，镜头连续推进。",
-                                    },
-                                    {
-                                        "camera_shot_id": "Camera Shot 2",
-                                        "time_range": "5-10秒",
-                                        "description": "邮件截图被推到桌面中央，证据被揭示。",
-                                    },
-                                ],
-                                "panel_plan": fake_panel_plan(index),
-                                "video_prompt": fake_video_prompt(index),
-                                "negative_prompt": "无字幕、无水印、无logo、无分格最终画面。",
-                            }
-                            for index in range(1, int(expected_clip_counts.get(key, fallback_clip_count)) + 1)
-                        ],
+                        "clip_id": f"{episode_key}_clip_{index:03d}",
+                        "clip_storyboard_prompt": fake_video_prompt(index),
                     }
-                    for key in storyboard_episode_keys
+                    for index in indices
                 ]
             }
         elif schema is VoiceSelectShortlistOutput or node_name == "role_voice_select_shortlist":

@@ -14,7 +14,7 @@ curl "${ENDPOINT}" \
   -H "Authorization: Bearer ${RIGHTCODE_API_KEY}" \
   -d '
 {
-  "model": "gpt-5.5",
+  "model": "gpt-5.6-terra",
   "instructions": "You are a structured JSON generation engine. Return only valid JSON that matches the requested schema. Do not wrap the answer in Markdown.",
   "input": [
     {

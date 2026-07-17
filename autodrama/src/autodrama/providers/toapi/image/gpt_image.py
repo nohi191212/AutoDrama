@@ -13,6 +13,11 @@ from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError
 from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef, ImageGenerationResult
 from autodrama.providers.http import request_id_from_response
+from autodrama.providers.media_refs import (
+    is_remote_url_expired,
+    local_ref_path,
+    refresh_expired_image_ref_urls,
+)
 
 
 class ToAPIImageProvider:
@@ -98,6 +103,11 @@ class ToAPIImageProvider:
             "max_attempts",
             default=self.DEFAULT_MAX_ATTEMPTS,
         )
+        self._reference_reupload_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
+        self._reference_reupload_tasks: dict[
+            tuple[str, int, int],
+            asyncio.Task[dict[str, Any]],
+        ] = {}
 
     @property
     def generation_endpoint(self) -> str:
@@ -240,6 +250,7 @@ class ToAPIImageProvider:
         return None
 
     async def _reference_images(self, client: httpx.AsyncClient, refs: list[AssetRef]) -> tuple[list[str], list[dict[str, Any]]]:
+        refresh_expired_image_ref_urls(refs)
         images: list[str] = []
         uploaded: list[dict[str, Any]] = []
         for ref in refs:
@@ -250,7 +261,12 @@ class ToAPIImageProvider:
                 images.append(url)
             elif local_path := self._local_ref_path(ref):
                 uploaded_item = await self._upload_reference_image(client, local_path)
-                images.append(str(uploaded_item["url"]))
+                url = str(uploaded_item["url"])
+                ref.url = url
+                ref.metadata.pop("expired_url_cleared_for_local_refresh", None)
+                ref.metadata["uploaded_reference_image_url"] = url
+                ref.metadata["uploaded_reference_image_provider"] = self.name
+                images.append(url)
                 uploaded.append(uploaded_item)
             elif ref.path:
                 uploaded_item = await self._upload_reference_image(client, Path(ref.path))
@@ -259,6 +275,72 @@ class ToAPIImageProvider:
             if len(images) >= self.max_reference_images:
                 break
         return images, uploaded
+
+    async def reupload_expired_reference_images(
+        self,
+        refs: list[AssetRef] | None,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        targets: list[tuple[AssetRef, str, Path]] = []
+        for ref in refs or []:
+            if ref.type != "image" or not ref.url:
+                continue
+            path = local_ref_path(ref)
+            if path is None or (not force and not is_remote_url_expired(ref.url)):
+                continue
+            targets.append((ref, ref.url, path))
+        if not targets:
+            return []
+
+        uploaded: list[dict[str, Any]] = []
+        for ref, old_url, path in targets:
+            uploaded_item = await self._coalesced_reference_reupload(path)
+            new_url = str(uploaded_item["url"])
+            ref.url = new_url
+            ref.metadata["expired_asset_url"] = old_url
+            ref.metadata["expired_url_reuploaded"] = True
+            ref.metadata.pop("expired_url_cleared_for_local_refresh", None)
+            ref.metadata["uploaded_reference_image_url"] = new_url
+            ref.metadata["uploaded_reference_image_provider"] = self.name
+            uploaded.append(dict(uploaded_item))
+            get_logger().info(
+                "ToAPI refreshed expired reference image ref=%s path=%s",
+                ref.id or "-",
+                path,
+            )
+        return uploaded
+
+    @staticmethod
+    def _reference_reupload_key(path: Path) -> tuple[str, int, int]:
+        stat = path.stat()
+        return (str(path.resolve()), stat.st_size, stat.st_mtime_ns)
+
+    async def _coalesced_reference_reupload(self, path: Path) -> dict[str, Any]:
+        key = self._reference_reupload_key(path)
+        if cached := self._reference_reupload_cache.get(key):
+            return dict(cached)
+
+        task = self._reference_reupload_tasks.get(key)
+        if task is None:
+            task = asyncio.create_task(self._upload_reference_image_with_client(path))
+            self._reference_reupload_tasks[key] = task
+
+        try:
+            uploaded_item = await asyncio.shield(task)
+        except BaseException:
+            if task.done() and self._reference_reupload_tasks.get(key) is task:
+                self._reference_reupload_tasks.pop(key, None)
+            raise
+
+        self._reference_reupload_cache[key] = dict(uploaded_item)
+        if self._reference_reupload_tasks.get(key) is task:
+            self._reference_reupload_tasks.pop(key, None)
+        return dict(uploaded_item)
+
+    async def _upload_reference_image_with_client(self, path: Path) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
+            return await self._upload_reference_image(client, path)
 
     @staticmethod
     def _local_ref_path(ref: AssetRef) -> Path | None:
@@ -276,7 +358,7 @@ class ToAPIImageProvider:
         if not path.exists() or not path.is_file():
             raise ProviderBadResponseError(f"ToAPI reference image does not exist: {path}")
 
-        upload = self._prepare_reference_upload(path)
+        upload = await asyncio.to_thread(self._prepare_reference_upload, path)
         if upload.get("data") is not None:
             response = await client.post(
                 self.upload_endpoint,
@@ -400,7 +482,7 @@ class ToAPIImageProvider:
         best: dict[str, Any] | None = None
         low = 0.01
         high = 1.0
-        for _ in range(18):
+        for _ in range(10):
             scale = (low + high) / 2
             candidate = self._encode_reference_upload_image(image, output_format, scale, save_options)
             if len(candidate["data"]) <= self.max_reference_upload_bytes:
@@ -431,10 +513,7 @@ class ToAPIImageProvider:
     def _reference_upload_save_options(output_format: str) -> list[dict[str, Any]]:
         if output_format == "PNG":
             return [
-                {"optimize": True, "compress_level": 6},
-                {"optimize": True, "compress_level": 4},
-                {"optimize": True, "compress_level": 2},
-                {"optimize": False, "compress_level": 0},
+                {"optimize": False, "compress_level": 6},
             ]
         if output_format == "JPEG":
             return [

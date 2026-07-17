@@ -54,21 +54,37 @@ async def _run() -> None:
         path=str(local_ref),
         url="https://cdn.example.test/existing.png",
     )
+    expired_url = (
+        "https://bucket.example.test/layout.png?"
+        "X-Amz-Date=20200101T000000Z&X-Amz-Expires=60&X-Amz-Signature=expired"
+    )
+    expired_url_ref = AssetRef(
+        id="expired_url",
+        type="image",
+        path=str(local_ref),
+        url=expired_url,
+    )
     local_ref_asset = AssetRef(id="local_ref", type="image", path=str(local_ref))
 
     images, uploaded = await provider._resolve_reference_images(
         object(),
-        [existing_url_ref, local_ref_asset],
+        [existing_url_ref, expired_url_ref, local_ref_asset],
         metadata={},
     )
 
     expected_uploaded_url = f"https://files.toapis.com/tmp/{local_ref.name}"
-    if images != ["https://cdn.example.test/existing.png", expected_uploaded_url]:
+    if images != ["https://cdn.example.test/existing.png", expected_uploaded_url, expected_uploaded_url]:
         raise AssertionError(f"unexpected resolved images: {images!r}")
-    if len(uploaded) != 1 or uploaded[0]["url"] != expected_uploaded_url:
+    if len(uploaded) != 2 or any(item["url"] != expected_uploaded_url for item in uploaded):
         raise AssertionError(f"unexpected uploaded refs: {uploaded!r}")
-    if uploader.uploaded_paths != [local_ref]:
+    if uploader.uploaded_paths != [local_ref, local_ref]:
         raise AssertionError(f"unexpected upload paths: {uploader.uploaded_paths!r}")
+    if expired_url_ref.url != expected_uploaded_url:
+        raise AssertionError(f"expired AssetRef URL was not refreshed: {expired_url_ref.url!r}")
+    if expired_url_ref.metadata.get("expired_asset_url") != expired_url:
+        raise AssertionError("expired AIBOX reference URL was not retained in metadata")
+    if expired_url_ref.metadata.get("expired_url_cleared_for_local_refresh"):
+        raise AssertionError("AIBOX left a stale pending-refresh marker after ToAPI upload")
     if local_ref_asset.url != expected_uploaded_url:
         raise AssertionError(f"local AssetRef.url was not bound: {local_ref_asset.url!r}")
 
