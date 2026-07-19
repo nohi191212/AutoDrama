@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 
-from autodrama.postgen.schemas import POSTGEN_EDIT_PLAN_SCHEMA_VERSION, PostgenSourceClip
+from autodrama.postgen.schemas import POSTGEN_EDIT_PLAN_SCHEMA_VERSION, PostgenSourceAuditReport, PostgenSourceClip
 
 
 def build_postgen_edit_plan_prompt(
     *,
-    project_title: str,
-    episode_key: str,
     source_clips: list[PostgenSourceClip],
+    source_audit: PostgenSourceAuditReport,
     output_path: str,
     width: int,
     height: int,
@@ -34,15 +33,15 @@ def build_postgen_edit_plan_prompt(
         "不要输出 Markdown、解释、注释或多余字段。\n\n"
         "剪辑目标：提升短剧节奏，删除空镜头冗余，保留剧情因果、关键动作和台词完整性。"
         "除非必要，保持原始镜头顺序。第一版只允许硬切转场。\n\n"
-        f"项目标题：{project_title}\n"
-        f"剧集：{episode_key}\n"
         f"输出规格：{width}x{height}, {fps}fps, output_path={output_path}\n\n"
         "输入镜头 JSON：\n"
         f"{json.dumps(clip_payload, ensure_ascii=False, indent=2)}\n\n"
+        "源素材审计 JSON（reject 镜头不得使用，trim 镜头必须落在 usable 区间内）：\n"
+        f"{json.dumps(source_audit.model_dump(mode='json'), ensure_ascii=False, indent=2)}\n\n"
         "返回 JSON 必须符合以下结构：\n"
         "{\n"
         f'  "schema_version": "{POSTGEN_EDIT_PLAN_SCHEMA_VERSION}",\n'
-        f'  "episode_key": "{episode_key}",\n'
+        f'  "episode_key": "{source_audit.episode_key}",\n'
         '  "source_clips": [输入镜头对象，必须保留 shot_id/source_path/duration_seconds],\n'
         '  "timeline": [\n'
         '    {"clip_id": "episode_001_cut_001", "shot_id": "episode_001_shot_001", '

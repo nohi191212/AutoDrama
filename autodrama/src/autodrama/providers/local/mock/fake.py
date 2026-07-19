@@ -39,7 +39,7 @@ from autodrama.core.voice_catalog import (
     VoiceSelectAudioJudgeOutput,
     VoiceSelectShortlistOutput,
 )
-from autodrama.postgen.schemas import PostgenEditPlan
+from autodrama.postgen.schemas import PostgenEditPlan, PostgenFinalAuditReport, PostgenSourceAuditReport
 from autodrama.providers.base import (
     AssetRef,
     ImageGenerationResult,
@@ -843,6 +843,34 @@ class FakeTextProvider:
             data = {
                 "bgms": bgms
             }
+        elif schema is PostgenSourceAuditReport or node_name == "postgen_source_audit":
+            episode_key = str(metadata.get("episode_key") or "episode_001")
+            source_items = _extract_json_after_label(prompt, "素材") or []
+            data = {
+                "episode_key": episode_key,
+                "clips": [
+                    {
+                        "shot_id": str(item.get("shot_id")),
+                        "verdict": "pass",
+                        "usable_start": 0.0,
+                        "usable_end": float(item.get("duration_seconds") or 1.0),
+                        "issues": [],
+                        "edit_guidance": "fake audit: preserve usable range",
+                    }
+                    for item in source_items
+                ],
+                "continuity_notes": [],
+                "overall_notes": "fake source audit passed",
+            }
+        elif schema is PostgenFinalAuditReport or node_name == "postgen_final_audit":
+            data = {
+                "episode_key": str(metadata.get("episode_key") or "episode_001"),
+                "verdict": "pass",
+                "score": 95,
+                "issues": [],
+                "repair_actions": [],
+                "summary": "fake final audit passed",
+            }
         elif schema is PostgenEditPlan or node_name == "postgen_edit_plan_generation":
             episode_key = str(metadata.get("episode_key") or episode_keys[0])
             clips = _extract_json_after_label(prompt, "输入镜头 JSON")
@@ -906,7 +934,7 @@ class FakeTextProvider:
                     "height": 1280,
                     "fps": 25,
                     "burn_subtitles": True,
-                    "audio": False,
+                    "audio": True,
                 },
                 "warnings": [],
                 "metadata": {"provider": "fake", "model": "fake"},

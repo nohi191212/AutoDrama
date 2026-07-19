@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "autodrama" / "src"
@@ -13,6 +15,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from autodrama.config import ProviderSettings, RuntimeSettings
+from autodrama.core.errors import ProviderBadResponseError
 from autodrama.providers.base import AssetRef
 from autodrama.providers.toapi.image.gpt_image import ToAPIImageProvider
 
@@ -30,6 +33,19 @@ class RecordingToAPIImageProvider(ToAPIImageProvider):
     async def _upload_reference_image(self, client: Any, path: Path) -> dict[str, Any]:
         await asyncio.sleep(0.01)
         self.uploaded_paths.append(path)
+        return {"path": str(path), "url": f"https://files.toapis.com/tmp/{path.name}"}
+
+
+class FlakyUploadToAPIImageProvider(ToAPIImageProvider):
+    def __init__(self, *args: Any, failures_before_success: int, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.failures_before_success = failures_before_success
+        self.upload_attempts = 0
+
+    async def _upload_reference_image(self, client: Any, path: Path) -> dict[str, Any]:
+        self.upload_attempts += 1
+        if self.upload_attempts <= self.failures_before_success:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
         return {"path": str(path), "url": f"https://files.toapis.com/tmp/{path.name}"}
 
 
@@ -152,6 +168,61 @@ async def _run() -> None:
         raise AssertionError("a new provider process did not reuse the persisted ToAPI URL")
     if second_ref.url != first_ref.url or not second_result[0].get("persistent_cache"):
         raise AssertionError("persisted ToAPI URL did not override the expired asset URL")
+
+    retry_project = tmp_dir / "toapi_reference_upload_retry" / "project"
+    retry_ref_path = retry_project / "assets" / "images" / "storyboards" / "clip_004.png"
+    retry_ref_path.parent.mkdir(parents=True, exist_ok=True)
+    retry_ref_path.write_bytes(b"retry reference placeholder")
+    retry_cache_path = retry_project / "assets" / "json" / "cache" / "reference_image_urls.json"
+    if retry_cache_path.exists():
+        retry_cache_path.unlink()
+    retry_options = {
+        "toapi_reference_upload_max_attempts": 3,
+        "toapi_reference_upload_retry_initial_delay_seconds": 0,
+        "toapi_reference_upload_retry_max_delay_seconds": 0,
+    }
+    retry_provider = FlakyUploadToAPIImageProvider(
+        ProviderSettings(models={"image": "gpt-image-2"}, options=retry_options),
+        RuntimeSettings(),
+        failures_before_success=2,
+    )
+    delay_provider = FlakyUploadToAPIImageProvider(
+        ProviderSettings(
+            models={"image": "gpt-image-2"},
+            options={
+                "toapi_reference_upload_retry_initial_delay_seconds": 2,
+                "toapi_reference_upload_retry_max_delay_seconds": 5,
+            },
+        ),
+        RuntimeSettings(),
+        failures_before_success=0,
+    )
+    delays = [delay_provider._reference_upload_retry_delay_seconds(attempt) for attempt in range(1, 5)]
+    if delays != [2, 4, 5, 5]:
+        raise AssertionError(f"unexpected ToAPI reference upload exponential backoff: {delays}")
+    retry_ref = AssetRef(id="retry", type="image", path=str(retry_ref_path))
+    await retry_provider.ensure_reference_image_urls([retry_ref])
+    if retry_provider.upload_attempts != 3 or not retry_ref.url:
+        raise AssertionError("ToAPI reference upload did not recover on the configured retry attempt")
+
+    failing_ref_path = retry_project / "assets" / "images" / "storyboards" / "always_fail.png"
+    failing_ref_path.write_bytes(b"failing reference placeholder")
+    failing_provider = FlakyUploadToAPIImageProvider(
+        ProviderSettings(models={"image": "gpt-image-2"}, options=retry_options),
+        RuntimeSettings(),
+        failures_before_success=99,
+    )
+    failing_ref = AssetRef(id="always_fail", type="image", path=str(failing_ref_path))
+    try:
+        await failing_provider.ensure_reference_image_urls([failing_ref])
+    except ProviderBadResponseError as exc:
+        error_text = str(exc)
+        if "failed after 3 attempt(s)" not in error_text or str(failing_ref_path) not in error_text:
+            raise AssertionError(f"unexpected final reference upload error: {error_text}") from exc
+    else:
+        raise AssertionError("ToAPI reference upload should fail after exhausting retries")
+    if failing_provider.upload_attempts != 3:
+        raise AssertionError("ToAPI reference upload did not stop at the configured attempt limit")
 
     (tmp_dir / "toapi_reference_url_preference_smoke.ok").write_text("ok\n", encoding="utf-8")
     print("toapi_reference_url_preference_smoke: ok")

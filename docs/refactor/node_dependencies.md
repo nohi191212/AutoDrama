@@ -55,3 +55,8 @@ longer included.
 | A3 voice node migration | `role_voice_select` is owned by `RoleVoiceSelectNode`; the old role-level `role_voice_generation` node and preview-audio output have been removed. Shot dialogue synthesis uses the selected role `voice_type` directly. |
 | E1 pregen node boundary smoke | `scripts/smoke/pregen_node_boundary_smoke.py` checks script node class ownership and registry order. |
 | E1 project layout contract smoke | `scripts/smoke/project_layout_contract_smoke.py` checks critical output paths used by migrated repositories/helpers. |
+# Postgen v2
+
+`postgen_source_collect -> postgen_source_audit -> postgen_edit_plan_generation -> postgen_edit_plan_validation -> postgen_video_composition -> postgen_audio_separation -> postgen_speaker_diarization -> postgen_voice_conversion -> postgen_audio_remix -> postgen_subtitle_asr -> postgen_subtitle_render -> postgen_final_audit`
+
+必须先剪辑、再做人声音色对齐：剪辑会改变绝对时间轴；若先完成声纹切片再剪画面，PyAnnote 时间戳和 RVC 回贴位置都会失效。字幕必须基于混音后的最终人声识别，避免 RVC 造成少量音素变化后字幕仍引用旧音轨。源审计向剪辑节点提供 reject/trim 区间，最终审计只负责验收和给出返修动作，不反向静默修改成片。

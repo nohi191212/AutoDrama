@@ -31,6 +31,7 @@ class ToAPIImageProvider:
     DEFAULT_MIN_REFERENCE_UPLOAD_BYTES = 5_000_000
     DEFAULT_REFERENCE_URL_CACHE_TTL_SECONDS = 86_400
     DEFAULT_MAX_ATTEMPTS = 10
+    DEFAULT_REFERENCE_UPLOAD_MAX_ATTEMPTS = 5
     RETRYABLE_HTTP_STATUS_CODES = {
         408,
         409,
@@ -113,6 +114,11 @@ class ToAPIImageProvider:
             "toapi_max_attempts",
             "max_attempts",
             default=self.DEFAULT_MAX_ATTEMPTS,
+        )
+        self.reference_upload_max_attempts = self._int_option(
+            "toapi_reference_upload_max_attempts",
+            "reference_upload_max_attempts",
+            default=self.DEFAULT_REFERENCE_UPLOAD_MAX_ATTEMPTS,
         )
         self._reference_reupload_cache: dict[tuple[str, int, int], dict[str, Any]] = {}
         self._reference_reupload_tasks: dict[
@@ -485,8 +491,49 @@ class ToAPIImageProvider:
             temp_path.replace(cache_path)
 
     async def _upload_reference_image_with_client(self, path: Path) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
-            return await self._upload_reference_image(client, path)
+        max_attempts = max(1, self.reference_upload_max_attempts)
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self._http_timeout()) as client:
+                    return await self._upload_reference_image(client, path)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                if attempt >= max_attempts:
+                    raise ProviderBadResponseError(
+                        "ToAPI reference image upload failed after "
+                        f"{attempt} attempt(s) path={path}: "
+                        f"{exc.__class__.__name__}: {self._format_exception(exc)}"
+                    ) from exc
+                delay_seconds = self._reference_upload_retry_delay_seconds(attempt)
+                get_logger().warning(
+                    "ToAPI reference image upload attempt %d/%d failed path=%s: %s: %s; "
+                    "retrying in %.1fs",
+                    attempt,
+                    max_attempts,
+                    path,
+                    exc.__class__.__name__,
+                    self._format_exception(exc),
+                    delay_seconds,
+                )
+                if delay_seconds > 0:
+                    await asyncio.sleep(delay_seconds)
+
+        raise ProviderBadResponseError(
+            f"ToAPI reference image upload failed after {max_attempts} attempt(s) path={path}"
+        )
+
+    def _reference_upload_retry_delay_seconds(self, attempt: int) -> float:
+        initial_delay = self._float_option(
+            "toapi_reference_upload_retry_initial_delay_seconds",
+            "reference_upload_retry_initial_delay_seconds",
+            default=2.0,
+        )
+        max_delay = self._float_option(
+            "toapi_reference_upload_retry_max_delay_seconds",
+            "reference_upload_retry_max_delay_seconds",
+            default=30.0,
+        )
+        delay = max(0.0, initial_delay) * (2 ** max(0, attempt - 1))
+        return min(max(0.0, max_delay), delay)
 
     @staticmethod
     def _local_ref_path(ref: AssetRef) -> Path | None:

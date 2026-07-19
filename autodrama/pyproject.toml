@@ -10,6 +10,14 @@ dependencies = [
   "httpx>=0.25",
   "openai>=1.0",
   "Pillow>=10",
+  "pydub>=0.25",
+]
+
+[project.optional-dependencies]
+postgen-audio = [
+  "demucs>=4.0,<5",
+  "pyannote.audio>=3.1,<4",
+  "whisperx>=3.3,<4",
 ]
 
 [project.scripts]

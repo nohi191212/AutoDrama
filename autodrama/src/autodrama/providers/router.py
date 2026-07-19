@@ -55,7 +55,7 @@ MINIMAX_MUSIC_PROVIDER_NAMES = {"minimax", "minimax_music"}
 ELEVENLABS_MUSIC_PROVIDER_NAMES = {"elevenlabs", "elevenlabs_music"}
 VOLCENGINE_IMAGE_PROVIDER_NAMES = {"volcengine", "seedream", "volcengine_seedream"}
 KLING_VIDEO_PROVIDER_NAMES = {"kling", "kling_omni", "kling_video"}
-GOOGLE_TEXT_PROVIDER_NAMES = {"google", "gemini"}
+GOOGLE_TEXT_PROVIDER_NAMES = {"google", "gemini", "aibox", "aibox_gemini"}
 
 
 class BoundProviderProxy:
@@ -125,6 +125,8 @@ class BoundProviderProxy:
         self.model_binding.spec.validate_duration(effective_duration, context=context)
 
     async def _resolve_reference_image_urls(self, refs: list[Any] | None) -> None:
+        if bool(getattr(self._provider, "supports_local_refs", False)):
+            return
         targets = [
             ref
             for ref in refs or []
@@ -335,9 +337,12 @@ class ProviderRouter:
             "text",
             GOOGLE_TEXT_PROVIDER_NAMES,
             lambda provider_name, purpose, **_: GeminiTextProvider(
-                self._settings_for("google" if provider_name == "gemini" else provider_name),
+                self._settings_for(
+                    "google" if provider_name == "gemini" else "aibox" if provider_name == "aibox_gemini" else provider_name
+                ),
                 self.settings.runtime,
                 model_key=purpose,
+                provider_name=provider_name,
             ),
         )
 

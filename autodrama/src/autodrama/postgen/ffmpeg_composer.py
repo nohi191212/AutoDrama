@@ -50,6 +50,22 @@ async def probe_video_duration_seconds(path: Path, *, ffmpeg_path: str = "ffmpeg
     return None
 
 
+async def probe_has_audio(path: Path, *, ffmpeg_path: str = "ffmpeg") -> bool:
+    for candidate in _ffprobe_candidates(ffmpeg_path):
+        process = await asyncio.to_thread(
+            subprocess.run,
+            [candidate, "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if process.returncode == 0:
+            return bool((process.stdout or "").strip())
+    return False
+
+
 class PostgenFfmpegComposer:
     def __init__(self, *, ffmpeg_path: str = "ffmpeg") -> None:
         self.ffmpeg_path = ffmpeg_path
@@ -104,6 +120,7 @@ class PostgenFfmpegComposer:
     ) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         source_duration = item.source_out - item.source_in
+        output_duration = source_duration / item.speed
         vf = (
             f"trim=start={ffmpeg_tools.ffmpeg_seconds(item.source_in)}:"
             f"duration={ffmpeg_tools.ffmpeg_seconds(source_duration)},"
@@ -112,23 +129,51 @@ class PostgenFfmpegComposer:
             f"crop={plan.output.width}:{plan.output.height},setsar=1,"
             f"fps={plan.output.fps},format=yuv420p"
         )
-        command = [
-            *ffmpeg_tools.ffmpeg_base_command(self.ffmpeg_path),
-            "-i",
-            str(source_path),
-            "-vf",
-            vf,
-            "-an",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "18",
-            "-movflags",
-            "+faststart",
-            str(output_path),
-        ]
+        has_audio = plan.output.audio and await probe_has_audio(source_path, ffmpeg_path=self.ffmpeg_path)
+        command = [*ffmpeg_tools.ffmpeg_base_command(self.ffmpeg_path), "-i", str(source_path)]
+        if has_audio:
+            af = (
+                f"atrim=start={ffmpeg_tools.ffmpeg_seconds(item.source_in)}:"
+                f"duration={ffmpeg_tools.ffmpeg_seconds(source_duration)},"
+                f"asetpts=PTS-STARTPTS,atempo={item.speed:.6f},"
+                "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+            )
+            command.extend(["-vf", vf, "-af", af, "-map", "0:v:0", "-map", "0:a:0"])
+        else:
+            command.extend(
+                [
+                    "-f",
+                    "lavfi",
+                    "-t",
+                    ffmpeg_tools.ffmpeg_seconds(output_duration),
+                    "-i",
+                    "anullsrc=channel_layout=stereo:sample_rate=48000",
+                    "-vf",
+                    vf,
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "1:a:0",
+                ]
+            )
+        command.extend(
+            [
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "18",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-shortest",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ]
+        )
         await ffmpeg_tools.run_ffmpeg(command, cwd=project_dir)
 
     async def _concat(self, concat_path: Path, output_path: Path) -> None:
@@ -160,4 +205,4 @@ class PostgenFfmpegComposer:
         await ffmpeg_tools.run_ffmpeg(command, cwd=output_path.parent)
 
 
-__all__ = ["PostgenFfmpegComposer", "probe_video_duration_seconds"]
+__all__ = ["PostgenFfmpegComposer", "probe_has_audio", "probe_video_duration_seconds"]

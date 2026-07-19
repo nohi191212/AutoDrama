@@ -67,6 +67,50 @@ class GenerationSettings(BaseModel):
     layout_design_style_prompt: str = ""
 
 
+class VoiceAlignmentSettings(BaseModel):
+    enabled: bool = False
+    demucs_model: str = "htdemucs"
+    demucs_device: Literal["cpu", "cuda"] = "cpu"
+    diarization_model: str = "pyannote/speaker-diarization-3.1"
+    huggingface_token_env: str = "HUGGINGFACE_TOKEN"
+    min_speakers: int | None = Field(default=None, ge=1)
+    max_speakers: int | None = Field(default=None, ge=1)
+    speaker_role_map: dict[str, str] = Field(default_factory=dict)
+    role_rvc_models: dict[str, Path] = Field(default_factory=dict)
+    speaker_rvc_models: dict[str, Path] = Field(default_factory=dict)
+    rvc_command: list[str] = Field(default_factory=list)
+    fail_on_unmapped_speaker: bool = True
+    segment_padding_ms: int = Field(default=80, ge=0, le=1000)
+    crossfade_ms: int = Field(default=25, ge=0, le=500)
+    vocals_gain_db: float = 0.0
+    background_gain_db: float = 0.0
+
+
+class SubtitleSettings(BaseModel):
+    enabled: bool = False
+    backend: Literal["whisperx", "sidecar"] = "whisperx"
+    model: str = "large-v3"
+    language: str = "zh"
+    device: Literal["cpu", "cuda"] = "cpu"
+    compute_type: str = "int8"
+    batch_size: int = Field(default=4, ge=1)
+    max_chars_per_line: int = Field(default=18, ge=4, le=60)
+    max_lines: int = Field(default=2, ge=1, le=3)
+    font_name: str = "Microsoft YaHei"
+    font_size: int | None = Field(default=None, ge=12)
+    margin_v: int | None = Field(default=None, ge=0)
+
+
+class AuditSettings(BaseModel):
+    enabled: bool = False
+    source_audit: bool = True
+    final_audit: bool = True
+    frame_count: int = Field(default=9, ge=3, le=24)
+    include_audio: bool = True
+    fail_on_reject: bool = False
+    max_output_tokens: int = Field(default=8192, ge=256)
+
+
 class PostgenSettings(BaseModel):
     max_source_clips_per_plan: int = Field(default=9, ge=1, le=9)
     render_width: int = Field(default=720, ge=64)
@@ -75,6 +119,9 @@ class PostgenSettings(BaseModel):
     burn_subtitles: bool = True
     edit_plan_mode: Literal["llm", "deterministic"] = "llm"
     keep_tmp_cuts: bool = True
+    voice_alignment: VoiceAlignmentSettings = Field(default_factory=VoiceAlignmentSettings)
+    subtitles: SubtitleSettings = Field(default_factory=SubtitleSettings)
+    audit: AuditSettings = Field(default_factory=AuditSettings)
 
 
 class ProviderSettings(BaseModel):

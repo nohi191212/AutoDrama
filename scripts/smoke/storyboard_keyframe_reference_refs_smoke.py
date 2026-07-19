@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +22,7 @@ from autodrama.core.schemas import (  # noqa: E402
     StoryboardSheetGenerationItem,
 )
 from autodrama.workflows.nodes.storyboard_asset_nodes import StoryboardKeyframeGenerationNode  # noqa: E402
+from autodrama.utils.prompts import PromptStore  # noqa: E402
 
 
 class FakeLayout:
@@ -45,6 +47,7 @@ def _write_placeholder(project_dir: Path, relative_path: str) -> str:
 def main() -> None:
     project_dir = ROOT / ".tmp" / "storyboard_keyframe_reference_refs_smoke"
     storyboard_path = _write_placeholder(project_dir, "assets/images/storyboards/clip_001_storyboard.png")
+    key_vision_path = _write_placeholder(project_dir, "assets/images/key_visions/key_vision_original.png")
     roleboard_path = _write_placeholder(project_dir, "assets/images/roles/role_alex_base.png")
     layout_path = _write_placeholder(project_dir, "assets/images/layouts/layout_lab.png")
     prop_path = _write_placeholder(project_dir, "assets/images/props/prop_keycard.png")
@@ -97,6 +100,14 @@ def main() -> None:
             )
         },
     )
+    state.metadata.update(
+        {
+            "visual_style_prompt": "统一的超精细写实 CGI 动画风格，冷青色电影布光与稳定材质表现。",
+            "key_vision_asset_id": "key_vision_original",
+            "key_vision_asset_path": key_vision_path,
+            "key_vision_name": "主视觉原图",
+        }
+    )
     clip = StoryboardPromptClip(
         clip_id="clip_001",
         clip_title="Entry",
@@ -132,7 +143,7 @@ def main() -> None:
         limit=8,
     )
     asset_types = [ref.metadata.get("asset_type") for ref in refs]
-    if asset_types != ["storyboard", "roleboard", "layout", "prop"]:
+    if asset_types != ["storyboard", "key_vision", "roleboard", "layout", "prop"]:
         raise AssertionError(f"unexpected keyframe reference order: {asset_types}")
     if any(ref.metadata.get("reference_for") != "storyboard_keyframe" for ref in refs):
         raise AssertionError("all keyframe refs should be marked for storyboard_keyframe")
@@ -149,8 +160,53 @@ def main() -> None:
         limit=2,
     )
     limited_asset_types = [ref.metadata.get("asset_type") for ref in limited_refs]
-    if limited_asset_types != ["storyboard", "roleboard"]:
+    if limited_asset_types != ["storyboard", "key_vision"]:
         raise AssertionError(f"reference limit should preserve highest priority refs: {limited_asset_types}")
+    try:
+        node._keyframe_reference_refs(
+            project_dir,
+            state,
+            clip,
+            storyboard_sheet,
+            frame_role="end",
+            panel_ref="P12",
+            limit=1,
+        )
+    except ValueError as exc:
+        if "at least 2 reference image slots" not in str(exc):
+            raise
+    else:
+        raise AssertionError("keyframe generation must reject providers that cannot carry both style anchors")
+
+    node.workflow = SimpleNamespace(prompts=PromptStore())
+    node.repo = SimpleNamespace(settings=SimpleNamespace(nodes={}))
+    node.asset_service = SimpleNamespace(
+        visual_tone=lambda _state: state.metadata["visual_style_prompt"]
+    )
+    provider = SimpleNamespace(
+        name="aibox",
+        model="gpt-image-2-guan",
+        model_binding=SimpleNamespace(params={"prompt_template": "toapi_gpt_image_2"}),
+    )
+    prompt, prompt_template = node._render_keyframe_prompt(
+        provider=provider,
+        state=state,
+        episode_key="episode_001",
+        clip=clip,
+        storyboard_sheet=storyboard_sheet,
+        frame_role="end",
+        panel_ref="P12",
+    )
+    if prompt_template != "storyboard_keyframe/toapi_gpt_image_2":
+        raise AssertionError(f"unexpected keyframe prompt template: {prompt_template}")
+    if state.metadata["visual_style_prompt"] not in prompt:
+        raise AssertionError("keyframe prompt must include the authoritative project visual style")
+    if "image_2: project key vision" not in prompt:
+        raise AssertionError("keyframe prompt must assign image_2 as the shared style anchor")
+    if "cinematic live-action frame" in prompt:
+        raise AssertionError("keyframe prompt must not hard-code a live-action rendering style")
+    if "never inherit its pencil-sketch medium" not in prompt:
+        raise AssertionError("keyframe prompt must prevent storyboard sketch style leakage")
 
     tmp_dir = ROOT / ".tmp"
     tmp_dir.mkdir(exist_ok=True)

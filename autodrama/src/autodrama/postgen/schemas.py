@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 POSTGEN_EDIT_PLAN_SCHEMA_VERSION = "autodrama.postgen.edit_plan.v1"
@@ -132,6 +132,40 @@ class PostgenCompositionOutput(BaseModel):
     skipped_episodes: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class PostgenAuditIssue(BaseModel):
+    category: Literal["visual", "audio", "continuity", "lip_sync", "subtitle", "safety", "technical"]
+    severity: Literal["info", "warning", "error", "fatal"]
+    start_time: float | None = None
+    end_time: float | None = None
+    description: str
+    suggested_fix: str | None = None
+
+
+class PostgenSourceClipAudit(BaseModel):
+    shot_id: str
+    verdict: Literal["pass", "trim", "reject"] = Field(default="pass", validation_alias=AliasChoices("verdict", "status"))
+    usable_start: float = 0.0
+    usable_end: float | None = None
+    issues: list[PostgenAuditIssue] = Field(default_factory=list)
+    edit_guidance: str = ""
+
+
+class PostgenSourceAuditReport(BaseModel):
+    episode_key: str
+    clips: list[PostgenSourceClipAudit] = Field(default_factory=list)
+    continuity_notes: list[str] = Field(default_factory=list)
+    overall_notes: str = ""
+
+
+class PostgenFinalAuditReport(BaseModel):
+    episode_key: str
+    verdict: Literal["pass", "warn", "fail"] = Field(validation_alias=AliasChoices("verdict", "status"))
+    score: int = Field(ge=0, le=100)
+    issues: list[PostgenAuditIssue] = Field(default_factory=list)
+    repair_actions: list[str] = Field(default_factory=list)
+    summary: str = ""
+
+
 __all__ = [
     "POSTGEN_EDIT_PLAN_SCHEMA_VERSION",
     "PostgenAudioLayer",
@@ -142,10 +176,14 @@ __all__ = [
     "PostgenEditPlanGenerationOutput",
     "PostgenEditPlanValidationItem",
     "PostgenEditPlanValidationOutput",
+    "PostgenAuditIssue",
+    "PostgenFinalAuditReport",
     "PostgenOutputSpec",
     "PostgenSourceClip",
     "PostgenSourceCollectItem",
     "PostgenSourceCollectOutput",
+    "PostgenSourceAuditReport",
+    "PostgenSourceClipAudit",
     "PostgenSubtitleCue",
     "PostgenTimelineItem",
     "PostgenTransition",

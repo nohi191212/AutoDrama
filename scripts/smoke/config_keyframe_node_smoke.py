@@ -20,8 +20,15 @@ def _check(path: Path) -> None:
     params = node.params
     if params.get("prompt_template") != "toapi_gpt_image_2":
         raise AssertionError(f"{path.name} keyframe prompt_template is not configured")
+    if params.get("quality") != "high":
+        raise AssertionError(f"{path.name} keyframe quality must be fixed to high")
     if int(params.get("clip_storyboard_keyframe_generation_concurrency") or 0) < 1:
         raise AssertionError(f"{path.name} keyframe concurrency is invalid")
+    toapi_options = settings.providers["toapi"].options
+    if int(toapi_options.get("toapi_reference_upload_max_attempts") or 0) < 2:
+        raise AssertionError(f"{path.name} ToAPI reference upload retries are not configured")
+    if float(toapi_options.get("toapi_reference_upload_retry_initial_delay_seconds") or 0) <= 0:
+        raise AssertionError(f"{path.name} ToAPI reference upload retry delay is invalid")
 
 
 def main() -> None:

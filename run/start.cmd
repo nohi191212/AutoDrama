@@ -44,7 +44,7 @@ if "%~1"=="--generation" (
 )
 if "%~1"=="--postgen" (
   set "WORKFLOW=postgen"
-  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=postgen_video_composition"
+  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=postgen_final_audit"
   shift
   goto parse
 )
@@ -155,7 +155,7 @@ echo   clip_prompt, clip_storyboard_prompt, clip_storyboard_image_generation, cl
 echo   pregen --roles is supported with --only role_voice_select.
 echo   pregen --clips is supported with --only clip_storyboard_prompt, clip_storyboard_image_generation, or clip_storyboard_keyframe_generation.
 echo   generation starts with shot_dialogue_audio_generation, then clip_video_generation and solidification.
-echo   postgen collects generated shot videos, asks for an edit plan, validates it, and composes final episode video.
+echo   postgen audits source clips, edits with native audio, optionally aligns voices and subtitles, then audits the final video.
 goto end
 
 :help_error
@@ -182,7 +182,7 @@ if /I "%WORKFLOW%"=="generation" (
   if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=dynamic_asset_solidification"
 )
 if /I "%WORKFLOW%"=="postgen" (
-  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=postgen_video_composition"
+  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=postgen_final_audit"
 )
 
 set "AUTODRAMA_PYTHON="

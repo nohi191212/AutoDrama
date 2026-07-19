@@ -300,6 +300,8 @@ clip_manifest_generation
 
 `clip_segment` 在剧本正文和摘要之后运行，把每集文本切成建议 8-15 秒的 clip，并为每个 clip 提取 `role_names`、`prop_names`、`layout_names`；episode 时长只作为文本节奏参考，不再用来硬性校验 clip 数量。`clip_prompt` 在角色、道具、场景静态资产之后运行，为每个 clip 生成逐镜头视频提示词。`clip_storyboard_prompt` 严格跟随 `clip_segment` 的 clip 数和顺序，把项目约束、完整正文、剧情摘要、clip 片段、`clip_prompt`、角色身份板摘要以及道具/场景摘要整理成 storyboard clip；每个 clip 的 `video_prompt` 内部再拆 1-4 个真实 `Camera Shot`，推荐 2-4 个，并写出 P01-P12 十二宫格面板规划。P01-P12 是视觉节奏帧，不是 1 秒 1 格；真实切镜边界会要求在故事板宫格之间用醒目的红色斜杠标出。pregen 的 `clip_storyboard_image_generation` 会为每个 storyboard clip 生成一张 3840×2160、16:9 的黑白线稿 12 宫格故事板整图，4×3 网格中的每格为 4:3，并由代码覆盖黑色宫格号、红色镜头号和红色切镜斜杠，保存到 `assets/images/storyboards/`。`clip_storyboard_keyframe_generation` 紧随其后，从每集首个 clip 的 P01/P12 生成 start/end 关键帧，并从后续 clip 的 P12 生成 end 关键帧。`clip_manifest_generation` 是本地整理节点，会把故事板 prompt、12 宫格故事板整图、首尾关键帧、角色/道具/场景 ID 和融合后的 `video_prompt` 写入 `shots/<episode_key>.json`，同时保留已有视频/音频动态资产字段。这里的 `clip_storyboard_image_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
 
+`clip_storyboard_keyframe_generation` 的参考图顺序是固定契约：image_1 为当前十二宫格故事板，只锁定目标 P01/P12 的构图和动作；image_2 为项目主视觉，锁定全项目统一的渲染媒介、材质、色彩、光影、镜头质感和完成度；后续 roleboard、layout 和 prop 只锁定人物、空间与道具身份，不覆盖主视觉风格。节点还会把项目 `visual_style_prompt` 原样加入关键帧 prompt，并拒绝不支持至少 2 张参考图的图像 provider，避免关键帧在缺少主视觉风格锚点时静默降级生成。
+
 `role_finalize` 在 `role_extract_primary` 和 `role_extract_functional` 之后运行，合并主要/功能角色，执行一次批量收口审查，追加遗漏的 `episode_keys/source_chapters`，合并重复角色，并写出 `role_finalize.json` 与角色 JSON。
 
 ### 4. 运行动态资产生成流程
@@ -417,6 +419,26 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --con
 ```
 
 `voice-catalog build` 会刷新 provider speaker manifest；`--force-samples` 默认只为目标音色生成 `normal` 样例，避免全量 catalog 触发过多 TTS 请求；如果确实需要五情绪样例，可以加 `--sample-emotion all` 生成 `normal/angry/sad/happy/low`。`--force-profiles` 会调用 `routing.judge.voice_catalog_profile` 配置的 audio judge 重新生成自然语言听感画像，每个音色会单独落盘到 `.assets/voice_catalog/<provider>/<model>/profiles/<voice_type>.json`，同时回写 manifest；`--miss-profiles` 只补 manifest 中缺失或 `profile_hash` 过期的 profile，已有匹配画像会复用并跳过 judge；两种 profile 模式都会以 5 并发调用 judge；如需临时覆盖 judge，可加 `--judge-provider fake` 或其他已注册 judge。调试时可以加 `--voice-type <voice_type>` 或 `--limit 5` 控制范围。项目内 `role_voice_select` 会先把候选过滤到中文、角色同性别、豆包语音合成模型 2.0（Volcengine catalog）后，为每个候选生成内部 `candidate_id`，并用 `deepseek-v4-flash`、关闭 thinking 的单次文本调用直接筛 top 3；多个角色会并行执行，每个角色确定后立即落盘并输出 `<role> generated` 日志。样例齐全时再调用 `routing.judge.role_voice_select`，默认 Qwen3.5-Omni-Plus，听 top 3 音频终选。`voice_label` 只作为人类可读展示字段，落盘和合成 API 始终使用官方 `voice_type`。
+
+## Postgen 后处理
+
+后处理固定按以下依赖顺序运行：
+
+1. 收集带原生音画同步的源视频，并由 AI盒子 Gemini 3.5 Flash 审计每个镜头的可用区间。
+2. 审计结果进入剪辑计划；FFmpeg 按同一裁切和变速参数处理画面与原生音频，生成锁定时间轴的剪辑版。
+3. 可选执行 Demucs 人声/环境声分离、PyAnnote 说话人时间轴、按 `SPEAKER_XX` 映射执行 RVC、原时间戳回贴和双轨混音。
+4. 可选用 WhisperX 做字级对齐，生成 SRT/ASS，并通过 FFmpeg + libass 烧录字幕。
+5. AI盒子 Gemini 读取成片联系表、完整压缩音频、媒体参数和 ASR 时间轴，输出最终结构化审计报告。
+
+运行完整链：
+
+```powershell
+run\postgen.cmd --config config.yaml --project <project_id>
+```
+
+可用 `--until <node>` 停在某节点，或用 `--only <node> --force` 单独重跑。默认 `config.yaml` 已开启 Gemini 的前后双审计；音色对齐和 WhisperX 字幕默认关闭，因为它们还需要本机模型。开启前安装 `autodrama[postgen-audio]`，设置 `HUGGINGFACE_TOKEN`，填写 `postgen.voice_alignment.speaker_role_map`、`role_rvc_models` 与 `rvc_command`；建议使用 `episode_001:SPEAKER_00` 这种集级键，避免 PyAnnote 的临时标签跨集互换。也可用 `speaker_rvc_models` 直接映射 Speaker。RVC 没有统一稳定的 Python API，因此流水线通过命令模板调用用户选定的 RVC v2 推理实现，模板支持 `{input}`、`{output}`、`{model}`、`{speaker}` 占位符。
+
+主要产物：剪辑版在 `outputs/videos/<episode>_edited.mp4`，音色版在 `<episode>_voice_aligned.mp4`，最终版在 `<episode>_postgen.mp4`；字幕、分轨音频、说话人时间轴和两阶段审计 JSON 均保留在项目 `assets` 目录内。
 
 按镜头选择：
 

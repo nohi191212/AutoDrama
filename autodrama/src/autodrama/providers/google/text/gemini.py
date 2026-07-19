@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import base64
+import json
+import mimetypes
+from pathlib import Path
 from typing import Any, TypeVar
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from autodrama.config import ProviderSettings, RuntimeSettings
 from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError
@@ -15,8 +19,17 @@ T = TypeVar("T", bound=BaseModel)
 
 class GeminiTextProvider:
     name = "google"
+    supports_local_refs = True
 
-    def __init__(self, settings: ProviderSettings, runtime: RuntimeSettings, *, model_key: str = "text") -> None:
+    def __init__(
+        self,
+        settings: ProviderSettings,
+        runtime: RuntimeSettings,
+        *,
+        model_key: str = "text",
+        provider_name: str = "google",
+    ) -> None:
+        self.name = provider_name
         self.settings = settings
         self.runtime = runtime
         self.model_key = model_key
@@ -59,6 +72,7 @@ class GeminiTextProvider:
         *,
         temperature: float = 0.7,
         metadata: dict[str, Any] | None = None,
+        refs: list[AssetRef] | None = None,
     ) -> dict[str, Any]:
         metadata = metadata or {}
         generation_config: dict[str, Any] = {
@@ -73,17 +87,40 @@ class GeminiTextProvider:
         if thinking_level:
             generation_config["thinkingConfig"] = {"thinkingLevel": str(thinking_level)}
 
+        parts: list[dict[str, Any]] = [{"text": prompt}]
+        for ref in refs or []:
+            parts.append(self._ref_part(ref))
         return {
             "contents": [
                 {
-                    "parts": [
-                        {
-                            "text": prompt,
-                        }
-                    ]
+                    "role": "user",
+                    "parts": parts,
                 }
             ],
             "generationConfig": generation_config,
+        }
+
+    def _ref_part(self, ref: AssetRef) -> dict[str, Any]:
+        if ref.url:
+            mime_type = str(ref.metadata.get("mime_type") or mimetypes.guess_type(ref.url)[0] or "application/octet-stream")
+            return {"file_data": {"file_uri": ref.url, "mime_type": mime_type}}
+        if not ref.path:
+            raise ProviderBadResponseError(f"Gemini reference {ref.id or '-'} has neither path nor URL")
+        path = Path(ref.path).expanduser().resolve()
+        if not path.exists() or not path.is_file():
+            raise ProviderBadResponseError(f"Gemini local reference is missing: {path}")
+        max_bytes = int(self.settings.options.get("max_inline_media_bytes") or 20 * 1024 * 1024)
+        size = path.stat().st_size
+        if size > max_bytes:
+            raise ProviderBadResponseError(
+                f"Gemini local reference is too large for inline upload: {path} ({size} > {max_bytes} bytes)"
+            )
+        mime_type = str(ref.metadata.get("mime_type") or mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        return {
+            "inline_data": {
+                "mime_type": mime_type,
+                "data": base64.b64encode(path.read_bytes()).decode("ascii"),
+            }
         }
 
     @staticmethod
@@ -110,13 +147,11 @@ class GeminiTextProvider:
         metadata: dict[str, Any] | None = None,
         refs: list[AssetRef] | None = None,
     ) -> T:
-        if refs:
-            raise ProviderBadResponseError("GeminiTextProvider currently supports text-only postgen planning refs")
         if not self.api_key:
             raise ProviderAuthError("Missing Google Gemini API key")
 
         merged_metadata = {**dict(metadata or {})}
-        payload = self.build_payload(prompt, schema, temperature=temperature, metadata=merged_metadata)
+        payload = self.build_payload(prompt, schema, temperature=temperature, metadata=merged_metadata, refs=refs)
         headers = {
             "Content-Type": "application/json",
         }
@@ -129,7 +164,35 @@ class GeminiTextProvider:
         response_payload = response.json()
         content = self._extract_text(response_payload)
         parsed = parse_json_object(content)
-        return schema.model_validate(parsed)
+        try:
+            return schema.model_validate(parsed)
+        except ValidationError as exc:
+            repair_prompt = (
+                "将下面未通过校验的 JSON 修复为指定结构。只输出修复后的 JSON，不要解释，不要新增事实。\n\n"
+                f"JSON Schema:\n{json.dumps(self._gemini_json_schema(schema), ensure_ascii=False)}\n\n"
+                f"校验错误:\n{exc}\n\n"
+                f"原始 JSON:\n{content[:16000]}"
+            )
+            repair_payload = self.build_payload(
+                repair_prompt,
+                schema,
+                temperature=0.0,
+                metadata={**merged_metadata, "temperature": 0.0},
+                refs=None,
+            )
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                repair_response = await client.post(
+                    self._endpoint(),
+                    params={"key": self.api_key},
+                    headers=headers,
+                    json=repair_payload,
+                )
+            if repair_response.status_code >= 400:
+                raise ProviderBadResponseError(
+                    f"Gemini JSON repair failed with HTTP {repair_response.status_code}: {repair_response.text[:2000]}"
+                ) from exc
+            repaired_content = self._extract_text(repair_response.json())
+            return schema.model_validate(parse_json_object(repaired_content))
 
 
 __all__ = ["GeminiTextProvider"]

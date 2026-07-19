@@ -2637,6 +2637,26 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
     def keyframe_asset_id(clip_id: str, frame_role: str) -> str:
         return f"{str(clip_id).strip()}_{str(frame_role).strip()}_frame"
 
+    def _keyframe_visual_style_prompt(self, state: ProjectState) -> str:
+        asset_service = getattr(self, "asset_service", None)
+        visual_tone_method = getattr(asset_service, "visual_tone", None)
+        service_style = visual_tone_method(state) if callable(visual_tone_method) else None
+        settings = getattr(getattr(self, "repo", None), "settings", None)
+        generation = getattr(settings, "generation", None)
+        configured_style = getattr(generation, "visual_style_prompt", None)
+        style = str(
+            service_style
+            or state.metadata.get("visual_style_prompt")
+            or configured_style
+            or ""
+        ).strip()
+        if not style:
+            raise ValueError(
+                "clip_storyboard_keyframe_generation requires a project visual style prompt; "
+                "run key_vision_prompt first or configure generation.visual_style_prompt"
+            )
+        return style
+
     def _active_clip_selectors(self) -> set[str]:
         context = getattr(self.workflow, "_run_context", None)
         if context is not None and getattr(context, "has_clip_selectors", False):
@@ -2911,6 +2931,7 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
                         source_storyboard_asset_id=storyboard_sheet.asset_id,
                         source_storyboard_asset_path=storyboard_sheet.asset_path or "",
                         source_storyboard_asset_url=storyboard_sheet.asset_url or "",
+                        visual_style_prompt=self._keyframe_visual_style_prompt(state),
                         final_aspect_ratio=self.final_aspect_ratio(),
                         provider_name=getattr(provider, "name", "unknown"),
                         model_name=getattr(provider, "model", "-"),
@@ -2951,6 +2972,57 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             )
         ]
 
+    def _keyframe_key_vision_ref(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        *,
+        frame_role: str,
+        panel_ref: str,
+    ) -> AssetRef:
+        asset = state.metadata.get("key_vision_asset")
+        if isinstance(asset, dict):
+            asset_id = asset.get("asset_id") or state.metadata.get("key_vision_asset_id")
+            asset_path = asset.get("asset_path") or state.metadata.get("key_vision_asset_path")
+            asset_url = asset.get("asset_url") or state.metadata.get("key_vision_asset_url")
+            name = asset.get("name") or state.metadata.get("key_vision_name") or "主视觉原图"
+        else:
+            asset_id = state.metadata.get("key_vision_asset_id")
+            asset_path = state.metadata.get("key_vision_asset_path")
+            asset_url = state.metadata.get("key_vision_asset_url")
+            name = state.metadata.get("key_vision_name") or "主视觉原图"
+        if not asset_path and not asset_url:
+            raise FileNotFoundError(
+                "clip_storyboard_keyframe_generation requires the key vision style reference; "
+                "run key_vision_image_generation first"
+            )
+
+        path: str | None = None
+        if asset_path:
+            existing = self.layout.existing_project_file(project_dir, str(asset_path))
+            if existing is None:
+                if not asset_url:
+                    raise FileNotFoundError(
+                        "clip_storyboard_keyframe_generation key vision image is missing: "
+                        f"{asset_path}"
+                    )
+            else:
+                path = str(project_dir / existing)
+        return AssetRef(
+            id=str(asset_id or "key_vision_original"),
+            type="image",
+            path=path,
+            url=str(asset_url) if asset_url else None,
+            metadata={
+                "asset_type": "key_vision",
+                "name": str(name),
+                "reference_for": "storyboard_keyframe",
+                "reference_role": "style_world_reference",
+                "frame_role": frame_role,
+                "panel_ref": panel_ref,
+            },
+        )
+
     def _keyframe_reference_refs(
         self,
         project_dir: Path,
@@ -2965,6 +3037,11 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
         refs: list[AssetRef] = []
         if limit <= 0:
             return refs
+        if limit < 2:
+            raise ValueError(
+                "clip_storyboard_keyframe_generation requires at least 2 reference image slots "
+                "for the storyboard composition reference and key vision style reference"
+            )
 
         def append(ref: AssetRef) -> bool:
             if len(refs) >= limit:
@@ -2975,6 +3052,16 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
         for ref in self._storyboard_ref(project_dir, storyboard_sheet, frame_role=frame_role, panel_ref=panel_ref):
             if not append(ref):
                 return refs
+
+        if not append(
+            self._keyframe_key_vision_ref(
+                project_dir,
+                state,
+                frame_role=frame_role,
+                panel_ref=panel_ref,
+            )
+        ):
+            return refs
 
         for role_id in clip.role_ids:
             role = state.roles.get(role_id)
@@ -3221,6 +3308,11 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
         force_pregen = bool(getattr(self.workflow, "_force_pregen", False))
         max_refs = max(0, int(getattr(provider, "max_reference_images", 1) or 1))
         supports_refs = bool(max_refs and getattr(provider, "supports_reference_images", False))
+        if not supports_refs or max_refs < 2:
+            raise ValueError(
+                "clip_storyboard_keyframe_generation requires an image provider with at least 2 "
+                "reference image slots so every keyframe can use both the storyboard and key vision"
+            )
         generated_by_key = dict(existing_by_key)
         clip_selectors = self._active_clip_selectors()
         selected_clip_count = 0

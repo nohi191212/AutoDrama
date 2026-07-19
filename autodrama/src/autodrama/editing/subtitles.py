@@ -47,10 +47,17 @@ def write_srt(path: Path, cues: list[Any]) -> None:
     path.write_text("\n\n".join(blocks) + ("\n" if blocks else ""), encoding="utf-8")
 
 
-def write_ass(path: Path, plan: Any) -> None:
+def write_ass(
+    path: Path,
+    plan: Any,
+    *,
+    font_name: str = "Microsoft YaHei",
+    font_size: int | None = None,
+    margin_v: int | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    font_size = max(24, int(plan.height * 0.055))
-    margin_v = max(28, int(plan.height * 0.075))
+    font_size = font_size or max(24, int(plan.height * 0.055))
+    margin_v = margin_v if margin_v is not None else max(28, int(plan.height * 0.075))
     lines = [
         "[Script Info]",
         "ScriptType: v4.00+",
@@ -61,7 +68,7 @@ def write_ass(path: Path, plan: Any) -> None:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Default,Microsoft YaHei,{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
+        f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
         f"0,0,0,0,100,100,0,0,1,2,1,2,60,60,{margin_v},1",
         "",
         "[Events]",
@@ -74,7 +81,7 @@ def write_ass(path: Path, plan: Any) -> None:
             f"0,{ass_time(cue.start_time)},{ass_time(cue.end_time)},"
             f"Default,,0,0,0,,{text}"
         )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 __all__ = [

@@ -6,6 +6,7 @@ from autodrama.postgen.schemas import (
     POSTGEN_EDIT_PLAN_SCHEMA_VERSION,
     PostgenEditPlan,
     PostgenOutputSpec,
+    PostgenSourceAuditReport,
     PostgenSourceClip,
     PostgenTimelineItem,
 )
@@ -46,6 +47,7 @@ def validate_edit_plan(
     project_dir: Path,
     episode_key: str,
     expected_source_clips: list[PostgenSourceClip],
+    source_audit: PostgenSourceAuditReport | None = None,
     output_path: str,
     width: int,
     height: int,
@@ -57,6 +59,7 @@ def validate_edit_plan(
         raise ValueError(f"Edit plan episode_key mismatch: expected {episode_key}, got {raw_plan.episode_key}")
 
     expected_by_id = {clip.shot_id: clip for clip in expected_source_clips}
+    audit_by_id = {item.shot_id: item for item in source_audit.clips} if source_audit is not None else {}
     if not 1 <= len(expected_by_id) < 10:
         raise ValueError("postgen source_clips must contain 1-9 usable clips")
     if not raw_plan.timeline:
@@ -82,6 +85,16 @@ def validate_edit_plan(
                 f"{clip_id}.source_out {item.source_out:.3f}s exceeds source duration "
                 f"{source.duration_seconds:.3f}s for {item.shot_id}"
             )
+        review = audit_by_id.get(item.shot_id)
+        if review is not None:
+            if review.verdict == "reject":
+                raise ValueError(f"{clip_id} uses source clip rejected by Gemini audit: {item.shot_id}")
+            usable_end = source.duration_seconds if review.usable_end is None else review.usable_end
+            if item.source_in < review.usable_start - 0.05 or item.source_out > usable_end + 0.05:
+                raise ValueError(
+                    f"{clip_id} range {item.source_in:.3f}-{item.source_out:.3f}s is outside audited usable range "
+                    f"{review.usable_start:.3f}-{usable_end:.3f}s for {item.shot_id}"
+                )
         if item.speed < 0.5 or item.speed > 2.0:
             raise ValueError(f"{clip_id}.speed must be between 0.5 and 2.0")
         if item.transition_after.type != "cut":
@@ -109,7 +122,7 @@ def validate_edit_plan(
             height=height,
             fps=fps,
             burn_subtitles=raw_plan.output.burn_subtitles,
-            audio=raw_plan.output.audio,
+            audio=True,
         ),
         audio_layers=list(raw_plan.audio_layers),
         subtitle_cues=list(raw_plan.subtitle_cues),

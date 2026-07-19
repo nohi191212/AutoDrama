@@ -559,6 +559,15 @@ def main() -> None:
         raise AssertionError("clip_storyboard_prompt render left unresolved template variables")
     if "所有对白原文统一放在中文直角引号 `「……」` 中" not in rendered:
         raise AssertionError("clip_storyboard_prompt must require stable dialogue quote formatting")
+    safety_requirements = (
+        "不主动重复或强化“未成年、高中生、少女、幼小”等年龄标签",
+        "不连续安排脱离动作语境的手、脚、嘴唇、胸口、颈部等身体局部特写",
+        "不得为了规避而删除剧情关键动作",
+        "不输出“安全、合规、审核、规避、敏感词、政策”等元说明",
+    )
+    for requirement in safety_requirements:
+        if requirement not in rendered:
+            raise AssertionError(f"clip_storyboard_prompt missing image-safety requirement: {requirement}")
     for removed_field in (
         "clip_batch",
         "clip_count_by_episode",

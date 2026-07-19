@@ -148,6 +148,26 @@
         min: 1
         max: 20
 
+  aibox:gemini-3.5-flash:
+    provider: aibox
+    family: gemini
+    capability: text
+    input_modalities: [text, image, audio, video]
+    output_modalities: [json]
+    limits:
+      max_reference_images: 24
+      max_reference_audio: 1
+      max_reference_videos: 1
+      max_output_tokens: 8192
+    params_schema:
+      temperature:
+        type: number
+        min: 0
+        max: 2
+      max_output_tokens:
+        type: integer
+        min: 1
+
   aibox:gpt-image-2-guan:
     provider: aibox
     family: gpt-image
