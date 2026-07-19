@@ -124,6 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="episodes",
         help=(
             "Supported with pregen --only clip_segment, roleboard_prompt, roleboard_image_generation, "
+            "role_subject_frontal_image_generation, role_kling_voice_generation, "
             "role_subject_video_generation, role_subject_element_generation, clip_prompt, clip_storyboard_prompt, "
             "clip_storyboard_image_generation, clip_storyboard_keyframe_generation, clip_manifest_generation, "
             "role_voice_select, "
@@ -259,6 +260,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _catalog_speech_provider(settings, provider_name: str):
+    if provider_name in {"kling", "kling_omni", "kling_video"}:
+        router = ProviderRouter(settings, provider_override="kling")
+        return router.video("shot")
     override = None if provider_name == "configured" else provider_name
     router = ProviderRouter(settings, provider_override=override)
     return router.audio("speech")
@@ -300,18 +304,28 @@ async def cmd_voice_catalog_build(args: argparse.Namespace) -> int:
     provider = _catalog_speech_provider(settings, args.provider)
     catalog_repo = VoiceCatalogRepository.from_settings(settings)
     service = VoiceCatalogService(catalog_repo)
-    manifest = service.load_or_bootstrap_manifest(provider, force_bootstrap=args.force_manifest)
-    sample_emotions = _parse_sample_emotions(args.sample_emotions)
-    manifest = service.with_sample_emotions(manifest, sample_emotions)
-    catalog_repo.save_manifest(manifest)
+    is_official_preset_catalog = callable(getattr(provider, "list_preset_voices", None))
+    if is_official_preset_catalog:
+        manifest = await service.sync_official_preset_catalog(
+            provider,
+            refresh_manifest=args.force_manifest,
+            force_samples=args.force_samples,
+            download_trials=True,
+        )
+    else:
+        manifest = service.load_or_bootstrap_manifest(provider, force_bootstrap=args.force_manifest)
+    sample_emotions = ["normal"] if is_official_preset_catalog else _parse_sample_emotions(args.sample_emotions)
+    if not is_official_preset_catalog:
+        manifest = service.with_sample_emotions(manifest, sample_emotions)
+        catalog_repo.save_manifest(manifest)
     voice_types = set(args.voice_types or [])
     if args.limit is not None and args.limit > 0:
         limited = {voice.voice_type for voice in manifest.voices[: args.limit]}
         voice_types = voice_types.intersection(limited) if voice_types else limited
     voice_types_arg = voice_types or None
-    samples_built = False
+    samples_built = is_official_preset_catalog and any(voice.samples for voice in manifest.voices)
     profiles_built = False
-    if args.force_samples:
+    if args.force_samples and not is_official_preset_catalog:
         manifest = await service.build_samples(
             provider,
             manifest,
@@ -359,12 +373,15 @@ async def cmd_voice_catalog_build(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_voice_catalog_inspect(args: argparse.Namespace) -> int:
+async def cmd_voice_catalog_inspect(args: argparse.Namespace) -> int:
     settings = load_settings(args.config)
     provider = _catalog_speech_provider(settings, args.provider)
     catalog_repo = VoiceCatalogRepository.from_settings(settings)
     service = VoiceCatalogService(catalog_repo)
-    manifest = service.load_or_bootstrap_manifest(provider)
+    if callable(getattr(provider, "list_preset_voices", None)):
+        manifest = await service.sync_official_preset_catalog(provider, download_trials=False)
+    else:
+        manifest = service.load_or_bootstrap_manifest(provider)
     duplicates = catalog_repo.duplicate_labels(manifest)
     print(
         json.dumps(
@@ -867,7 +884,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "voice-catalog" and args.action == "build":
         return asyncio.run(cmd_voice_catalog_build(args))
     if args.command == "voice-catalog" and args.action == "inspect":
-        return cmd_voice_catalog_inspect(args)
+        return asyncio.run(cmd_voice_catalog_inspect(args))
     if args.command == "inspect" and args.target == "state":
         return cmd_inspect_state(args)
     if args.command == "inspect" and args.target == "nodes":

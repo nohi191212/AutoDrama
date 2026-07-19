@@ -73,10 +73,13 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "clip_segment",
     "roleboard_prompt",
     "roleboard_image_generation",
+    "role_subject_frontal_image_generation",
     "role_subject_video_generation",
+    "role_kling_voice_generation",
     "role_subject_element_generation",
     "clip_prompt",
     "clip_storyboard_prompt",
+    "clip_storyboard_prompt_audit",
     "clip_storyboard_image_generation",
     "clip_storyboard_keyframe_generation",
     "clip_manifest_generation",
@@ -87,9 +90,11 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
 }
 ROLE_SCOPED_PREGEN_ONLY_NODES = {
     "role_voice_select",
+    "role_kling_voice_generation",
 }
 CLIP_SCOPED_PREGEN_ONLY_NODES = {
     "clip_storyboard_prompt",
+    "clip_storyboard_prompt_audit",
     "clip_storyboard_image_generation",
     "clip_storyboard_keyframe_generation",
     "clip_manifest_generation",
@@ -518,6 +523,14 @@ class PregenWorkflow:
             appearance.model = existing_appearance.model
             appearance.request_id = existing_appearance.request_id
             appearance.usage = existing_appearance.usage
+            appearance.subject_frontal_image_asset_id = existing_appearance.subject_frontal_image_asset_id
+            appearance.subject_frontal_image_asset_path = existing_appearance.subject_frontal_image_asset_path
+            appearance.subject_frontal_image_asset_url = existing_appearance.subject_frontal_image_asset_url
+            appearance.subject_frontal_image_provider = existing_appearance.subject_frontal_image_provider
+            appearance.subject_frontal_image_model = existing_appearance.subject_frontal_image_model
+            appearance.subject_frontal_image_request_id = existing_appearance.subject_frontal_image_request_id
+            appearance.subject_frontal_image_usage = existing_appearance.subject_frontal_image_usage
+            appearance.subject_frontal_image_raw_response = existing_appearance.subject_frontal_image_raw_response
             appearance.subject_video_asset_id = existing_appearance.subject_video_asset_id
             appearance.subject_video_asset_path = existing_appearance.subject_video_asset_path
             appearance.subject_video_asset_url = existing_appearance.subject_video_asset_url
@@ -589,12 +602,16 @@ class PregenWorkflow:
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
                 "--episodes is only supported for pregen --only clip_segment, roleboard_prompt, roleboard_image_generation, "
-                "role_subject_video_generation, role_subject_element_generation, clip_prompt, clip_storyboard_prompt, "
+                "role_subject_frontal_image_generation, role_kling_voice_generation, role_subject_video_generation, "
+                "role_subject_element_generation, "
+                "clip_prompt, clip_storyboard_prompt, clip_storyboard_prompt_audit, "
                 "clip_storyboard_image_generation, clip_storyboard_keyframe_generation, clip_manifest_generation, "
                 "role_voice_select, prop_prompt, prop_image_generation, or layout_image_generation."
             )
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
-            raise ValueError("--roles is only supported for pregen --only role_voice_select.")
+            raise ValueError(
+                "--roles is only supported for pregen --only role_voice_select or role_kling_voice_generation."
+            )
         if selected_clip_selectors and (
             len(target_nodes) != 1
             or target_nodes[0]
@@ -602,6 +619,7 @@ class PregenWorkflow:
         ):
             raise ValueError(
                 "--clips is only supported for pregen --only clip_storyboard_prompt, "
+                "clip_storyboard_prompt_audit, "
                 "clip_storyboard_image_generation, clip_storyboard_keyframe_generation, "
                 "or clip_manifest_generation."
             )

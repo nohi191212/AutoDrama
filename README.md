@@ -103,7 +103,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 
 - `key_vision`: 项目主视觉原图，由 `key_vision_image_generation` 生成，默认建议竖版比例，例如 `key_vision_size: "9:16"`。
 - `roleboard`: 角色身份板图，由 `roleboard_image_generation` 基于主视觉原图和角色身份板 prompt 生成，包含正面、侧面、背面、表情、动作和服装细节，并在边缘保留小号“角色：<角色名> | <形象名>”及可选视图标签，默认走支持参考图的图像 provider，建议 16:9 横幅比例，例如 `roleboard_size: "16:9"`。
-- `clip_storyboard_image_generation`: pregen 内部用于 `clip_storyboard_image_generation` 的图像绑定，按输入 clip 输出 3840×2160、16:9 的黑白线稿 12 宫格故事板整图到 `assets/images/storyboards/`；4×3 网格中的每格为 4:3，并由代码覆盖黑色宫格号、红色镜头号和红色切镜斜杠。`clip_storyboard_keyframe_generation` 会在每集首个 clip 生成 start/end 两张关键帧、后续 clip 只生成自己的 end 关键帧到 `assets/images/storyboard_keyframes/`。`clip_manifest_generation` 再把 clip 脚本、12 宫格故事板和首尾关键帧整理成 `shots/episode_XXX.json`，供 generation 阶段逐 clip 读取。generation 阶段不再提供同名 `clip_storyboard_image_generation` 节点；保留的 `clip_storyboard_image_generation` 仅指 pregen 的 12 宫格故事板图像节点。
+- `clip_storyboard_image_generation`: pregen 内部用于 `clip_storyboard_image_generation` 的图像绑定，按输入 clip 输出 3840×2160、16:9 的黑白线稿 12 宫格故事板整图到 `assets/images/storyboards/`；4×3 网格中的每格为 4:3，并由代码覆盖黑色宫格号、红色镜头号和红色切镜斜杠。`clip_storyboard_keyframe_generation` 随后生成首尾关键帧。Kling 主体模式提交首帧、尾帧、故事板和 subject element；其他视频 provider 继续使用原有参考图策略。
 
 旧的分散式角色视觉链路已移除；当前角色视觉资产以 roleboard 身份板为准。
 
@@ -132,7 +132,7 @@ Copy-Item apikeys.yaml.example apikeys.yaml
 - 全局 BGM: `minimax`
 - 镜头视频: `volcengine`
 
-所有图片生成默认通过 ToAPI GPT-Image-2：主视觉原图、角色身份板、12 宫格故事板、storyboard 首尾关键帧、道具图和场景图都会本地保存图片文件，并尽量保存 provider 返回的图片 URL。`clip_manifest_generation` 会为每个 storyboard clip 准备固定 `shot_video_inputs` 和模型专属 `final_video_prompt`：`image_1` 是实际使用的 clip_start_frame，`image_2` 是 clip_end_frame，`image_3` 是当前 clip 的 12 宫格故事板整图，后面依次是一个或多个 roleboard、layout 和 prop。首个 clip 的 start/end 都来自自己；非首个 clip 的 start 来自上一 clip 的 end，并要求视频开头立刻 hard cut 到当前 clip 的 P01。`clip_video_generation` 不再渲染提示词或推断素材，只读取 `shots/<episode_key>.json` 里已经准备好的 `final_video_prompt + shot_video_inputs` 并提交给视频 provider。每个模型的负向规则通过 `nodes.clip_video_generation.params.negative_rules` 绑定到具体模型。
+所有图片生成默认通过 ToAPI GPT-Image-2：主视觉原图、角色身份板、12 宫格故事板、首尾关键帧、道具图和场景图都会本地保存图片文件，并尽量保存 provider 返回的图片 URL。Kling 主体模式的 `clip_video_inputs` 固定为 `image_1` 首帧、`image_2` 尾帧、`image_3` 故事板，角色通过 subject element 追加；后续 clip 使用上一 clip 的尾帧作为自己的首帧。可灵文本只包含 Camera Shot 段落，不再重复 P01-P12 或图片输入 JSON。每个模型的负向规则通过 `nodes.clip_video_generation.params.negative_rules` 绑定到具体模型。
 
 参考图片统一以公网 URL 提交。签名 URL 过期时，控制台会以淡红色提示，框架通过 ToAPI 上传本地图片，并把新 URL 按本地文件路径、大小和修改时间缓存到项目的 `assets/json/cache/reference_image_urls.json`。默认有效缓存时间为 86400 秒，可通过 `providers.toapi.options.toapi_reference_url_cache_ttl_seconds` 调整；缓存有效时后续 CLI 运行不会重复上传。RightCode 不接收本地图片或 inline base64。
 
@@ -260,6 +260,7 @@ layout_image_generation
 clip_segment
 clip_prompt
 clip_storyboard_prompt
+clip_storyboard_prompt_audit
 clip_storyboard_image_generation
 clip_storyboard_keyframe_generation
 clip_manifest_generation
@@ -291,6 +292,7 @@ layout_image_generation
 clip_segment
 clip_prompt
 clip_storyboard_prompt
+clip_storyboard_prompt_audit
 clip_storyboard_image_generation
 clip_storyboard_keyframe_generation
 clip_manifest_generation
@@ -298,9 +300,9 @@ clip_manifest_generation
 
 `roleboard_prompt` 按角色递归运行，只读取该角色 `episode_keys` 对应的完整正文，并结合主视觉原图信息输出 prompt-only 的角色身份板提示词；代码负责生成 `role_id`、`appearance_id` 等内部 ID。`roleboard_prompt` 的模板按后续 `roleboard_image_generation` 绑定的生图 provider/model 自动选择，也可通过 `nodes.roleboard_image_generation.params.roleboard_prompt_template` 显式指定，便于为 GPT-Image、Seedream 等不同模型维护不同调性的角色板提示词。`roleboard_image_generation` 使用身份板提示词和 `key_vision_image_generation` 产出的主视觉原图作为参考图，生成正面、侧面、背面、表情、动作、服装细节等角色身份板，并要求图片边缘带小号“角色：<角色名> | <形象名>”以及可选的“正面/侧面/背面/头部/表情/动作/服装细节/配饰细节”视图标签，方便后续把图片单独作为参考图时直接识别角色；除这些指定标签外仍禁止字幕、水印、logo、编号、ID、文件名、项目名、剧情台词或乱码文字。`roleboard_image_generation` 支持按 `nodes.roleboard_image_generation.params.roleboard_image_generation_concurrency` 并发生成多张角色板。`role_voice_select` 读取全局 `.assets/voice_catalog/<provider>/<model>/manifest.json`，参考角色身份板并按手工覆盖、有效缓存、DeepSeek Flash 文本 top 3 初筛、Qwen3.5-Omni 音频 judge 终选、catalog 启发式和 provider fallback 的优先级给角色绑定官方 `voice_type`；后续 `shot_dialogue_audio_generation` 会直接使用该 `voice_type` 生成逐镜头对白音频。功能角色如果 `has_dialogue=false` 不选择声音。
 
-`clip_segment` 在剧本正文和摘要之后运行，把每集文本切成建议 8-15 秒的 clip，并为每个 clip 提取 `role_names`、`prop_names`、`layout_names`；episode 时长只作为文本节奏参考，不再用来硬性校验 clip 数量。`clip_prompt` 在角色、道具、场景静态资产之后运行，为每个 clip 生成逐镜头视频提示词。`clip_storyboard_prompt` 严格跟随 `clip_segment` 的 clip 数和顺序，把项目约束、完整正文、剧情摘要、clip 片段、`clip_prompt`、角色身份板摘要以及道具/场景摘要整理成 storyboard clip；每个 clip 的 `video_prompt` 内部再拆 1-4 个真实 `Camera Shot`，推荐 2-4 个，并写出 P01-P12 十二宫格面板规划。P01-P12 是视觉节奏帧，不是 1 秒 1 格；真实切镜边界会要求在故事板宫格之间用醒目的红色斜杠标出。pregen 的 `clip_storyboard_image_generation` 会为每个 storyboard clip 生成一张 3840×2160、16:9 的黑白线稿 12 宫格故事板整图，4×3 网格中的每格为 4:3，并由代码覆盖黑色宫格号、红色镜头号和红色切镜斜杠，保存到 `assets/images/storyboards/`。`clip_storyboard_keyframe_generation` 紧随其后，从每集首个 clip 的 P01/P12 生成 start/end 关键帧，并从后续 clip 的 P12 生成 end 关键帧。`clip_manifest_generation` 是本地整理节点，会把故事板 prompt、12 宫格故事板整图、首尾关键帧、角色/道具/场景 ID 和融合后的 `video_prompt` 写入 `shots/<episode_key>.json`，同时保留已有视频/音频动态资产字段。这里的 `clip_storyboard_image_generation` 只属于 pregen；generation 阶段不再提供同名 storyboard 节点。
+`clip_segment` 在剧本正文和摘要之后运行，把每集文本切成建议 8-15 秒的 clip，并为每个 clip 提取 `role_names`、`prop_names`、`layout_names`；episode 时长只作为文本节奏参考，不再用来硬性校验 clip 数量。`clip_prompt` 在角色、道具、场景静态资产之后运行，为每个 clip 生成逐镜头视频提示词。`clip_storyboard_prompt` 严格跟随 `clip_segment` 的 clip 数和顺序，把项目约束、完整正文、剧情摘要、clip 片段、`clip_prompt`、角色身份板摘要以及道具/场景摘要整理成 storyboard clip；每个 clip 的 `video_prompt` 内部固定拆成 2-3 个真实 `Camera Shot`，12 秒左右默认使用 2 个，并写出 P01-P12 十二宫格面板规划。固定机位是默认选择，每个 clip 最多只有 1 个 Camera Shot 使用一种明确的主要运镜；P01-P12 是同一镜头内的视觉节奏采样，不是 1 秒 1 格，固定镜头的连续面板保持相同构图。真实切镜边界会要求在故事板宫格之间用醒目的红色斜杠标出。`clip_storyboard_prompt_audit` 随后按每批最多 8 个相邻 clip 串行审计站姿/坐姿、朝向、空间位置、道具和进出场连续性；有问题的 prompt 会被修订并回写为下游使用的正式 `clip_storyboard_prompt`，审计结果另存为报告。pregen 的 `clip_storyboard_image_generation` 会为每个 storyboard clip 生成一张 3840×2160、16:9 的黑白线稿 12 宫格故事板整图。`clip_manifest_generation` 是本地整理节点，会把故事板 prompt、故事板整图、角色/道具/场景 ID 和融合后的 `video_prompt` 写入 `shots/<episode_key>.json`。Kling 视频生成阶段按 `role_ids` 动态追加 subject element；首尾关键帧不再进入视频输入，跨 clip 衔接由后期剪辑处理。
 
-`clip_storyboard_keyframe_generation` 的参考图顺序是固定契约：image_1 为当前十二宫格故事板，只锁定目标 P01/P12 的构图和动作；image_2 为项目主视觉，锁定全项目统一的渲染媒介、材质、色彩、光影、镜头质感和完成度；后续 roleboard、layout 和 prop 只锁定人物、空间与道具身份，不覆盖主视觉风格。节点还会把项目 `visual_style_prompt` 原样加入关键帧 prompt，并拒绝不支持至少 2 张参考图的图像 provider，避免关键帧在缺少主视觉风格锚点时静默降级生成。
+`clip_storyboard_keyframe_generation` 在默认链中生成视觉关键帧；Kling 主体模式会把首帧和尾帧作为正式视频输入。
 
 `role_finalize` 在 `role_extract_primary` 和 `role_extract_functional` 之后运行，合并主要/功能角色，执行一次批量收口审查，追加遗漏的 `episode_keys/source_chapters`，合并重复角色，并写出 `role_finalize.json` 与角色 JSON。
 
@@ -327,7 +329,9 @@ clip_video_generation
 dynamic_asset_solidification
 ```
 
-`generation` 阶段不再生成 storyboard JSON 或单独参考图资产。运行 `run\start.cmd --generation ...` 时进入动态流程；不带 `--generation` 时进入 pregen 流程。`shot_dialogue_audio_generation` 先读取 `shots/<episode_key>.json` 中的 `dialogue`，用 `role_voice_select` 绑定的官方 `voice_type` 生成对白音频并写回 `dialogue_audio_assets`。`clip_video_generation` 随后读取同一个 clip 清单中的 `final_video_prompt` 和 `shot_video_inputs`，只负责提交视频任务、轮询和落盘；`shot_video_inputs` 前三张固定是 `clip_start_frame`、`clip_end_frame`、`storyboard`，人物输入必须是 roleboard 图片，不是 Kling subject element 或其它 element 引用。对白文本、Camera Shot 段落、P01-P12 面板规划、首尾帧连续性和非首 clip hard cut 约束必须已经包含在 `video_prompt` 以及由 `clip_manifest_generation` 渲染出的 `final_video_prompt` 中。
+`generation` 阶段不再生成 storyboard JSON 或单独参考图资产。运行 `run\start.cmd --generation ...` 时进入动态流程；不带 `--generation` 时进入 pregen 流程。普通视频 provider 仍先运行 `shot_dialogue_audio_generation`；Kling 3.0 Omni 分支会跳过这个独立 TTS 节点，直接使用 pregen 持久化的角色主体和绑定音色生成 `audio=native` 的音画同步镜头。Kling 的 `clip_video_generation` 读取首帧、尾帧、故事板和 subject element，并在提示词前部追加 `@role_1` 等角色、音色和对白约束；文本只保留 Camera Shot，不重复 P01-P12。
+
+Kling 分支在默认 pregen 中新增两个持久化节点：`role_kling_voice_generation` 首次运行时同步可灵官方音色列表及试听音频到 `.assets/voice_catalog/kling_omni/kling-v3-omni/`，再依据角色声音画像完成文本初筛和试听终选；`role_subject_element_generation` 将选出的官方 `voice_id` 绑定到角色主体。`providers.kling.options.role_voice_map` 只作为最高优先级的人工覆盖，也仍支持用公开的 5～30 秒干净样本 URL 创建自定义音色。远端音色列表刷新失败时会继续复用本地 catalog；首次同步失败且没有缓存时才会停止。建议使用 `image_refer` 从 roleboard 创建多图主体。任何有对白角色缺少音色、镜头角色缺少主体，都会在提交视频前直接报错，避免消耗生成额度后才发现串音。
 
 ### 5. 一次性运行预生成和动态资产
 
@@ -362,7 +366,6 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli inspect nodes --config 
 ```powershell
 run\start.cmd --config config.yaml --project <project_id> --until roleboard_image_generation
 run\start.cmd --config config.yaml --project <project_id> --until clip_storyboard_image_generation
-run\start.cmd --config config.yaml --project <project_id> --until clip_storyboard_keyframe_generation
 run\start.cmd --config config.yaml --project <project_id> --until clip_manifest_generation
 run\start.cmd --generation --config config.yaml --project <project_id> --until clip_video_generation
 ```
@@ -374,10 +377,13 @@ run\start.cmd --config config.yaml --project <project_id> --only roleboard_promp
 run\start.cmd --config config.yaml --project <project_id> --only roleboard_image_generation
 run\start.cmd --config config.yaml --project <project_id> --only clip_segment
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_prompt
+run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_prompt_audit
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_image_generation
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_keyframe_generation
 run\start.cmd --config config.yaml --project <project_id> --only clip_manifest_generation
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_select
+run\start.cmd --config config.yaml --project <project_id> --only role_kling_voice_generation
+run\start.cmd --config config.yaml --project <project_id> --only role_subject_element_generation
 run\start.cmd --generation --config config.yaml --project <project_id> --only shot_dialogue_audio_generation --episodes 1
 run\start.cmd --generation --config config.yaml --project <project_id> --only clip_video_generation --episodes 1
 ```
@@ -390,22 +396,25 @@ run\start.cmd --config config.yaml --project <project_id> --only roleboard_promp
 run\start.cmd --config config.yaml --project <project_id> --only roleboard_image_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_prompt --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_prompt --episodes 1 --clips 1-3 --force
+run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_prompt_audit --episodes 1 --clips 1-8 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_image_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_image_generation --episodes 1 --clips 1-3 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_storyboard_keyframe_generation --episodes 1 --force
 run\start.cmd --config config.yaml --project <project_id> --only clip_manifest_generation --episodes 1 --clips 1-3 --force
 run\start.cmd --config config.yaml --project <project_id> --only role_voice_select --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only role_kling_voice_generation --episodes 1 --force
+run\start.cmd --config config.yaml --project <project_id> --only role_subject_element_generation --episodes 1 --force
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1,3
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes 1-3
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
 
-`clip_storyboard_prompt`、`clip_storyboard_image_generation`、`clip_storyboard_keyframe_generation` 和 `clip_manifest_generation` 还支持 `--clips`，可使用 `1-3`、`2,5-7` 或完整 clip ID，只处理选中的 clip 并保留其他已有输出。局部生成 manifest 时不会要求未选中 clip 的故事板或关键帧已经存在；如果还没有原 manifest，输出中暂时只包含本次选中的 clip，后续分批运行会按 storyboard 顺序合并进去。
+`clip_storyboard_prompt`、`clip_storyboard_prompt_audit`、`clip_storyboard_image_generation`、可选的 `clip_storyboard_keyframe_generation` 和 `clip_manifest_generation` 还支持 `--clips`，可使用 `1-3`、`2,5-7` 或完整 clip ID，只处理选中的 clip 并保留其他已有输出。局部生成 manifest 只要求选中 clip 的故事板整图已经存在，不要求关键帧。
 
 `clip_storyboard_prompt` 会为每个 clip 同时落盘视频用 `video_prompt` 和仅供生图使用的 `storyboard_image_prompt`；后者只包含固定故事板模板和 P01-P12 逐格画面内容，不包含 `video_prompt`、episode/clip 标识或工作流说明。`clip_storyboard_image_generation` 只读取并原样提交 `storyboard_image_prompt`、附加参考图和保存图片，不再组装或安全重写提示词。旧输出缺少该字段时需要先重跑 `clip_storyboard_prompt`。
 
-`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `clip_segment`、`roleboard_prompt`、`roleboard_image_generation`、`clip_storyboard_prompt`、`clip_storyboard_image_generation`、`clip_storyboard_keyframe_generation`、`clip_manifest_generation`、`role_voice_select`、`prop_prompt`、`prop_image_generation` 和 `layout_image_generation`。clip、角色、故事板、关键帧、道具和场景图相关节点会按各自的 `episode_keys` 或目标集过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。`prop_design`、`prop_generation` 是旧别名，会分别转到 `prop_prompt`、`prop_image_generation`。
+`pregen --episodes` 只支持配合 `--only` 使用，当前支持 `clip_segment`、`roleboard_prompt`、`roleboard_image_generation`、`role_kling_voice_generation`、`role_subject_video_generation`、`role_subject_element_generation`、`clip_storyboard_prompt`、`clip_storyboard_prompt_audit`、`clip_storyboard_image_generation`、`clip_storyboard_keyframe_generation`、`clip_manifest_generation`、`role_voice_select`、`prop_prompt`、`prop_image_generation` 和 `layout_image_generation`。clip、角色、故事板、关键帧、道具和场景图相关节点会按各自的 `episode_keys` 或目标集过滤；如果角色缺少 `episode_keys`，会直接报错，不会退回加载全文。`prop_design`、`prop_generation` 是旧别名，会分别转到 `prop_prompt`、`prop_image_generation`。
 
 全局音色 catalog 命令：
 
@@ -416,17 +425,19 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --confi
 D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider volcengine --force-profiles
 D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider volcengine --miss-profiles
 D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --config config.yaml --provider volcengine
+D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog build --config config.yaml --provider kling --force-manifest
+D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --config config.yaml --provider kling
 ```
 
-`voice-catalog build` 会刷新 provider speaker manifest；`--force-samples` 默认只为目标音色生成 `normal` 样例，避免全量 catalog 触发过多 TTS 请求；如果确实需要五情绪样例，可以加 `--sample-emotion all` 生成 `normal/angry/sad/happy/low`。`--force-profiles` 会调用 `routing.judge.voice_catalog_profile` 配置的 audio judge 重新生成自然语言听感画像，每个音色会单独落盘到 `.assets/voice_catalog/<provider>/<model>/profiles/<voice_type>.json`，同时回写 manifest；`--miss-profiles` 只补 manifest 中缺失或 `profile_hash` 过期的 profile，已有匹配画像会复用并跳过 judge；两种 profile 模式都会以 5 并发调用 judge；如需临时覆盖 judge，可加 `--judge-provider fake` 或其他已注册 judge。调试时可以加 `--voice-type <voice_type>` 或 `--limit 5` 控制范围。项目内 `role_voice_select` 会先把候选过滤到中文、角色同性别、豆包语音合成模型 2.0（Volcengine catalog）后，为每个候选生成内部 `candidate_id`，并用 `deepseek-v4-flash`、关闭 thinking 的单次文本调用直接筛 top 3；多个角色会并行执行，每个角色确定后立即落盘并输出 `<role> generated` 日志。样例齐全时再调用 `routing.judge.role_voice_select`，默认 Qwen3.5-Omni-Plus，听 top 3 音频终选。`voice_label` 只作为人类可读展示字段，落盘和合成 API 始终使用官方 `voice_type`。
+`voice-catalog build` 会刷新 provider speaker manifest；对 `--provider kling`，它调用官方 `/v1/general/presets-voices`，并把每个音色自带的试听保存为 `official_trial`。Kling Omni 预置音色 ID 与数字人 `/v1/audio/tts` 的音色 ID 属于不同命名空间，不能直接互用；只有在 `official_voice_tts_map` 配置了官方映射时，短于阈值的试听才会用映射后的 TTS ID 补一份 `normal` 长样例。其他语音 provider 的 `--force-samples` 默认只为目标音色生成 `normal` 样例，避免全量 catalog 触发过多 TTS 请求；如果确实需要五情绪样例，可以加 `--sample-emotion all` 生成 `normal/angry/sad/happy/low`。`--force-profiles` 会调用 `routing.judge.voice_catalog_profile` 配置的 audio judge 重新生成自然语言听感画像，每个音色会单独落盘到 `.assets/voice_catalog/<provider>/<model>/profiles/<voice_type>.json`，同时回写 manifest；`--miss-profiles` 只补 manifest 中缺失或 `profile_hash` 过期的 profile，已有匹配画像会复用并跳过 judge；两种 profile 模式都会以 5 并发调用 judge；如需临时覆盖 judge，可加 `--judge-provider fake` 或其他已注册 judge。调试时可以加 `--voice-type <voice_type>` 或 `--limit 5` 控制范围。项目内选音会先把候选过滤到中文和角色同性别，再进行文本初筛；样例齐全时调用 `routing.judge.role_voice_select` 听 top 3 音频终选。`voice_label` 只作为人类可读展示字段，落盘和 API 绑定始终使用官方 `voice_type/voice_id`。
 
 ## Postgen 后处理
 
 后处理固定按以下依赖顺序运行：
 
-1. 收集带原生音画同步的源视频，并由 AI盒子 Gemini 3.5 Flash 审计每个镜头的可用区间。
+1. 收集带原生音画同步的源视频；先对每个镜头执行 ASR，再由 AI盒子 Gemini 3.5 Flash 结合连续音频、联系表、预期台词和 ASR 结果审计台词、角色音色、口型及可用区间。
 2. 审计结果进入剪辑计划；FFmpeg 按同一裁切和变速参数处理画面与原生音频，生成锁定时间轴的剪辑版。
-3. 可选执行 Demucs 人声/环境声分离、PyAnnote 说话人时间轴、按 `SPEAKER_XX` 映射执行 RVC、原时间戳回贴和双轨混音。
+3. Kling 原生音色分支默认直接保留剪辑后的原声音轨；只有 `postgen.voice_alignment.enabled=true` 时才执行 Demucs、PyAnnote、RVC、时间轴回贴和双轨混音。
 4. 可选用 WhisperX 做字级对齐，生成 SRT/ASS，并通过 FFmpeg + libass 烧录字幕。
 5. AI盒子 Gemini 读取成片联系表、完整压缩音频、媒体参数和 ASR 时间轴，输出最终结构化审计报告。
 
@@ -436,7 +447,7 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama voice-catalog inspect --con
 run\postgen.cmd --config config.yaml --project <project_id>
 ```
 
-可用 `--until <node>` 停在某节点，或用 `--only <node> --force` 单独重跑。默认 `config.yaml` 已开启 Gemini 的前后双审计；音色对齐和 WhisperX 字幕默认关闭，因为它们还需要本机模型。开启前安装 `autodrama[postgen-audio]`，设置 `HUGGINGFACE_TOKEN`，填写 `postgen.voice_alignment.speaker_role_map`、`role_rvc_models` 与 `rvc_command`；建议使用 `episode_001:SPEAKER_00` 这种集级键，避免 PyAnnote 的临时标签跨集互换。也可用 `speaker_rvc_models` 直接映射 Speaker。RVC 没有统一稳定的 Python API，因此流水线通过命令模板调用用户选定的 RVC v2 推理实现，模板支持 `{input}`、`{output}`、`{model}`、`{speaker}` 占位符。
+可用 `--until <node>` 停在某节点，或用 `--only <node> --force` 单独重跑。开启源镜头/成片审计时，ASR 即使未烧录字幕也会为审计生成时间轴；开启字幕后同一套设置用于生成 ASS。RVC 已降级为可选兜底：只有旧素材或 Kling 原生音色异常时才建议开启，并填写 `speaker_role_map`、`role_rvc_models` 与 `rvc_command`。
 
 主要产物：剪辑版在 `outputs/videos/<episode>_edited.mp4`，音色版在 `<episode>_voice_aligned.mp4`，最终版在 `<episode>_postgen.mp4`；字幕、分轨音频、说话人时间轴和两阶段审计 JSON 均保留在项目 `assets` 目录内。
 

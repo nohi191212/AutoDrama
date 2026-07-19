@@ -16,6 +16,10 @@ from autodrama.core.schemas import (
     ClipPromptItem,
     ClipPromptModelOutput,
     ClipPromptOutput,
+    ClipStoryboardPromptAuditEpisode,
+    ClipStoryboardPromptAuditItem,
+    ClipStoryboardPromptAuditModelOutput,
+    ClipStoryboardPromptAuditOutput,
     ClipStoryboardPromptModelOutput,
     ClipSegmentOutput,
     ClipSegmentNodeOutput,
@@ -43,6 +47,7 @@ from autodrama.workflows.runner import WorkflowNode
 STORYBOARD_ASSET_NODE_NAMES = [
     "clip_prompt",
     "clip_storyboard_prompt",
+    "clip_storyboard_prompt_audit",
     "clip_storyboard_image_generation",
     "clip_storyboard_keyframe_generation",
     "clip_manifest_generation",
@@ -531,9 +536,9 @@ class StoryboardAssetNodeBase(StaticAssetNodeBase):
                 camera_shot_count = self._camera_shot_count(clip)
                 if camera_shot_count < 1:
                     raise ValueError(f"clip_storyboard_prompt {clip.clip_id} must include at least one Camera Shot")
-                if not 2 <= camera_shot_count <= 4 and getattr(self, "logger", None) is not None:
+                if not 2 <= camera_shot_count <= 3 and getattr(self, "logger", None) is not None:
                     self.logger.warning(
-                        "clip_storyboard_prompt %s has %d Camera Shot(s); recommended range is 2-4",
+                        "clip_storyboard_prompt %s has %d Camera Shot(s); required range is 2-3",
                         clip.clip_id,
                         camera_shot_count,
                     )
@@ -1328,8 +1333,8 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             errors.append("missing CAMERA_SHOTS markers")
         if "<PANEL_PLAN>" not in prompt or "</PANEL_PLAN>" not in prompt:
             errors.append("missing PANEL_PLAN markers")
-        if not 2 <= len(camera_shots) <= 4:
-            errors.append(f"camera shot count must be 2-4, got {len(camera_shots)}")
+        if not 2 <= len(camera_shots) <= 3:
+            errors.append(f"camera shot count must be 2-3, got {len(camera_shots)}")
         expected_shot_ids = [f"Camera Shot {index}" for index in range(1, len(camera_shots) + 1)]
         actual_shot_ids = [str(shot.get("camera_shot_id") or "") for shot in camera_shots]
         if actual_shot_ids != expected_shot_ids:
@@ -1829,6 +1834,441 @@ class StoryboardPromptNode(StoryboardAssetNodeBase):
             expected_clip_ids_by_episode=self._expected_clip_ids_by_episode(all_expected_clip_segments),
         )
         self.repo.save_node_output(project_dir, self.name, merged)
+        return state
+
+
+class StoryboardPromptAuditNode(StoryboardPromptNode):
+    name = "clip_storyboard_prompt_audit"
+    MAX_CLIPS_PER_BATCH = 8
+    MAX_AUDIT_ATTEMPTS = 3
+
+    def _audit_batches(
+        self,
+        selected_clips: dict[str, object],
+        all_source_clips: dict[str, object],
+    ) -> list[dict[str, object]]:
+        all_keys = self._sorted_clip_segment_keys(all_source_clips)
+        positions = {key: index for index, key in enumerate(all_keys)}
+        selected_keys = self._sorted_clip_segment_keys(selected_clips)
+        batches: list[dict[str, object]] = []
+        current_keys: list[str] = []
+        previous_position: int | None = None
+        for key in selected_keys:
+            position = positions[key]
+            if (
+                current_keys
+                and (position != (previous_position or 0) + 1 or len(current_keys) >= self.MAX_CLIPS_PER_BATCH)
+            ):
+                batches.append({item: selected_clips[item] for item in current_keys})
+                current_keys = []
+            current_keys.append(key)
+            previous_position = position
+        if current_keys:
+            batches.append({item: selected_clips[item] for item in current_keys})
+        return batches
+
+    @staticmethod
+    def _storyboard_prompt_for_audit(clip: StoryboardPromptClip) -> str:
+        camera_lines = ["<CAMERA_SHOTS>"]
+        for shot in clip.camera_shots:
+            shot_id = str(shot.get("camera_shot_id") or "").strip()
+            time_range = str(shot.get("time_range") or "").strip()
+            description = str(shot.get("description") or "").strip()
+            camera_lines.append(f"{shot_id}（{time_range}）：\n{description}")
+        camera_lines.append("</CAMERA_SHOTS>")
+
+        panel_lines = ["<PANEL_PLAN>"]
+        for panel_index in range(1, 13):
+            panel_ref = f"P{panel_index:02d}"
+            value = str(clip.panel_plan.get(panel_ref) or "").strip()
+            match = re.match(
+                rf"^{panel_ref}\s*[（(]\s*Camera\s+Shot\s+(\d+)\s*[）)]\s*[:：]\s*(.*)$",
+                value,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if not match:
+                raise ValueError(
+                    f"clip_storyboard_prompt_audit cannot serialize {clip.clip_id} {panel_ref}: {value or '-'}"
+                )
+            panel_lines.append(
+                f'<{panel_ref} camera_shot="{match.group(1)}">{match.group(2).strip()}</{panel_ref}>'
+            )
+        panel_lines.append("</PANEL_PLAN>")
+        return "\n".join([*camera_lines, *panel_lines])
+
+    def _audit_context_item(
+        self,
+        *,
+        clip: StoryboardPromptClip,
+        source_text: str,
+        modifiable: bool,
+    ) -> dict[str, object]:
+        return {
+            "clip_id": clip.clip_id,
+            "modifiable": modifiable,
+            "source_clip_text": source_text,
+            "target_duration_seconds": clip.duration_seconds,
+            "clip_storyboard_prompt": self._storyboard_prompt_for_audit(clip),
+        }
+
+    async def _audit_batch(
+        self,
+        *,
+        provider: object,
+        project_dir: Path,
+        state: ProjectState,
+        episode_key: str,
+        batch_index: int,
+        batch_total: int,
+        batch_clips: dict[str, object],
+        all_source_clips: dict[str, object],
+        clip_prompt_items: dict[str, ClipPromptItem],
+        canonical_clips_by_id: dict[str, StoryboardPromptClip],
+        current_episode_full: str,
+    ) -> tuple[list[StoryboardPromptClip], list[ClipStoryboardPromptAuditItem]]:
+        all_keys = self._sorted_clip_segment_keys(all_source_clips)
+        batch_keys = self._sorted_clip_segment_keys(batch_clips)
+        key_positions = {key: index for index, key in enumerate(all_keys)}
+
+        allowed_clip_ids: list[str] = []
+        original_prompts: dict[str, str] = {}
+        audit_clip_context: list[dict[str, object]] = []
+        for source_key in batch_keys:
+            position = key_positions[source_key]
+            clip_id = self.clip_id_for_episode_index(
+                episode_key,
+                int(str(source_key)) if str(source_key).isdigit() else position + 1,
+            )
+            clip = canonical_clips_by_id.get(clip_id)
+            if clip is None:
+                raise ValueError(f"clip_storyboard_prompt_audit missing canonical prompt for {clip_id}")
+            allowed_clip_ids.append(clip_id)
+            original_prompts[clip_id] = self._storyboard_prompt_for_audit(clip)
+            audit_clip_context.append(
+                self._audit_context_item(
+                    clip=clip,
+                    source_text=self._clip_segment_text(all_source_clips[source_key]),
+                    modifiable=True,
+                )
+            )
+
+        boundary_context: list[dict[str, object]] = []
+        if batch_keys:
+            boundary_keys: list[str] = []
+            first_position = key_positions[batch_keys[0]]
+            last_position = key_positions[batch_keys[-1]]
+            if first_position > 0:
+                boundary_keys.append(all_keys[first_position - 1])
+            if last_position + 1 < len(all_keys):
+                boundary_keys.append(all_keys[last_position + 1])
+            for source_key in boundary_keys:
+                position = key_positions[source_key]
+                clip_id = self.clip_id_for_episode_index(
+                    episode_key,
+                    int(str(source_key)) if str(source_key).isdigit() else position + 1,
+                )
+                clip = canonical_clips_by_id.get(clip_id)
+                if clip is None:
+                    continue
+                boundary_context.append(
+                    self._audit_context_item(
+                        clip=clip,
+                        source_text=self._clip_segment_text(all_source_clips[source_key]),
+                        modifiable=False,
+                    )
+                )
+
+        base_prompt = self.workflow.prompts.render(
+            "clip_storyboard_prompt_audit",
+            current_episode_full=current_episode_full,
+            boundary_context=self._format_json(boundary_context),
+            audit_clip_context=self._format_json(audit_clip_context),
+            allowed_clip_ids=self._format_json(allowed_clip_ids),
+        )
+        last_error: Exception | None = None
+        for attempt in range(1, self.MAX_AUDIT_ATTEMPTS + 1):
+            prompt = base_prompt
+            if last_error is not None:
+                prompt += (
+                    "\n\n上一次输出未通过结构校验。请重新返回整个批次并修复此错误：\n"
+                    + str(last_error)
+                )
+            response = await provider.generate_json(
+                prompt,
+                ClipStoryboardPromptAuditModelOutput,
+                temperature=0.2,
+                metadata={
+                    "node_name": self.name,
+                    "project_id": state.project_id,
+                    "episode_key": episode_key,
+                    "clip_batch_index": batch_index,
+                    "clip_batch_total": batch_total,
+                    "expected_clip_ids": allowed_clip_ids,
+                    "audit_attempt": attempt,
+                },
+            )
+            state.budget.used_text_calls += 1
+            raw_path = self.layout.node_episode_output_path(
+                project_dir,
+                "clip_storyboard_prompt_audit_raw",
+                f"{episode_key}_batch_{batch_index:03d}_of_{batch_total:03d}_attempt_{attempt:02d}",
+            )
+            self.repo.write_json(raw_path, response)
+            try:
+                response_ids = [
+                    str(item.clip_id or "").strip().replace("_shot_", "_clip_")
+                    for item in response.clips
+                ]
+                if response_ids != allowed_clip_ids:
+                    raise ValueError(
+                        "clip ids must exactly match the requested batch in order; "
+                        f"expected {allowed_clip_ids}, got {response_ids}"
+                    )
+
+                model_clips: list[dict[str, object]] = []
+                report_items: list[ClipStoryboardPromptAuditItem] = []
+                changed_ids: set[str] = set()
+                for item, clip_id in zip(response.clips, allowed_clip_ids):
+                    issues = self._dedupe_nonempty_texts(item.issues)
+                    if item.changed and not issues:
+                        raise ValueError(f"{clip_id} changed=true requires at least one issue")
+                    if not item.changed and issues:
+                        raise ValueError(f"{clip_id} changed=false requires issues=[]")
+                    revised_prompt = (
+                        str(item.clip_storyboard_prompt or "").strip()
+                        if item.changed
+                        else original_prompts[clip_id]
+                    )
+                    if item.changed:
+                        changed_ids.add(clip_id)
+                    model_clips.append(
+                        {
+                            "clip_id": clip_id,
+                            "clip_storyboard_prompt": revised_prompt,
+                        }
+                    )
+                    report_items.append(
+                        ClipStoryboardPromptAuditItem(
+                            clip_id=clip_id,
+                            changed=item.changed,
+                            issues=issues,
+                        )
+                    )
+
+                rejection_reasons: dict[str, str] = {}
+                materialized = self._materialize_clip_storyboard_prompt_output(
+                    ClipStoryboardPromptModelOutput.model_validate({"clips": model_clips}),
+                    episode_key=episode_key,
+                    batch_clips=batch_clips,
+                    clip_prompt_items=clip_prompt_items,
+                    rejection_reasons=rejection_reasons,
+                )
+                materialized_by_id = {clip.clip_id: clip for clip in materialized}
+                missing_ids = [clip_id for clip_id in allowed_clip_ids if clip_id not in materialized_by_id]
+                if missing_ids:
+                    details = "; ".join(
+                        f"{clip_id}: {rejection_reasons.get(clip_id, 'invalid revision')}"
+                        for clip_id in missing_ids
+                    )
+                    raise ValueError(details)
+                camera_motion_terms = (
+                    "推镜",
+                    "拉镜",
+                    "摇镜",
+                    "移镜",
+                    "跟拍",
+                    "环绕",
+                    "升降镜头",
+                    "变焦",
+                    "镜头推进",
+                    "镜头后拉",
+                    "镜头移动",
+                )
+                for clip_id in changed_ids:
+                    original_clip = canonical_clips_by_id[clip_id]
+                    revised_clip = materialized_by_id[clip_id]
+                    original_shots = [
+                        (
+                            str(shot.get("camera_shot_id") or "").strip(),
+                            str(shot.get("time_range") or "").strip(),
+                        )
+                        for shot in original_clip.camera_shots
+                    ]
+                    revised_shots = [
+                        (
+                            str(shot.get("camera_shot_id") or "").strip(),
+                            str(shot.get("time_range") or "").strip(),
+                        )
+                        for shot in revised_clip.camera_shots
+                    ]
+                    if revised_shots != original_shots:
+                        raise ValueError(
+                            f"{clip_id} audit revision must preserve Camera Shot ids and time ranges"
+                        )
+                    original_panel_owners = [
+                        re.search(r"Camera Shot (\d+)", str(original_clip.panel_plan.get(f"P{i:02d}") or "")).group(1)
+                        for i in range(1, 13)
+                    ]
+                    revised_panel_owners = [
+                        re.search(r"Camera Shot (\d+)", str(revised_clip.panel_plan.get(f"P{i:02d}") or "")).group(1)
+                        for i in range(1, 13)
+                    ]
+                    if revised_panel_owners != original_panel_owners:
+                        raise ValueError(
+                            f"{clip_id} audit revision must preserve P01-P12 Camera Shot ownership"
+                        )
+                    for term in camera_motion_terms:
+                        if term in revised_clip.video_prompt and term not in original_clip.video_prompt:
+                            raise ValueError(
+                                f"{clip_id} audit revision introduced forbidden camera motion: {term}"
+                            )
+                corrected = [
+                    materialized_by_id[clip_id]
+                    for clip_id in allowed_clip_ids
+                    if clip_id in changed_ids
+                ]
+                return corrected, report_items
+            except Exception as exc:
+                last_error = exc
+                self.logger.warning(
+                    "node=%s episode=%s batch=%d/%d attempt=%d/%d rejected: %s",
+                    self.name,
+                    episode_key,
+                    batch_index,
+                    batch_total,
+                    attempt,
+                    self.MAX_AUDIT_ATTEMPTS,
+                    exc,
+                )
+        raise ProviderBadResponseError(
+            f"clip_storyboard_prompt_audit failed semantic validation after "
+            f"{self.MAX_AUDIT_ATTEMPTS} attempts: {last_error}"
+        )
+
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        provider = self.router.text("storyboard", node_name=self.name)
+        self.logger.info(
+            "node=%s provider=%s model=%s batch_size=%d",
+            self.name,
+            getattr(provider, "name", "unknown"),
+            getattr(provider, "model", "-"),
+            self.MAX_CLIPS_PER_BATCH,
+        )
+        target_episode_keys = self.target_episode_keys(state)
+        all_episode_keys = self.expected_episode_keys(state)
+        all_segments = self._expected_clip_segments(
+            self.clip_segments_by_episode(project_dir),
+            target_episode_keys,
+        )
+        selectors = self.active_clip_selectors()
+        selected_segments, selected_clip_ids = self._select_expected_clip_segments(all_segments, selectors)
+        if selectors and not selected_clip_ids:
+            raise ValueError(
+                "clip_storyboard_prompt_audit --clips matched no clips in selected episodes: "
+                + ", ".join(sorted(selectors))
+            )
+
+        canonical_output = self.load_clip_storyboard_prompt_output(project_dir)
+        canonical_episodes = {episode.episode_key: episode for episode in canonical_output.storyboards}
+        missing_episodes = [key for key in target_episode_keys if key not in canonical_episodes]
+        if missing_episodes:
+            raise ValueError(
+                "clip_storyboard_prompt_audit missing clip_storyboard_prompt episode(s): "
+                + ", ".join(missing_episodes)
+            )
+        clip_prompt_by_episode = self.clip_prompts_by_episode(self.load_clip_prompt_output(project_dir))
+        audit_episodes: list[ClipStoryboardPromptAuditEpisode] = []
+
+        for episode_key in target_episode_keys:
+            episode = canonical_episodes[episode_key]
+            canonical_clips_by_id = {clip.clip_id: clip for clip in episode.clips}
+            batches = self._audit_batches(
+                selected_segments[episode_key],
+                all_segments[episode_key],
+            )
+            current_episode_full, _adjacent = self._storyboard_episode_context(
+                project_dir,
+                state,
+                episode_key,
+                all_episode_keys,
+            )
+            episode_report_items: list[ClipStoryboardPromptAuditItem] = []
+            for batch_index, batch_clips in enumerate(batches, start=1):
+                print(
+                    f"[autodrama] {self.name} episode={episode_key} "
+                    f"batch={batch_index}/{len(batches)} clips={len(batch_clips)}",
+                    flush=True,
+                )
+                corrected, report_items = await self._audit_batch(
+                    provider=provider,
+                    project_dir=project_dir,
+                    state=state,
+                    episode_key=episode_key,
+                    batch_index=batch_index,
+                    batch_total=len(batches),
+                    batch_clips=batch_clips,
+                    all_source_clips=all_segments[episode_key],
+                    clip_prompt_items=clip_prompt_by_episode.get(episode_key, {}),
+                    canonical_clips_by_id=canonical_clips_by_id,
+                    current_episode_full=current_episode_full,
+                )
+                for clip in corrected:
+                    canonical_clips_by_id[clip.clip_id] = clip
+                episode_report_items.extend(report_items)
+
+            expected_order = self._expected_clip_ids_by_episode(all_segments)[episode_key]
+            episode.clips = [
+                canonical_clips_by_id[clip_id]
+                for clip_id in expected_order
+                if clip_id in canonical_clips_by_id
+            ]
+            audit_episodes.append(
+                ClipStoryboardPromptAuditEpisode(
+                    episode_key=episode_key,
+                    clips=episode_report_items,
+                )
+            )
+
+        ordered_canonical = StoryboardPromptOutput(
+            storyboards=[
+                canonical_episodes[key]
+                for key in all_episode_keys
+                if key in canonical_episodes
+            ]
+        )
+        self.repo.save_node_output(project_dir, "clip_storyboard_prompt", ordered_canonical)
+
+        report_path = self.layout.node_output_path(project_dir, self.name)
+        reports_by_episode: dict[str, ClipStoryboardPromptAuditEpisode] = {}
+        if report_path.exists():
+            try:
+                existing_report = ClipStoryboardPromptAuditOutput.model_validate_json(
+                    report_path.read_text(encoding="utf-8")
+                )
+                reports_by_episode.update(
+                    {episode.episode_key: episode for episode in existing_report.episodes}
+                )
+            except Exception as exc:
+                self.logger.warning("%s ignored invalid existing audit report: %s", self.name, exc)
+        for generated_episode in audit_episodes:
+            if not selectors:
+                reports_by_episode[generated_episode.episode_key] = generated_episode
+                continue
+            existing_episode = reports_by_episode.get(generated_episode.episode_key)
+            items_by_id = {
+                item.clip_id: item
+                for item in (existing_episode.clips if existing_episode is not None else [])
+            }
+            items_by_id.update({item.clip_id: item for item in generated_episode.clips})
+            expected_order = self._expected_clip_ids_by_episode(all_segments)[generated_episode.episode_key]
+            reports_by_episode[generated_episode.episode_key] = ClipStoryboardPromptAuditEpisode(
+                episode_key=generated_episode.episode_key,
+                clips=[items_by_id[clip_id] for clip_id in expected_order if clip_id in items_by_id],
+            )
+        report = ClipStoryboardPromptAuditOutput(
+            episodes=[reports_by_episode[key] for key in all_episode_keys if key in reports_by_episode]
+        )
+        self.repo.save_node_output(project_dir, self.name, report)
         return state
 
 
@@ -2893,6 +3333,55 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
             return ""
         return self._format_json(panel)
 
+    @staticmethod
+    def _keyframe_orientation(aspect_ratio: str) -> str:
+        match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*", aspect_ratio)
+        if match is None:
+            return "竖"
+        return "竖" if float(match.group(1)) < float(match.group(2)) else "横"
+
+    def _keyframe_target_content(
+        self,
+        clip: StoryboardPromptClip,
+        *,
+        frame_role: str,
+        panel_ref: str,
+    ) -> tuple[str, str]:
+        panel_text = self._panel_text(clip, panel_ref).strip()
+        shot_match = re.search(r"Camera\s+Shot\s*(\d+)", panel_text, flags=re.IGNORECASE)
+        shot_number = shot_match.group(1) if shot_match is not None else ""
+        if not shot_number and clip.camera_shots:
+            fallback_index = 0 if frame_role == "start" else len(clip.camera_shots) - 1
+            fallback_id = str(clip.camera_shots[fallback_index].get("camera_shot_id") or "")
+            fallback_match = re.search(r"(\d+)", fallback_id)
+            shot_number = fallback_match.group(1) if fallback_match is not None else str(fallback_index + 1)
+
+        shot_description = ""
+        for index, shot in enumerate(clip.camera_shots, start=1):
+            shot_id = str(shot.get("camera_shot_id") or f"Camera Shot {index}")
+            id_match = re.search(r"(\d+)", shot_id)
+            candidate_number = id_match.group(1) if id_match is not None else str(index)
+            if candidate_number == shot_number:
+                shot_description = str(shot.get("description") or "").strip()
+                break
+
+        # Audio belongs to video generation, not to a single visual keyframe.
+        shot_description = re.split(
+            r"(?:声音|音效|主声轨)\s*[:：]",
+            shot_description,
+            maxsplit=1,
+        )[0].strip()
+        panel_content = re.sub(
+            rf"^\s*{re.escape(panel_ref)}\s*[（(]\s*Camera\s+Shot\s*\d+\s*[）)]\s*[:：]?\s*",
+            "",
+            panel_text,
+            flags=re.IGNORECASE,
+        ).strip()
+        panel_content = re.sub(r"[；;，,]?\s*[橙绿黄紫蓝灰红]+色[^。；;]*箭头[^。；;]*[。；;]?", "", panel_content)
+
+        parts = [part for part in (shot_description, f"目标定格状态：{panel_content}" if panel_content else "") if part]
+        return shot_number or "1", "\n\n".join(parts)
+
     def _render_keyframe_prompt(
         self,
         *,
@@ -2908,6 +3397,12 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
         if prompts is None:
             raise ValueError("clip_storyboard_keyframe_generation requires workflow prompt store")
         frame_role_label = "start_frame" if frame_role == "start" else "end_frame"
+        final_aspect_ratio = self.final_aspect_ratio()
+        target_camera_shot_id, target_frame_content = self._keyframe_target_content(
+            clip,
+            frame_role=frame_role,
+            panel_ref=panel_ref,
+        )
         last_error: Exception | None = None
         for template_name in self._keyframe_template_candidates(provider):
             try:
@@ -2921,6 +3416,8 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
                         frame_role_label=frame_role_label,
                         panel_ref=panel_ref,
                         panel_text=self._panel_text(clip, panel_ref),
+                        target_camera_shot_id=target_camera_shot_id,
+                        target_frame_content=target_frame_content,
                         clip_title=clip.clip_title or "",
                         clip_text=clip.clip_text or "",
                         clip_duration_hint=clip.clip_duration_hint or f"{clip.duration_seconds:g}s",
@@ -2932,7 +3429,8 @@ class StoryboardKeyframeGenerationNode(StoryboardAssetNodeBase):
                         source_storyboard_asset_path=storyboard_sheet.asset_path or "",
                         source_storyboard_asset_url=storyboard_sheet.asset_url or "",
                         visual_style_prompt=self._keyframe_visual_style_prompt(state),
-                        final_aspect_ratio=self.final_aspect_ratio(),
+                        final_aspect_ratio=final_aspect_ratio,
+                        frame_orientation=self._keyframe_orientation(final_aspect_ratio),
                         provider_name=getattr(provider, "name", "unknown"),
                         model_name=getattr(provider, "model", "-"),
                     ).strip(),
@@ -3725,6 +4223,31 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
     def _video_prompt_for_shot(self, shot_prompt: StoryboardPromptClip) -> tuple[str, list[str]]:
         return self._video_prompt_for_clip(shot_prompt)
 
+    def _camera_shots_only_video_prompt(
+        self,
+        clip_prompt: StoryboardPromptClip,
+    ) -> tuple[str, list[str]]:
+        if not 2 <= len(clip_prompt.camera_shots) <= 3:
+            raise ValueError(
+                f"clip_manifest_generation requires 2-3 Camera Shots for {clip_prompt.clip_id}; "
+                f"got {len(clip_prompt.camera_shots)}"
+            )
+        lines: list[str] = []
+        for shot in clip_prompt.camera_shots:
+            shot_id = self._clean_text(shot.get("camera_shot_id"))
+            time_range = self._clean_text(shot.get("time_range"))
+            description = self._clean_text(shot.get("description"))
+            description = re.sub(
+                r"[，；]?\s*[^，；。！？]*箭头[^，；。！？]*",
+                "",
+                description,
+            ).strip("，；。 ")
+            lines.append(f"{shot_id}（{time_range}）：{description}")
+        prompt = sanitize_video_prompt_text("\n".join(lines))
+        if "字幕" not in prompt or "水印" not in prompt:
+            prompt += "\n画面不出现字幕、对白文字、水印、logo、宫格、箭头或面板编号。"
+        return prompt, []
+
     def _clip_video_model_params(self, provider: object) -> dict[str, Any]:
         binding = getattr(provider, "model_binding", None)
         params = getattr(binding, "params", {}) if binding is not None else {}
@@ -3757,9 +4280,6 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         duration_seconds: float,
         video_prompt: str,
         clip_video_inputs: list[ClipVideoInput],
-        is_first_clip: bool,
-        start_frame_source_clip_id: str,
-        end_frame_source_clip_id: str,
     ) -> tuple[str, str]:
         prompts = getattr(self.workflow, "prompts", None)
         if prompts is None:
@@ -3801,23 +4321,9 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         slots_by_type: dict[str, list[str]] = {}
         for item in clip_video_inputs:
             slots_by_type.setdefault(str(item.asset_type), []).append(item.slot)
-        clip_start_frame_slot = ", ".join(slots_by_type.get("clip_start_frame", [])) or "无"
-        clip_end_frame_slot = ", ".join(slots_by_type.get("clip_end_frame", [])) or "无"
         storyboard_slot = ", ".join(slots_by_type.get("storyboard", [])) or "无"
-        if is_first_clip:
-            clip_continuity_instructions = (
-                f"{clip_start_frame_slot} 是当前 clip 的首帧，视频必须从它自然开始；"
-                f"{clip_end_frame_slot} 是当前 clip 的尾帧，视频必须最终收束到它；"
-                f"{storyboard_slot} 是当前 clip 的十二宫格 storyboard，用于执行中段 Camera Shot 运动和切镜节奏。"
-            )
-        else:
-            clip_continuity_instructions = (
-                f"{clip_start_frame_slot} 是上一条 clip（{start_frame_source_clip_id}）的尾帧，"
-                f"只用于当前视频开头的连续性，视频必须从 {clip_start_frame_slot} 开始；"
-                "开头必须立刻硬切到当前 clip 的 P01 / 第一宫格内容，不要做丝滑变形过渡；"
-                f"硬切后严格按照 {storyboard_slot} 的十二宫格 storyboard 和 Camera Shot 计划推进；"
-                f"最终收束到 {clip_end_frame_slot} 当前 clip（{end_frame_source_clip_id}）尾帧。"
-            )
+        start_frame_slot = ", ".join(slots_by_type.get("clip_start_frame", [])) or "无"
+        end_frame_slot = ", ".join(slots_by_type.get("clip_end_frame", [])) or "无"
 
         last_error: Exception | None = None
         for template_name in self._clip_video_template_candidates(provider):
@@ -3831,17 +4337,12 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
                         duration_seconds=duration_seconds,
                         video_prompt=video_prompt,
                         clip_video_inputs_json=json.dumps(input_rows, ensure_ascii=False, indent=2),
-                        clip_start_frame_slot=clip_start_frame_slot,
-                        clip_end_frame_slot=clip_end_frame_slot,
                         storyboard_input_slot=storyboard_slot,
+                        start_frame_input_slot=start_frame_slot,
+                        end_frame_input_slot=end_frame_slot,
                         roleboard_input_slots=", ".join(slots_by_type.get("roleboard", [])) or "无",
                         layout_input_slots=", ".join(slots_by_type.get("layout", [])) or "无",
                         prop_input_slots=", ".join(slots_by_type.get("prop", [])) or "无",
-                        is_first_clip=str(is_first_clip).lower(),
-                        requires_initial_hard_cut=str(not is_first_clip).lower(),
-                        start_frame_source_clip_id=start_frame_source_clip_id,
-                        end_frame_source_clip_id=end_frame_source_clip_id,
-                        clip_continuity_instructions=clip_continuity_instructions,
                         negative_rules=negative_rules_text,
                         provider_name=getattr(provider, "name", "unknown"),
                         model_name=getattr(provider, "model", "-"),
@@ -3877,15 +4378,32 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         clip_id: str,
     ) -> tuple[list[ClipVideoInput], list[str]]:
         max_images = self._provider_max_reference_images(provider)
-        if len(inputs) <= max_images:
+        kling_subject_mode = bool(
+            getattr(provider, "supports_kling_omni_placeholders", False)
+        )
+        frame_inputs = (
+            [
+                item
+                for item in inputs
+                if item.asset_type in {"clip_start_frame", "clip_end_frame"}
+            ]
+            if kling_subject_mode
+            else []
+        )
+        reference_inputs = (
+            [item for item in inputs if item not in frame_inputs]
+            if kling_subject_mode
+            else inputs
+        )
+        if len(reference_inputs) <= max_images:
             return inputs, []
-        if max_images < 3:
+        if max_images < 1:
             raise ValueError(
-                f"clip_manifest_generation requires at least 3 image refs for {clip_id} "
-                f"(clip_start_frame, clip_end_frame, storyboard); provider supports max_reference_images={max_images}"
+                f"clip_manifest_generation requires one storyboard image ref for {clip_id}; "
+                f"provider supports max_reference_images={max_images}"
             )
-        kept = inputs[:max_images]
-        omitted = inputs[max_images:]
+        kept = frame_inputs + reference_inputs[:max_images]
+        omitted = reference_inputs[max_images:]
         warnings = [
             (
                 f"clip_video_inputs truncated to provider max_reference_images={max_images}; "
@@ -3936,50 +4454,47 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         self,
         *,
         state: ProjectState,
-        start_frame: StoryboardKeyframeGenerationItem,
-        end_frame: StoryboardKeyframeGenerationItem,
         storyboard_sheet: StoryboardSheetGenerationItem,
+        start_frame: StoryboardKeyframeGenerationItem | None = None,
+        end_frame: StoryboardKeyframeGenerationItem | None = None,
         role_ids: list[str],
         role_appearance_ids: list[str],
         layout_ids: list[str],
         prop_ids: list[str],
-        is_first_clip: bool,
-        start_frame_source_clip_id: str,
+        include_roleboards: bool = True,
     ) -> tuple[list[ClipVideoInput], list[str]]:
         inputs: list[ClipVideoInput] = []
         warnings: list[str] = []
-        self._append_clip_video_input(
-            inputs,
-            asset_type="clip_start_frame",
-            asset_id=start_frame.asset_id,
-            asset_path=start_frame.asset_path,
-            asset_url=start_frame.asset_url,
-            source_node="clip_storyboard_keyframe_generation",
-            label=(
-                "当前 clip 的首帧关键帧"
-                if is_first_clip
-                else f"上一 clip {start_frame_source_clip_id} 的尾帧，作为当前 clip 开头连续性起点"
-            ),
-            required=True,
-            clip_id=start_frame.clip_id,
-            frame_role=start_frame.frame_role,
-            panel_ref=start_frame.panel_ref,
-            source_clip_id=start_frame_source_clip_id,
-        )
-        self._append_clip_video_input(
-            inputs,
-            asset_type="clip_end_frame",
-            asset_id=end_frame.asset_id,
-            asset_path=end_frame.asset_path,
-            asset_url=end_frame.asset_url,
-            source_node="clip_storyboard_keyframe_generation",
-            label="当前 clip 的尾帧关键帧",
-            required=True,
-            clip_id=end_frame.clip_id,
-            frame_role=end_frame.frame_role,
-            panel_ref=end_frame.panel_ref,
-            source_clip_id=end_frame.clip_id,
-        )
+        if start_frame is not None:
+            self._append_clip_video_input(
+                inputs,
+                asset_type="clip_start_frame",
+                asset_id=start_frame.asset_id,
+                asset_path=start_frame.asset_path,
+                asset_url=start_frame.asset_url,
+                source_node="clip_storyboard_keyframe_generation",
+                label="当前 clip 首帧",
+                required=True,
+                clip_id=storyboard_sheet.clip_id,
+                source_clip_id=start_frame.clip_id,
+                frame_role="start",
+                kling_type="first_frame",
+            )
+        if end_frame is not None:
+            self._append_clip_video_input(
+                inputs,
+                asset_type="clip_end_frame",
+                asset_id=end_frame.asset_id,
+                asset_path=end_frame.asset_path,
+                asset_url=end_frame.asset_url,
+                source_node="clip_storyboard_keyframe_generation",
+                label="当前 clip 尾帧",
+                required=True,
+                clip_id=storyboard_sheet.clip_id,
+                source_clip_id=end_frame.clip_id,
+                frame_role="end",
+                kling_type="last_frame",
+            )
         self._append_clip_video_input(
             inputs,
             asset_type="storyboard",
@@ -3993,7 +4508,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         )
 
         explicit_appearance_ids = {str(value).strip() for value in role_appearance_ids if str(value).strip()}
-        for role_id in role_ids:
+        for role_id in role_ids if include_roleboards else []:
             role = state.roles.get(role_id)
             if role is None:
                 warnings.append(f"missing role for shot video input: {role_id}")
@@ -4165,7 +4680,7 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         state: ProjectState,
         storyboard: StoryboardPromptEpisode,
         storyboard_sheets: dict[str, StoryboardSheetGenerationItem],
-        keyframes: dict[tuple[str, str, str], StoryboardKeyframeGenerationItem],
+        keyframes: dict[tuple[str, str, str], StoryboardKeyframeGenerationItem] | None,
         existing_episode: StoryboardEpisodeOutput | None,
         included_clip_ids: set[str] | None = None,
     ) -> tuple[StoryboardEpisodeOutput, list[str]]:
@@ -4177,13 +4692,15 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         episode_warnings: list[str] = []
         clips: list[StoryboardShot] = []
         video_provider = self.router.video("shot", node_name="clip_video_generation")
+        kling_subject_mode = bool(
+            getattr(video_provider, "supports_kling_omni_placeholders", False)
+        )
 
         for clip_index, clip_prompt in enumerate(storyboard.clips, start=1):
             clip_id = self._clean_text(clip_prompt.clip_id)
             if included_clip_ids is not None and clip_id not in included_clip_ids:
                 continue
             is_first_clip = clip_index == 1
-            previous_clip_id = self._clean_text(storyboard.clips[clip_index - 2].clip_id) if not is_first_clip else clip_id
             prompt_text = self._prompt_clip_text(clip_prompt)
             role_ids = self._resolve_ids(
                 explicit_ids=list(clip_prompt.role_ids or []),
@@ -4220,44 +4737,51 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
             role_appearance_ids = self._first_appearance_ids(state, role_ids)
             role_audio_ids: list[str] = []
             dialogue: list[str] = []
-            video_prompt, prompt_warnings = self._video_prompt_for_clip(clip_prompt)
+            if kling_subject_mode:
+                video_prompt, prompt_warnings = self._camera_shots_only_video_prompt(clip_prompt)
+            else:
+                video_prompt, prompt_warnings = self._video_prompt_for_clip(clip_prompt)
             episode_warnings.extend(f"{clip_id}: {warning}" for warning in prompt_warnings)
             storyboard_sheet = storyboard_sheets.get(clip_id)
             if storyboard_sheet is None:
                 raise ValueError(f"clip_manifest_generation missing clip_storyboard_image_generation image for {clip_id}")
-            current_end_frame = self._require_keyframe(
-                keyframes,
-                episode_key=storyboard.episode_key,
-                clip_id=clip_id,
-                frame_role="end",
-            )
-            if is_first_clip:
+            start_frame: StoryboardKeyframeGenerationItem | None = None
+            end_frame: StoryboardKeyframeGenerationItem | None = None
+            start_frame_source_clip_id: str | None = None
+            if kling_subject_mode:
+                if keyframes is None:
+                    raise ValueError(
+                        "clip_manifest_generation requires clip_storyboard_keyframe_generation "
+                        "for Kling subject mode"
+                    )
+                previous_clip_id = (
+                    self._clean_text(storyboard.clips[clip_index - 2].clip_id)
+                    if not is_first_clip
+                    else clip_id
+                )
+                start_frame_source_clip_id = clip_id if is_first_clip else previous_clip_id
                 start_frame = self._require_keyframe(
+                    keyframes,
+                    episode_key=storyboard.episode_key,
+                    clip_id=start_frame_source_clip_id,
+                    frame_role="start" if is_first_clip else "end",
+                )
+                end_frame = self._require_keyframe(
                     keyframes,
                     episode_key=storyboard.episode_key,
                     clip_id=clip_id,
-                    frame_role="start",
-                )
-                start_frame_source_clip_id = clip_id
-            else:
-                start_frame = self._require_keyframe(
-                    keyframes,
-                    episode_key=storyboard.episode_key,
-                    clip_id=previous_clip_id,
                     frame_role="end",
                 )
-                start_frame_source_clip_id = previous_clip_id
             clip_video_inputs, input_warnings = self._clip_video_inputs_for_shot(
                 state=state,
-                start_frame=start_frame,
-                end_frame=current_end_frame,
                 storyboard_sheet=storyboard_sheet,
+                start_frame=start_frame,
+                end_frame=end_frame,
                 role_ids=role_ids,
                 role_appearance_ids=role_appearance_ids,
                 layout_ids=layout_ids,
                 prop_ids=prop_ids,
-                is_first_clip=is_first_clip,
-                start_frame_source_clip_id=start_frame_source_clip_id,
+                include_roleboards=not kling_subject_mode,
             )
             clip_video_inputs, limit_warnings = self._limit_clip_video_inputs_for_provider(
                 inputs=clip_video_inputs,
@@ -4273,9 +4797,6 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
                 duration_seconds=float(clip_prompt.duration_seconds),
                 video_prompt=video_prompt,
                 clip_video_inputs=clip_video_inputs,
-                is_first_clip=is_first_clip,
-                start_frame_source_clip_id=start_frame_source_clip_id,
-                end_frame_source_clip_id=clip_id,
             )
             for item in clip_video_inputs:
                 item.metadata.setdefault("final_video_prompt_template", prompt_template)
@@ -4289,11 +4810,19 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
                 content=video_prompt,
                 duration_seconds=float(clip_prompt.duration_seconds),
                 transition="硬切",
-                start_frame_source="own_start_frame" if is_first_clip else "previous_clip_end_frame",
+                start_frame_source=(
+                    "own_start_frame"
+                    if kling_subject_mode and is_first_clip
+                    else "previous_clip_end_frame"
+                    if kling_subject_mode
+                    else "storyboard_only"
+                ),
                 start_frame_inheritance_reason=(
-                    "首个 clip 使用自己的 P01 首帧关键帧。"
-                    if is_first_clip
-                    else f"非首个 clip 使用上一 clip {start_frame_source_clip_id} 的 P12 尾帧作为开头连续性起点。"
+                    "首个 clip 使用自己的首帧；尾帧使用自己的 P12 关键帧。"
+                    if kling_subject_mode and is_first_clip
+                    else f"使用上一 clip {start_frame_source_clip_id} 的尾帧作为当前首帧。"
+                    if kling_subject_mode
+                    else "不使用首尾帧参考；每个 clip 按当前十二宫格故事板独立生成。"
                 ),
                 dialogue=dialogue,
                 role_ids=role_ids,
@@ -4306,15 +4835,15 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
                 video_prompt=video_prompt,
                 final_video_prompt=final_video_prompt,
                 clip_video_inputs=clip_video_inputs,
-                start_frame_asset_id=start_frame.asset_id,
-                start_frame_asset_path=start_frame.asset_path,
-                start_frame_asset_url=start_frame.asset_url,
+                start_frame_asset_id=start_frame.asset_id if start_frame is not None else None,
+                start_frame_asset_path=start_frame.asset_path if start_frame is not None else None,
+                start_frame_asset_url=start_frame.asset_url if start_frame is not None else None,
                 start_frame_source_clip_id=start_frame_source_clip_id,
-                end_frame_asset_id=current_end_frame.asset_id,
-                end_frame_asset_path=current_end_frame.asset_path,
-                end_frame_asset_url=current_end_frame.asset_url,
+                end_frame_asset_id=end_frame.asset_id if end_frame is not None else None,
+                end_frame_asset_path=end_frame.asset_path if end_frame is not None else None,
+                end_frame_asset_url=end_frame.asset_url if end_frame is not None else None,
                 is_first_clip=is_first_clip,
-                requires_initial_hard_cut=not is_first_clip,
+                requires_initial_hard_cut=False,
             )
             existing = existing_by_id.get(clip.clip_id) or existing_by_index.get(clip.index)
             self._preserve_dynamic_fields(clip, existing)
@@ -4335,11 +4864,15 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         prompt_output = self.load_clip_storyboard_prompt_output(project_dir)
         sheet_output = self.load_storyboard_sheet_output(project_dir)
-        keyframe_output = self.load_storyboard_keyframe_output(project_dir)
+        video_provider = self.router.video("shot", node_name="clip_video_generation")
+        keyframes: dict[tuple[str, str, str], StoryboardKeyframeGenerationItem] | None = None
+        if bool(getattr(video_provider, "supports_kling_omni_placeholders", False)):
+            keyframes = self._keyframes_by_clip_role(
+                self.load_storyboard_keyframe_output(project_dir)
+            )
         target_episode_keys = self.target_episode_keys(state)
         storyboard_by_episode = {episode.episode_key: episode for episode in prompt_output.storyboards}
         storyboard_sheets = {item.clip_id: item for item in sheet_output.generated_storyboards}
-        keyframes = self._keyframes_by_clip_role(keyframe_output)
         clip_selectors = self.active_clip_selectors()
         selected_clip_ids_by_episode: dict[str, set[str]] = {}
         selected_clip_count = 0
@@ -4468,6 +5001,7 @@ def build_storyboard_asset_node_runners(workflow: Any) -> dict[str, StoryboardAs
     return {
         ClipPromptNode.name: ClipPromptNode(**deps),
         StoryboardPromptNode.name: StoryboardPromptNode(**deps),
+        StoryboardPromptAuditNode.name: StoryboardPromptAuditNode(**deps),
         StoryboardGenerationNode.name: StoryboardGenerationNode(**deps),
         StoryboardKeyframeGenerationNode.name: StoryboardKeyframeGenerationNode(**deps),
         ClipManifestGenerationNode.name: ClipManifestGenerationNode(**deps),
@@ -4489,6 +5023,7 @@ __all__ = [
     "ClipManifestGenerationNode",
     "StoryboardGenerationNode",
     "StoryboardKeyframeGenerationNode",
+    "StoryboardPromptAuditNode",
     "StoryboardPromptNode",
     "build_storyboard_asset_node_runners",
     "build_storyboard_asset_nodes",

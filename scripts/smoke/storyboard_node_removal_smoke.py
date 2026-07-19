@@ -16,6 +16,7 @@ from autodrama.workflows.nodes import AVAILABLE_PREGEN_NODE_NAMES, PREGEN_NODE_N
 EXPECTED_STORYBOARD_NODES = [
     "clip_prompt",
     "clip_storyboard_prompt",
+    "clip_storyboard_prompt_audit",
     "clip_storyboard_image_generation",
     "clip_storyboard_keyframe_generation",
     "clip_manifest_generation",
@@ -26,8 +27,10 @@ def main() -> None:
     if STORYBOARD_ASSET_NODE_NAMES != EXPECTED_STORYBOARD_NODES:
         raise AssertionError(f"unexpected storyboard node chain: {STORYBOARD_ASSET_NODE_NAMES!r}")
     for node_name in STORYBOARD_ASSET_NODE_NAMES:
-        if node_name not in PREGEN_NODE_NAMES or node_name not in AVAILABLE_PREGEN_NODE_NAMES:
+        if node_name not in AVAILABLE_PREGEN_NODE_NAMES:
             raise AssertionError(f"storyboard node is not available through pregen: {node_name}")
+        if node_name not in PREGEN_NODE_NAMES:
+            raise AssertionError(f"default storyboard node is missing from pregen: {node_name}")
 
     payload = {
         "clip_id": "episode_001_clip_001",

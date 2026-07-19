@@ -633,7 +633,7 @@ class DynamicAssetNodeMixin:
                     raise ProviderError(f"{shot.shot_id} missing final_video_prompt; rerun clip_manifest_generation")
                 shot.final_video_prompt = recorded_prompt
                 clip_video_inputs = self._clip_video_inputs(project_dir, shot, provider=provider)
-                video_refs = self._asset_refs_from_clip_video_inputs(project_dir, clip_video_inputs)
+                video_refs = self._clip_video_refs(project_dir, state, shot, provider, clip_video_inputs)
                 self._write_generation_prompt_log(
                     project_dir,
                     episode_key=episode.episode_key,
@@ -726,7 +726,7 @@ class DynamicAssetNodeMixin:
                     raise ProviderError(f"{shot.shot_id} missing final_video_prompt; rerun clip_manifest_generation")
                 shot.final_video_prompt = prompt
                 clip_video_inputs = self._clip_video_inputs(project_dir, shot, provider=provider)
-                video_refs = self._asset_refs_from_clip_video_inputs(project_dir, clip_video_inputs)
+                video_refs = self._clip_video_refs(project_dir, state, shot, provider, clip_video_inputs)
                 async with episode_lock:
                     self._save_storyboard_episode(project_dir, episode)
                 self._write_generation_prompt_log(
@@ -787,7 +787,8 @@ class DynamicAssetNodeMixin:
                     if not prompt:
                         raise ProviderError(f"{shot.shot_id} missing final_video_prompt; rerun clip_manifest_generation")
                     clip_video_inputs = self._clip_video_inputs(project_dir, shot, provider=provider)
-                    video_refs = self._asset_refs_from_clip_video_inputs(project_dir, clip_video_inputs)
+                    video_refs = self._clip_video_refs(project_dir, state, shot, provider, clip_video_inputs)
+                    prompt = self._kling_native_prompt(prompt, state, shot, provider)
                     shot.final_video_prompt = prompt
                     async with episode_lock:
                         self._save_storyboard_episode(project_dir, episode)
@@ -820,6 +821,11 @@ class DynamicAssetNodeMixin:
                             "shot_id": shot.shot_id,
                             "asset_id": asset_id,
                             "clip_video_inputs": clip_video_inputs,
+                            **(
+                                {"audio": "native", "multi_shot": False}
+                                if bool(getattr(provider, "supports_kling_omni_placeholders", False))
+                                else {}
+                            ),
                         },
                     )
                 except Exception as exc:

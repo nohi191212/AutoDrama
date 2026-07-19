@@ -116,8 +116,13 @@ def main() -> None:
         role_ids=["role_alex"],
         layout_ids=["layout_lab"],
         prop_ids=["prop_keycard"],
-        camera_shots=[{"shot": "push in"}],
-        panel_plan={"P12": "Alex raises the keycard inside the lab."},
+        camera_shots=[
+            {
+                "camera_shot_id": "Camera Shot 1",
+                "description": "50mm中近景，固定机位，Alex在实验室举起门卡。声音：设备低鸣。",
+            }
+        ],
+        panel_plan={"P12": "P12（Camera Shot 1）：Alex举起门卡；橙色箭头标示抬手动作。"},
         video_prompt="Alex enters the lab with a keycard.",
     )
     storyboard_sheet = StoryboardSheetGenerationItem(
@@ -201,11 +206,19 @@ def main() -> None:
         raise AssertionError(f"unexpected keyframe prompt template: {prompt_template}")
     if state.metadata["visual_style_prompt"] not in prompt:
         raise AssertionError("keyframe prompt must include the authoritative project visual style")
-    if "image_2: project key vision" not in prompt:
-        raise AssertionError("keyframe prompt must assign image_2 as the shared style anchor")
+    if "9:16 竖版视频end_frame关键帧" not in prompt:
+        raise AssertionError("keyframe prompt must identify ratio, orientation, and frame role")
+    if "P12与Camera Shot 1" not in prompt:
+        raise AssertionError("keyframe prompt must identify the target panel and camera shot")
+    if "设备低鸣" in prompt:
+        raise AssertionError("keyframe prompt must omit audio-only camera shot content")
+    if "橙色箭头" in prompt:
+        raise AssertionError("keyframe prompt must omit storyboard arrow annotations")
+    if "Alex举起门卡" not in prompt:
+        raise AssertionError("keyframe prompt must preserve the target panel state")
     if "cinematic live-action frame" in prompt:
         raise AssertionError("keyframe prompt must not hard-code a live-action rendering style")
-    if "never inherit its pencil-sketch medium" not in prompt:
+    if "不要继承黑白分镜的铅笔画风" not in prompt:
         raise AssertionError("keyframe prompt must prevent storyboard sketch style leakage")
 
     tmp_dir = ROOT / ".tmp"

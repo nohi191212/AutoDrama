@@ -65,7 +65,7 @@ async def main() -> None:
                     "font_name": "Arial",
                     "max_chars_per_line": 12,
                 },
-                "audit": {"enabled": True, "source_audit": True, "final_audit": True},
+                "audit": {"enabled": True, "source_asr": False, "source_audit": True, "final_audit": True},
             },
             "routing": {"text": {"postgen_audit": "fake", "postgen_edit_plan": "fake"}},
         }

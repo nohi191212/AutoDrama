@@ -37,10 +37,18 @@ DEFAULT_PREGEN_ROLE_NODE_NAMES = [
 MANUAL_PREGEN_ROLE_NODE_NAMES = [
     node_name for node_name in ROLE_NODE_NAMES if node_name not in DEFAULT_PREGEN_ROLE_NODE_NAMES
 ]
+DEFAULT_PREGEN_ROLE_SUBJECT_NODE_NAMES = [
+    "role_subject_frontal_image_generation",
+    "role_kling_voice_generation",
+    "role_subject_element_generation",
+]
+MANUAL_PREGEN_ROLE_SUBJECT_NODE_NAMES = [
+    node_name for node_name in ROLE_SUBJECT_NODE_NAMES if node_name not in DEFAULT_PREGEN_ROLE_SUBJECT_NODE_NAMES
+]
 DEFERRED_PREGEN_NODE_NAMES = [
     *MANUAL_SCRIPT_NODE_NAMES,
     *MANUAL_PREGEN_ROLE_NODE_NAMES,
-    *ROLE_SUBJECT_NODE_NAMES,
+    *MANUAL_PREGEN_ROLE_SUBJECT_NODE_NAMES,
     *VOICE_NODE_NAMES,
     *BGM_NODE_NAMES,
 ]
@@ -56,11 +64,22 @@ def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
         name="clip_segment",
         run=script_runners["clip_segment"].run,
     )
+    role_subject_by_name = {node.name: node for node in build_role_subject_nodes(workflow)}
+    static_nodes = build_static_asset_nodes(workflow)
+    static_by_name = {node.name: node for node in static_nodes}
+    remaining_static_nodes = [node for node in static_nodes if node.name != "roleboard_image_generation"]
     return [
         *build_script_nodes(workflow),
         *build_director_nodes(workflow),
         *default_role_nodes,
-        *build_static_asset_nodes(workflow),
+        static_by_name["roleboard_image_generation"],
+        role_subject_by_name["role_subject_frontal_image_generation"],
+        *remaining_static_nodes,
+        *[
+            role_subject_by_name[name]
+            for name in DEFAULT_PREGEN_ROLE_SUBJECT_NODE_NAMES
+            if name != "role_subject_frontal_image_generation"
+        ],
         clip_segment_node,
         *build_storyboard_asset_nodes(workflow),
     ]
@@ -76,10 +95,11 @@ def build_manual_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
     manual_role_nodes = [
         node for node in build_role_nodes(workflow) if node.name in manual_role_names
     ]
+    role_subject_by_name = {node.name: node for node in build_role_subject_nodes(workflow)}
     return [
         *manual_script_nodes,
         *manual_role_nodes,
-        *build_role_subject_nodes(workflow),
+        *[role_subject_by_name[name] for name in MANUAL_PREGEN_ROLE_SUBJECT_NODE_NAMES],
         *build_voice_nodes(workflow),
         *build_bgm_nodes(workflow),
     ]
@@ -89,7 +109,10 @@ PREGEN_NODE_NAMES = [
     *SCRIPT_NODE_NAMES,
     *DIRECTOR_NODE_NAMES,
     *DEFAULT_PREGEN_ROLE_NODE_NAMES,
-    *STATIC_ASSET_NODE_NAMES,
+    "roleboard_image_generation",
+    "role_subject_frontal_image_generation",
+    *[name for name in STATIC_ASSET_NODE_NAMES if name != "roleboard_image_generation"],
+    *[name for name in DEFAULT_PREGEN_ROLE_SUBJECT_NODE_NAMES if name != "role_subject_frontal_image_generation"],
     "clip_segment",
     *STORYBOARD_ASSET_NODE_NAMES,
 ]

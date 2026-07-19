@@ -103,6 +103,7 @@ class SubtitleSettings(BaseModel):
 
 class AuditSettings(BaseModel):
     enabled: bool = False
+    source_asr: bool = True
     source_audit: bool = True
     final_audit: bool = True
     frame_count: int = Field(default=9, ge=3, le=24)

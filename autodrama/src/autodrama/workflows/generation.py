@@ -16,6 +16,7 @@ from autodrama.core.schemas import (
 )
 from autodrama.logging import get_logger, log_context, setup_logging
 from autodrama.providers.router import ProviderRouter
+from autodrama.providers.base import AssetRef
 from autodrama.repositories.dynamic_asset_repo import DynamicAssetRepository
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.utils.prompts import PromptStore
@@ -58,14 +59,25 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         normalized: list[dict[str, object]] = []
         missing_required: list[dict[str, object]] = []
         order_errors: list[str] = []
-        expected_order = {
-            "clip_start_frame": 0,
-            "clip_end_frame": 1,
-            "storyboard": 2,
-            "roleboard": 3,
-            "layout": 4,
-            "prop": 5,
-        }
+        kling_subject_mode = bool(
+            getattr(provider, "supports_kling_omni_placeholders", False)
+        )
+        expected_order = (
+            {
+                "clip_start_frame": 0,
+                "clip_end_frame": 1,
+                "storyboard": 2,
+                "layout": 3,
+                "prop": 4,
+            }
+            if kling_subject_mode
+            else {
+                "storyboard": 0,
+                "roleboard": 1,
+                "layout": 2,
+                "prop": 3,
+            }
+        )
         last_order = -1
         for expected_index, item in enumerate(items, start=1):
             asset_type = str(item.asset_type or "")
@@ -75,12 +87,20 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             if rank < last_order:
                 order_errors.append(f"{item.slot}: {asset_type} appears after a later input type")
             last_order = max(last_order, rank)
-            if expected_index == 1 and asset_type != "clip_start_frame":
-                order_errors.append("image_1 must be clip_start_frame")
-            if expected_index == 2 and asset_type != "clip_end_frame":
-                order_errors.append("image_2 must be clip_end_frame")
-            if expected_index == 3 and asset_type != "storyboard":
-                order_errors.append("image_3 must be storyboard")
+            if kling_subject_mode:
+                required_prefix = ("clip_start_frame", "clip_end_frame", "storyboard")
+                if expected_index <= len(required_prefix) and asset_type != required_prefix[expected_index - 1]:
+                    order_errors.append(
+                        f"image_{expected_index} must be {required_prefix[expected_index - 1]} for Kling"
+                    )
+                if asset_type == "roleboard":
+                    order_errors.append(
+                        f"{item.slot}: Kling characters must use subject elements, not roleboard images"
+                    )
+            elif expected_index == 1 and asset_type != "storyboard":
+                order_errors.append("image_1 must be storyboard")
+            if not kling_subject_mode and asset_type in {"clip_start_frame", "clip_end_frame"}:
+                order_errors.append(f"{item.slot}: {asset_type} is no longer a supported video input")
             path_exists = bool(item.asset_path and self._path_exists(project_dir, item.asset_path))
             has_url = bool(str(item.asset_url or "").strip())
             row = {
@@ -110,15 +130,22 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             if isinstance(limits, dict) and limits.get("max_reference_images") is not None:
                 max_images = min(max_images, int(limits.get("max_reference_images") or max_images))
         omitted_inputs: list[dict[str, object]] = []
-        if len(normalized) > max_images:
-            if max_images < 3:
-                order_errors.append(
-                    f"{shot.shot_id} requires at least 3 image refs for start/end/storyboard, "
-                    f"provider supports max_reference_images={max_images}"
-                )
+        frame_input_count = (
+            sum(
+                1
+                for row in normalized
+                if row.get("asset_type") in {"clip_start_frame", "clip_end_frame"}
+            )
+            if kling_subject_mode
+            else 0
+        )
+        allowed_input_count = max_images + frame_input_count
+        if len(normalized) > allowed_input_count:
+            if max_images < 1:
+                order_errors.append(f"{shot.shot_id} requires a storyboard image reference")
             else:
-                omitted_inputs = normalized[max_images:]
-                normalized = normalized[:max_images]
+                omitted_inputs = normalized[allowed_input_count:]
+                normalized = normalized[:allowed_input_count]
                 included_slots = {str(row.get("slot") or "") for row in normalized}
                 missing_required = [
                     row
@@ -141,7 +168,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         clip_id = str(shot.shot_id or "")
         episode_key = clip_id.rsplit("_clip_", 1)[0] if "_clip_" in clip_id else clip_id.rsplit("_shot_", 1)[0]
         return {
-            "contract": "fixed_clip_start_end_storyboard_roleboard_layout_prop_v1",
+            "contract": (
+                "kling_start_end_storyboard_context_with_subject_elements_v1"
+                if kling_subject_mode
+                else "storyboard_context_images_with_subject_elements_v2"
+            ),
             "final_video_prompt_source": "clip_manifest_generation",
             "episode_key": episode_key,
             "shot_id": shot.shot_id,
@@ -155,8 +186,6 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
 
     @staticmethod
     def _asset_refs_from_clip_video_inputs(project_dir: Path, clip_video_inputs: dict[str, object]) -> list:
-        from autodrama.providers.base import AssetRef
-
         refs: list[AssetRef] = []
         rows = clip_video_inputs.get("inputs") if isinstance(clip_video_inputs, dict) else []
         if not isinstance(rows, list):
@@ -181,6 +210,112 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 )
             )
         return refs
+
+    @staticmethod
+    def _kling_dialogue_role_names(shot: StoryboardShot) -> set[str]:
+        names: set[str] = set()
+        for line in shot.dialogue:
+            text = str(line or "").strip()
+            for separator in ("：", ":"):
+                if separator in text:
+                    name = text.split(separator, 1)[0].strip()
+                    if name:
+                        names.add(name.casefold())
+                    break
+        return names
+
+    @staticmethod
+    def _shot_role_appearance(role, shot: StoryboardShot):
+        requested = set(shot.role_appearance_ids or [])
+        for appearance in role.appearances.values():
+            if appearance.id in requested:
+                return appearance
+        for appearance in role.appearances.values():
+            if appearance.asset_role == "base":
+                return appearance
+        return next(iter(role.appearances.values()), None)
+
+    def _kling_role_element_refs(
+        self,
+        state: ProjectState,
+        shot: StoryboardShot,
+        provider: object,
+    ) -> list[AssetRef]:
+        if not bool(getattr(provider, "supports_kling_omni_placeholders", False)):
+            return []
+        refs: list[AssetRef] = []
+        dialogue_names = self._kling_dialogue_role_names(shot)
+        for role_index, role_id in enumerate(shot.role_ids, start=1):
+            role = state.roles.get(role_id)
+            if role is None:
+                raise ValueError(f"{shot.shot_id} references unknown role_id {role_id}")
+            appearance = self._shot_role_appearance(role, shot)
+            if appearance is None or not appearance.subject_element_id:
+                raise ValueError(
+                    f"{shot.shot_id} requires Kling subject element for {role.name}; "
+                    "rerun pregen through role_subject_element_generation"
+                )
+            speaks = bool(shot.dialogue) and (
+                not dialogue_names or role.name.casefold() in dialogue_names or role.id.casefold() in dialogue_names
+            )
+            if speaks and role.has_dialogue and not role.kling_voice_id:
+                raise ValueError(
+                    f"{shot.shot_id} has dialogue for {role.name}, but no Kling voice is bound; "
+                    "rerun role_kling_voice_generation and role_subject_element_generation"
+                )
+            refs.append(
+                AssetRef(
+                    id=appearance.subject_element_id,
+                    type="element",
+                    metadata={
+                        "element_id": appearance.subject_element_id,
+                        "kling_content_id": f"role_{role_index}",
+                        "role_id": role.id,
+                        "role_name": role.name,
+                        "appearance_id": appearance.id,
+                        "voice_id": role.kling_voice_id,
+                    },
+                )
+            )
+        max_elements = int(getattr(provider, "max_reference_elements", 3) or 3)
+        if len(refs) > max_elements:
+            raise ValueError(
+                f"{shot.shot_id} requires {len(refs)} Kling role elements, provider limit is {max_elements}"
+            )
+        return refs
+
+    def _clip_video_refs(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        shot: StoryboardShot,
+        provider: object,
+        clip_video_inputs: dict[str, object],
+    ) -> list[AssetRef]:
+        refs = self._asset_refs_from_clip_video_inputs(project_dir, clip_video_inputs)
+        refs.extend(self._kling_role_element_refs(state, shot, provider))
+        return refs
+
+    def _kling_native_prompt(self, prompt: str, state: ProjectState, shot: StoryboardShot, provider: object) -> str:
+        if not bool(getattr(provider, "supports_kling_omni_placeholders", False)):
+            return prompt
+        marker = "[AUTODRAMA_KLING_ROLE_BINDINGS]"
+        if marker in prompt:
+            return prompt
+        lines = [marker, "角色主体与音色绑定（必须严格遵守）："]
+        for role_index, role_id in enumerate(shot.role_ids, start=1):
+            role = state.roles.get(role_id)
+            if role is None:
+                continue
+            voice_note = f"，使用已绑定音色 {role.kling_voice_id}" if role.kling_voice_id else ""
+            lines.append(f"- @role_{role_index} 对应角色“{role.name}”{voice_note}。")
+        if shot.dialogue:
+            lines.append("对白必须按以下顺序和角色归属逐字说出；角色依次说话，不要抢词、串音或互换音色：")
+            lines.extend(f"- {str(line).strip()}" for line in shot.dialogue if str(line).strip())
+        lines.append("生成与画面动作同步的对白、呼吸、环境声和动作音效；画面中不要出现字幕或对白文字。")
+        # Keep role/voice/dialogue constraints before the long cinematic prompt so Kling's
+        # documented prompt-length limit cannot truncate the binding block.
+        return "\n".join(lines) + f"\n\n{prompt.rstrip()}"
 
     async def _run_generation_node_for_episode(
         self,
@@ -417,6 +552,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         state = self.repo.load_state(project_dir)
         self._apply_script_plan_settings(state)
         self._hydrate_roles_from_design_files(project_dir, state)
+        if only is None and target_nodes and target_nodes[-1] != "shot_dialogue_audio_generation":
+            shot_provider = self.router.video("shot", node_name="clip_video_generation")
+            if bool(getattr(shot_provider, "supports_kling_omni_placeholders", False)):
+                target_nodes = [node for node in target_nodes if node != "shot_dialogue_audio_generation"]
         selected_episode_keys, checklist = selected_episode_keys_from_checklist(
             self.repo,
             project_dir,

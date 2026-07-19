@@ -13,6 +13,7 @@ from autodrama.config import load_settings
 IMAGE_NODES = {
     "key_vision_image_generation",
     "roleboard_image_generation",
+    "role_subject_frontal_image_generation",
     "clip_storyboard_image_generation",
     "clip_storyboard_keyframe_generation",
     "prop_image_generation",

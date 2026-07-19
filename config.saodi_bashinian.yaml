@@ -2,12 +2,87 @@ app:
   env: dev
   default_quality_preset: cheap
   enable_human_review: false
-
 apikeys_file: ./apikeys.yaml
 model_catalog_file: ./model_catalog.yaml.example
-
-# Node-level model bindings. If a node is omitted here, AutoDrama falls back to the legacy routing section.
-# Params are validated against model_catalog_file when the config is loaded.
+project:
+  id: saodi_bashinian
+  title: 扫地八十年，从宗门杂役飞升成仙
+  script_outline_file: ./inputs/扫地八十年，从宗门杂役飞升成仙.txt
+  episode_count: 3
+  episode_duration_seconds: 150
+  bgm_count: 1
+output:
+  root_dir: ./outputs
+  project_dir_template: '{date}_{slug}'
+  db_filename: autodrama.sqlite
+  subdirs:
+    logs: logs
+    assets: assets
+    outputs: outputs
+    images: assets/images
+    videos: assets/videos
+    audios: assets/audios
+    json: assets/json
+runtime:
+  python:
+    windows: D:/miniforge3/envs/autodrama/python.exe
+    linux: python3
+    macos: python3
+    default: python3
+  max_text_retry: 3
+  max_media_retry: 2
+  request_timeout_seconds: 1200
+  ffmpeg_path: ffmpeg
+budget:
+  max_total_cny: 100
+  max_image_count: 20
+  max_video_seconds: 45
+  max_music_count: 5
+  max_text_calls: 200
+generation:
+  visual_style_prompt: 高质感东方玄幻3D国漫短剧风格，采用风格化CG人物、清晰面部表演、精细材质和电影级体积光，整体明显非真人摄影。美术体系以东方古典建筑、服饰与器物语言为基础，结合克制的超自然光效和空间氛围。主色使用月白、青灰与墨蓝，并以朱红、熔金等暖色作为重要情绪或能量节点的对比色。材质精细但不过度游戏化，织物、石材、木材、金属和能量效果层次分明。镜头强调人物关系、身份差异、情绪转折和竖屏构图的空间压迫感。所有具体人物、场景和物件均以剧本内容为准。避免真人照片、欧美奇幻造型、夸张网游UI、廉价塑料皮肤、可读文字、水印和logo。
+  roleboard_style_prompt: 使用参考图片统一东方古典衣冠结构、交领层次、冠发方式和人物仪态，并转译为高完成度3D国漫角色。脸部采用风格化CG表现，五官、年龄特征、体态和表情服务角色设定，但避免真人毛孔级写实。服装形制、材质、颜色、纹样、整洁程度和配饰必须依据角色的时代、年龄、身份、职业、阶层、性格与经历生成，不预设具体人物造型。背景干净，人物轮廓和服装层次清楚；除指定角色名和视图标签外，不出现其他文字、水印或logo。
+  prop_design_style_prompt: 采用高质感东方玄幻3D国漫的通用道具设计语言。道具结构兼顾东方古典工艺、清晰功能逻辑和适度超自然想象；材料、纹样、磨损、制造精度、能量状态和使用方式必须符合其时代、用途、等级与持有者身份。织物、木材、石材、陶瓷、金属、药物和能量材质应有明确差异，环境光与自发光关系稳定。不预设具体道具类型，造型完整、比例准确、便于不同镜头复用。无人物、手持、可读文字、水印或logo。
+  layout_design_style_prompt: 采用高质感东方玄幻3D国漫的通用场景设计语言。具体空间的建筑形制、自然环境、功能分区、尺度、陈设、通行关系和使用痕迹必须依据剧情地点生成，并在同一世界观中保持结构、材质和装饰体系一致。使用青灰石材、深色木构、冷白雾气与克制金属装饰建立空间基调，超自然光效根据剧情需要出现但不取代真实光照逻辑。场景需支持竖屏近景表演、多人调度、动作场面与能量效果，不预设具体地点或剧情事件。无人物、字幕、水印或logo。
+postgen:
+  max_source_clips_per_plan: 9
+  render_width: 720
+  render_height: 1280
+  fps: 25
+  burn_subtitles: true
+  edit_plan_mode: deterministic
+  keep_tmp_cuts: true
+  voice_alignment:
+    enabled: false
+    demucs_model: htdemucs
+    demucs_device: cpu
+    diarization_model: pyannote/speaker-diarization-3.1
+    huggingface_token_env: HUGGINGFACE_TOKEN
+    speaker_role_map: {}
+    role_rvc_models: {}
+    speaker_rvc_models: {}
+    rvc_command: []
+    fail_on_unmapped_speaker: true
+  subtitles:
+    enabled: false
+    backend: whisperx
+    model: large-v3
+    language: zh
+    device: cpu
+    compute_type: int8
+    batch_size: 4
+    max_chars_per_line: 18
+    max_lines: 2
+    font_name: Microsoft YaHei
+  audit:
+    enabled: true
+    source_asr: true
+    source_audit: true
+    final_audit: true
+    frame_count: 9
+    include_audio: true
+    fail_on_reject: false
+    max_output_tokens: 8192
 nodes:
   script_outline:
     model: rightcode:gpt-5.6-terra
@@ -36,7 +111,8 @@ nodes:
   key_vision_image_generation:
     model: aibox:gpt-image-2-guan
     params:
-      size: 2160x3840
+      size: 3840x2160
+      quality: high
   role_extract_primary:
     model: rightcode:gpt-5.6-terra
     params:
@@ -49,23 +125,11 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
-  role_episode_key_audit:
+  role_finalize:
     model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.2
-      response_format: json_object
-  role_duplicate_audit:
-    model: rightcode:gpt-5.6-terra
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.2
-      response_format: json_object
-  ambient_entity_extract:
-    model: rightcode:gpt-5.6-terra
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.3
       response_format: json_object
   roleboard_prompt:
     model: rightcode:gpt-5.6-terra
@@ -85,31 +149,19 @@ nodes:
       size: 1088x1920
       quality: high
       image_generation_concurrency: 3
-  clip_prompt:
-    model: rightcode:gpt-5.6-terra
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.45
-      response_format: json_object
   clip_storyboard_prompt:
     model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
-  clip_storyboard_prompt_audit:
-    model: rightcode:gpt-5.6-terra
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.2
-      response_format: json_object
-  # Image binding used internally by pregen node clip_storyboard_image_generation for the 12-panel storyboard sheet.
+      console_stream: false
   clip_storyboard_image_generation:
     model: aibox:gpt-image-2-guan
     params:
-      clip_storyboard_image_generation_concurrency: 4
+      clip_storyboard_image_generation_concurrency: 1
       size: 3840x2160
-      storyboard_panel_aspect_ratio: "4:3"
+      storyboard_panel_aspect_ratio: '4:3'
   clip_storyboard_keyframe_generation:
     model: aibox:gpt-image-2-guan
     params:
@@ -171,7 +223,7 @@ nodes:
   layout_image_generation:
     model: aibox:gpt-image-2-guan
     params:
-      size: 2160x3840
+      size: 3840x2160
       concurrency: 3
   bgm_design:
     model: rightcode:gpt-5.6-terra
@@ -186,65 +238,48 @@ nodes:
       sample_rate: 44100
       output_format: url
       is_instrumental: true
-  clip_video_generation:
-    model: volcengine:doubao-seedance-2-0-260128
+  role_kling_voice_generation:
+    model: kling:kling-v3-omni
     params:
-      ratio: "9:16"
-      resolution: 720p
-      generate_audio: false
-      return_last_frame: true
-      prompt_template: clip_video/volcengine
+      require_dialogue_voice: true
+  role_subject_video_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: '9:16'
+      mode: pro
+      sound: 'on'
+      watermark: false
+      max_reference_images: 2
+      max_reference_elements: 3
+      role_subject_video_generation_concurrency: 5
+  role_subject_video_intro_text:
+    model: rightcode:gpt-5.6-terra
+    params:
+      reasoning_effort: low
+      temperature: 0.5
+      response_format: json_object
+  role_subject_element_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: '9:16'
+      mode: pro
+      sound: native
+      watermark: false
+      subject_reference_type: image_refer
+  clip_video_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: '9:16'
+      mode: pro
+      audio: native
+      resolution: 1080p
+      multi_shot: false
+      watermark: false
+      prompt_template: clip_video/kling
       negative_rules:
-        - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示参考图版式或三视图布局。
-        - 不要把 12 宫格故事板画成最终成片，不要生成故事板线稿风格。
+      - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示场景三视图、人物三视图。
+      max_reference_images: 3
       clip_video_generation_concurrency: 5
-  # Optional Kling 3.0 Omni native-audio branch. Switch these bindings plus routing.video.shot to kling.
-  # role_kling_voice_generation auto-selects an official voice; role_voice_map is optional override.
-  # It resolves preset/custom voices, then
-  # role_subject_element_generation binds each voice_id to the reusable role subject.
-  # role_kling_voice_generation:
-  #   model: kling:kling-v3-omni
-  #   params:
-  #     require_dialogue_voice: true
-  # role_subject_video_generation:
-  #   model: kling:kling-v3-omni
-  #   params:
-  #     aspect_ratio: "9:16"
-  #     mode: pro
-  #     sound: "on"
-  #     watermark: false
-  #     max_reference_images: 2
-  #     max_reference_elements: 3
-  #     role_subject_video_generation_concurrency: 5
-  # role_subject_video_intro_text:
-  #   model: rightcode:gpt-5.6-terra
-  #   params:
-  #     reasoning_effort: low
-  #     temperature: 0.5
-  #     response_format: json_object
-  # role_subject_element_generation:
-  #   model: kling:kling-v3-omni
-  #   params:
-  #     aspect_ratio: "9:16"
-  #     mode: pro
-  #     sound: "on"
-  #     watermark: false
-  #     subject_reference_type: image_refer
-  # clip_video_generation:
-  #   model: kling:kling-v3-omni
-  #   params:
-  #     aspect_ratio: "9:16"
-  #     mode: pro
-  #     audio: native
-  #     resolution: 1080p
-  #     multi_shot: false
-  #     watermark: false
-  #     prompt_template: clip_video/kling
-  #     negative_rules:
-  #       - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示参考图版式或三视图布局。
-  #       - 不要生成参考图拼版、三视图布局、宫格或面板编号；角色身份与音色以 subject element 为准。
-  #     max_reference_images: 3
-  #     clip_video_generation_concurrency: 5
   shot_dialogue_audio_generation:
     model: volcengine:seed-tts-2.0
     params:
@@ -272,125 +307,16 @@ nodes:
     params:
       temperature: 0.2
       response_format: json_object
-
-project:
-  # Stable ID is recommended because resume relies on it.
-  id: review_demo
-  title: 测试短片
-  script_outline_file: ./inputs/story_outline.md
-  # The script pipeline lets the text model split the story into this many episodes.
-  episode_count: 1
-  # Target duration for each episode, in seconds.
-  episode_duration_seconds: 30
-  # Exact number of reusable BGM tracks; set 0 to skip BGM design/generation.
-  bgm_count: 3
-output:
-  # All generated assets are saved under this directory.
-  # Relative paths are resolved from the working directory.
-  root_dir: ./outputs
-  project_dir_template: "{date}_{slug}"
-  db_filename: autodrama.sqlite
-  subdirs:
-    logs: logs
-    assets: assets
-    outputs: outputs
-    images: assets/images
-    videos: assets/videos
-    audios: assets/audios
-    json: assets/json
-
-runtime:
-  python:
-    # The key is selected by scripts/env.sh after platform detection.
-    # Supported keys: windows, macos, linux, default.
-    windows: D:/miniforge3/envs/autodrama/python.exe
-    linux: python3
-    macos: python3
-    default: python3
-  max_text_retry: 3
-  max_media_retry: 2
-  request_timeout_seconds: 120
-  ffmpeg_path: ffmpeg
-
-budget:
-  max_total_cny: 100
-  max_image_count: 20
-  max_video_seconds: 45
-  max_music_count: 5
-  max_text_calls: 200
-
-generation:
-  # Used by roleboard_image_generation as Image 2 style references.
-  roleboard_style_reference_dir: ./.assets/sample
-  # Global visual style prompt used by key_vision_prompt.
-  visual_style_prompt: >
-    保持国漫CG/动画电影短剧主视觉质感，人物、场景、道具和光影属于同一美术体系；
-    画面有明确戏剧冲突、纵深层次和电影镜头感，色彩克制但记忆点清晰。
-    避免真人照片质感、可读文字、字幕、水印、logo和无关装饰。
-  # Unified role image style prompt used by roleboard_prompt and roleboard_image_generation.
-  roleboard_style_prompt: >
-    使用参考图片作为统一人物美术风格、材质质感、光影、色彩和画面气质参考。
-    人物保持国漫CG/动画电影角色质感，明显非真人摄影，脸部为风格化CG美术表现，
-    避免真实人脸毛孔、汗渍、微血管等照片级细节。保留东方修仙题材的服饰层次、
-    旧布料、金属、石材和随身道具材质差异。背景保持干净，除指定角色名和视图标签外，
-    不出现其他文字、水印或logo。
-  prop_design_style_prompt: >
-    道具图保持国漫CG/动画电影资产设定图质感，材质区分清楚，轮廓完整可读；
-    光影干净，背景简洁，无人物、无手持、无文字、水印或logo。重点表现尺寸比例、
-    材质、磨损、能量状态和一眼可识别的结构细节。
-  layout_design_style_prompt: >
-    场景图保持国漫CG/动画电影无人物场景三视图设定板质感，空间结构清晰；
-    顶视平面、正向主视和侧向/45度透视必须统一为同一个空间，用于后续短剧取景参考。
-    材质、光源、阴影、空气粒子和色彩关系稳定可复用，适配16:9横向资产设定板和9:16短剧镜头取景。
-    不出现人物、背影、手、剪影、字幕、水印、文字标识或无关logo。
-
-postgen:
-  max_source_clips_per_plan: 9
-  render_width: 720
-  render_height: 1280
-  fps: 25
-  burn_subtitles: true
-  # Use deterministic for local dry-runs; llm calls routing.text.postgen_edit_plan.
-  edit_plan_mode: llm
-  keep_tmp_cuts: true
-  voice_alignment:
-    enabled: false
-    demucs_model: htdemucs
-    demucs_device: cpu
-    diarization_model: pyannote/speaker-diarization-3.1
-    huggingface_token_env: HUGGINGFACE_TOKEN
-    speaker_role_map:
-      episode_001:SPEAKER_00: role_a
-      episode_001:SPEAKER_01: role_b
-    role_rvc_models:
-      role_a: ./models/rvc/role_a.pth
-      role_b: ./models/rvc/role_b.pth
-    speaker_rvc_models:
-      SPEAKER_00: ./models/rvc/role_a.pth
-      SPEAKER_01: ./models/rvc/role_b.pth
-    rvc_command: []
-    fail_on_unmapped_speaker: true
-  subtitles:
-    enabled: false
-    backend: whisperx
-    model: large-v3
-    language: zh
-    device: cpu
-    compute_type: int8
-    batch_size: 4
-    max_chars_per_line: 18
-    max_lines: 2
-    font_name: Microsoft YaHei
-  audit:
-    enabled: false
-    source_asr: true
-    source_audit: true
-    final_audit: true
-    frame_count: 9
-    include_audio: true
-    fail_on_reject: false
-    max_output_tokens: 8192
-
+  postgen_source_audit:
+    model: aibox:gemini-3.5-flash
+    params:
+      temperature: 0.1
+      max_output_tokens: 8192
+  postgen_final_audit:
+    model: aibox:gemini-3.5-flash
+    params:
+      temperature: 0.1
+      max_output_tokens: 8192
 providers:
   aliyun:
     base_url: https://dashscope.aliyuncs.com
@@ -419,12 +345,11 @@ providers:
       n: 1
       thinking_mode: true
       resolution: 720P
-      ratio: "16:9"
+      ratio: '16:9'
       prompt_extend: true
       watermark: false
       poll_interval_seconds: 15
       max_polls: 80
-
   aliyun_omni:
     base_url: https://dashscope.aliyuncs.com
     api_key_env: ALIYUN_API_KEY
@@ -432,31 +357,29 @@ providers:
       audio_judge: qwen3.5-omni-plus
     options:
       omni_response_format: false
-
   rightcode:
-    base_url: https://www.right.codes/draw
+    base_url: https://www.right.codes
     api_key_env: RIGHTCODE_API_KEY
     models:
       text: gpt-5.6-terra
       storyboard: gpt-5.6-terra
       image: gpt-image-2
-      # Used by key_vision_image_generation for the global key visual original.
       key_vision: gpt-image-2
-      # Used by roleboard_image_generation for role identity boards.
       roleboard: gpt-image-2-vip
     options:
+      model_base_paths:
+        gpt-5.6-terra: /codex
+        gpt-image-2: /draw
+        gpt-image-2-vip: /draw
       text_response_format: true
       reasoning_effort: xhigh
       storyboard_reasoning_effort: xhigh
       size: 1024x1024
-      # Used by roleboard_image_generation for role identity boards.
       roleboard_size: 3840x2160
       roleboard_quality: high
-      # Used by key_vision_image_generation for the global key visual original.
       key_vision_size: 1024x1536
       key_vision_quality: high
       n: 1
-
   aibox:
     base_url: https://api.lk888.ai
     api_key_env: AIBOX_API_KEY
@@ -472,39 +395,37 @@ providers:
     options:
       size: auto
       quality: auto
-      key_vision_size: 2160x3840
+      key_vision_size: 3840x2160
+      key_vision_quality: high
       roleboard_size: 3840x2160
       storyboard_size: 2048x2048
       prop_size: 2048x2048
       layout_size: 2160x3840
       max_reference_images: 14
-      aibox_request_timeout_seconds: 60
+      aibox_request_timeout_seconds: 240
       aibox_max_attempts: 3
       aibox_retry_initial_delay_seconds: 2
       aibox_retry_max_delay_seconds: 30
       poll_interval_seconds: 4
       max_wait_seconds: 900
-
   toapi:
     base_url: https://toapis.com
     api_key_env: TOAPI_API_KEY
     models:
       image: gpt-image-2
-      # Used by key_vision_image_generation for the global key visual original.
       key_vision: gpt-image-2
-      # Used by roleboard_image_generation for the final 16:9 role identity board.
       roleboard: gpt-image-2
     options:
       resolution: 4K
-      size: "16:9"
-      roleboard_size: "16:9"
+      size: '16:9'
+      roleboard_size: '16:9'
       roleboard_resolution: 4K
-      key_vision_size: "9:16"
+      key_vision_size: '9:16'
       key_vision_resolution: 4K
-      prop_size: "1:1"
+      prop_size: '1:1'
       prop_resolution: 2K
       prop_image_generation_concurrency: 3
-      layout_size: "9:16"
+      layout_size: '9:16'
       layout_resolution: 4K
       response_format: url
       n: 1
@@ -514,9 +435,9 @@ providers:
       toapi_reference_upload_max_attempts: 5
       toapi_reference_upload_retry_initial_delay_seconds: 2
       toapi_reference_upload_retry_max_delay_seconds: 30
+      toapi_reference_url_cache_ttl_seconds: 86400
       poll_interval_seconds: 3
       max_wait_seconds: 900
-
   deepseek:
     base_url: https://api.deepseek.com
     api_key_env: DEEPSEEK_API_KEY
@@ -528,7 +449,6 @@ providers:
       thinking_enabled: true
       storyboard_reasoning_effort: max
       storyboard_thinking_enabled: true
-
   google:
     base_url: https://generativelanguage.googleapis.com
     api_key_env: GOOGLE_API_KEY
@@ -539,7 +459,6 @@ providers:
       response_format: json_object
       temperature: 0.2
       max_output_tokens: 8192
-
   minimax:
     base_url: https://api.minimaxi.com
     api_key_env: MINIMAX_API_KEY
@@ -556,7 +475,6 @@ providers:
       lyrics_optimizer: false
       aigc_watermark: false
       music_timeout_seconds: 600
-
   elevenlabs:
     base_url: https://api.elevenlabs.io
     api_key_env: ELEVENLABS_API_KEY
@@ -567,7 +485,6 @@ providers:
       force_instrumental: true
       respect_sections_durations: true
       music_timeout_seconds: 600
-
   volcengine:
     base_url: https://openspeech.bytedance.com
     region: cn-beijing
@@ -611,16 +528,11 @@ providers:
       seedream_max_reference_images: 14
       seedance_base_url: https://ark.cn-beijing.volces.com
       seedance_api_key_env: VOLCENGINE_API_KEY
-      video_ratio: "9:16"
+      video_ratio: '9:16'
       video_resolution: 720p
-      # Seedance video refs are prepared by clip_manifest_generation as fixed clip_video_inputs.
-      # Kling subject mode submits start/end anchors plus storyboard/layout/prop refs;
-      # roles are submitted separately as subject elements.
       video_reference_mode: full
       previous_video_preroll_seconds: 0
-      # For Kling this limits refer_image inputs (storyboard/layout/prop), excluding
-      # the dedicated first/last-frame anchors and subject elements.
-      max_reference_images: 3
+      max_reference_images: 4
       max_reference_audio: 1
       max_reference_audio_duration_seconds: 15.2
       max_reference_videos: 2
@@ -687,14 +599,12 @@ providers:
           speech_rate: 0
           loudness_rate: 0
           instruction: 按角色设定自然表达，根据文本上下文微调情绪。
-      # Only used by the legacy Volcengine voice design/clone provider.
       speaker_id_pool: []
       poll_interval_seconds: 5
       max_polls: 60
       voice_clone_extra_params:
-        voice_clone_denoise_model_id: ""
+        voice_clone_denoise_model_id: ''
         enable_audio_denoise: false
-
   kling:
     base_url: https://api-beijing.klingai.com
     api_key_env: KLING_API_KEY
@@ -702,11 +612,10 @@ providers:
       video: kling-v3-omni
       subject_element: advanced-custom-elements
     options:
-      # official_v3 uses /omni-video/kling-3.0-omni and /tasks from kling_omni_pipeline.md.
       api_schema: official_v3
       mode: pro
       resolution: 1080p
-      aspect_ratio: "9:16"
+      aspect_ratio: '9:16'
       duration: 5
       sound: native
       multi_shot: false
@@ -717,35 +626,18 @@ providers:
       max_reference_images: 3
       max_reference_elements: 3
       require_dialogue_voice: true
-      # On first use, cache the official Kling voice list and trial clips under
-      # .assets/voice_catalog/kling_omni/kling-v3-omni/. Reuse the cache offline.
       auto_select_official_voice: true
       refresh_official_voice_catalog: false
       download_official_voice_trials: true
       official_voice_download_concurrency: 8
-      # Preserve every official trial; when it is shorter than 5s, use the same
-      # Kling voice_id with /v1/audio/tts to build an approximately 8s normal sample.
       synthesize_short_official_voice_trials: true
       official_voice_min_sample_seconds: 5
       official_voice_tts_target_seconds: 8
-      # /v1/general/presets-voices and /v1/audio/tts use different ID spaces.
-      # Key: Omni preset voice_id; value: officially mapped avatar TTS voice_id.
       official_voice_tts_map: {}
-      # Set false only when the machine's HTTP(S) proxy breaks Kling TLS.
-      httpx_trust_env: true
-      # Key by stable role_id (preferred) or exact role name.
-      # Manual mappings override automatic official-voice selection.
-      # A string is an existing Kling preset/custom voice_id.
-      # An object with voice_url creates a custom voice from a public 5-30 second clean sample.
+      httpx_trust_env: false
       role_voice_map: {}
-      # role_voice_map:
-      #   role_江未晞: "850087542757535834"
-      #   role_九韶:
-      #     voice_name: 九韶
-      #     voice_url: https://your-cdn.example.com/jiushao-clean-voice.wav
       poll_interval_seconds: 10
       max_polls: 120
-
 routing:
   text:
     script: rightcode
@@ -755,25 +647,26 @@ routing:
     prop: rightcode
     layout: rightcode
     storyboard: rightcode
+    shot_bgm: rightcode
     postgen_edit_plan: google
     postgen_audit: aibox
     edit_plan: rightcode
     bgm_plan: rightcode
   image:
-    # Reusable global assets and pregen storyboard sheets.
     role: aibox
     key_vision: aibox
     storyboard: aibox
     prop: aibox
     layout: aibox
   video:
-    shot: volcengine
+    shot: kling
     upscale: volcengine
   audio:
     speech: volcengine
     music: minimax
   music:
     bgm: minimax
+    shot_bgm: elevenlabs
   judge:
     voice_catalog_profile: aliyun_omni
     role_voice_select: aliyun_omni

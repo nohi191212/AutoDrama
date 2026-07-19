@@ -1,22 +1,18 @@
 固定输入说明：
-- {{clip_start_frame_slot}}：clip_start_frame。首个 clip 时是当前 clip 的首帧；非首个 clip 时是上一 clip 的尾帧，只用于当前视频开头连续性。
-- {{clip_end_frame_slot}}：clip_end_frame。当前 clip 的尾帧，视频必须最终收束到这张图。
-- {{storyboard_input_slot}}：当前 clip 的 12 宫格故事板整图，只锁定构图、景别、机位、动作方向、camera shot 边界、镜头节奏和面板顺序。
-- 人物参考：{{roleboard_input_slots}}，只锁定人物身份、脸型、发型、服装、体态、配饰和年龄感。
-- 场景参考：{{layout_input_slots}}，只锁定空间结构、材质、光照、尺度和可取景区域。
-- 道具参考：{{prop_input_slots}}，只锁定道具造型、材质、尺寸和识别细节。
+- {{start_frame_input_slot}}：当前 clip 的首帧，必须作为视频起始画面与姿态锚点。
+- {{end_frame_input_slot}}：当前 clip 的尾帧，必须作为视频结束画面与姿态锚点。
+- {{storyboard_input_slot}}：当前 clip 的 12 宫格故事板整图，只用于辅助理解 Camera Shot 的构图、动作方向和切镜边界；不要把宫格、箭头或编号画进成片。
+- 人物主体：由生成节点按当前 clip 的角色列表追加 Kling subject element，并通过 @role_1、@role_2 等占位符绑定；人物身份与音色以主体为唯一准则。
 
-首尾帧与衔接规则：
-{{clip_continuity_instructions}}
+镜头与片段规则：
+- 从首帧自然演进到尾帧，只在明确的 Camera Shot 边界切镜；不要把故事板面板当成独立镜头。
+- 人物姿态、朝向和空间位置必须按 Camera Shot 描述连续变化，不得自行增加起身、转身或走位。
 
-输入清单：
-{{clip_video_inputs_json}}
-
-当前 clip 的 camera shot 与十二宫格面板内容：
+当前 clip 的 Camera Shot：
 {{video_prompt}}
 
 模型强相关负向规则：
 {{negative_rules}}
 
 Kling Omni 执行要求：
-生成 {{duration_seconds}} 秒电影级真人剧视频。严格按当前 clip 的 Camera Shot 段落推进动作和镜头运动；不要逐秒硬切，不要把每个故事板面板当成独立镜头。首尾帧优先级高于 storyboard、人物、场景和道具参考。只在 video_prompt 明确标出的 Camera Shot 边界处切镜，大部分镜头保持 3-6 秒连续运动。非首个 clip 必须从上一 clip 尾帧开始并立刻硬切到当前 clip 的 P01 内容，不要做丝滑变形过渡。参考图只作为输入锚点，不使用 subject element，不生成参考图版式、三视图布局、宫格或面板编号。
+生成 {{duration_seconds}} 秒电影级真人剧视频。严格按当前 clip 的 2-3 个 Camera Shot 推进，只在明确边界切镜。固定机位必须严格保持固定，不得自行增加推近、拉远、摇移、环绕、升降、手持晃动、跟随、变焦或拉焦。角色身份和音色以 Kling subject element 为准。首尾帧控制起止状态，故事板只辅助镜头顺序。不要生成参考图版式、三视图、宫格、箭头或面板编号。

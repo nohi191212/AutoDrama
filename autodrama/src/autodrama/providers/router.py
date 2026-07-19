@@ -262,6 +262,34 @@ class BoundProviderProxy:
             metadata=self._metadata(metadata),
         )
 
+    async def create_custom_voice(self, *, voice_name, voice_url=None, video_id=None, metadata=None):
+        return await self._provider.create_custom_voice(
+            voice_name=voice_name,
+            voice_url=voice_url,
+            video_id=video_id,
+            metadata=self._metadata(metadata),
+        )
+
+    async def query_custom_voice(self, task_id):
+        return await self._provider.query_custom_voice(task_id)
+
+    async def generate_custom_voice(
+        self,
+        *,
+        voice_name,
+        voice_url=None,
+        video_id=None,
+        wait: bool = True,
+        metadata=None,
+    ):
+        return await self._provider.generate_custom_voice(
+            voice_name=voice_name,
+            voice_url=voice_url,
+            video_id=video_id,
+            wait=wait,
+            metadata=self._metadata(metadata),
+        )
+
     async def create_voice(self, *, voice_prompt, preview_text, preferred_name, metadata=None):
         return await self._provider.create_voice(
             voice_prompt=voice_prompt,

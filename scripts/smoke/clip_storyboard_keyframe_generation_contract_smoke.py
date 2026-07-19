@@ -49,13 +49,13 @@ def main() -> None:
         raise AssertionError("first clip start frame is missing")
     if ("episode_001", "episode_001_clip_002", "start") in by_key:
         raise AssertionError("non-first clip should not generate its own start frame")
-    previous_end = ClipManifestGenerationNode._require_keyframe(
+    ClipManifestGenerationNode._require_keyframe(
         by_key,
         episode_key="episode_001",
         clip_id="episode_001_clip_001",
         frame_role="end",
     )
-    current_end = ClipManifestGenerationNode._require_keyframe(
+    ClipManifestGenerationNode._require_keyframe(
         by_key,
         episode_key="episode_001",
         clip_id="episode_001_clip_002",
@@ -65,8 +65,6 @@ def main() -> None:
     node = ClipManifestGenerationNode.__new__(ClipManifestGenerationNode)
     inputs, warnings = node._clip_video_inputs_for_shot(
         state=SimpleNamespace(roles={}, layouts={}, props={}),
-        start_frame=previous_end,
-        end_frame=current_end,
         storyboard_sheet=StoryboardSheetGenerationItem(
             episode_key="episode_001",
             clip_id="episode_001_clip_002",
@@ -80,17 +78,11 @@ def main() -> None:
         role_appearance_ids=[],
         layout_ids=[],
         prop_ids=[],
-        is_first_clip=False,
-        start_frame_source_clip_id="episode_001_clip_001",
     )
     if warnings:
         raise AssertionError(f"unexpected warnings: {warnings}")
-    if [item.asset_type for item in inputs[:3]] != ["clip_start_frame", "clip_end_frame", "storyboard"]:
-        raise AssertionError("shot video inputs must start with previous end, current end, storyboard")
-    if inputs[0].asset_id != previous_end.asset_id:
-        raise AssertionError("non-first clip start frame should come from previous clip end frame")
-    if inputs[0].metadata.get("source_clip_id") != "episode_001_clip_001":
-        raise AssertionError("start frame source clip id was not recorded")
+    if [item.asset_type for item in inputs] != ["storyboard"]:
+        raise AssertionError("manual keyframes must not enter shot video inputs")
 
     tmp_dir = ROOT / ".tmp"
     tmp_dir.mkdir(exist_ok=True)

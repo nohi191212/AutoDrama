@@ -41,6 +41,7 @@ from autodrama.workflows.selection import normalize_shot_selectors, select_episo
 
 POSTGEN_NODES = [
     "postgen_source_collect",
+    "postgen_source_asr",
     "postgen_source_audit",
     "postgen_edit_plan_generation",
     "postgen_edit_plan_validation",
@@ -84,6 +85,17 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
         state = self.repo.load_state(project_dir)
         selected_episode_keys = select_episode_keys(state, episode_keys)
         target_nodes = [only] if only else POSTGEN_NODES[: POSTGEN_NODES.index(until) + 1]
+        if only is None and not self.repo.settings.postgen.voice_alignment.enabled:
+            target_nodes = [
+                node
+                for node in target_nodes
+                if node
+                not in {
+                    "postgen_audio_separation",
+                    "postgen_speaker_diarization",
+                    "postgen_voice_conversion",
+                }
+            ]
         logger.info(
             "workflow=postgen project_id=%s until=%s only=%s force=%s episodes=%s shots=%s",
             state.project_id,
@@ -151,6 +163,9 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
     def _source_audit_path(self, project_dir: Path, episode_key: str) -> Path:
         return self._json_dir(project_dir) / "audits" / f"{episode_key}.source.json"
 
+    def _source_transcript_path(self, project_dir: Path, episode_key: str) -> Path:
+        return self._json_dir(project_dir) / "transcripts" / f"{episode_key}.source.json"
+
     def _raw_plan_path(self, project_dir: Path, episode_key: str) -> Path:
         return self._json_dir(project_dir) / "edit_plans" / f"{episode_key}.raw.json"
 
@@ -184,6 +199,7 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
     def _node_outputs_exist(self, project_dir: Path, node_name: str, episode_keys: list[str]) -> bool:
         path_for = {
             "postgen_source_collect": self._source_clips_path,
+            "postgen_source_asr": self._source_transcript_path,
             "postgen_source_audit": self._source_audit_path,
             "postgen_edit_plan_generation": self._raw_plan_path,
             "postgen_edit_plan_validation": self._validated_plan_path,
@@ -216,6 +232,56 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
         state.metadata["postgen_source_clips"] = outputs
         return state
 
+    async def _run_postgen_source_asr(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        episode_keys: list[str],
+    ) -> ProjectState:
+        audit_settings = self.repo.settings.postgen.audit
+        asr_settings = self.repo.settings.postgen.subtitles
+        enabled = bool(audit_settings.enabled and audit_settings.source_asr)
+        outputs: list[dict[str, Any]] = []
+        for episode_key in episode_keys:
+            clips = self._load_source_clips(project_dir, episode_key)
+            clip_results: list[dict[str, Any]] = []
+            for clip in clips:
+                if enabled:
+                    source_path = Path(clip.source_path)
+                    if not source_path.is_absolute():
+                        source_path = project_dir / source_path
+                    audio_path = self._audio_dir(project_dir, episode_key) / "source_asr" / f"{clip.shot_id}.wav"
+                    await extract_audio(
+                        source_path,
+                        audio_path,
+                        ffmpeg_path=self.repo.settings.runtime.ffmpeg_path,
+                    )
+                    transcript = await transcribe(audio_path, asr_settings)
+                else:
+                    transcript = {"language": asr_settings.language, "segments": []}
+                clip_results.append(
+                    {
+                        "shot_id": clip.shot_id,
+                        "source_path": clip.source_path,
+                        "expected_dialogue_lines": clip.dialogue_lines,
+                        "transcript": transcript,
+                    }
+                )
+            path = self._source_transcript_path(project_dir, episode_key)
+            manifest = {"episode_key": episode_key, "enabled": enabled, "clips": clip_results}
+            self.repo.write_json(path, manifest)
+            outputs.append(
+                {
+                    "episode_key": episode_key,
+                    "path": self._relative(project_dir, path),
+                    "enabled": enabled,
+                    "clip_count": len(clip_results),
+                }
+            )
+        self.repo.save_node_output(project_dir, "postgen_source_asr", {"episodes": outputs})
+        state.metadata["postgen_source_transcripts"] = outputs
+        return state
+
     async def _run_postgen_source_audit(self, project_dir: Path, state: ProjectState, episode_keys: list[str]) -> ProjectState:
         settings = self.repo.settings.postgen.audit
         provider = None
@@ -224,6 +290,8 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
         outputs: list[dict[str, Any]] = []
         for episode_key in episode_keys:
             clips = self._load_source_clips(project_dir, episode_key)
+            transcript_path = self._source_transcript_path(project_dir, episode_key)
+            source_transcripts = self._read_json(transcript_path) if transcript_path.exists() else {"clips": []}
             if provider is None:
                 report = PostgenSourceAuditReport(
                     episode_key=episode_key,
@@ -241,6 +309,7 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
                         work_dir=self._tmp_dir(project_dir, episode_key, "source_audit"),
                         settings=settings,
                         ffmpeg_path=self.repo.settings.runtime.ffmpeg_path,
+                        source_transcripts=source_transcripts,
                     )
                 self._validate_source_audit(report, clips)
                 mode = "gemini"
@@ -512,16 +581,19 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
 
     async def _run_postgen_subtitle_asr(self, project_dir: Path, state: ProjectState, episode_keys: list[str]) -> ProjectState:
         settings = self.repo.settings.postgen.subtitles
+        audit = self.repo.settings.postgen.audit
+        enabled = bool(settings.enabled or (audit.enabled and audit.final_audit))
         outputs: list[dict[str, Any]] = []
         for episode_key in episode_keys:
             path = self._transcript_path(project_dir, episode_key)
-            if not settings.enabled:
+            if not enabled:
                 result: dict[str, Any] = {"enabled": False, "language": settings.language, "segments": []}
             else:
                 audio_path = self._audio_dir(project_dir, episode_key) / "subtitle_audio.wav"
                 await extract_audio(self._aligned_video_path(project_dir, episode_key), audio_path, ffmpeg_path=self.repo.settings.runtime.ffmpeg_path)
                 result = await transcribe(audio_path, settings)
                 result["enabled"] = True
+                result["purpose"] = "subtitles_and_final_audit" if settings.enabled else "final_audit"
             self.repo.write_json(path, result)
             outputs.append({"episode_key": episode_key, "path": self._relative(project_dir, path), "segment_count": len(result.get("segments", []))})
         self.repo.save_node_output(project_dir, "postgen_subtitle_asr", {"episodes": outputs})

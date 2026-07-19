@@ -152,10 +152,16 @@ async def audit_source_clips(
     work_dir: Path,
     settings: AuditSettings,
     ffmpeg_path: str,
+    source_transcripts: dict[str, Any] | None = None,
 ) -> PostgenSourceAuditReport:
     refs: list[AssetRef] = []
     clip_payload: list[dict[str, Any]] = []
     per_clip_frames = max(3, settings.frame_count // max(1, len(clips)))
+    transcript_by_shot = {
+        str(item.get("shot_id")): item.get("transcript") or {}
+        for item in (source_transcripts or {}).get("clips", [])
+        if isinstance(item, dict) and item.get("shot_id")
+    }
     for clip in clips:
         source_path = project_dir / clip.source_path if not Path(clip.source_path).is_absolute() else Path(clip.source_path)
         sheet = await extract_contact_sheet(
@@ -166,21 +172,39 @@ async def audit_source_clips(
             ffmpeg_path=ffmpeg_path,
         )
         refs.append(AssetRef(id=clip.shot_id, type="image", path=str(sheet)))
+        audit_video_ref = None
+        if settings.include_audio:
+            audit_video = await extract_audit_video(
+                source_path,
+                work_dir / f"{clip.shot_id}_audit.mp4",
+                ffmpeg_path=ffmpeg_path,
+            )
+            audit_video_ref = f"{clip.shot_id}_video"
+            refs.append(AssetRef(id=audit_video_ref, type="video", path=str(audit_video)))
         clip_payload.append(
             {
                 "shot_id": clip.shot_id,
                 "duration_seconds": clip.duration_seconds,
                 "dialogue_lines": clip.dialogue_lines,
+                "asr_segments": transcript_by_shot.get(clip.shot_id, {}).get("segments", []),
                 "content": clip.content,
                 "contact_sheet_ref": clip.shot_id,
+                "audit_video_ref": audit_video_ref,
             }
         )
 
+    audio_instruction = (
+        "每个镜头还附有含音频的低码率连续视频。检查实际对白是否与 dialogue_lines 一致、说话角色是否正确、"
+        "角色间音色是否串换、口型是否同步，以及爆音、断音、环境声遮挡。ASR 仅作为辅助证据，"
+        "应结合实际听感判断；明显错词、漏词、串角色或口型错误应 trim/reject。"
+        if settings.include_audio
+        else "本次没有提供连续音频，不要判断音质、音色身份或口型同步。"
+    )
     prompt = (
         "你是短剧源素材审计员。每张联系表按时间从左到右、从上到下展示对应镜头。"
         "检查人物/道具/场景连续性、AI生成伪影、黑帧、画面突变和镜头头尾可剪区间。"
-        "此阶段没有提供连续音频，不要对音质或口型同步下结论；这些项目由最终成片审计负责。"
-        "只基于可见证据，不臆测；时间必须落在对应素材时长内。"
+        + audio_instruction
+        + "只基于可见证据，不臆测；时间必须落在对应素材时长内。"
         "verdict=pass 表示可直接用，trim 表示需按 usable_start/usable_end 裁剪，reject 表示整段不可用。"
         "返回结构化 JSON，并为每个 shot_id 恰好返回一项。\n\n"
         f"素材：{json.dumps(clip_payload, ensure_ascii=False, indent=2)}"

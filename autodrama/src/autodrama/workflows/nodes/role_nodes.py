@@ -1148,6 +1148,14 @@ class RoleboardPromptNode(RoleNodeBase):
             appearance.model = existing_appearance.model
             appearance.request_id = existing_appearance.request_id
             appearance.usage = existing_appearance.usage
+            appearance.subject_frontal_image_asset_id = existing_appearance.subject_frontal_image_asset_id
+            appearance.subject_frontal_image_asset_path = existing_appearance.subject_frontal_image_asset_path
+            appearance.subject_frontal_image_asset_url = existing_appearance.subject_frontal_image_asset_url
+            appearance.subject_frontal_image_provider = existing_appearance.subject_frontal_image_provider
+            appearance.subject_frontal_image_model = existing_appearance.subject_frontal_image_model
+            appearance.subject_frontal_image_request_id = existing_appearance.subject_frontal_image_request_id
+            appearance.subject_frontal_image_usage = existing_appearance.subject_frontal_image_usage
+            appearance.subject_frontal_image_raw_response = existing_appearance.subject_frontal_image_raw_response
         role.appearances[item.appearance_name] = appearance
         state.roles[item.role_id] = role
         if self.workflow._role_needs_voice(role):

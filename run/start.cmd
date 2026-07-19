@@ -151,7 +151,8 @@ echo Notes:
 echo   pregen writes roleboards, prop/layout assets, 12-panel storyboard sheets, and shot manifests through clip_manifest_generation.
 echo   ambient entity, role subject, role voice selection, and BGM nodes are optional and can be run with --only.
 echo   pregen visual/static chain is roleboard_prompt, roleboard_image_generation, prop/layout generation,
-echo   clip_prompt, clip_storyboard_prompt, clip_storyboard_image_generation, clip_storyboard_keyframe_generation, then clip_manifest_generation.
+echo   clip_prompt, clip_storyboard_prompt, clip_storyboard_image_generation, then clip_manifest_generation.
+echo   clip_storyboard_keyframe_generation remains available only as an optional manual node.
 echo   pregen --roles is supported with --only role_voice_select.
 echo   pregen --clips is supported with --only clip_storyboard_prompt, clip_storyboard_image_generation, clip_storyboard_keyframe_generation, or clip_manifest_generation.
 echo   generation starts with shot_dialogue_audio_generation, then clip_video_generation and solidification.

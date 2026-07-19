@@ -18,25 +18,29 @@ from autodrama.workflows.runner import node_is_completed
 
 REMOVED_FROM_DEFAULT = [
     "role_subject_video_generation",
-    "role_subject_element_generation",
     "role_voice_select",
 ]
 
 INSERTED_AFTER_ROLEBOARD = [
+    "role_subject_frontal_image_generation",
     "prop_extract",
     "prop_finalize",
-    "prop_prompt",
-    "prop_image_generation",
     "layout_extract",
     "layout_finalize",
+    "layout_prop_boundary_review",
+    "prop_prompt",
     "layout_prompt",
+    "prop_image_generation",
     "layout_image_generation",
+    "role_kling_voice_generation",
+    "role_subject_element_generation",
     "clip_segment",
 ]
 
 STORYBOARD_CHAIN = [
     "clip_prompt",
     "clip_storyboard_prompt",
+    "clip_storyboard_prompt_audit",
     "clip_storyboard_image_generation",
     "clip_storyboard_keyframe_generation",
     "clip_manifest_generation",
@@ -109,6 +113,8 @@ def main() -> None:
             raise AssertionError(f"{node_name} should not be in the default pregen chain")
         if node_name not in PREGEN_ONLY_NODES:
             raise AssertionError(f"{node_name} should remain available through pregen --only")
+    if "clip_storyboard_keyframe_generation" not in PREGEN_NODES:
+        raise AssertionError("clip_storyboard_keyframe_generation should run before the Kling manifest")
 
     expected_role_chain = ["role_extract_primary", "role_extract_functional", "role_finalize", "roleboard_prompt"]
     role_index = PREGEN_NODES.index("role_extract_primary")
@@ -136,16 +142,14 @@ def main() -> None:
             f"got {actual_script_key_vision_chain!r}"
         )
 
-    prop_finalize_index = PREGEN_NODES.index("prop_finalize")
-    if PREGEN_NODES[prop_finalize_index + 1] != "prop_prompt":
-        raise AssertionError("prop_prompt should run immediately after prop_finalize")
-    prop_image_index = PREGEN_NODES.index("prop_image_generation")
-    if PREGEN_NODES[prop_image_index + 1] != "layout_extract":
-        raise AssertionError("layout_extract should run after prop_image_generation")
     layout_image_index = PREGEN_NODES.index("layout_image_generation")
-    if PREGEN_NODES[layout_image_index + 1] != "clip_segment":
-        raise AssertionError("clip_segment should run after prop/layout prompts/images")
-    if PREGEN_NODES[layout_image_index + 2] != "clip_prompt":
+    if PREGEN_NODES[layout_image_index + 1 : layout_image_index + 4] != [
+        "role_kling_voice_generation",
+        "role_subject_element_generation",
+        "clip_segment",
+    ]:
+        raise AssertionError("Kling frontal/voice/subject assets must be prepared before clip segmentation")
+    if PREGEN_NODES[layout_image_index + 4] != "clip_prompt":
         raise AssertionError("clip_prompt should run after clip_segment")
     storyboard_index = PREGEN_NODES.index("clip_prompt")
     actual_storyboard_chain = PREGEN_NODES[storyboard_index : storyboard_index + len(STORYBOARD_CHAIN)]

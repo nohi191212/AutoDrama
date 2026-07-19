@@ -33,30 +33,21 @@ def main() -> None:
     inputs = [
         ClipVideoInput(
             slot="image_1",
-            asset_type="clip_start_frame",
-            asset_id="episode_001_clip_001_end_frame",
-            asset_path="assets/images/storyboard_keyframes/episode_001_clip_001_end_frame.png",
-            source_node="clip_storyboard_keyframe_generation",
-            label="previous end",
-            order=1,
-        ),
-        ClipVideoInput(
-            slot="image_2",
-            asset_type="clip_end_frame",
-            asset_id="episode_001_clip_002_end_frame",
-            asset_path="assets/images/storyboard_keyframes/episode_001_clip_002_end_frame.png",
-            source_node="clip_storyboard_keyframe_generation",
-            label="current end",
-            order=2,
-        ),
-        ClipVideoInput(
-            slot="image_3",
             asset_type="storyboard",
             asset_id="episode_001_clip_002_storyboard",
             asset_path="assets/images/storyboards/episode_001_clip_002_storyboard.png",
             source_node="clip_storyboard_image_generation",
             label="storyboard",
-            order=3,
+            order=1,
+        ),
+        ClipVideoInput(
+            slot="image_2",
+            asset_type="layout",
+            asset_id="layout_demo",
+            asset_path="assets/images/layouts/layout_demo.png",
+            source_node="layout_image_generation",
+            label="layout",
+            order=2,
         ),
     ]
     prompt, template = node._render_clip_video_prompt_template(
@@ -69,21 +60,22 @@ def main() -> None:
             "十二宫格面板规划 P01 P02 P03 P04 P05 P06 P07 P08 P09 P10 P11 P12。"
         ),
         clip_video_inputs=inputs,
-        is_first_clip=False,
-        start_frame_source_clip_id="episode_001_clip_001",
-        end_frame_source_clip_id="episode_001_clip_002",
     )
     if template != "clip_video/volcengine":
         raise AssertionError(f"unexpected prompt template: {template}")
-    required = ["上一条 clip", "必须从 image_1 开始", "立刻硬切", "P01", "不要把上一尾帧丝滑变形"]
+    required = ["每个 clip", "后期剪辑"]
     missing = [text for text in required if text not in prompt]
     if missing:
-        raise AssertionError(f"hard cut prompt is missing: {missing}")
+        raise AssertionError(f"frame-free prompt is missing: {missing}")
+    forbidden = ["必须从 image_1 开始", "上一条 clip", "最终收束到", "首尾帧优先级"]
+    leaked = [text for text in forbidden if text in prompt]
+    if leaked:
+        raise AssertionError(f"frame-anchor prompt leaked: {leaked}")
 
     tmp_dir = ROOT / ".tmp"
     tmp_dir.mkdir(exist_ok=True)
     (tmp_dir / "non_first_clip_hard_cut_prompt_smoke.ok").write_text("ok\n", encoding="utf-8")
-    print("non_first_clip_hard_cut_prompt_smoke: ok")
+    print("frame-free clip prompt smoke: ok")
 
 
 if __name__ == "__main__":

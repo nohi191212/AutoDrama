@@ -620,7 +620,32 @@
         max: 15
       sound:
         type: string
-        enum: ["on", "off"]
+        enum: ["on", "off", "native", "original"]
+      audio:
+        type: string
+        enum: ["native", "original", "off"]
+      resolution:
+        type: string
+        enum: ["720p", "1080p", "4k"]
+      multi_shot:
+        type: boolean
+      require_dialogue_voice:
+        type: boolean
+      auto_select_official_voice:
+        type: boolean
+      refresh_official_voice_catalog:
+        type: boolean
+      download_official_voice_trials:
+        type: boolean
+      force_official_voice_samples:
+        type: boolean
+      official_voice_download_concurrency:
+        type: integer
+        min: 1
+        max: 20
+      subject_reference_type:
+        type: string
+        enum: ["image_refer", "video_refer"]
       watermark:
         type: boolean
       prompt_template:

@@ -65,6 +65,14 @@ class RoleAppearance(BaseModel):
     model: str | None = None
     request_id: str | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
+    subject_frontal_image_asset_id: str | None = None
+    subject_frontal_image_asset_path: str | None = None
+    subject_frontal_image_asset_url: str | None = None
+    subject_frontal_image_provider: str | None = None
+    subject_frontal_image_model: str | None = None
+    subject_frontal_image_request_id: str | None = None
+    subject_frontal_image_usage: dict[str, Any] = Field(default_factory=dict)
+    subject_frontal_image_raw_response: dict[str, Any] = Field(default_factory=dict)
     subject_video_asset_id: str | None = None
     subject_video_asset_path: str | None = None
     subject_video_asset_url: str | None = None
@@ -79,6 +87,7 @@ class RoleAppearance(BaseModel):
     subject_element_provider: str | None = None
     subject_element_model: str | None = None
     subject_element_reference_type: str | None = None
+    subject_element_voice_id: str | None = None
     subject_element_id: str | None = None
     subject_element_task_id: str | None = None
     subject_element_task_status: str | None = None
@@ -106,6 +115,17 @@ class Role(BaseModel):
     voice_resource_id: str | None = None
     voice_model_family: str | None = None
     voice_selection_reason: str | None = None
+    kling_voice_id: str | None = None
+    kling_voice_name: str | None = None
+    kling_voice_source: Literal["preset", "custom"] | None = None
+    kling_voice_trial_url: str | None = None
+    kling_voice_provider: str | None = None
+    kling_voice_model: str | None = None
+    kling_voice_task_id: str | None = None
+    kling_voice_task_status: str | None = None
+    kling_voice_request_id: str | None = None
+    kling_voice_usage: dict[str, Any] = Field(default_factory=dict)
+    kling_voice_raw_response: dict[str, Any] = Field(default_factory=dict)
     aliases: list[str] = Field(default_factory=list)
     appearances: dict[str, RoleAppearance] = Field(default_factory=dict)
     audio: dict[str, RoleAudio] = Field(default_factory=dict)
@@ -516,6 +536,32 @@ class ClipStoryboardPromptModelItem(BaseModel):
 
 class ClipStoryboardPromptModelOutput(BaseModel):
     clips: list[ClipStoryboardPromptModelItem] = Field(min_length=1)
+
+
+class ClipStoryboardPromptAuditModelItem(BaseModel):
+    clip_id: str
+    changed: bool
+    issues: list[str] = Field(default_factory=list)
+    clip_storyboard_prompt: str
+
+
+class ClipStoryboardPromptAuditModelOutput(BaseModel):
+    clips: list[ClipStoryboardPromptAuditModelItem] = Field(min_length=1)
+
+
+class ClipStoryboardPromptAuditItem(BaseModel):
+    clip_id: str
+    changed: bool
+    issues: list[str] = Field(default_factory=list)
+
+
+class ClipStoryboardPromptAuditEpisode(BaseModel):
+    episode_key: str
+    clips: list[ClipStoryboardPromptAuditItem] = Field(default_factory=list)
+
+
+class ClipStoryboardPromptAuditOutput(BaseModel):
+    episodes: list[ClipStoryboardPromptAuditEpisode] = Field(default_factory=list)
 
 
 class StoryboardPromptClip(BaseModel):
@@ -1010,6 +1056,27 @@ class RoleSubjectVideoGenerationItem(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
+class RoleSubjectFrontalImageGenerationItem(BaseModel):
+    role_id: str
+    role_name: str
+    appearance_id: str
+    appearance_name: str
+    asset_id: str
+    prompt: str
+    asset_path: str | None = None
+    asset_url: str | None = None
+    provider: str
+    model: str
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class RoleSubjectFrontalImageGenerationOutput(BaseModel):
+    generated_frontal_images: list[RoleSubjectFrontalImageGenerationItem]
+    skipped_frontal_images: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class RoleSubjectVideoGenerationOutput(BaseModel):
     generated_subject_videos: list[RoleSubjectVideoGenerationItem]
     skipped_subject_videos: list[dict[str, Any]] = Field(default_factory=list)
@@ -1026,6 +1093,7 @@ class RoleSubjectElementGenerationItem(BaseModel):
     appearance_name: str
     reference_type: str
     element_id: str | None = None
+    voice_id: str | None = None
     provider: str
     model: str
     task_id: str | None = None
@@ -1038,6 +1106,27 @@ class RoleSubjectElementGenerationItem(BaseModel):
 class RoleSubjectElementGenerationOutput(BaseModel):
     generated_subject_elements: list[RoleSubjectElementGenerationItem]
     skipped_subject_elements: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RoleKlingVoiceGenerationItem(BaseModel):
+    role_id: str
+    role_name: str
+    voice_id: str
+    voice_name: str | None = None
+    source: Literal["preset", "custom"]
+    trial_url: str | None = None
+    provider: str
+    model: str
+    task_id: str | None = None
+    task_status: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class RoleKlingVoiceGenerationOutput(BaseModel):
+    generated_voices: list[RoleKlingVoiceGenerationItem] = Field(default_factory=list)
+    skipped_roles: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DynamicAssetSolidificationItem(BaseModel):

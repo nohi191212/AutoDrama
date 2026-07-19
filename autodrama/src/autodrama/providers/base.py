@@ -124,6 +124,22 @@ class VoiceSynthesisResult(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
+class VoiceAssetResult(BaseModel):
+    """Reusable provider-side voice asset, such as a Kling custom voice."""
+
+    provider: str
+    model: str
+    task_id: str | None = None
+    task_status: str | None = None
+    voice_id: str | None = None
+    voice_name: str | None = None
+    trial_url: str | None = None
+    owned_by: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
 class SpeechSynthesizer(Protocol):
     name: str
 

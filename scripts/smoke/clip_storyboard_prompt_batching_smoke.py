@@ -559,6 +559,37 @@ def main() -> None:
         raise AssertionError("clip_storyboard_prompt render left unresolved template variables")
     if "所有对白原文统一放在中文直角引号 `「……」` 中" not in rendered:
         raise AssertionError("clip_storyboard_prompt must require stable dialogue quote formatting")
+    camera_discipline_requirements = (
+        "每个 clip 内必须包含 2-3 个真实 Camera Shot",
+        "每个 clip 最多只有 1 个 Camera Shot 可以使用明确的摄影机运动",
+        "固定机位的面板不得添加蓝色镜头运动、变焦或对焦箭头",
+    )
+    for requirement in camera_discipline_requirements:
+        if requirement not in rendered:
+            raise AssertionError(f"clip_storyboard_prompt missing camera-discipline requirement: {requirement}")
+
+    four_shot_prompt = (
+        "<CAMERA_SHOTS>\n"
+        "Camera Shot 1（0-3秒）：固定机位。\n"
+        "Camera Shot 2（3-6秒）：固定机位。\n"
+        "Camera Shot 3（6-9秒）：固定机位。\n"
+        "Camera Shot 4（9-12秒）：固定机位。\n"
+        "</CAMERA_SHOTS>\n<PANEL_PLAN>\n"
+        + "\n".join(
+            f'<P{panel:02d} camera_shot="{min(4, (panel - 1) // 3 + 1)}">第 {panel} 格。</P{panel:02d}>'
+            for panel in range(1, 13)
+        )
+        + "\n</PANEL_PLAN>"
+    )
+    four_shot_errors = node._clip_storyboard_prompt_errors(
+        prompt=four_shot_prompt,
+        source_text="",
+        target_duration_seconds=12,
+        camera_shots=node._camera_shots_from_storyboard_prompt(four_shot_prompt),
+        panel_plan=node._panel_plan_from_storyboard_prompt(four_shot_prompt),
+    )
+    if "camera shot count must be 2-3, got 4" not in four_shot_errors:
+        raise AssertionError("clip_storyboard_prompt must reject four Camera Shots")
     safety_requirements = (
         "不主动重复或强化“未成年、高中生、少女、幼小”等年龄标签",
         "不连续安排脱离动作语境的手、脚、嘴唇、胸口、颈部等身体局部特写",

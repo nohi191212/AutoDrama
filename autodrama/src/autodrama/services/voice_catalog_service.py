@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from autodrama.core.schemas import Role
 from autodrama.core.voice_catalog import (
     RoleVoiceSelectionItem,
@@ -18,6 +20,7 @@ from autodrama.core.voice_catalog import (
 )
 from autodrama.providers.base import AssetRef, AudioJudgeLLM
 from autodrama.repositories.voice_catalog_repo import VoiceCatalogRepository
+from autodrama.services.audio_duration import probe_audio_duration_seconds
 from autodrama.utils.prompts import PromptStore
 
 
@@ -75,6 +78,281 @@ class VoiceCatalogService:
             model=model,
             speakers=speakers,
         )
+        self.repo.save_manifest(manifest)
+        return manifest
+
+    async def sync_official_preset_catalog(
+        self,
+        provider: Any,
+        *,
+        refresh_manifest: bool = False,
+        force_samples: bool = False,
+        download_trials: bool = True,
+        download_concurrency: int = 8,
+    ) -> VoiceCatalogManifest:
+        """Sync a provider's official preset voices and cache their trial audio.
+
+        A previously saved catalog remains usable when the remote list endpoint is
+        temporarily unavailable. A first-time sync still fails clearly because
+        there is no safe voice_id fallback to invent.
+        """
+
+        provider_name, model = self.provider_identity(provider)
+        existing = self.repo.try_load_manifest(provider_name, model)
+        manifest = existing
+        list_voices = getattr(provider, "list_preset_voices", None)
+        if manifest is None or refresh_manifest:
+            if not callable(list_voices):
+                raise ValueError(f"Provider {provider_name} does not expose an official preset voice list")
+            try:
+                speakers = await list_voices()
+            except Exception as exc:
+                if existing is None:
+                    raise RuntimeError(
+                        f"Cannot refresh {provider_name} official voice catalog and no local cache exists: "
+                        f"{type(exc).__name__}: {exc or 'no detail returned'}"
+                    ) from exc
+                manifest = existing
+            else:
+                if not speakers:
+                    if existing is None:
+                        raise ValueError(f"Provider {provider_name} returned an empty official voice catalog")
+                    manifest = existing
+                else:
+                    refreshed = self.repo.build_manifest_from_speakers(
+                        provider=provider_name,
+                        model=model,
+                        speakers=speakers,
+                    )
+                    manifest = self._merge_existing_voice_assets(refreshed, existing)
+                    self.repo.save_manifest(manifest)
+
+        if manifest is None:
+            raise ValueError(f"No official voice catalog is available for {provider_name}:{model}")
+        provider_settings = getattr(provider, "settings", None)
+        provider_options = getattr(provider_settings, "options", {}) if provider_settings is not None else {}
+        if download_trials:
+            manifest = await self.build_official_trial_samples(
+                manifest,
+                force_samples=force_samples,
+                concurrency=download_concurrency,
+                trust_env=bool(provider_options.get("httpx_trust_env", True)),
+            )
+        if bool(provider_options.get("synthesize_short_official_voice_trials", False)):
+            manifest = await self.build_short_official_tts_samples(
+                provider,
+                manifest,
+                min_duration_seconds=float(provider_options.get("official_voice_min_sample_seconds", 5.0)),
+                target_duration_seconds=float(provider_options.get("official_voice_tts_target_seconds", 8.0)),
+                force_samples=force_samples,
+            )
+        return manifest
+
+    @staticmethod
+    def _merge_existing_voice_assets(
+        refreshed: VoiceCatalogManifest,
+        existing: VoiceCatalogManifest | None,
+    ) -> VoiceCatalogManifest:
+        if existing is None:
+            return refreshed
+        old_by_type = {voice.voice_type: voice for voice in existing.voices}
+        voices: list[VoiceCatalogVoiceItem] = []
+        for voice in refreshed.voices:
+            old = old_by_type.get(voice.voice_type)
+            if old is None:
+                voices.append(voice)
+                continue
+            voices.append(
+                voice.model_copy(
+                    update={
+                        "samples": dict(old.samples),
+                        "omni_profile": old.omni_profile,
+                        "profile_hash": old.profile_hash,
+                    }
+                )
+            )
+        return refreshed.model_copy(update={"voices": voices})
+
+    @staticmethod
+    def _trial_audio_extension(response: httpx.Response) -> str:
+        content_type = str(response.headers.get("content-type") or "").lower()
+        if "wav" in content_type:
+            return "wav"
+        if "ogg" in content_type:
+            return "ogg"
+        if "aac" in content_type:
+            return "aac"
+        if "mp4" in content_type or "m4a" in content_type:
+            return "m4a"
+        return "mp3"
+
+    async def build_official_trial_samples(
+        self,
+        manifest: VoiceCatalogManifest,
+        *,
+        force_samples: bool = False,
+        concurrency: int = 8,
+        trust_env: bool = True,
+    ) -> VoiceCatalogManifest:
+        """Download provider-supplied trial clips into the reusable local catalog."""
+
+        semaphore = asyncio.Semaphore(max(1, min(20, int(concurrency))))
+
+        async def download_one(client: httpx.AsyncClient, voice: VoiceCatalogVoiceItem) -> VoiceCatalogVoiceItem:
+            updated = voice.model_copy(deep=True)
+            existing = updated.samples.get("official_trial")
+            if existing is not None and not force_samples:
+                existing_path = self.repo.root / Path(existing.asset_path)
+                if existing_path.exists() and existing_path.stat().st_size > 0:
+                    return updated
+            trial_url = str(updated.official.get("trial_url") or "").strip()
+            if not trial_url.startswith(("http://", "https://")):
+                return updated
+            async with semaphore:
+                try:
+                    response = await client.get(trial_url, follow_redirects=True)
+                    response.raise_for_status()
+                    content_type = str(response.headers.get("content-type") or "").lower()
+                    if "text/html" in content_type or not response.content:
+                        return updated
+                except Exception:
+                    return updated
+            extension = self._trial_audio_extension(response)
+            sample_text = f"可灵官方试听音频：{updated.voice_label}"
+            sample = self.repo.sample_item_for_voice(
+                provider=manifest.provider,
+                model=manifest.model,
+                voice_type=updated.voice_type,
+                voice_resource_id=updated.voice_resource_id,
+                emotion="official_trial",
+                sample_text=sample_text,
+                audio_params={"source": "official_trial"},
+                response_format=extension,
+            )
+            sample_path = self.repo.root / Path(sample.asset_path)
+            sample_path.parent.mkdir(parents=True, exist_ok=True)
+            sample_path.write_bytes(response.content)
+            updated.samples["official_trial"] = sample
+            current_normal = updated.samples.get("normal")
+            if current_normal is None or current_normal.audio_params.get("source") == "official_trial":
+                updated.samples["normal"] = sample.model_copy(update={"emotion": "normal"})
+            return updated
+
+        timeout = httpx.Timeout(60.0, connect=20.0)
+        async with httpx.AsyncClient(timeout=timeout, trust_env=trust_env) as client:
+            updated_voices = await asyncio.gather(
+                *(download_one(client, voice) for voice in manifest.voices)
+            )
+        manifest = manifest.model_copy(update={"sample_emotions": ["normal"], "voices": updated_voices})
+        for voice in manifest.voices:
+            self.repo.save_voice_sample_manifest(manifest, voice)
+        self.repo.save_manifest(manifest)
+        return manifest
+
+    async def build_short_official_tts_samples(
+        self,
+        provider: Any,
+        manifest: VoiceCatalogManifest,
+        *,
+        min_duration_seconds: float = 5.0,
+        target_duration_seconds: float = 8.0,
+        force_samples: bool = False,
+    ) -> VoiceCatalogManifest:
+        """Replace too-short trial samples with speech synthesized by the same Kling voice_id."""
+
+        synthesize = getattr(provider, "synthesize_speech", None)
+        if not callable(synthesize):
+            raise ValueError(f"Provider {manifest.provider} cannot synthesize official voice samples")
+        provider_settings = getattr(provider, "settings", None)
+        provider_options = getattr(provider_settings, "options", {}) if provider_settings is not None else {}
+        raw_tts_map = provider_options.get("official_voice_tts_map") or {}
+        if not isinstance(raw_tts_map, dict):
+            raise ValueError("Kling official_voice_tts_map must be an object keyed by Omni voice_id")
+        sample_text = "今天我们在这里认真说一段完整的话，让你听清声音的气息、节奏、语调和情绪变化。"
+        updated_voices: list[VoiceCatalogVoiceItem] = []
+        for voice in manifest.voices:
+            updated = voice.model_copy(deep=True)
+            trial = updated.samples.get("official_trial") or updated.samples.get("normal")
+            if trial is None:
+                updated_voices.append(updated)
+                continue
+            trial_path = self.repo.root / Path(trial.asset_path)
+            trial_duration = probe_audio_duration_seconds(trial_path)
+            if trial_duration is None or trial_duration >= min_duration_seconds:
+                updated_voices.append(updated)
+                continue
+            tts_voice_id = str(raw_tts_map.get(updated.voice_type) or "").strip()
+            if not tts_voice_id:
+                updated.official["tts_sample_error"] = (
+                    "No official Omni voice_id to /v1/audio/tts voice_id mapping is configured"
+                )
+                updated_voices.append(updated)
+                continue
+            existing_normal = updated.samples.get("normal")
+            if existing_normal is not None and not force_samples:
+                existing_path = self.repo.root / Path(existing_normal.asset_path)
+                existing_duration = probe_audio_duration_seconds(existing_path)
+                if (
+                    existing_normal.audio_params.get("source") == "official_tts"
+                    and existing_duration is not None
+                    and existing_duration >= min_duration_seconds
+                ):
+                    updated_voices.append(updated)
+                    continue
+            try:
+                result = await synthesize(
+                    voice=tts_voice_id,
+                    text=sample_text,
+                    metadata={
+                        "node_name": "voice_catalog_official_tts",
+                        "voice_language": str(updated.official.get("language") or "zh"),
+                        "voice_speed": 1.0,
+                        "target_duration_seconds": target_duration_seconds,
+                    },
+                )
+                if not result.audio_data:
+                    raise ValueError("TTS returned no audio data")
+                response_format = str(result.audio_format or "mp3").lower()
+                sample = self.repo.sample_item_for_voice(
+                    provider=manifest.provider,
+                    model=manifest.model,
+                    voice_type=updated.voice_type,
+                    voice_resource_id=updated.voice_resource_id,
+                    emotion="normal",
+                    sample_text=sample_text,
+                    audio_params={
+                        "source": "official_tts",
+                        "tts_voice_id": tts_voice_id,
+                        "target_duration_seconds": target_duration_seconds,
+                        "trial_duration_seconds": trial_duration,
+                    },
+                    response_format=response_format,
+                )
+                sample_path = self.repo.root / Path(sample.asset_path)
+                sample_path.parent.mkdir(parents=True, exist_ok=True)
+                sample_path.write_bytes(base64.b64decode(self._base64_payload(result.audio_data)))
+                generated_duration = probe_audio_duration_seconds(sample_path)
+                if generated_duration is None or generated_duration < min_duration_seconds:
+                    raise ValueError(
+                        f"generated sample duration {generated_duration!r} is below {min_duration_seconds:.1f}s"
+                    )
+                updated.samples["normal"] = sample.model_copy(
+                    update={
+                        "audio_params": {
+                            **sample.audio_params,
+                            "duration_seconds": generated_duration,
+                            "request_id": result.request_id,
+                        }
+                    }
+                )
+                updated.official.pop("tts_sample_error", None)
+            except Exception as exc:
+                updated.official["tts_sample_error"] = f"{type(exc).__name__}: {exc or 'no detail returned'}"
+            updated_voices.append(updated)
+
+        manifest = manifest.model_copy(update={"voices": updated_voices})
+        for voice in manifest.voices:
+            self.repo.save_voice_sample_manifest(manifest, voice)
         self.repo.save_manifest(manifest)
         return manifest
 
@@ -522,7 +800,10 @@ class VoiceCatalogService:
             return "male"
         if any(marker in gender_text for marker in ("female", "woman", "girl", "女", "女生", "少女", "御姐")):
             return "female"
-        if any(marker in gender_text for marker in ("male", " man ", "boy", "男", "男生", "青叔", "大叔")):
+        if any(
+            marker in gender_text
+            for marker in ("male", " man ", "boy", "男", "男生", "少年", "青年", "青叔", "大叔", "叔", "爷")
+        ):
             return "male"
         if voice.voice_type.startswith("zh_female"):
             return "female"
@@ -578,6 +859,7 @@ class VoiceCatalogService:
         role_gender = self._infer_role_gender(role_text)
         require_doubao_2 = str(manifest.provider or "").strip().lower() == "volcengine"
         skipped = {
+            "not_auto_selectable": 0,
             "non_chinese": 0,
             "unknown_gender": 0,
             "gender_mismatch": 0,
@@ -585,6 +867,9 @@ class VoiceCatalogService:
         }
         scored: list[tuple[float, int, VoiceCatalogVoiceItem, str]] = []
         for index, voice in enumerate(manifest.voices):
+            if voice.official.get("auto_selectable") is False:
+                skipped["not_auto_selectable"] += 1
+                continue
             if self._voice_language_key(voice) != "zh":
                 skipped["non_chinese"] += 1
                 continue
