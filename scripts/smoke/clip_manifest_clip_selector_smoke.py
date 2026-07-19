@@ -38,6 +38,32 @@ def main() -> None:
     if "clip_manifest_generation" not in CLIP_SCOPED_PREGEN_ONLY_NODES:
         raise AssertionError("pregen --clips does not allow clip_manifest_generation")
 
+    nine_clip_storyboard = StoryboardPromptEpisode(
+        episode_key="episode_001",
+        clips=[_prompt_clip(index) for index in range(1, 10)],
+    )
+    first_four_ids = {
+        clip.clip_id
+        for index, clip in enumerate(nine_clip_storyboard.clips, start=1)
+        if clip_matches_selectors(
+            nine_clip_storyboard.episode_key,
+            clip.clip_id,
+            index,
+            {"1", "2", "3", "4"},
+        )
+    }
+    first_four_rebuild_ids = ClipManifestGenerationNode._manifest_rebuild_clip_ids(
+        nine_clip_storyboard,
+        first_four_ids,
+    )
+    if first_four_rebuild_ids != {
+        "episode_001_clip_001",
+        "episode_001_clip_002",
+        "episode_001_clip_003",
+        "episode_001_clip_004",
+    }:
+        raise AssertionError(f"--clips 1-4 expanded unexpectedly: {sorted(first_four_rebuild_ids)}")
+
     storyboard = StoryboardPromptEpisode(
         episode_key="episode_001",
         clips=[_prompt_clip(index) for index in range(1, 5)],
@@ -49,19 +75,16 @@ def main() -> None:
     }
     existing = StoryboardEpisodeOutput(
         episode_key=storyboard.episode_key,
-        clips=[_shot(index, f"old-{index}") for index in (1, 2, 4)],
+        clips=[_shot(index, f"old-{index}") for index in range(1, 5)],
     )
-    rebuild_ids = ClipManifestGenerationNode._manifest_rebuild_clip_ids(storyboard, selected_ids, existing)
-    expected_rebuild_ids = {
-        "episode_001_clip_002",
-        "episode_001_clip_003",
-    }
+    rebuild_ids = ClipManifestGenerationNode._manifest_rebuild_clip_ids(storyboard, selected_ids)
+    expected_rebuild_ids = {"episode_001_clip_002"}
     if rebuild_ids != expected_rebuild_ids:
         raise AssertionError(f"unexpected manifest rebuild ids: {sorted(rebuild_ids)}")
 
     rebuilt = StoryboardEpisodeOutput(
         episode_key=storyboard.episode_key,
-        clips=[_shot(2, "new-2"), _shot(3, "new-3")],
+        clips=[_shot(2, "new-2")],
     )
     merged = ClipManifestGenerationNode._merge_partial_episode_manifest(
         storyboard=storyboard,
@@ -70,14 +93,21 @@ def main() -> None:
     )
     if [clip.clip_id for clip in merged.clips] != [clip.clip_id for clip in storyboard.clips]:
         raise AssertionError("partial manifest merge did not preserve storyboard clip order")
-    if [clip.video_prompt for clip in merged.clips] != ["old-1", "new-2", "new-3", "old-4"]:
+    if [clip.video_prompt for clip in merged.clips] != ["old-1", "new-2", "old-3", "old-4"]:
         raise AssertionError("partial manifest merge replaced an unselected existing clip")
     if merged.clips[0].video_task_id != "task-1" or merged.clips[3].video_task_id != "task-4":
         raise AssertionError("partial manifest merge lost existing dynamic fields")
 
-    fresh_rebuild_ids = ClipManifestGenerationNode._manifest_rebuild_clip_ids(storyboard, selected_ids, None)
-    if fresh_rebuild_ids != {clip.clip_id for clip in storyboard.clips}:
-        raise AssertionError("partial run without an existing manifest must build a complete episode")
+    fresh_rebuild_ids = ClipManifestGenerationNode._manifest_rebuild_clip_ids(storyboard, selected_ids)
+    if fresh_rebuild_ids != selected_ids:
+        raise AssertionError("partial run without an existing manifest expanded beyond selected clips")
+    fresh_merged = ClipManifestGenerationNode._merge_partial_episode_manifest(
+        storyboard=storyboard,
+        existing_episode=None,
+        rebuilt_episode=rebuilt,
+    )
+    if [clip.clip_id for clip in fresh_merged.clips] != ["episode_001_clip_002"]:
+        raise AssertionError("fresh partial manifest should contain only selected clips")
 
     tmp_dir = ROOT / ".tmp"
     tmp_dir.mkdir(exist_ok=True)

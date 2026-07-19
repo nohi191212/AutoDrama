@@ -4133,25 +4133,9 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         cls,
         storyboard: StoryboardPromptEpisode,
         selected_clip_ids: set[str],
-        existing_episode: StoryboardEpisodeOutput | None,
     ) -> set[str]:
-        ordered_clip_ids = [cls._clean_text(clip.clip_id) for clip in storyboard.clips]
-        rebuild_clip_ids = set(selected_clip_ids)
-
-        # A clip's end keyframe is the next clip's start frame. Refresh the
-        # direct successor so its manifest does not retain a stale URL/ref.
-        for index, clip_id in enumerate(ordered_clip_ids[:-1]):
-            if clip_id in selected_clip_ids:
-                rebuild_clip_ids.add(ordered_clip_ids[index + 1])
-
-        # A partial run must still leave a complete episode manifest. Build
-        # any clips that do not yet exist instead of emitting a partial file.
-        existing_clip_ids = {
-            cls._clean_text(clip.clip_id)
-            for clip in (existing_episode.clips if existing_episode else [])
-        }
-        rebuild_clip_ids.update(clip_id for clip_id in ordered_clip_ids if clip_id not in existing_clip_ids)
-        return rebuild_clip_ids
+        available_clip_ids = {cls._clean_text(clip.clip_id) for clip in storyboard.clips}
+        return set(selected_clip_ids).intersection(available_clip_ids)
 
     @classmethod
     def _merge_partial_episode_manifest(
@@ -4170,12 +4154,8 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
         for clip_prompt in storyboard.clips:
             clip_id = cls._clean_text(clip_prompt.clip_id)
             clip = rebuilt_by_id.get(clip_id) or existing_by_id.get(clip_id)
-            if clip is None:
-                raise ValueError(
-                    "clip_manifest_generation could not preserve or rebuild "
-                    f"{storyboard.episode_key}/{clip_id}"
-                )
-            clips.append(clip)
+            if clip is not None:
+                clips.append(clip)
         return StoryboardEpisodeOutput(episode_key=storyboard.episode_key, clips=clips)
 
     def _build_episode_manifest(
@@ -4401,7 +4381,6 @@ class ClipManifestGenerationNode(StoryboardAssetNodeBase):
                 included_clip_ids = self._manifest_rebuild_clip_ids(
                     storyboard,
                     selected_clip_ids_by_episode.get(episode_key, set()),
-                    existing,
                 )
             rebuilt_episode, warnings = self._build_episode_manifest(
                 project_dir=project_dir,

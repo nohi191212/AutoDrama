@@ -401,7 +401,7 @@ run\start.cmd --generation --config config.yaml --project <project_id> --episode
 run\start.cmd --generation --config config.yaml --project <project_id> --episodes episode_001,episode_003
 ```
 
-`clip_storyboard_prompt`、`clip_storyboard_image_generation`、`clip_storyboard_keyframe_generation` 和 `clip_manifest_generation` 还支持 `--clips`，可使用 `1-3`、`2,5-7` 或完整 clip ID，只处理选中的 clip 并保留其他已有输出。局部重建 manifest 时还会刷新选中 clip 的直接后继 clip，因为前者的 end 关键帧是后者的 start 关键帧；如果原 manifest 不完整，也会补齐缺失 clip。
+`clip_storyboard_prompt`、`clip_storyboard_image_generation`、`clip_storyboard_keyframe_generation` 和 `clip_manifest_generation` 还支持 `--clips`，可使用 `1-3`、`2,5-7` 或完整 clip ID，只处理选中的 clip 并保留其他已有输出。局部生成 manifest 时不会要求未选中 clip 的故事板或关键帧已经存在；如果还没有原 manifest，输出中暂时只包含本次选中的 clip，后续分批运行会按 storyboard 顺序合并进去。
 
 `clip_storyboard_prompt` 会为每个 clip 同时落盘视频用 `video_prompt` 和仅供生图使用的 `storyboard_image_prompt`；后者只包含固定故事板模板和 P01-P12 逐格画面内容，不包含 `video_prompt`、episode/clip 标识或工作流说明。`clip_storyboard_image_generation` 只读取并原样提交 `storyboard_image_prompt`、附加参考图和保存图片，不再组装或安全重写提示词。旧输出缺少该字段时需要先重跑 `clip_storyboard_prompt`。
 
