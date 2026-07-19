@@ -88,6 +88,12 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
 ROLE_SCOPED_PREGEN_ONLY_NODES = {
     "role_voice_select",
 }
+CLIP_SCOPED_PREGEN_ONLY_NODES = {
+    "clip_storyboard_prompt",
+    "clip_storyboard_image_generation",
+    "clip_storyboard_keyframe_generation",
+    "clip_manifest_generation",
+}
 
 
 class PregenWorkflow:
@@ -592,15 +598,12 @@ class PregenWorkflow:
         if selected_clip_selectors and (
             len(target_nodes) != 1
             or target_nodes[0]
-            not in {
-                "clip_storyboard_prompt",
-                "clip_storyboard_image_generation",
-                "clip_storyboard_keyframe_generation",
-            }
+            not in CLIP_SCOPED_PREGEN_ONLY_NODES
         ):
             raise ValueError(
                 "--clips is only supported for pregen --only clip_storyboard_prompt, "
-                "clip_storyboard_image_generation, or clip_storyboard_keyframe_generation."
+                "clip_storyboard_image_generation, clip_storyboard_keyframe_generation, "
+                "or clip_manifest_generation."
             )
         logger.info(
             "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s completed=%s",

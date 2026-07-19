@@ -82,6 +82,10 @@ async def extract_audit_video(video_path: Path, output_path: Path, *, ffmpeg_pat
         "veryfast",
         "-crf",
         "32",
+        "-maxrate",
+        "350k",
+        "-bufsize",
+        "700k",
         "-c:a",
         "aac",
         "-b:a",
@@ -221,11 +225,21 @@ async def audit_final_video(
     transcript_segments = []
     if transcript:
         transcript_segments = transcript.get("segments", [])
+    media_note = (
+        "另附含音频的完整低码率审计视频，可用于检查连续运动、口型和声音。"
+        if settings.include_audio
+        else "本次未附连续视频，不要判断音质或口型同步。"
+    )
+    media_scope = (
+        "综合检查剪辑节奏和连续性、画面AI伪影、音色跨角色一致性、爆音/电音/断裂、口型同步、"
+        if settings.include_audio
+        else "综合检查剪辑节奏、画面AI伪影和画面连续性、"
+    )
     prompt = (
         "你是最终成片质检审计员。联系表按时间从左到右、从上到下展示成片。"
-        + ("另附含音频的完整低码率审计视频，可用于检查连续运动、口型和声音。" if settings.include_audio else "本次未附连续视频，不要判断音质或口型同步。")
-        "综合检查剪辑节奏和连续性、画面AI伪影、音色跨角色一致性、爆音/电音/断裂、口型同步、"
-        "字幕错字与遮挡、音画时长、黑帧和安全风险。不要把联系表格线当作画面缺陷。"
+        + media_note
+        + media_scope
+        + "字幕错字与遮挡、音画时长、黑帧和安全风险。不要把联系表格线当作画面缺陷。"
         "fatal/error 问题应导致 fail；只有轻微 warning 可返回 warn；无实质问题返回 pass。"
         "repair_actions 必须是可执行的后期修复建议。只返回结构化 JSON。\n\n"
         f"媒体探测：{json.dumps(metrics, ensure_ascii=False)}\n"

@@ -6,6 +6,8 @@ from autodrama.postgen.schemas import (
     PostgenEditPlan,
     PostgenEditPlanGenerationOutput,
     PostgenEditPlanValidationOutput,
+    PostgenFinalAuditReport,
+    PostgenSourceAuditReport,
     PostgenSourceClip,
     PostgenSourceCollectOutput,
 )
@@ -16,6 +18,8 @@ __all__ = [
     "PostgenEditPlan",
     "PostgenEditPlanGenerationOutput",
     "PostgenEditPlanValidationOutput",
+    "PostgenFinalAuditReport",
+    "PostgenSourceAuditReport",
     "PostgenSourceClip",
     "PostgenSourceCollectOutput",
 ]

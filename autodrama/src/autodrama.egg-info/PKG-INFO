@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: autodrama
+Version: 0.1.0
+Summary: AutoDrama MVP pipeline up to role voice generation.
+Requires-Python: >=3.11
+Requires-Dist: pydantic>=2
+Requires-Dist: PyYAML>=6
+Requires-Dist: dashscope>=1.20
+Requires-Dist: httpx>=0.25
+Requires-Dist: openai>=1.0
+Requires-Dist: Pillow>=10
+Requires-Dist: pydub>=0.25
+Provides-Extra: postgen-audio
+Requires-Dist: demucs<5,>=4.0; extra == "postgen-audio"
+Requires-Dist: pyannote.audio<4,>=3.1; extra == "postgen-audio"
+Requires-Dist: whisperx<4,>=3.3; extra == "postgen-audio"

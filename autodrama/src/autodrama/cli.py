@@ -146,8 +146,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest="clips",
         help=(
             "Comma-separated clip indexes or ids to regenerate with pregen --only "
-            "clip_storyboard_prompt, clip_storyboard_image_generation, or "
-            "clip_storyboard_keyframe_generation. "
+            "clip_storyboard_prompt, clip_storyboard_image_generation, "
+            "clip_storyboard_keyframe_generation, or clip_manifest_generation. "
             "Supports ranges such as 2,5-7 or ids such as episode_001_clip_005."
         ),
     )
