@@ -94,17 +94,17 @@ class AssetService:
         provider: TextLLM,
         *,
         props: list[dict[str, object]],
-        prompt_template: str = "prop_prompt",
+        prompt_variant: str = "default",
     ) -> PropPromptOutput:
         prop_style_prompt = (
             self.prop_design_style_prompt(state)
             or self.visual_tone(state)
             or "（暂无道具风格约束，请只依据道具资产描述输出中性、可复用的道具提示词。）"
         )
-        prompt = self.prompts.render(
-            prompt_template,
-            props=self.format_json(props),
-            prop_style_prompt=prop_style_prompt,
+        prompt = self.prompts.render_context(
+            "prop_prompt",
+            {"props": self.format_json(props), "prop_style_prompt": prop_style_prompt},
+            variant=prompt_variant,
         )
         return await provider.generate_json(
             prompt,
@@ -128,7 +128,7 @@ class AssetService:
             state,
             provider,
             props=[prop_item.model_dump(mode="json")],
-            prompt_template="prop_prompt",
+            prompt_variant="default",
         )
         prompt_by_asset = {
             (item.prop_name, item.asset_name): item.prompt
@@ -177,12 +177,16 @@ class AssetService:
         provider: TextLLM,
         *,
         layouts: list[dict[str, object]],
-        prompt_template: str = "layout_prompt",
+        prompt_variant: str = "default",
     ) -> LayoutPromptOutput:
-        prompt = self.prompts.render(
-            prompt_template,
-            layouts=self.format_json(layouts),
-            visual_tone=self.visual_tone(state) or "（暂无导演 visual_tone，请只依据场景结构化资产输出中性、可复用的场景提示词。）",
+        prompt = self.prompts.render_context(
+            "layout_prompt",
+            {
+                "layouts": self.format_json(layouts),
+                "visual_tone": self.visual_tone(state)
+                or "（暂无导演 visual_tone，请只依据场景结构化资产输出中性、可复用的场景提示词。）",
+            },
+            variant=prompt_variant,
         )
         return await provider.generate_json(
             prompt,

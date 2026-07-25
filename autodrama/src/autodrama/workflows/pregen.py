@@ -19,14 +19,14 @@ from autodrama.core.schemas import (
     RoleboardPromptItem,
     RoleboardPromptOutput,
     ShotDialogueAudioAsset,
-    StoryboardEpisodeOutput,
-    StoryboardShot,
+    ShotManifestEpisodeOutput,
+    ShotManifestItem,
 )
 from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.prop_design_repo import PropDesignRepository
 from autodrama.repositories.project_layout import ProjectLayout
-from autodrama.repositories.storyboard_repo import StoryboardRepository
+from autodrama.repositories.shot_manifest_repo import ShotManifestRepository
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.repositories.roleboard_prompt_repo import RoleboardPromptRepository
 from autodrama.repositories.script_content_repo import ScriptContentRepository
@@ -64,7 +64,7 @@ from autodrama.workflows.nodes.static_asset_nodes import (
 from autodrama.workflows.nodes.voice_nodes import VoiceNodeBase, build_voice_node_runners
 from autodrama.workflows.router_adapter import adapt_workflow_router
 from autodrama.workflows.runner import WorkflowRunner
-from autodrama.workflows.selection import normalize_clip_selectors, select_episode_keys
+from autodrama.workflows.selection import normalize_clip_selectors, normalize_shot_selectors, select_episode_keys
 
 
 PREGEN_NODES = PREGEN_NODE_NAMES
@@ -77,12 +77,12 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "role_subject_video_generation",
     "role_kling_voice_generation",
     "role_subject_element_generation",
-    "clip_prompt",
-    "clip_storyboard_prompt",
-    "clip_storyboard_prompt_audit",
-    "clip_storyboard_image_generation",
-    "clip_storyboard_keyframe_generation",
-    "clip_manifest_generation",
+    "clip_to_shots",
+    "layout_to_background_prompt",
+    "shot_background_image_generation",
+    "shot_keyframe_prompt",
+    "shot_keyframe_image_generation",
+    "shot_manifest_generation",
     "role_voice_select",
     "prop_prompt",
     "prop_image_generation",
@@ -93,11 +93,14 @@ ROLE_SCOPED_PREGEN_ONLY_NODES = {
     "role_kling_voice_generation",
 }
 CLIP_SCOPED_PREGEN_ONLY_NODES = {
-    "clip_storyboard_prompt",
-    "clip_storyboard_prompt_audit",
-    "clip_storyboard_image_generation",
-    "clip_storyboard_keyframe_generation",
-    "clip_manifest_generation",
+    "clip_to_shots",
+}
+SHOT_SCOPED_PREGEN_ONLY_NODES = {
+    "layout_to_background_prompt",
+    "shot_background_image_generation",
+    "shot_keyframe_prompt",
+    "shot_keyframe_image_generation",
+    "shot_manifest_generation",
 }
 
 
@@ -128,7 +131,7 @@ class PregenWorkflow:
             self.layout,
             timeout_seconds=self.settings.runtime.request_timeout_seconds,
         )
-        self.storyboards = StoryboardRepository(self.repo, self.layout)
+        self.shot_manifests = ShotManifestRepository(self.repo, self.layout)
         self.runner = WorkflowRunner(repo=self.repo, logger=get_logger())
 
     def _expected_episode_keys(self, state: ProjectState) -> list[str]:
@@ -574,12 +577,13 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         *,
-        until: str = "clip_manifest_generation",
+        until: str = "shot_manifest_generation",
         force: bool = False,
         only: str | None = None,
         episode_keys: list[str] | None = None,
         role_names: list[str] | None = None,
         clip_selectors: list[str] | None = None,
+        shot_selectors: list[str] | None = None,
     ) -> ProjectState:
 
         if only is not None and only not in PREGEN_ONLY_NODES:
@@ -593,20 +597,21 @@ class PregenWorkflow:
             raise ValueError(f"Unsupported pregen stop node: {until}")
 
         logger = setup_logging(project_dir)
+        self.router.set_prompt_audit_project_dir(project_dir)
         state = self.repo.load_state(project_dir)
         self._apply_script_plan_settings(state)
         target_nodes = [only] if only else PREGEN_NODES[: PREGEN_NODES.index(until) + 1]
         selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
         selected_role_names = self._select_role_names(role_names) if role_names else None
         selected_clip_selectors = normalize_clip_selectors(clip_selectors) if clip_selectors else set()
+        selected_shot_selectors = normalize_shot_selectors(shot_selectors) if shot_selectors else set()
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
                 "--episodes is only supported for pregen --only clip_segment, roleboard_prompt, roleboard_image_generation, "
+                "clip_to_shots, layout_to_background_prompt, shot_background_image_generation, shot_keyframe_prompt, shot_keyframe_image_generation, shot_manifest_generation, "
                 "role_subject_frontal_image_generation, role_kling_voice_generation, role_subject_video_generation, "
-                "role_subject_element_generation, "
-                "clip_prompt, clip_storyboard_prompt, clip_storyboard_prompt_audit, "
-                "clip_storyboard_image_generation, clip_storyboard_keyframe_generation, clip_manifest_generation, "
-                "role_voice_select, prop_prompt, prop_image_generation, or layout_image_generation."
+                "role_subject_element_generation, role_voice_select, prop_prompt, prop_image_generation, "
+                "or layout_image_generation."
             )
         if selected_role_names and (len(target_nodes) != 1 or target_nodes[0] not in ROLE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
@@ -618,11 +623,10 @@ class PregenWorkflow:
             not in CLIP_SCOPED_PREGEN_ONLY_NODES
         ):
             raise ValueError(
-                "--clips is only supported for pregen --only clip_storyboard_prompt, "
-                "clip_storyboard_prompt_audit, "
-                "clip_storyboard_image_generation, clip_storyboard_keyframe_generation, "
-                "or clip_manifest_generation."
+                "--clips is only supported for pregen --only clip_to_shots."
             )
+        if selected_shot_selectors and (len(target_nodes) != 1 or target_nodes[0] not in SHOT_SCOPED_PREGEN_ONLY_NODES):
+            raise ValueError("--shots is only supported for pregen --only layout_to_background_prompt, shot_background_image_generation, shot_keyframe_prompt, shot_keyframe_image_generation, or shot_manifest_generation.")
         logger.info(
             "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s completed=%s",
             state.project_id,
@@ -638,6 +642,7 @@ class PregenWorkflow:
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
         previous_active_role_names = getattr(self, "_active_role_names", None)
         previous_active_clip_selectors = getattr(self, "_active_clip_selectors", None)
+        previous_active_shot_selectors = getattr(self, "_active_shot_selectors", None)
         previous_force_pregen = getattr(self, "_force_pregen", None)
         previous_run_context = getattr(self, "_run_context", None)
         self._run_context = WorkflowRunContext(
@@ -649,6 +654,7 @@ class PregenWorkflow:
             selected_episode_keys=selected_episode_keys,
             selected_role_names=selected_role_names,
             clip_selectors=selected_clip_selectors,
+            shot_selectors=selected_shot_selectors,
         )
         self._force_pregen = bool(force)
         if selected_episode_keys is not None:
@@ -659,6 +665,10 @@ class PregenWorkflow:
             self._active_clip_selectors = set(selected_clip_selectors)
         elif hasattr(self, "_active_clip_selectors"):
             delattr(self, "_active_clip_selectors")
+        if selected_shot_selectors:
+            self._active_shot_selectors = set(selected_shot_selectors)
+        elif hasattr(self, "_active_shot_selectors"):
+            delattr(self, "_active_shot_selectors")
         try:
             node_by_name = {
                 node.name: node
@@ -690,6 +700,11 @@ class PregenWorkflow:
                     delattr(self, "_active_clip_selectors")
             else:
                 self._active_clip_selectors = previous_active_clip_selectors
+            if previous_active_shot_selectors is None:
+                if hasattr(self, "_active_shot_selectors"):
+                    delattr(self, "_active_shot_selectors")
+            else:
+                self._active_shot_selectors = previous_active_shot_selectors
             if previous_force_pregen is None:
                 if hasattr(self, "_force_pregen"):
                     delattr(self, "_force_pregen")
@@ -801,19 +816,19 @@ class PregenWorkflow:
     def _shot_path(self, project_dir: Path, episode_key: str) -> Path:
         return self.layout.shot_path(project_dir, episode_key)
 
-    def _load_storyboard_episode(self, project_dir: Path, episode_key: str) -> StoryboardEpisodeOutput:
-        return self.storyboards.load(project_dir, episode_key)
+    def _load_shot_manifest(self, project_dir: Path, episode_key: str) -> ShotManifestEpisodeOutput:
+        return self.shot_manifests.load(project_dir, episode_key)
 
-    def _save_storyboard_episode(self, project_dir: Path, episode: StoryboardEpisodeOutput) -> None:
-        self.storyboards.save(project_dir, episode)
+    def _save_shot_manifest(self, project_dir: Path, episode: ShotManifestEpisodeOutput) -> None:
+        self.shot_manifests.save(project_dir, episode)
 
-    def _iter_storyboard_episodes(
+    def _iter_shot_manifest_episodes(
         self,
         project_dir: Path,
         state: ProjectState,
-    ) -> list[StoryboardEpisodeOutput]:
+    ) -> list[ShotManifestEpisodeOutput]:
         return [
-            self._load_storyboard_episode(project_dir, episode_key)
+            self._load_shot_manifest(project_dir, episode_key)
             for episode_key in self._active_episode_keys_in_order(state)
         ]
 
@@ -970,7 +985,7 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         state: ProjectState,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         *,
         include_layout: bool = True,
         include_roles: bool = True,
@@ -1088,7 +1103,7 @@ class PregenWorkflow:
             )
         )
 
-    def _shot_speaking_role_ids(self, state: ProjectState, shot: StoryboardShot) -> list[str]:
+    def _shot_speaking_role_ids(self, state: ProjectState, shot: ShotManifestItem) -> list[str]:
         role_ids: list[str] = []
         seen: set[str] = set()
 
@@ -1114,7 +1129,7 @@ class PregenWorkflow:
             append(shot.role_ids[0])
         return role_ids
 
-    def _shot_voiceover_speaking_role_ids(self, state: ProjectState, shot: StoryboardShot) -> list[str]:
+    def _shot_voiceover_speaking_role_ids(self, state: ProjectState, shot: ShotManifestItem) -> list[str]:
         role_ids: list[str] = []
         seen: set[str] = set()
         for dialogue_line in shot.dialogue:
@@ -1146,7 +1161,7 @@ class PregenWorkflow:
                     break
         return selected
 
-    def _shot_intro_role_ids(self, state: ProjectState, shot: StoryboardShot) -> list[str]:
+    def _shot_intro_role_ids(self, state: ProjectState, shot: ShotManifestItem) -> list[str]:
         speaking_role_ids = self._shot_speaking_role_ids(state, shot)
         voiceover_role_ids = set(self._shot_voiceover_speaking_role_ids(state, shot))
 
@@ -1171,7 +1186,7 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         state: ProjectState,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         *,
         role_ids: set[str] | None = None,
         limit: int = 1,
@@ -1211,7 +1226,7 @@ class PregenWorkflow:
                         url=asset_url,
                         metadata={
                             "asset_type": "roleboard",
-                            "reference_source": "storyboard_visual_subject_roleboard",
+                            "reference_source": "shot_keyframe_visual_subject_roleboard",
                             "role_id": role.id,
                             "role_name": role.name,
                             "appearance_id": appearance.id,
@@ -1226,7 +1241,7 @@ class PregenWorkflow:
     def _shot_subject_element_refs(
         self,
         state: ProjectState,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         *,
         limit: int = 3,
     ) -> list:
@@ -1315,7 +1330,7 @@ class PregenWorkflow:
 
 
     @classmethod
-    def _shot_generated_video_duration_seconds(cls, shot: StoryboardShot) -> float | None:
+    def _shot_generated_video_duration_seconds(cls, shot: ShotManifestItem) -> float | None:
         duration = cls._raw_response_duration_seconds(shot.video_raw_response)
         if duration is not None:
             return duration
@@ -1329,7 +1344,7 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         state: ProjectState,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         *,
         role_ids: set[str] | None = None,
         limit: int = 1,
@@ -1378,7 +1393,7 @@ class PregenWorkflow:
             for role in state.roles.values():
                 for audio in role.audio.values():
                     if audio.id in explicit_audio_ids or (audio.asset_id and audio.asset_id in explicit_audio_ids):
-                        append_audio(role, audio, source="storyboard_role_audio_ids")
+                        append_audio(role, audio, source="shot_role_audio_ids")
                         if len(refs) >= limit:
                             return refs
             return refs
@@ -1419,7 +1434,7 @@ class PregenWorkflow:
         def image_priority(ref) -> tuple[int, str]:
             asset_type = cls._clip_video_ref_asset_type(ref)
             priority = {
-                "storyboard": 0,
+                "shot_keyframe": 0,
                 "layout": 1,
                 "roleboard": 2,
                 "key_vision": 3,
@@ -1522,10 +1537,10 @@ class PregenWorkflow:
         return mode in {
             "layout_roleboard",
             "scene_roleboard",
-            "subject_storyboard_key_vision",
-            "subject_storyboard_keyvision",
+            "subject_shot_keyframe_key_vision",
+            "subject_shot_keyframe_keyvision",
             "kling_subject",
-            "kling_subject_storyboard_key_vision",
+            "kling_subject_shot_keyframe_key_vision",
             "layout_roleboard_previous_video",
             "layout_roleboard_prev_video",
             "layout_roleboard_context_video",
@@ -1565,7 +1580,7 @@ class PregenWorkflow:
         return False
 
     @staticmethod
-    def _previous_shot(episode: StoryboardEpisodeOutput | None, shot: StoryboardShot) -> StoryboardShot | None:
+    def _previous_shot(episode: ShotManifestEpisodeOutput | None, shot: ShotManifestItem) -> ShotManifestItem | None:
         if episode is None:
             return None
         previous = [
@@ -1578,11 +1593,11 @@ class PregenWorkflow:
         return sorted(previous, key=lambda item: int(item.index))[-1]
 
     @staticmethod
-    def _shots_share_scene(current_shot: StoryboardShot, previous_shot: StoryboardShot) -> bool:
+    def _shots_share_scene(current_shot: ShotManifestItem, previous_shot: ShotManifestItem) -> bool:
         return bool(current_shot.layout_id and current_shot.layout_id == previous_shot.layout_id)
 
     @staticmethod
-    def _clip_video_file_path(project_dir: Path, shot: StoryboardShot) -> Path | None:
+    def _clip_video_file_path(project_dir: Path, shot: ShotManifestItem) -> Path | None:
         if not shot.video_asset_path:
             return None
         video_path = Path(shot.video_asset_path)
@@ -1675,7 +1690,7 @@ class PregenWorkflow:
         return walk(value)
 
     @classmethod
-    def _clip_video_web_url(cls, shot: StoryboardShot) -> str | None:
+    def _clip_video_web_url(cls, shot: ShotManifestItem) -> str | None:
         asset_url = getattr(shot, "video_asset_url", None)
         if cls._web_url_is_probably_usable(asset_url):
             return str(asset_url)
@@ -1688,7 +1703,7 @@ class PregenWorkflow:
     def _clip_video_reference_available(
         self,
         project_dir: Path,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         *,
         provider=None,
     ) -> bool:
@@ -1699,11 +1714,11 @@ class PregenWorkflow:
     def _previous_video_shot(
         self,
         project_dir: Path,
-        episode: StoryboardEpisodeOutput | None,
-        shot: StoryboardShot,
+        episode: ShotManifestEpisodeOutput | None,
+        shot: ShotManifestItem,
         *,
         provider=None,
-    ) -> StoryboardShot | None:
+    ) -> ShotManifestItem | None:
         previous_shot = self._previous_shot(episode, shot)
         if previous_shot is None:
             return None
@@ -1712,11 +1727,11 @@ class PregenWorkflow:
     def _nearest_same_scene_video_shot(
         self,
         project_dir: Path,
-        episode: StoryboardEpisodeOutput | None,
-        shot: StoryboardShot,
+        episode: ShotManifestEpisodeOutput | None,
+        shot: ShotManifestItem,
         *,
         provider=None,
-    ) -> StoryboardShot | None:
+    ) -> ShotManifestItem | None:
         if episode is None:
             return None
         previous_shots = sorted(
@@ -1751,7 +1766,7 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         state: ProjectState,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
     ):
         from autodrama.providers.base import AssetRef
 
@@ -1784,47 +1799,15 @@ class PregenWorkflow:
             },
         )
 
-    def _storyboard_ref(
-        self,
-        project_dir: Path,
-        shot: StoryboardShot,
-    ):
-        from autodrama.providers.base import AssetRef
-
-        asset_path = shot.storyboard_asset_path or shot.source_storyboard_asset_path
-        existing = self.layout.existing_project_file(project_dir, asset_path)
-        if not existing:
-            return None
-        episode_key = str(shot.shot_id or "").rsplit("_shot_", 1)[0]
-        return AssetRef(
-            id=shot.storyboard_asset_id or f"{shot.shot_id}_storyboard",
-            type="image",
-            path=str(project_dir / existing),
-            url=None,
-            metadata={
-                "asset_type": "storyboard",
-                "reference_source": "clip_storyboard_image_generation",
-                "reference_role": "composition_action_camera",
-                "episode_key": episode_key,
-                "shot_index": shot.index,
-                "shot_id": shot.shot_id,
-                "source_shot_id": shot.shot_id,
-                "panel_count": 12,
-                "grid": "4x3",
-                "panel_aspect_ratio": "4:3",
-                "name": f"{shot.shot_id} 12宫格故事板",
-            },
-        )
-
     def _clip_video_asset_ref(
         self,
         project_dir: Path,
-        source_shot: StoryboardShot,
+        source_shot: ShotManifestItem,
         *,
         asset_type: str,
         reference_source: str,
         reference_role: str,
-        current_shot: StoryboardShot,
+        current_shot: ShotManifestItem,
         provider=None,
         extra_metadata: dict[str, Any] | None = None,
     ):
@@ -1867,8 +1850,8 @@ class PregenWorkflow:
     def _shot_context_video_refs(
         self,
         project_dir: Path,
-        shot: StoryboardShot,
-        episode: StoryboardEpisodeOutput | None,
+        shot: ShotManifestItem,
+        episode: ShotManifestEpisodeOutput | None,
         provider=None,
     ) -> list:
         previous_shot = self._previous_video_shot(project_dir, episode, shot, provider=provider)
@@ -1893,8 +1876,8 @@ class PregenWorkflow:
     def _clip_video_reference_context(
         self,
         project_dir: Path | None,
-        episode: StoryboardEpisodeOutput | None,
-        shot: StoryboardShot,
+        episode: ShotManifestEpisodeOutput | None,
+        shot: ShotManifestItem,
         *,
         provider=None,
     ) -> str:
@@ -1924,9 +1907,9 @@ class PregenWorkflow:
         self,
         project_dir: Path,
         state: ProjectState,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         provider=None,
-        episode: StoryboardEpisodeOutput | None = None,
+        episode: ShotManifestEpisodeOutput | None = None,
     ) -> list:
         from autodrama.providers.base import AssetRef
 
@@ -1965,9 +1948,6 @@ class PregenWorkflow:
                 )
             )
             return refs
-        storyboard_ref = self._storyboard_ref(project_dir, shot)
-        if storyboard_ref is not None:
-            refs.append(storyboard_ref)
         refs.extend(self._shot_roleboard_refs(project_dir, state, shot, role_ids=intro_role_ids, limit=1))
         if self._video_reference_mode_uses_layout_roleboard_refs(reference_mode):
             refs.extend(
@@ -2045,7 +2025,7 @@ class PregenWorkflow:
     def _role_for_dialogue_line(
         self,
         state: ProjectState,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         line: str,
     ) -> tuple[Role | None, str, str | None]:
         text = str(line).strip()
@@ -2070,7 +2050,7 @@ class PregenWorkflow:
         return role, dialogue_text or text, speaker_name
 
     @staticmethod
-    def _shot_dialogue_emotion(role: Role | None, shot: StoryboardShot) -> str:
+    def _shot_dialogue_emotion(role: Role | None, shot: ShotManifestItem) -> str:
         if role is None:
             return "normal"
         available = list(role.audio)
@@ -2099,7 +2079,7 @@ class PregenWorkflow:
         project_dir: Path,
         state: ProjectState,
         episode_key: str,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         line_index: int,
         line: str,
     ) -> tuple[ShotDialogueAudioAsset | None, dict[str, Any] | None]:

@@ -110,6 +110,8 @@ class StaticAssetNodeBase:
                 "policy violation",
                 "内容政策",
                 "安全策略",
+                "安全审核",
+                "未通过审核",
                 "违反了我们的内容政策",
                 "可能违反",
             )
@@ -125,7 +127,7 @@ class StaticAssetNodeBase:
             preferred = ["layout"]
         else:
             preferred = []
-        fallback = ["storyboard", "role", "prop", "layout"]
+        fallback = ["shot", "role", "prop", "layout"]
         ordered: list[str] = []
         for purpose in [*preferred, *fallback]:
             if purpose not in ordered:
@@ -154,19 +156,11 @@ class StaticAssetNodeBase:
     ) -> SafeImagePromptRewriteOutput:
         provider = self._safe_image_prompt_rewrite_provider(node_name)
         rewrite_prompt = (
-            "你是图像生成 prompt 安全改写器。请把下方图像生成 prompt 改写得更容易通过图像安全策略，"
-            "但不要改变资产职责、角色身份、道具身份、场景设定、构图关系、参考图片编号或核心视觉连续性。\n"
-            "只移除或弱化可能触发安全策略的视觉表达：血液、血迹、开放性伤口、尸体、内脏、断肢、"
-            "写实暴力、恐怖 gore、裸露、性暗示、仇恨标识、危险违法细节、可读文字、logo、水印等。\n"
-            "优先改写为低风险替代表达：尘土、泥污、旧污渍、暗色纹理、衣物破损、疲惫或紧张神情、"
-            "非写实符号化痕迹、CG 动画电影质感、克制的冲突氛围。保持画面仍然可作为当前资产使用。\n"
-            "输出 JSON，只包含改写后的 prompt 和简短 notes。\n\n"
-            f"## 节点\n{node_name}\n\n"
-            f"## 资产 ID\n{asset_id}\n\n"
-            f"## 资产上下文\n{context or {}}\n\n"
-            f"## 原始图像生成 prompt\n{current_prompt}\n\n"
-            f"## 安全失败信息\n{str(safety_error)[:2000]}\n\n"
-            f"## 改写轮次\n{rewrite_attempt}/{self.IMAGE_SAFETY_PROMPT_REWRITE_MAX_ATTEMPTS}"
+            "将下方图像提示词改写为低风险版本。保留人物、道具、场景、构图、参考图编号和视觉连续性，"
+            "但移除或弱化血液、伤口、尸体、内脏、断肢、写实暴力、恐怖、裸露、性暗示、仇恨标识、"
+            "危险违法细节、可读文字、logo 和水印。可用尘土、旧污渍、衣物破损、疲惫神情、克制冲突氛围"
+            "等低风险表达替代。\n\n只输出 JSON，包含 `prompt` 和可选的简短 `notes`。\n\n"
+            f"原始图像提示词：\n{current_prompt}"
         )
         output = await provider.generate_json(
             rewrite_prompt,
@@ -623,6 +617,8 @@ class StaticAssetNodeBase:
                 )
             if name in prompts:
                 raise ValueError(f"layout_prompt returned duplicated layout prompt: {name}")
+            if layout_item.asset_role == "base" and "three consistent views" not in prompt.lower():
+                raise ValueError(f"layout_prompt base {name} must describe three consistent views")
             prompts[name] = LayoutPromptItem(
                 name=name,
                 group=str(prompt_item.group or layout_item.group or "").strip() or layout_item.group,
@@ -672,6 +668,8 @@ class StaticAssetNodeBase:
                 model=existing.model if existing else None,
                 request_id=existing.request_id if existing else None,
                 usage=dict(existing.usage) if existing else {},
+                reference_image_kind=("three_view" if item.asset_role == "base" else (existing.reference_image_kind if existing else "single_view")),
+                prompt_language="en" if item.asset_role == "base" else (existing.prompt_language if existing else None),
             )
         return layouts
 
@@ -1228,12 +1226,26 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             raise ValueError(
                 f"Cannot generate roleboard for {role.name}/{appearance.name}: missing roleboard_prompt"
             )
-        if "本剧主视觉原图" not in base_prompt:
-            raise ValueError(
-                f"Cannot generate roleboard for {role.name}/{appearance.name}: roleboard_prompt is stale; "
-                "rerun pregen --only roleboard_prompt first"
-            )
-        return base_prompt
+        return "\n".join(
+            [
+                "Photorealistic cinematic character reference sheet.",
+                base_prompt,
+                "Full-body front, side and back views, plus one face close-up. Neutral standing pose, clean light background.",
+                "Match the supplied anchor image's rendering style, lighting and color treatment.",
+                "Avoid identity drift, duplicate bodies, extra limbs, text, logos and watermarks.",
+            ]
+        )
+
+    @staticmethod
+    def _roleboard_ref(project_dir: Path, role: Role, appearance: RoleAppearance) -> AssetRef:
+        path = appearance.asset_path or appearance.design_image_asset_path
+        return AssetRef(
+            id=appearance.asset_id or appearance.design_image_asset_id or f"{appearance.id}_roleboard",
+            type="image",
+            path=str(project_dir / path) if path else None,
+            url=appearance.asset_url or appearance.design_image_asset_url,
+            metadata={"asset_type": "roleboard", "role_id": role.id, "appearance_id": appearance.id},
+        )
 
     def existing_roleboard_path(self, project_dir: Path, appearance: RoleAppearance) -> str | None:
         for value in (appearance.asset_path, appearance.design_image_asset_path):
@@ -1337,14 +1349,21 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         node_name: str,
         style_refs: list[AssetRef],
         reuse_existing_assets: bool,
+        anchor_ref: AssetRef | None = None,
+        is_anchor: bool = False,
     ) -> StaticAssetGenerationItem:
         asset_id = self.roleboard_asset_id(appearance)
         identity_ref = self.roleboard_identity_reference_ref(project_dir, role, appearance)
         identity_refs = [identity_ref] if identity_ref is not None else []
-        key_vision_ref = self.key_vision_reference_ref(project_dir, state, reference_for=asset_id)
-        refs = [*style_refs, *identity_refs, key_vision_ref]
-        identity_reference_index = len(style_refs) + 1 if identity_refs else None
-        key_vision_reference_index = len(style_refs) + len(identity_refs) + 1
+        if is_anchor:
+            key_vision_ref = self.key_vision_reference_ref(project_dir, state, reference_for=asset_id)
+            refs = [*style_refs, key_vision_ref]
+        else:
+            if anchor_ref is None:
+                raise ValueError("roleboard_image_generation could not resolve its anchor roleboard")
+            refs = [anchor_ref, *identity_refs]
+        identity_reference_index = len(refs) if identity_refs else None
+        key_vision_reference_index = len(refs) if is_anchor else None
         prompt = self.roleboard_prompt_for_generation(
             role=role,
             appearance=appearance,
@@ -1384,6 +1403,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                     "style_reference_count": len(style_refs),
                     "identity_reference_index": identity_reference_index,
                     "key_vision_reference_index": key_vision_reference_index,
+                    "anchor_reference": bool(anchor_ref),
                 },
                 context={
                     "asset_type": "roleboard",
@@ -1460,7 +1480,31 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         )
         semaphore = asyncio.Semaphore(concurrency)
 
-        async def generate_one(role: Role, appearance: RoleAppearance) -> StaticAssetGenerationItem:
+        def select_anchor() -> tuple[Role, RoleAppearance]:
+            params = getattr(self.repo.settings.nodes.get(node_name), "params", {}) or {}
+            wanted_role = str(params.get("anchor_role") or "").strip()
+            wanted_appearance = str(params.get("anchor_appearance") or "base").strip() or "base"
+            if wanted_role:
+                for role, appearance in appearances:
+                    if (role.id == wanted_role or role.name == wanted_role or wanted_role in role.aliases) and appearance.name == wanted_appearance:
+                        return role, appearance
+            for role, appearance in appearances:
+                if str(role.role_tier).lower() == "primary" and appearance.asset_role == "base":
+                    return role, appearance
+            for role, appearance in appearances:
+                if appearance.asset_role == "base":
+                    return role, appearance
+            raise ValueError("roleboard_image_generation requires a base appearance for the anchor")
+
+        anchor_role, anchor_appearance = select_anchor()
+
+        async def generate_one(
+            role: Role,
+            appearance: RoleAppearance,
+            *,
+            anchor_ref: AssetRef | None,
+            is_anchor: bool = False,
+        ) -> StaticAssetGenerationItem:
             async with semaphore:
                 return await self.generate_roleboard_asset(
                     provider=provider,
@@ -1471,12 +1515,26 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                     node_name=node_name,
                     style_refs=style_refs,
                     reuse_existing_assets=reuse_existing_assets,
+                    anchor_ref=anchor_ref,
+                    is_anchor=is_anchor,
                 )
+
+        anchor_item = await generate_one(anchor_role, anchor_appearance, anchor_ref=None, is_anchor=True)
+        generated.append(anchor_item)
+        generated_by_asset_id[anchor_item.asset_id] = anchor_item
+        anchor_ref = self._roleboard_ref(project_dir, anchor_role, anchor_appearance)
+        state.metadata["roleboard_anchor"] = {
+            "role_id": anchor_role.id,
+            "appearance_id": anchor_appearance.id,
+            "asset_id": anchor_item.asset_id,
+            "asset_path": anchor_item.asset_path,
+            "asset_url": anchor_item.asset_url,
+        }
 
         independent = [
             (role, appearance)
             for role, appearance in appearances
-            if appearance.asset_role == "base"
+            if appearance.asset_role == "base" and appearance.id != anchor_appearance.id
         ]
         dependent = [
             (role, appearance)
@@ -1485,7 +1543,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         ]
 
         async def run_batch(batch: list[tuple[Role, RoleAppearance]]) -> list[StaticAssetGenerationItem]:
-            tasks = [asyncio.create_task(generate_one(role, appearance)) for role, appearance in batch]
+            tasks = [asyncio.create_task(generate_one(role, appearance, anchor_ref=anchor_ref)) for role, appearance in batch]
             try:
                 return list(await asyncio.gather(*tasks)) if tasks else []
             except Exception:
@@ -1690,17 +1748,14 @@ class PropPromptNode(StaticAssetNodeBase):
     name = "prop_prompt"
 
     def _text_provider(self):
-        node_name = self.name
-        if node_name not in self.repo.settings.nodes and "prop_design" in self.repo.settings.nodes:
-            node_name = "prop_design"
-        return self.router.text("prop", node_name=node_name)
+        return self.router.text("prop", node_name=self.name)
 
-    def _prop_prompt_template_name(self) -> str:
-        node_settings = self.repo.settings.nodes.get(self.name) or self.repo.settings.nodes.get("prop_design")
+    def _prop_prompt_variant(self) -> str:
+        node_settings = self.repo.settings.nodes.get(self.name)
         params = getattr(node_settings, "params", {}) if node_settings is not None else {}
         explicit = str(params.get("prompt_template") or "").strip()
         if explicit:
-            return explicit
+            return explicit.removesuffix(".md")
 
         try:
             image_provider = self.router.image("prop", node_name=PropImageGenerationNode.name)
@@ -1711,25 +1766,25 @@ class PropPromptNode(StaticAssetNodeBase):
             model_key = ""
 
         candidates = [
-            f"prop_prompt_{provider_key}_{model_key}",
-            f"prop_prompt_{model_key}",
-            f"prop_prompt_{provider_key}",
-            "prop_prompt",
+            f"{provider_key}_{model_key}",
+            model_key,
+            provider_key,
+            "default",
         ]
         prompt_dir = self.asset_service.prompts.prompt_dir
         for candidate in candidates:
-            if candidate and (prompt_dir / f"{candidate}.md").exists():
+            if candidate and (prompt_dir / self.name / f"{candidate}.md").exists():
                 return candidate
-        return "prop_prompt"
+        return "default"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self._text_provider()
-        prompt_template = self._prop_prompt_template_name()
+        prompt_variant = self._prop_prompt_variant()
         self.logger.info(
-            "node=prop_prompt provider=%s model=%s prompt_template=%s",
+            "node=prop_prompt provider=%s model=%s prompt_variant=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
-            prompt_template,
+            prompt_variant,
         )
         source_prop_assets_path = "assets/json/nodes/prop_finalize.json"
         try:
@@ -1743,7 +1798,7 @@ class PropPromptNode(StaticAssetNodeBase):
             state,
             provider,
             props=self.prop_output_payload(prop_source_output),
-            prompt_template=prompt_template,
+            prompt_variant=prompt_variant,
         )
         owner_role_props = {
             prop_id: prop
@@ -1762,10 +1817,6 @@ class PropPromptNode(StaticAssetNodeBase):
         state.budget.used_text_calls += 1
         self.repo.save_node_output(project_dir, self.name, output)
         return state
-
-
-class PropDesignNode(PropPromptNode):
-    name = "prop_design"
 
 
 class PropImageGenerationNode(StaticAssetNodeBase):
@@ -1935,9 +1986,6 @@ class PropImageGenerationNode(StaticAssetNodeBase):
         return state
 
 
-class PropGenerationNode(PropImageGenerationNode):
-    name = "prop_generation"
-
 class LayoutExtractNode(StaticAssetNodeBase):
     name = "layout_extract"
 
@@ -2104,12 +2152,12 @@ class LayoutPromptNode(StaticAssetNodeBase):
     def _text_provider(self):
         return self.router.text("layout", node_name=self.name)
 
-    def _layout_prompt_template_name(self) -> str:
+    def _layout_prompt_variant(self) -> str:
         node_settings = self.repo.settings.nodes.get(self.name)
         params = getattr(node_settings, "params", {}) if node_settings is not None else {}
         explicit = str(params.get("prompt_template") or "").strip()
         if explicit:
-            return explicit
+            return explicit.removesuffix(".md")
 
         try:
             image_provider = self.router.image("layout", node_name=LayoutImageGenerationNode.name)
@@ -2120,29 +2168,29 @@ class LayoutPromptNode(StaticAssetNodeBase):
             model_key = ""
 
         candidates = [
-            f"layout_prompt_{provider_key}_{model_key}",
-            f"layout_prompt_{provider_key}_seedream" if "seedream" in model_key else "",
-            f"layout_prompt_{provider_key}_gpt_image_2" if "gpt_image" in model_key else "",
-            f"layout_prompt_{model_key}",
-            "layout_prompt_seedream" if "seedream" in model_key else "",
-            "layout_prompt_gpt_image_2" if "gpt_image" in model_key else "",
-            f"layout_prompt_{provider_key}",
-            "layout_prompt",
+            f"{provider_key}_{model_key}",
+            f"{provider_key}_seedream" if "seedream" in model_key else "",
+            f"{provider_key}_gpt_image_2" if "gpt_image" in model_key else "",
+            model_key,
+            "seedream" if "seedream" in model_key else "",
+            "gpt_image_2" if "gpt_image" in model_key else "",
+            provider_key,
+            "default",
         ]
         prompt_dir = self.asset_service.prompts.prompt_dir
         for candidate in candidates:
-            if candidate and (prompt_dir / f"{candidate}.md").exists():
+            if candidate and (prompt_dir / self.name / f"{candidate}.md").exists():
                 return candidate
-        return "layout_prompt"
+        return "default"
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self._text_provider()
-        prompt_template = self._layout_prompt_template_name()
+        prompt_variant = self._layout_prompt_variant()
         self.logger.info(
-            "node=layout_prompt provider=%s model=%s prompt_template=%s",
+            "node=layout_prompt provider=%s model=%s prompt_variant=%s",
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
-            prompt_template,
+            prompt_variant,
         )
         try:
             layout_source_output = self.load_layout_prop_boundary_review_output(project_dir)
@@ -2156,7 +2204,7 @@ class LayoutPromptNode(StaticAssetNodeBase):
             state,
             provider,
             layouts=[item.model_dump() for item in layout_items],
-            prompt_template=prompt_template,
+            prompt_variant=prompt_variant,
         )
         self.normalize_layout_prompt_items(output.layout_prompts, layout_items)
         state.layouts = self.layout_prompt_output_to_state(layout_items, output, state)
@@ -2289,6 +2337,9 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
         layout.model = result.model
         layout.request_id = result.request_id
         layout.usage = result.usage
+        if layout.asset_role == "base":
+            layout.reference_image_kind = "three_view"
+            layout.prompt_language = "en"
         item = StaticAssetGenerationItem(
             asset_id=layout.id,
             asset_type="layout",
@@ -2407,8 +2458,6 @@ def build_static_asset_node_runners(workflow: Any) -> dict[str, StaticAssetNodeB
         PropDedupeNode.name: PropDedupeNode(**deps),
         PropPromptNode.name: PropPromptNode(**deps),
         PropImageGenerationNode.name: PropImageGenerationNode(**deps),
-        PropDesignNode.name: PropDesignNode(**deps),
-        PropGenerationNode.name: PropGenerationNode(**deps),
         LayoutExtractNode.name: LayoutExtractNode(**deps),
         LayoutDedupeReviewNode.name: LayoutDedupeReviewNode(**deps),
         LayoutPropBoundaryReviewNode.name: LayoutPropBoundaryReviewNode(**deps),
@@ -2433,11 +2482,9 @@ __all__ = [
     "LayoutPromptNode",
     "LayoutPropBoundaryReviewNode",
     "PropDedupeNode",
-    "PropDesignNode",
     "PropExtractNode",
     "PropImageGenerationNode",
     "PropPromptNode",
-    "PropGenerationNode",
     "RoleboardGenerationNode",
     "StaticAssetNodeBase",
     "build_static_asset_node_runners",

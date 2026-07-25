@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from autodrama.core.schemas import ProjectState, StoryboardEpisodeOutput, StoryboardShot
+from autodrama.core.schemas import ProjectState, ShotManifestEpisodeOutput, ShotManifestItem
 from autodrama.services.script_service import ScriptService
 
 
@@ -126,15 +126,15 @@ def shot_selector_index_bounds(selectors: list[str] | set[str] | None) -> tuple[
             indexes.append(index)
     if unresolved:
         raise ValueError(
-            "Storyboard big-loop --shots must use numeric shot selectors so the storyboard limit can be derived; "
+            "Shot selection --shots must use numeric selectors so the selection bounds can be derived; "
             f"unsupported selectors: {', '.join(unresolved)}"
         )
     return min(indexes), max(indexes)
 
 
 def shot_matches_selectors(
-    episode: StoryboardEpisodeOutput,
-    shot: StoryboardShot,
+    episode: ShotManifestEpisodeOutput,
+    shot: ShotManifestItem,
     selectors: set[str],
 ) -> bool:
     shot_id = str(shot.shot_id).lower().replace("-", "_")
@@ -174,9 +174,9 @@ def clip_matches_selectors(
 
 
 def active_shots_for_episode(
-    episode: StoryboardEpisodeOutput,
+    episode: ShotManifestEpisodeOutput,
     selectors: list[str] | set[str] | None,
-) -> list[StoryboardShot]:
+) -> list[ShotManifestItem]:
     normalized_selectors = normalize_shot_selectors(selectors)
     if not normalized_selectors:
         return list(episode.shots)

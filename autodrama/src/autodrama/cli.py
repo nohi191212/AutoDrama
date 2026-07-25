@@ -55,9 +55,6 @@ def parse_role_names(value: str | None) -> list[str] | None:
 
 def build_parser() -> argparse.ArgumentParser:
     pregen_only_choices = [*PREGEN_ONLY_NODES]
-    for legacy_choice in ("prop_design", "prop_generation", "prop_image_generation"):
-        if legacy_choice not in pregen_only_choices:
-            pregen_only_choices.append(legacy_choice)
 
     parser = argparse.ArgumentParser(prog="autodrama")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -124,12 +121,10 @@ def build_parser() -> argparse.ArgumentParser:
         dest="episodes",
         help=(
             "Supported with pregen --only clip_segment, roleboard_prompt, roleboard_image_generation, "
+            "clip_to_shots, layout_to_background_prompt, shot_background_image_generation, shot_keyframe_prompt, shot_keyframe_image_generation, shot_manifest_generation, "
             "role_subject_frontal_image_generation, role_kling_voice_generation, "
-            "role_subject_video_generation, role_subject_element_generation, clip_prompt, clip_storyboard_prompt, "
-            "clip_storyboard_image_generation, clip_storyboard_keyframe_generation, clip_manifest_generation, "
-            "role_voice_select, "
-            "prop_prompt, prop_image_generation, or layout_image_generation "
-            "(legacy aliases: prop_design, prop_generation)."
+            "role_subject_video_generation, role_subject_element_generation, role_voice_select, "
+            "prop_prompt, prop_image_generation, or layout_image_generation."
         ),
     )
     pregen_parser.add_argument(
@@ -147,10 +142,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="clips",
         help=(
             "Comma-separated clip indexes or ids to regenerate with pregen --only "
-            "clip_storyboard_prompt, clip_storyboard_image_generation, "
-            "clip_storyboard_keyframe_generation, or clip_manifest_generation. "
+            "clip_to_shots. "
             "Supports ranges such as 2,5-7 or ids such as episode_001_clip_005."
         ),
+    )
+    pregen_parser.add_argument(
+        "--shots",
+        help="Comma-separated shot indexes or ids for pregen --only layout_to_background_prompt, shot_background_image_generation, shot_keyframe_prompt, shot_keyframe_image_generation, or shot_manifest_generation.",
     )
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     pregen_parser.add_argument("--force", action="store_true")
@@ -176,7 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--shots",
         help=(
             "Comma-separated shot indexes or ids to generate inside selected episodes. "
-            "Supported by clip_video_generation and dynamic_asset_solidification, "
+            "Supported by shot_video_generation and dynamic_asset_solidification, "
             "for example 1-3 or episode_001_shot_1."
         ),
     )
@@ -713,6 +711,7 @@ async def cmd_run_pregen(args: argparse.Namespace) -> int:
         episode_keys=parse_episode_keys(args.episodes),
         role_names=parse_role_names(args.roles),
         clip_selectors=parse_clip_selectors(args.clips),
+        shot_selectors=parse_shot_selectors(args.shots),
     )
     get_logger().info(
         "run summary project_id=%s current_node=%s role_count=%d project_dir=%s",
@@ -730,6 +729,7 @@ async def cmd_run_pregen(args: argparse.Namespace) -> int:
                 "role_count": len(state.roles),
                 "project_dir": str(project_dir),
                 "clips": args.clips or None,
+                "shots": args.shots or None,
             },
             ensure_ascii=False,
             indent=2,

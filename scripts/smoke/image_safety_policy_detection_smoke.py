@@ -18,12 +18,17 @@ def main() -> None:
     chinese_error = ProviderBadResponseError(
         "AIBOX image task 54415429 failed: 任务执行失败：我们很抱歉，我们创建的图像可能违反了我们的内容政策。"
     )
+    aibox_review_error = ProviderBadResponseError(
+        "AIBOX image task 77786026 failed: 提交的内容未通过安全审核，请修改内容后重试。"
+    )
     neutral_error = ProviderBadResponseError("AIBOX image task failed: no image URL returned")
 
     if not StaticAssetNodeBase._is_image_safety_failure(english_error):
         raise AssertionError("english safety error should be detected")
     if not StaticAssetNodeBase._is_image_safety_failure(chinese_error):
         raise AssertionError("chinese content policy error should be detected")
+    if not StaticAssetNodeBase._is_image_safety_failure(aibox_review_error):
+        raise AssertionError("AIBOX safety review error should be detected")
     if StaticAssetNodeBase._is_image_safety_failure(neutral_error):
         raise AssertionError("neutral provider error should not be treated as safety failure")
 

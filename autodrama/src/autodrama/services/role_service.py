@@ -83,8 +83,6 @@ class RoleService:
         existing_primary_roles = existing_primary_roles or []
         prompt = self.prompts.render(
             "role_extract_primary",
-            title=state.title,
-            raw_script=state.raw_script,
             novel_full_context=novel_full_context,
             existing_primary_roles=self.format_json(existing_primary_roles),
         )
@@ -111,8 +109,6 @@ class RoleService:
         existing_functional_roles = existing_functional_roles or []
         prompt = self.prompts.render(
             "role_extract_functional",
-            title=state.title,
-            raw_script=state.raw_script,
             novel_full_context=novel_full_context,
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(existing_functional_roles),
@@ -171,29 +167,29 @@ class RoleService:
         role_index: list[dict[str, object]],
         key_vision_asset: dict[str, object] | None = None,
         appearance_asset: dict[str, object] | None = None,
-        prompt_template: str = "roleboard_prompt",
+        prompt_variant: str = "default",
         roleboard_image_provider: str | None = None,
         roleboard_image_model: str | None = None,
     ) -> RoleboardPromptModelOutput:
-        prompt = self.prompts.render(
-            prompt_template,
-            role_extract_item=self.format_json(role_item.model_dump(mode="json")),
-            character_intro=self.role_character_intro(role_item),
-            role_novel_extract=self.format_json(role_novel_extract),
-            role_novel_full=self.format_json(role_novel_full),
-            clip_segments=self.clip_segments_context(state, list(role_novel_full)),
-            project_context=DirectorService.project_context(state, episode_keys=list(role_novel_full)),
-            visual_tone=(
-                self.visual_tone(state)
-                or "（暂无 visual_tone，请只依据人物介绍生成中性、可复用的角色身份板提示词。）"
-            ),
-            role_index=self.format_json(role_index),
-            key_vision_asset=self.format_json(key_vision_asset or {}),
-            appearance_asset=self.format_json(appearance_asset or {}),
-            roleboard_style_prompt=self.roleboard_style_prompt(state),
-            roleboard_view_requirement=self.roleboard_view_requirement(),
-            roleboard_image_provider=roleboard_image_provider or "",
-            roleboard_image_model=roleboard_image_model or "",
+        prompt = self.prompts.render_context(
+            "roleboard_prompt",
+            {
+                "role_extract_item": self.format_json(role_item.model_dump(mode="json")),
+                "character_intro": self.role_character_intro(role_item),
+                "role_novel_extract": self.format_json(role_novel_extract),
+                "role_novel_full": self.format_json(role_novel_full),
+                "clip_segments": self.clip_segments_context(state, list(role_novel_full)),
+                "project_context": DirectorService.project_context(state, episode_keys=list(role_novel_full)),
+                "visual_tone": self.visual_tone(state),
+                "role_index": self.format_json(role_index),
+                "key_vision_asset": self.format_json(key_vision_asset or {}),
+                "appearance_asset": self.format_json(appearance_asset or {}),
+                "roleboard_style_prompt": self.roleboard_style_prompt(state),
+                "roleboard_view_requirement": self.roleboard_view_requirement(),
+                "roleboard_image_provider": roleboard_image_provider or "",
+                "roleboard_image_model": roleboard_image_model or "",
+            },
+            variant=prompt_variant,
         )
         return await provider.generate_json(
             prompt,
@@ -203,10 +199,18 @@ class RoleService:
                 "node_name": "roleboard_prompt",
                 "project_id": state.project_id,
                 "role_name": role_item.name,
+                "prompt_asset_name": "_".join(
+                    value
+                    for value in (
+                        str(role_item.name or "").strip(),
+                        str((appearance_asset or {}).get("appearance_name") or (appearance_asset or {}).get("name") or "base").strip(),
+                    )
+                    if value
+                ),
                 "episode_keys": list(role_novel_full),
                 "key_vision_asset": key_vision_asset or {},
                 "appearance_asset": appearance_asset or {},
-                "roleboard_prompt_template": prompt_template,
+                "roleboard_prompt_variant": prompt_variant,
                 "roleboard_image_provider": roleboard_image_provider,
                 "roleboard_image_model": roleboard_image_model,
             },

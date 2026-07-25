@@ -85,6 +85,32 @@ postgen:
     fail_on_reject: false
     max_output_tokens: 8192
 nodes:
+  clip_to_shots:
+    model: rightcode:gpt-5.6-terra
+    params:
+      temperature: 0.35
+      response_format: json_object
+  layout_to_background_prompt:
+    model: aibox:gemini-3.5-flash
+    params:
+      temperature: 0.25
+  shot_background_image_generation:
+    model: aibox:gpt-image-2-guan
+    params:
+      concurrency: 2
+      size: 1088x1920
+  shot_keyframe_prompt:
+    model: aibox:gemini-3.5-flash
+    params:
+      temperature: 0.3
+      negative_prompt: extra people, duplicate bodies, identity drift, malformed hands, inconsistent scale, floating objects, text, subtitles, logo, watermark
+  shot_keyframe_image_generation:
+    model: aibox:gpt-image-2-guan
+    params:
+      concurrency: 2
+      size: 1088x1920
+  shot_manifest_generation:
+    params: {}
   script_outline:
     model: rightcode:gpt-5.6-terra
     params:
@@ -141,7 +167,7 @@ nodes:
   roleboard_image_generation:
     model: aibox:gpt-image-2-guan
     params:
-      roleboard_prompt_template: roleboard_prompt/aibox_gpt_image_2_guan
+      roleboard_prompt_template: aibox_gpt_image_2_guan
       roleboard_image_generation_concurrency: 3
       size: 3840x2160
   role_subject_frontal_image_generation:
@@ -150,27 +176,6 @@ nodes:
       size: 1088x1920
       quality: high
       image_generation_concurrency: 3
-  clip_storyboard_prompt:
-    model: rightcode:gpt-5.6-terra
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-      console_stream: false
-  clip_storyboard_image_generation:
-    model: aibox:gpt-image-2-guan
-    params:
-      clip_storyboard_image_generation_concurrency: 1
-      size: 3840x2160
-      storyboard_panel_aspect_ratio: '4:3'
-  clip_storyboard_keyframe_generation:
-    model: aibox:gpt-image-2-guan
-    params:
-      prompt_template: toapi_gpt_image_2
-      size: 1088x1920
-      quality: high
-      clip_storyboard_keyframe_generation_concurrency: 4
-      output_dir: assets/storyboard_keyframes
   prop_extract:
     model: rightcode:gpt-5.6-terra
     params:
@@ -267,7 +272,7 @@ nodes:
       sound: native
       watermark: false
       subject_reference_type: image_refer
-  clip_video_generation:
+  shot_video_generation:
     model: kling:kling-v3-omni
     params:
       aspect_ratio: '9:16'
@@ -276,11 +281,11 @@ nodes:
       resolution: 1080p
       multi_shot: false
       watermark: false
-      prompt_template: clip_video/kling
+      prompt_template: kling
       negative_rules:
       - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示场景三视图、人物三视图。
-      max_reference_images: 3
-      clip_video_generation_concurrency: 5
+      max_reference_images: 7
+      shot_video_generation_concurrency: 5
   shot_dialogue_audio_generation:
     model: volcengine:seed-tts-2.0
     params:
@@ -363,7 +368,7 @@ providers:
     api_key_env: RIGHTCODE_API_KEY
     models:
       text: gpt-5.6-terra
-      storyboard: gpt-5.6-terra
+      shot: gpt-5.6-terra
       image: gpt-image-2
       key_vision: gpt-image-2
       roleboard: gpt-image-2-vip
@@ -374,7 +379,7 @@ providers:
         gpt-image-2-vip: /draw
       text_response_format: true
       reasoning_effort: xhigh
-      storyboard_reasoning_effort: xhigh
+      shot_reasoning_effort: xhigh
       size: 1024x1024
       roleboard_size: 3840x2160
       roleboard_quality: high
@@ -390,7 +395,7 @@ providers:
       image: gpt-image-2-guan
       key_vision: gpt-image-2-guan
       roleboard: gpt-image-2-guan
-      storyboard: gpt-image-2-guan
+      shot: gpt-image-2-guan
       prop: gpt-image-2-guan
       layout: gpt-image-2-guan
     options:
@@ -399,7 +404,7 @@ providers:
       key_vision_size: 3840x2160
       key_vision_quality: high
       roleboard_size: 3840x2160
-      storyboard_size: 2048x2048
+      shot_size: 2048x2048
       prop_size: 2048x2048
       layout_size: 2160x3840
       max_reference_images: 14
@@ -444,12 +449,12 @@ providers:
     api_key_env: DEEPSEEK_API_KEY
     models:
       text: deepseek-v4-pro
-      storyboard: deepseek-v4-pro
+      shot: deepseek-v4-pro
     options:
       reasoning_effort: max
       thinking_enabled: true
-      storyboard_reasoning_effort: max
-      storyboard_thinking_enabled: true
+      shot_reasoning_effort: max
+      shot_thinking_enabled: true
   google:
     base_url: https://generativelanguage.googleapis.com
     api_key_env: GOOGLE_API_KEY
@@ -621,10 +626,10 @@ providers:
       sound: native
       multi_shot: false
       watermark: false
-      video_reference_mode: subject_storyboard_key_vision
+      video_reference_mode: shot_keyframe
       subject_reference_type: image_refer
       subject_video_duration_seconds: 5
-      max_reference_images: 3
+      max_reference_images: 7
       max_reference_elements: 3
       require_dialogue_voice: true
       auto_select_official_voice: true
@@ -647,7 +652,7 @@ routing:
     role_voice_select: rightcode
     prop: rightcode
     layout: rightcode
-    storyboard: rightcode
+    shot: rightcode
     shot_bgm: rightcode
     postgen_edit_plan: google
     postgen_audit: aibox
@@ -656,7 +661,7 @@ routing:
   image:
     role: aibox
     key_vision: aibox
-    storyboard: aibox
+    shot: aibox
     prop: aibox
     layout: aibox
   video:

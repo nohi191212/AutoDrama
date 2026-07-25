@@ -242,6 +242,10 @@ class Layout(BaseModel):
     model: str | None = None
     request_id: str | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
+    # Legacy projects are deliberately treated as single-view until their
+    # layout prompt/image pair is regenerated for the shot-first pipeline.
+    reference_image_kind: Literal["single_view", "three_view"] = "single_view"
+    prompt_language: str | None = None
 
 
 class BGM(BaseModel):
@@ -494,198 +498,6 @@ class RoleboardPromptOutput(BaseModel):
     prompts: list[RoleboardPromptItem]
 
 
-class ClipPromptModelOutput(BaseModel):
-    clip_prompt: str
-    target_duration_seconds: int
-
-
-class ClipPromptItem(BaseModel):
-    episode_key: str
-    clip_id: str
-    clip_index: int
-    source_clip_key: str
-    clip_text: str
-    role_names: list[str] = Field(default_factory=list)
-    layout_names: list[str] = Field(default_factory=list)
-    prop_names: list[str] = Field(default_factory=list)
-    role_ids: list[str] = Field(default_factory=list)
-    layout_ids: list[str] = Field(default_factory=list)
-    prop_ids: list[str] = Field(default_factory=list)
-    target_duration_seconds: int
-    clip_prompt: str
-    reference_image_context: list[dict[str, Any]] = Field(default_factory=list)
-    provider: str | None = None
-    model: str | None = None
-    usage: dict[str, Any] = Field(default_factory=dict)
-    raw_response: dict[str, Any] = Field(default_factory=dict)
-
-
-class ClipPromptEpisode(BaseModel):
-    episode_key: str
-    clips: list[ClipPromptItem] = Field(default_factory=list)
-
-
-class ClipPromptOutput(BaseModel):
-    clip_prompts: list[ClipPromptEpisode]
-
-
-class ClipStoryboardPromptModelItem(BaseModel):
-    clip_id: str
-    clip_storyboard_prompt: str
-
-
-class ClipStoryboardPromptModelOutput(BaseModel):
-    clips: list[ClipStoryboardPromptModelItem] = Field(min_length=1)
-
-
-class ClipStoryboardPromptAuditModelItem(BaseModel):
-    clip_id: str
-    changed: bool
-    issues: list[str] = Field(default_factory=list)
-    clip_storyboard_prompt: str
-
-
-class ClipStoryboardPromptAuditModelOutput(BaseModel):
-    clips: list[ClipStoryboardPromptAuditModelItem] = Field(min_length=1)
-
-
-class ClipStoryboardPromptAuditItem(BaseModel):
-    clip_id: str
-    changed: bool
-    issues: list[str] = Field(default_factory=list)
-
-
-class ClipStoryboardPromptAuditEpisode(BaseModel):
-    episode_key: str
-    clips: list[ClipStoryboardPromptAuditItem] = Field(default_factory=list)
-
-
-class ClipStoryboardPromptAuditOutput(BaseModel):
-    episodes: list[ClipStoryboardPromptAuditEpisode] = Field(default_factory=list)
-
-
-class StoryboardPromptClip(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    clip_id: str = Field(validation_alias=AliasChoices("clip_id", "shot_id"))
-    clip_title: str | None = None
-    clip_duration_hint: str | None = None
-    clip_text: str | None = None
-    duration_seconds: float
-    role_ids: list[str] = Field(default_factory=list)
-    layout_ids: list[str] = Field(default_factory=list)
-    prop_ids: list[str] = Field(default_factory=list)
-    camera_shots: list[dict[str, Any]] = Field(default_factory=list)
-    panel_plan: dict[str, Any] = Field(default_factory=dict)
-    video_prompt: str
-    storyboard_image_prompt: str | None = None
-    negative_prompt: str | None = None
-
-    @property
-    def clip_storyboard_prompt(self) -> str:
-        return self.video_prompt
-
-    @clip_storyboard_prompt.setter
-    def clip_storyboard_prompt(self, value: str) -> None:
-        self.video_prompt = value
-
-    @property
-    def shot_id(self) -> str:
-        return self.clip_id
-
-    @shot_id.setter
-    def shot_id(self, value: str) -> None:
-        self.clip_id = value
-
-
-StoryboardPromptShot = StoryboardPromptClip
-
-
-class StoryboardPromptEpisode(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    episode_key: str
-    clips: list[StoryboardPromptClip] = Field(default_factory=list, validation_alias=AliasChoices("clips", "shots"))
-
-    @property
-    def shots(self) -> list[StoryboardPromptClip]:
-        return self.clips
-
-    @shots.setter
-    def shots(self, value: list[StoryboardPromptClip]) -> None:
-        self.clips = value
-
-
-class StoryboardPromptOutput(BaseModel):
-    storyboards: list[StoryboardPromptEpisode]
-
-
-class StoryboardSheetGenerationItem(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    episode_key: str
-    clip_id: str = Field(validation_alias=AliasChoices("clip_id", "shot_id"))
-    asset_id: str
-    prompt: str
-    duration_seconds: float | None = None
-    panel_count: int = 12
-    grid: str = "4x3"
-    sheet_aspect_ratio: str = "16:9"
-    panel_aspect_ratio: str = "4:3"
-    size: str | None = None
-    asset_path: str | None = None
-    asset_url: str | None = None
-    provider: str
-    model: str
-    request_id: str | None = None
-    usage: dict[str, Any] = Field(default_factory=dict)
-    raw_response: dict[str, Any] = Field(default_factory=dict)
-
-    @property
-    def shot_id(self) -> str:
-        return self.clip_id
-
-    @shot_id.setter
-    def shot_id(self, value: str) -> None:
-        self.clip_id = value
-
-
-class StoryboardSheetGenerationOutput(BaseModel):
-    generated_storyboards: list[StoryboardSheetGenerationItem]
-
-
-class StoryboardKeyframeGenerationItem(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    episode_key: str
-    clip_id: str = Field(validation_alias=AliasChoices("clip_id", "shot_id"))
-    frame_role: Literal["start", "end"] | str
-    panel_ref: str
-    source_storyboard_asset_id: str
-    prompt: str
-    asset_id: str
-    asset_path: str | None = None
-    asset_url: str | None = None
-    provider: str
-    model: str
-    request: dict[str, Any] = Field(default_factory=dict)
-    response: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices("response", "raw_response"))
-    usage: dict[str, Any] = Field(default_factory=dict)
-    request_id: str | None = None
-
-    @property
-    def shot_id(self) -> str:
-        return self.clip_id
-
-    @shot_id.setter
-    def shot_id(self, value: str) -> None:
-        self.clip_id = value
-
-
-class StoryboardKeyframeGenerationOutput(BaseModel):
-    generated_keyframes: list[StoryboardKeyframeGenerationItem]
-
-
 class PropAssetExtractItem(BaseModel):
     name: str = "base"
     asset_role: Literal["base", "variant"] = "base"
@@ -863,17 +675,17 @@ class ShotBGMAsset(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
-class StoryboardSourceCoverage(BaseModel):
+class ShotSourceCoverage(BaseModel):
     start_text: str
     end_text: str
     next_start_text: str | None = None
     note: str
 
 
-class ClipVideoInput(BaseModel):
+class ShotVideoInput(BaseModel):
     slot: str
     type: Literal["image"] = "image"
-    asset_type: Literal["clip_start_frame", "clip_end_frame", "storyboard", "roleboard", "layout", "prop"] | str
+    asset_type: Literal["shot_keyframe", "shot_last_frame", "roleboard", "layout", "prop"] | str
     asset_id: str | None = None
     asset_path: str | None = None
     asset_url: str | None = None
@@ -892,16 +704,22 @@ class ClipVideoInput(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class StoryboardClip(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+class ShotManifestItem(BaseModel):
+    """The persisted, shot-first generation contract for one video shot."""
 
-    clip_id: str = Field(validation_alias=AliasChoices("clip_id", "shot_id"))
+    model_config = ConfigDict(extra="forbid")
+
+    shot_id: str
     index: int
     layout_id: str | None = None
     layout_ids: list[str] = Field(default_factory=list)
+    clip_id: str | None = None
+    clip_index: int | None = None
+    shot_index_in_clip: int | None = None
+    ref_ids: list[str] = Field(default_factory=list)
     title: str
     segment_index: int | None = None
-    source_coverage: StoryboardSourceCoverage | None = None
+    source_coverage: ShotSourceCoverage | None = None
     content: str | None = None
     scene_description: str | None = None
     composition: str | None = None
@@ -919,12 +737,9 @@ class StoryboardClip(BaseModel):
     role_appearance_ids: list[str] = Field(default_factory=list)
     role_audio_ids: list[str] = Field(default_factory=list)
     prop_ids: list[str] = Field(default_factory=list)
-    storyboard_asset_id: str | None = None
-    storyboard_asset_path: str | None = None
-    source_storyboard_asset_path: str | None = None
     video_prompt: str
     final_video_prompt: str | None = None
-    clip_video_inputs: list[ClipVideoInput] = Field(default_factory=list)
+    video_inputs: list[ShotVideoInput] = Field(default_factory=list)
     start_frame_asset_id: str | None = None
     start_frame_asset_path: str | None = None
     start_frame_asset_url: str | None = None
@@ -932,6 +747,12 @@ class StoryboardClip(BaseModel):
     end_frame_asset_id: str | None = None
     end_frame_asset_path: str | None = None
     end_frame_asset_url: str | None = None
+    background_asset_id: str | None = None
+    background_asset_path: str | None = None
+    background_asset_url: str | None = None
+    shot_description: str | None = None
+    narrative_angle: str | None = None
+    opening_state: str | None = None
     is_first_clip: bool = False
     requires_initial_hard_cut: bool = False
     dialogue_audio_assets: list[ShotDialogueAudioAsset] = Field(default_factory=list)
@@ -948,60 +769,186 @@ class StoryboardClip(BaseModel):
     video_raw_response: dict[str, Any] = Field(default_factory=dict)
     solidified_asset_ids: list[str] = Field(default_factory=list)
 
-    @property
-    def shot_id(self) -> str:
-        return self.clip_id
+class ShotManifestEpisodeOutput(BaseModel):
+    """The persisted shot manifest for one episode.
 
-    @shot_id.setter
-    def shot_id(self, value: str) -> None:
-        self.clip_id = value
+    This deliberately accepts only the current `shots` shape.  Earlier
+    manifest fields must be regenerated upstream rather than converted.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    episode_key: str
+    schema_version: Literal[4] = 4
+    shots: list[ShotManifestItem] = Field(default_factory=list)
 
 
-StoryboardShot = StoryboardClip
+class ClipToShotsModelItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shot_description: str
+    narrative_angle: str
+    opening_state: str
+    ref_ids: list[str] = Field(default_factory=list)
+    video_prompt: str
+    duration_seconds: int = Field(ge=3, le=15)
+    dialogue: list[str] = Field(default_factory=list)
 
 
-class StoryboardEpisodeOutput(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+class ClipToShotsModelOutput(RootModel[dict[str, ClipToShotsModelItem]]):
+    pass
+
+
+class ShotPlanItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shot_id: str
+    clip_id: str
+    clip_index: int
+    shot_index_in_clip: int
+    episode_shot_index: int
+    shot_description: str
+    narrative_angle: str
+    opening_state: str
+    ref_ids: list[str] = Field(default_factory=list)
+    video_prompt: str
+    duration_seconds: int = Field(ge=3, le=15)
+    dialogue: list[str] = Field(default_factory=list)
+
+
+class ClipShotPlan(BaseModel):
+    clip_id: str
+    clip_index: int
+    shots: list[ShotPlanItem] = Field(default_factory=list)
+
+
+class ClipToShotsEpisodeOutput(BaseModel):
+    episode_key: str
+    clips: list[ClipShotPlan] = Field(default_factory=list)
+
+
+class ClipToShotsOutput(BaseModel):
+    episodes: list[ClipToShotsEpisodeOutput] = Field(default_factory=list)
+
+
+class LayoutBackgroundPromptModelItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_content: str
+    shot_indices: list[int] = Field(min_length=1)
+    description: str
+
+
+class LayoutBackgroundPromptModelOutput(RootModel[dict[str, LayoutBackgroundPromptModelItem]]):
+    pass
+
+
+class ShotBackgroundPromptItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    background_id: str
+    layout_id: str
+    shot_ids: list[str] = Field(min_length=1)
+    description: str
+    prompt: str
+
+
+class LayoutToBackgroundPromptEpisodeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
     episode_key: str
-    clips: list[StoryboardClip] = Field(default_factory=list, validation_alias=AliasChoices("clips", "shots"))
-
-    @property
-    def shots(self) -> list[StoryboardClip]:
-        return self.clips
-
-    @shots.setter
-    def shots(self, value: list[StoryboardClip]) -> None:
-        self.clips = value
+    backgrounds: list[ShotBackgroundPromptItem] = Field(default_factory=list)
 
 
-class ClipManifestGenerationEpisodeItem(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+class LayoutToBackgroundPromptOutput(BaseModel):
+    episodes: list[LayoutToBackgroundPromptEpisodeOutput] = Field(default_factory=list)
+
+
+class ShotBackgroundImageGenerationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    background_id: str
+    layout_id: str
+    shot_ids: list[str] = Field(min_length=1)
+    description: str
+    prompt: str
+    fingerprint: str
+    asset_path: str
+    asset_url: str | None = None
+    provider: str
+    model: str
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShotBackgroundImageGenerationEpisodeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
     episode_key: str
-    clip_count: int = Field(validation_alias=AliasChoices("clip_count", "shot_count"))
-    clip_path: str = Field(validation_alias=AliasChoices("clip_path", "shot_path"))
+    generated_backgrounds: list[ShotBackgroundImageGenerationItem] = Field(default_factory=list)
+
+
+class ShotBackgroundImageGenerationOutput(BaseModel):
+    episodes: list[ShotBackgroundImageGenerationEpisodeOutput] = Field(default_factory=list)
+
+
+class ShotKeyframePromptModelOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_content: str
+
+
+class ShotKeyframePromptItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str
+    clip_id: str
+    shot_id: str
+    background_id: str
+    background_asset_path: str
+    background_asset_url: str | None = None
+    ref_ids: list[str] = Field(default_factory=list)
+    prompt: str
+    negative_prompt: str | None = None
+
+
+class ShotKeyframePromptOutput(BaseModel):
+    prompts: list[ShotKeyframePromptItem] = Field(default_factory=list)
+
+
+class ShotKeyframeImageGenerationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str
+    clip_id: str
+    shot_id: str
+    background_id: str
+    ref_ids: list[str] = Field(default_factory=list)
+    keyframe_asset_id: str
+    keyframe_asset_path: str
+    keyframe_asset_url: str | None = None
+    prompt: str
+    fingerprint: str
+    provider: str
+    model: str
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShotKeyframeImageGenerationOutput(BaseModel):
+    generated_keyframes: list[ShotKeyframeImageGenerationItem] = Field(default_factory=list)
+
+
+class ShotManifestGenerationEpisodeItem(BaseModel):
+    episode_key: str
+    shot_count: int
+    shot_path: str
     warnings: list[str] = Field(default_factory=list)
 
-    @property
-    def shot_count(self) -> int:
-        return self.clip_count
 
-    @shot_count.setter
-    def shot_count(self, value: int) -> None:
-        self.clip_count = value
-
-    @property
-    def shot_path(self) -> str:
-        return self.clip_path
-
-    @shot_path.setter
-    def shot_path(self, value: str) -> None:
-        self.clip_path = value
-
-
-class ClipManifestGenerationOutput(BaseModel):
-    episodes: list[ClipManifestGenerationEpisodeItem]
+class ShotManifestGenerationOutput(BaseModel):
+    episodes: list[ShotManifestGenerationEpisodeItem] = Field(default_factory=list)
 
 
 class ShotDialogueAudioGenerationItem(BaseModel):
@@ -1015,7 +962,9 @@ class ShotDialogueAudioGenerationOutput(BaseModel):
     skipped_dialogue_lines: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ClipVideoGenerationItem(BaseModel):
+class ShotVideoGenerationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     episode_key: str
     shot_id: str
     asset_id: str
@@ -1032,8 +981,10 @@ class ClipVideoGenerationItem(BaseModel):
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
 
-class ClipVideoGenerationOutput(BaseModel):
-    generated_videos: list[ClipVideoGenerationItem]
+class ShotVideoGenerationOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generated_videos: list[ShotVideoGenerationItem]
 
 
 class RoleSubjectVideoGenerationItem(BaseModel):
@@ -1131,7 +1082,7 @@ class RoleKlingVoiceGenerationOutput(BaseModel):
 
 class DynamicAssetSolidificationItem(BaseModel):
     asset_id: str
-    asset_type: Literal["shot_dialogue_audio", "shot_bgm", "clip_video"]
+    asset_type: Literal["shot_dialogue_audio", "shot_bgm", "shot_video"]
     episode_key: str
     shot_id: str
     asset_path: str | None = None

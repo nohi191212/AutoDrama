@@ -76,8 +76,10 @@ nodes:
   roleboard_image_generation:
     model: aibox:gpt-image-2-guan
     params:
-      roleboard_prompt_template: roleboard_prompt/aibox_gpt_image_2_guan
+      roleboard_prompt_template: aibox_gpt_image_2_guan
       roleboard_image_generation_concurrency: 3
+      anchor_role: ""
+      anchor_appearance: base
       size: 3840x2160
   role_subject_frontal_image_generation:
     model: aibox:gpt-image-2-guan
@@ -85,39 +87,34 @@ nodes:
       size: 1088x1920
       quality: high
       image_generation_concurrency: 3
-  clip_prompt:
+  clip_to_shots:
     model: rightcode:gpt-5.6-terra
     params:
-      reasoning_effort: xhigh
-      temperature: 0.45
+      temperature: 0.35
       response_format: json_object
-  clip_storyboard_prompt:
-    model: rightcode:gpt-5.6-terra
+  layout_to_background_prompt:
+    model: aibox:gemini-3.5-flash
     params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-  clip_storyboard_prompt_audit:
-    model: rightcode:gpt-5.6-terra
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.2
-      response_format: json_object
-  # Image binding used internally by pregen node clip_storyboard_image_generation for the 12-panel storyboard sheet.
-  clip_storyboard_image_generation:
+      temperature: 0.25
+  shot_background_image_generation:
     model: aibox:gpt-image-2-guan
     params:
-      clip_storyboard_image_generation_concurrency: 4
-      size: 3840x2160
-      storyboard_panel_aspect_ratio: "4:3"
-  clip_storyboard_keyframe_generation:
-    model: aibox:gpt-image-2-guan
-    params:
-      prompt_template: toapi_gpt_image_2
+      concurrency: 2
       size: 1088x1920
-      quality: high
-      clip_storyboard_keyframe_generation_concurrency: 4
-      output_dir: assets/storyboard_keyframes
+  shot_keyframe_prompt:
+    model: aibox:gemini-3.5-flash
+    params:
+      temperature: 0.3
+      negative_prompt: >-
+        extra people, duplicate bodies, identity drift, malformed hands,
+        inconsistent scale, floating objects, text, subtitles, logo, watermark
+  shot_keyframe_image_generation:
+    model: aibox:gpt-image-2-guan
+    params:
+      concurrency: 2
+      size: 1088x1920
+  shot_manifest_generation:
+    params: {}
   prop_extract:
     model: rightcode:gpt-5.6-terra
     params:
@@ -186,18 +183,11 @@ nodes:
       sample_rate: 44100
       output_format: url
       is_instrumental: true
-  clip_video_generation:
+  shot_video_generation:
     model: volcengine:doubao-seedance-2-0-260128
     params:
-      ratio: "9:16"
-      resolution: 720p
-      generate_audio: false
-      return_last_frame: true
-      prompt_template: clip_video/volcengine
-      negative_rules:
-        - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示参考图版式或三视图布局。
-        - 不要把 12 宫格故事板画成最终成片，不要生成故事板线稿风格。
-      clip_video_generation_concurrency: 5
+      prompt_template: volcengine
+      shot_video_generation_concurrency: 5
   # Optional Kling 3.0 Omni native-audio branch. Switch these bindings plus routing.video.shot to kling.
   # role_kling_voice_generation auto-selects an official voice; role_voice_map is optional override.
   # It resolves preset/custom voices, then
@@ -230,21 +220,21 @@ nodes:
   #     sound: "on"
   #     watermark: false
   #     subject_reference_type: image_refer
-  # clip_video_generation:
+  # shot_video_generation:
   #   model: kling:kling-v3-omni
   #   params:
   #     aspect_ratio: "9:16"
   #     mode: pro
   #     audio: native
   #     resolution: 1080p
-  #     multi_shot: false
+  #     multi_shot: true
   #     watermark: false
-  #     prompt_template: clip_video/kling
+  #     prompt_template: kling
   #     negative_rules:
   #       - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示参考图版式或三视图布局。
   #       - 不要生成参考图拼版、三视图布局、宫格或面板编号；角色身份与音色以 subject element 为准。
-  #     max_reference_images: 3
-  #     clip_video_generation_concurrency: 5
+  #     max_reference_images: 7
+  #     shot_video_generation_concurrency: 5
   shot_dialogue_audio_generation:
     model: volcengine:seed-tts-2.0
     params:
@@ -438,7 +428,7 @@ providers:
     api_key_env: RIGHTCODE_API_KEY
     models:
       text: gpt-5.6-terra
-      storyboard: gpt-5.6-terra
+      shot: gpt-5.6-terra
       image: gpt-image-2
       # Used by key_vision_image_generation for the global key visual original.
       key_vision: gpt-image-2
@@ -447,7 +437,7 @@ providers:
     options:
       text_response_format: true
       reasoning_effort: xhigh
-      storyboard_reasoning_effort: xhigh
+      shot_reasoning_effort: xhigh
       size: 1024x1024
       # Used by roleboard_image_generation for role identity boards.
       roleboard_size: 3840x2160
@@ -466,7 +456,7 @@ providers:
       image: gpt-image-2-guan
       key_vision: gpt-image-2-guan
       roleboard: gpt-image-2-guan
-      storyboard: gpt-image-2-guan
+      shot: gpt-image-2-guan
       prop: gpt-image-2-guan
       layout: gpt-image-2-guan
     options:
@@ -474,7 +464,7 @@ providers:
       quality: auto
       key_vision_size: 2160x3840
       roleboard_size: 3840x2160
-      storyboard_size: 2048x2048
+      shot_size: 2048x2048
       prop_size: 2048x2048
       layout_size: 2160x3840
       max_reference_images: 14
@@ -522,12 +512,12 @@ providers:
     api_key_env: DEEPSEEK_API_KEY
     models:
       text: deepseek-v4-pro
-      storyboard: deepseek-v4-pro
+      shot: deepseek-v4-pro
     options:
       reasoning_effort: max
       thinking_enabled: true
-      storyboard_reasoning_effort: max
-      storyboard_thinking_enabled: true
+      shot_reasoning_effort: max
+      shot_thinking_enabled: true
 
   google:
     base_url: https://generativelanguage.googleapis.com
@@ -613,13 +603,13 @@ providers:
       seedance_api_key_env: VOLCENGINE_API_KEY
       video_ratio: "9:16"
       video_resolution: 720p
-      # Seedance video refs are prepared by clip_manifest_generation as fixed clip_video_inputs.
-      # Kling subject mode submits start/end anchors plus storyboard/layout/prop refs;
+      # Seedance video refs use the shot manifest's keyframe as the first fixed image input.
+      # Kling subject mode submits the keyframe plus role/layout/prop references;
       # roles are submitted separately as subject elements.
       video_reference_mode: full
       previous_video_preroll_seconds: 0
-      # For Kling this limits refer_image inputs (storyboard/layout/prop), excluding
-      # the dedicated first/last-frame anchors and subject elements.
+      # Seedance image-reference limit. Kling uses its node-specific combined
+      # subject/first-frame/last-frame/refer-image budget instead.
       max_reference_images: 3
       max_reference_audio: 1
       max_reference_audio_duration_seconds: 15.2
@@ -709,12 +699,13 @@ providers:
       aspect_ratio: "9:16"
       duration: 5
       sound: native
-      multi_shot: false
+      multi_shot: true
       watermark: false
-      video_reference_mode: subject_storyboard_key_vision
+      video_reference_mode: shot_keyframe
       subject_reference_type: image_refer
       subject_video_duration_seconds: 5
-      max_reference_images: 3
+      # Combined budget for subject elements, first/last frames, and refer_image inputs.
+      max_reference_images: 7
       max_reference_elements: 3
       require_dialogue_voice: true
       # On first use, cache the official Kling voice list and trial clips under
@@ -754,16 +745,16 @@ routing:
     role_voice_select: rightcode
     prop: rightcode
     layout: rightcode
-    storyboard: rightcode
+    shot: rightcode
     postgen_edit_plan: google
     postgen_audit: aibox
     edit_plan: rightcode
     bgm_plan: rightcode
   image:
-    # Reusable global assets and pregen storyboard sheets.
+    # Reusable global assets and shot-level reference-image generation.
     role: aibox
     key_vision: aibox
-    storyboard: aibox
+    shot: aibox
     prop: aibox
     layout: aibox
   video:

@@ -10,9 +10,9 @@ from autodrama.core.schemas import (
     DynamicAssetSolidificationOutput,
     ProjectState,
     ShotDialogueAudioGenerationOutput,
-    ClipVideoGenerationOutput,
-    StoryboardEpisodeOutput,
-    StoryboardShot,
+    ShotManifestEpisodeOutput,
+    ShotManifestItem,
+    ShotVideoGenerationOutput,
 )
 from autodrama.logging import get_logger, log_context, setup_logging
 from autodrama.providers.router import ProviderRouter
@@ -48,36 +48,27 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         self.dynamic_assets = DynamicAssetRepository(self.repo, self.layout)
         self.generation_episode_nodes = build_generation_episode_nodes(self)
 
-    def _clip_video_inputs(
+    def _shot_video_inputs(
         self,
         project_dir: Path,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         *,
         provider=None,
     ) -> dict[str, object]:
-        items = sorted(list(shot.clip_video_inputs or []), key=lambda item: int(item.order or 0))
+        items = sorted(list(shot.video_inputs or []), key=lambda item: int(item.order or 0))
         normalized: list[dict[str, object]] = []
         missing_required: list[dict[str, object]] = []
         order_errors: list[str] = []
         kling_subject_mode = bool(
             getattr(provider, "supports_kling_omni_placeholders", False)
         )
-        expected_order = (
-            {
-                "clip_start_frame": 0,
-                "clip_end_frame": 1,
-                "storyboard": 2,
-                "layout": 3,
-                "prop": 4,
-            }
-            if kling_subject_mode
-            else {
-                "storyboard": 0,
-                "roleboard": 1,
-                "layout": 2,
-                "prop": 3,
-            }
-        )
+        expected_order = {
+            "shot_keyframe": 0,
+            "shot_last_frame": 1,
+            "roleboard": 2,
+            "layout": 3,
+            "prop": 4,
+        }
         last_order = -1
         for expected_index, item in enumerate(items, start=1):
             asset_type = str(item.asset_type or "")
@@ -87,20 +78,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             if rank < last_order:
                 order_errors.append(f"{item.slot}: {asset_type} appears after a later input type")
             last_order = max(last_order, rank)
-            if kling_subject_mode:
-                required_prefix = ("clip_start_frame", "clip_end_frame", "storyboard")
-                if expected_index <= len(required_prefix) and asset_type != required_prefix[expected_index - 1]:
-                    order_errors.append(
-                        f"image_{expected_index} must be {required_prefix[expected_index - 1]} for Kling"
-                    )
-                if asset_type == "roleboard":
-                    order_errors.append(
-                        f"{item.slot}: Kling characters must use subject elements, not roleboard images"
-                    )
-            elif expected_index == 1 and asset_type != "storyboard":
-                order_errors.append("image_1 must be storyboard")
-            if not kling_subject_mode and asset_type in {"clip_start_frame", "clip_end_frame"}:
-                order_errors.append(f"{item.slot}: {asset_type} is no longer a supported video input")
+            if expected_index == 1 and asset_type != "shot_keyframe":
+                order_errors.append("shot manifests require image_1 to be the shot_keyframe")
+            if asset_type not in expected_order:
+                order_errors.append(f"{item.slot}: {asset_type} is not a supported shot video input")
+            if kling_subject_mode and asset_type == "roleboard":
+                order_errors.append(
+                    f"{item.slot}: Kling characters must use subject elements, not roleboard images"
+                )
             path_exists = bool(item.asset_path and self._path_exists(project_dir, item.asset_path))
             has_url = bool(str(item.asset_url or "").strip())
             row = {
@@ -130,19 +115,19 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             if isinstance(limits, dict) and limits.get("max_reference_images") is not None:
                 max_images = min(max_images, int(limits.get("max_reference_images") or max_images))
         omitted_inputs: list[dict[str, object]] = []
-        frame_input_count = (
-            sum(
-                1
-                for row in normalized
-                if row.get("asset_type") in {"clip_start_frame", "clip_end_frame"}
+        elements_consume_image_limit = bool(
+            binding is not None
+            and getattr(getattr(binding, "spec", None), "limits", {}).get(
+                "reference_elements_consume_image_limit",
+                False,
             )
-            if kling_subject_mode
-            else 0
         )
-        allowed_input_count = max_images + frame_input_count
+        reserved_element_count = len(shot.role_ids) if kling_subject_mode and elements_consume_image_limit else 0
+        allowed_input_count = max_images - reserved_element_count
         if len(normalized) > allowed_input_count:
-            if max_images < 1:
-                order_errors.append(f"{shot.shot_id} requires a storyboard image reference")
+            required_image_count = 1
+            if allowed_input_count < required_image_count:
+                order_errors.append(f"{shot.shot_id} requires a shot keyframe image reference")
             else:
                 omitted_inputs = normalized[allowed_input_count:]
                 normalized = normalized[:allowed_input_count]
@@ -154,7 +139,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 ]
         if missing_required or order_errors:
             raise ValueError(
-                "clip_video_generation input validation failed: "
+                "shot_video_generation input validation failed: "
                 + json.dumps(
                     {
                         "shot_id": shot.shot_id,
@@ -165,29 +150,26 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     default=str,
                 )
             )
-        clip_id = str(shot.shot_id or "")
-        episode_key = clip_id.rsplit("_clip_", 1)[0] if "_clip_" in clip_id else clip_id.rsplit("_shot_", 1)[0]
+        episode_key = str(shot.shot_id or "").rsplit("_clip_", 1)[0]
         return {
-            "contract": (
-                "kling_start_end_storyboard_context_with_subject_elements_v1"
-                if kling_subject_mode
-                else "storyboard_context_images_with_subject_elements_v2"
-            ),
-            "final_video_prompt_source": "clip_manifest_generation",
+            "contract": "shot_keyframe_with_subject_elements_v1",
+            "final_video_prompt_source": "shot_manifest_generation",
             "episode_key": episode_key,
             "shot_id": shot.shot_id,
             "clip_id": shot.clip_id,
             "limits": {
                 "max_reference_images": max_images,
+                "reserved_reference_elements": reserved_element_count,
+                "available_reference_images": allowed_input_count,
             },
             "inputs": normalized,
             "omitted_inputs": omitted_inputs,
         }
 
     @staticmethod
-    def _asset_refs_from_clip_video_inputs(project_dir: Path, clip_video_inputs: dict[str, object]) -> list:
+    def _asset_refs_from_shot_video_inputs(project_dir: Path, video_inputs: dict[str, object]) -> list:
         refs: list[AssetRef] = []
-        rows = clip_video_inputs.get("inputs") if isinstance(clip_video_inputs, dict) else []
+        rows = video_inputs.get("inputs") if isinstance(video_inputs, dict) else []
         if not isinstance(rows, list):
             return refs
         for row in rows:
@@ -212,7 +194,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         return refs
 
     @staticmethod
-    def _kling_dialogue_role_names(shot: StoryboardShot) -> set[str]:
+    def _kling_dialogue_role_names(shot: ShotManifestItem) -> set[str]:
         names: set[str] = set()
         for line in shot.dialogue:
             text = str(line or "").strip()
@@ -225,7 +207,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         return names
 
     @staticmethod
-    def _shot_role_appearance(role, shot: StoryboardShot):
+    def _shot_role_appearance(role, shot: ShotManifestItem):
         requested = set(shot.role_appearance_ids or [])
         for appearance in role.appearances.values():
             if appearance.id in requested:
@@ -238,7 +220,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     def _kling_role_element_refs(
         self,
         state: ProjectState,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         provider: object,
     ) -> list[AssetRef]:
         if not bool(getattr(provider, "supports_kling_omni_placeholders", False)):
@@ -284,19 +266,19 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             )
         return refs
 
-    def _clip_video_refs(
+    def _shot_video_refs(
         self,
         project_dir: Path,
         state: ProjectState,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         provider: object,
-        clip_video_inputs: dict[str, object],
+        video_inputs: dict[str, object],
     ) -> list[AssetRef]:
-        refs = self._asset_refs_from_clip_video_inputs(project_dir, clip_video_inputs)
+        refs = self._asset_refs_from_shot_video_inputs(project_dir, video_inputs)
         refs.extend(self._kling_role_element_refs(state, shot, provider))
         return refs
 
-    def _kling_native_prompt(self, prompt: str, state: ProjectState, shot: StoryboardShot, provider: object) -> str:
+    def _kling_native_prompt(self, prompt: str, state: ProjectState, shot: ShotManifestItem, provider: object) -> str:
         if not bool(getattr(provider, "supports_kling_omni_placeholders", False)):
             return prompt
         marker = "[AUTODRAMA_KLING_ROLE_BINDINGS]"
@@ -335,8 +317,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 generated_dialogue_audios=[],
                 skipped_dialogue_lines=[],
             )
-        if "clip_video_generation" in target_nodes:
-            outputs["clip_video_generation"] = ClipVideoGenerationOutput(generated_videos=[])
+        if "shot_video_generation" in target_nodes:
+            outputs["shot_video_generation"] = ShotVideoGenerationOutput(generated_videos=[])
         if "dynamic_asset_solidification" in target_nodes:
             outputs["dynamic_asset_solidification"] = DynamicAssetSolidificationOutput(solidified_assets=[])
         return outputs
@@ -352,9 +334,9 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 raise TypeError("shot_dialogue_audio_generation output type mismatch")
             current.generated_dialogue_audios.extend(output.generated_dialogue_audios)
             current.skipped_dialogue_lines.extend(output.skipped_dialogue_lines)
-        elif node_name == "clip_video_generation":
-            if not isinstance(current, ClipVideoGenerationOutput) or not isinstance(output, ClipVideoGenerationOutput):
-                raise TypeError("clip_video_generation output type mismatch")
+        elif node_name == "shot_video_generation":
+            if not isinstance(current, ShotVideoGenerationOutput) or not isinstance(output, ShotVideoGenerationOutput):
+                raise TypeError(f"{node_name} output type mismatch")
             current.generated_videos.extend(output.generated_videos)
         elif node_name == "dynamic_asset_solidification":
             if not isinstance(current, DynamicAssetSolidificationOutput) or not isinstance(
@@ -376,13 +358,13 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         node_name: str,
         output: BaseModel,
         episode_key: str,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
     ) -> str:
         if node_name == "shot_dialogue_audio_generation" and isinstance(output, ShotDialogueAudioGenerationOutput):
             for item in output.generated_dialogue_audios:
                 if item.episode_key == episode_key and item.shot_id == shot.shot_id and item.asset.asset_path:
                     return item.asset.asset_path
-        if node_name == "clip_video_generation" and isinstance(output, ClipVideoGenerationOutput):
+        if node_name == "shot_video_generation" and isinstance(output, ShotVideoGenerationOutput):
             for item in output.generated_videos:
                 if item.episode_key == episode_key and item.shot_id == shot.shot_id and item.asset_path:
                     return item.asset_path
@@ -391,7 +373,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         return self._project_relative(project_dir, self.layout.node_output_path(project_dir, node_name))
 
     @staticmethod
-    def _log_shot_generation_started(logger, episode_key: str, shot: StoryboardShot, node_name: str) -> None:
+    def _log_shot_generation_started(logger, episode_key: str, shot: ShotManifestItem, node_name: str) -> None:
         logger.info(
             "%s shot %d %s started",
             episode_key,
@@ -404,7 +386,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     def _log_shot_generation_finished(
         logger,
         episode_key: str,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         node_name: str,
         saved_path: str,
     ) -> None:
@@ -421,7 +403,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     def _log_shot_generation_failed(
         logger,
         episode_key: str,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         node_name: str,
         exc: Exception,
     ) -> None:
@@ -450,7 +432,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         if resolved_path.exists() and resolved_path.is_file():
             resolved_path.unlink()
 
-    def _clear_shot_dynamic_asset_fields(self, project_dir: Path, shot: StoryboardShot) -> None:
+    def _clear_shot_dynamic_asset_fields(self, project_dir: Path, shot: ShotManifestItem) -> None:
         for audio in shot.dialogue_audio_assets:
             self._delete_project_file_if_exists(project_dir, audio.asset_path)
         for bgm in shot.shot_bgm_assets:
@@ -476,14 +458,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         self,
         project_dir: Path,
         state: ProjectState,
-        episode: StoryboardEpisodeOutput,
-        shots: list[StoryboardShot],
+        episode: ShotManifestEpisodeOutput,
+        shots: list[ShotManifestItem],
     ) -> None:
         selected_shot_ids = {shot.shot_id for shot in shots}
         for shot in episode.shots:
             if shot.shot_id in selected_shot_ids:
                 self._clear_shot_dynamic_asset_fields(project_dir, shot)
-        self._save_storyboard_episode(project_dir, episode)
+        self._save_shot_manifest(project_dir, episode)
 
         existing_assets = self.dynamic_assets.load_index(project_dir)
         remaining_assets = [
@@ -496,7 +478,7 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
 
         registry = load_generation_tasks(project_dir, project_id=state.project_id)
         task_keys = {
-            self._clip_video_task_key(episode.episode_key, shot_id)
+            self._shot_video_task_key(episode.episode_key, shot_id)
             for shot_id in selected_shot_ids
         }
         tasks = registry.get("tasks", [])
@@ -517,6 +499,25 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         if until in DEFAULT_GENERATION_NODES:
             return DEFAULT_GENERATION_NODES[: DEFAULT_GENERATION_NODES.index(until) + 1]
         return GENERATION_NODES[: GENERATION_NODES.index(until) + 1]
+
+    async def _run_shot_video_generation_for_episode(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        episode_key: str,
+    ) -> ShotVideoGenerationOutput:
+        episode = self._load_shot_manifest(project_dir, episode_key)
+        if episode.schema_version != 4:
+            raise ValueError("shot_video_generation requires the schema_version=4 shot manifest")
+        previous = getattr(self, "_active_video_node_name", None)
+        self._active_video_node_name = "shot_video_generation"
+        try:
+            return await self._run_shot_video_generation_for_episode_impl(project_dir, state, episode_key)
+        finally:
+            if previous is None:
+                delattr(self, "_active_video_node_name")
+            else:
+                self._active_video_node_name = previous
 
     def _sort_episode_keys_in_story_order(self, state: ProjectState, episode_keys: list[str]) -> list[str]:
         return sort_episode_keys_in_story_order(state, episode_keys)
@@ -549,11 +550,12 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         target_nodes = self._target_generation_nodes(until, only)
 
         logger = setup_logging(project_dir)
+        self.router.set_prompt_audit_project_dir(project_dir)
         state = self.repo.load_state(project_dir)
         self._apply_script_plan_settings(state)
         self._hydrate_roles_from_design_files(project_dir, state)
         if only is None and target_nodes and target_nodes[-1] != "shot_dialogue_audio_generation":
-            shot_provider = self.router.video("shot", node_name="clip_video_generation")
+            shot_provider = self.router.video("shot", node_name="shot_video_generation")
             if bool(getattr(shot_provider, "supports_kling_omni_placeholders", False)):
                 target_nodes = [node for node in target_nodes if node != "shot_dialogue_audio_generation"]
         selected_episode_keys, checklist = selected_episode_keys_from_checklist(

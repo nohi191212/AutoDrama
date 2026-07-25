@@ -10,10 +10,10 @@ from pydantic import BaseModel
 
 from autodrama.core.schemas import (
     BGMDesignOutput,
-    ClipPromptModelOutput,
-    ClipStoryboardPromptModelOutput,
+    ClipToShotsModelOutput,
     ClipSegmentOutput,
     KeyVisionPromptOutput,
+    LayoutBackgroundPromptModelOutput,
     LayoutDedupeReviewOutput,
     LayoutExtractOutput,
     LayoutPromptOutput,
@@ -27,12 +27,13 @@ from autodrama.core.schemas import (
     RoleSubjectVideoIntroTextOutput,
     RoleboardPromptModelOutput,
     SafeImagePromptRewriteOutput,
+    ShotKeyframePromptModelOutput,
     ScriptDetailExpandOutput,
     ScriptImportOutput,
     ScriptNovelExtractModelOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
-    StoryboardEpisodeOutput,
+    ShotManifestEpisodeOutput,
 )
 from autodrama.core.voice_catalog import (
     VoiceCatalogProfile,
@@ -333,69 +334,33 @@ class FakeTextProvider:
         elif schema is RoleSubjectVideoIntroTextOutput or node_name == "role_subject_video_intro_text":
             role_name = str(metadata.get("role_name") or "林舟").strip() or "林舟"
             data = {"intro_text": f"我是{role_name}，我会记住这一刻。"}
-        elif schema is ClipPromptModelOutput or node_name == "clip_prompt":
+        elif schema is ClipToShotsModelOutput or node_name == "clip_to_shots":
+            available_ids = re.findall(r"^([a-zA-Z0-9_\-\u4e00-\u9fff]+):", prompt, flags=re.MULTILINE)
+            layout_ids = [value for value in available_ids if value.startswith("layout_")]
+            role_ids = [value for value in available_ids if "_roleboard" in value]
             data = {
-                "clip_prompt": (
-                    "镜头1（0-3秒）：\n"
-                    "景别运镜：50mm 斜侧近景，轻微手持推进。\n"
-                    "画面内容：雨夜办公室冷白顶灯下，林舟半侧脸低头检查合同页码，"
-                    "手指沿着纸张边缘缓慢滑过，发现关键页纸色异常。\n"
-                    "声音设计：窗外雨声、空调低频和纸张摩擦声。\n\n"
-                    "镜头2（3-8秒）：\n"
-                    "景别运镜：低机位桌面跟拍，轨道车缓慢横移。\n"
-                    "画面内容：林舟把邮件截图推向桌面中央，视线压向对面的空位，"
-                    "低声说：“这份合同被换过，时间线就在这里。”口型清晰匹配台词。\n"
-                    "声音设计：文件轻响、远处雷声和一句克制的对白。"
-                ),
-                "target_duration_seconds": 8,
-            }
-        elif schema is ClipStoryboardPromptModelOutput or node_name == "clip_storyboard_prompt":
-            expected_keys = metadata.get("expected_keys") or episode_keys
-            storyboard_episode_keys = [str(key) for key in expected_keys]
-            expected_clip_counts = metadata.get("expected_clip_counts")
-            if not isinstance(expected_clip_counts, dict):
-                expected_clip_counts = {}
-            fallback_clip_count = int(metadata.get("shot_count") or metadata.get("clip_count") or 2)
-
-            def fake_panel_plan(index: int) -> dict[str, str]:
-                return {
-                    f"P{panel_index:02d}": (
-                        f"P{panel_index:02d}（Camera Shot {1 if panel_index <= 4 else 2}）："
-                        f"clip {index} 的关键动作阶段；"
-                        + ("P04 与 P05 之间画醒目的红色斜杠 cut mark。" if panel_index == 4 else "")
-                    )
-                    for panel_index in range(1, 13)
+                "shot_1": {
+                    "shot_description": "林舟在办公室查看合同，苏晚在桌边递出邮件截图。",
+                    "narrative_angle": "从苏晚一侧平视观察林舟与桌面证据。",
+                    "opening_state": "林舟位于左前景低头看合同，苏晚在中景桌边伸出邮件截图。",
+                    "ref_ids": [*layout_ids[:1], *role_ids[:2]],
+                    "video_prompt": "中景固定镜头，林舟翻看合同，苏晚把旧邮件截图推到他面前。",
+                    "duration_seconds": 8,
+                    "dialogue": [],
                 }
-
-            def fake_video_prompt(index: int) -> str:
-                return (
-                    "<CAMERA_SHOTS>\n"
-                    "Camera Shot 1（0-4秒）：\n雨夜办公室冷白顶灯下，50mm 斜侧近景贴着桌面建立合同，"
-                    "林舟以半侧脸低头检查合同页码，雨声和空调低频压住空间。\n"
-                    "Camera Shot 2（4-8秒）：\n轨道车轻微横移，林舟把邮件截图推向桌面中央，"
-                    "说：“这份合同被换过，时间线就在这里。”他说话时口型清晰匹配台词。\n"
-                    "</CAMERA_SHOTS>\n<PANEL_PLAN>\n"
-                    + "\n".join(
-                        f'<P{panel_index:02d} camera_shot="{1 if panel_index <= 6 else 2}">'
-                        f'clip {index} 的关键动作阶段。</P{panel_index:02d}>'
-                        for panel_index in range(1, 13)
-                    )
-                    + "\n</PANEL_PLAN>"
-                )
-
-            batch_keys = metadata.get("clip_batch_keys")
-            if not isinstance(batch_keys, list) or not batch_keys:
-                batch_keys = list(range(1, int(expected_clip_counts.get(storyboard_episode_keys[0], fallback_clip_count)) + 1))
-            indices = [int(key) for key in batch_keys]
-            episode_key = storyboard_episode_keys[0]
+            }
+        elif schema is LayoutBackgroundPromptModelOutput or node_name == "layout_to_background_prompt":
+            indices = [int(value) for value in re.findall(r'"index"\s*:\s*(\d+)', prompt)] or [1]
             data = {
-                "clips": [
-                    {
-                        "clip_id": f"{episode_key}_clip_{index:03d}",
-                        "clip_storyboard_prompt": fake_video_prompt(index),
-                    }
-                    for index in indices
-                ]
+                "background_1": {
+                    "prompt_content": "办公室内部的单张无人电影背景，平视中景，机位位于桌边一侧朝向合同与窗边，保留雨痕玻璃、办公桌、冷白顶灯与固定陈设。",
+                    "shot_indices": indices,
+                    "description": "林舟和苏晚在办公室围绕合同对话，镜头从苏晚一侧朝向林舟。",
+                }
+            }
+        elif schema is ShotKeyframePromptModelOutput or node_name == "shot_keyframe_prompt":
+            data = {
+                "prompt_content": "保持图1的办公室背景、平视机位、桌面透视和雨夜光线不变；将图2中的林舟放在左前景查看合同，将图3中的苏晚置于桌边中景递出邮件截图，两人视线指向桌面证据。"
             }
         elif schema is VoiceSelectShortlistOutput or node_name == "role_voice_select_shortlist":
             candidates = metadata.get("heuristic_candidates")
@@ -641,7 +606,7 @@ class FakeTextProvider:
                         "asset_role": "base",
                         "reference_asset_name": "",
                         "prompt_type": "text_to_image",
-                        "prompt": "现代公司办公室无人空场景资产图，工位区、玻璃窗、文件桌和入口通道清晰，桌面可放合同和电脑，冷色办公灯，材质与可行动线稳定，无人物、无可读文字、无水印。",
+                        "prompt": "Photorealistic cinematic location reference sheet showing three consistent views of the same empty modern office. Preserve identical workstations, windows, desk, entrance and circulation. No people, text, logo or watermark.",
                     },
                     {
                         "name": "办公室_雨夜",
@@ -657,7 +622,7 @@ class FakeTextProvider:
                         "asset_role": "base",
                         "reference_asset_name": "",
                         "prompt_type": "text_to_image",
-                        "prompt": "现代公司玻璃会议室无人空场景资产图，长桌、投影屏、玻璃墙、座椅通道和冷色顶灯构成公开对峙空间，桌面可放合同证据，无人物、无可读文字、无水印。",
+                        "prompt": "Photorealistic cinematic location reference sheet showing three consistent views of the same empty modern meeting room. Preserve identical table, glass wall, entrances and fixed lighting. No people, text, logo or watermark.",
                     },
                 ]
             }
@@ -950,7 +915,7 @@ class FakeTextProvider:
                 ),
                 "notes": "fake safety rewrite",
             }
-        elif schema is StoryboardEpisodeOutput:
+        elif schema is ShotManifestEpisodeOutput:
             episode_key = str(metadata.get("episode_key") or episode_keys[0])
             data = {
                 "episode_key": episode_key,
@@ -1018,7 +983,7 @@ class FakeImageProvider:
         from PIL import Image, ImageDraw
 
         asset_type = str(metadata.get("asset_type") or "")
-        if asset_type == "storyboard":
+        if asset_type == "contact_sheet":
             width, height = 1200, 1600
             image = Image.new("RGB", (width, height), "white")
             draw = ImageDraw.Draw(image)

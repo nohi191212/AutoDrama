@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from autodrama.core.schemas import KeyVisionPromptOutput, ProjectState
+from autodrama.core.schemas import ClipToShotsModelOutput, KeyVisionPromptOutput, ProjectState
 from autodrama.providers.base import TextLLM
 from autodrama.utils.prompts import PromptStore
 
@@ -73,6 +73,36 @@ class DirectorService:
         if not output.prompt:
             raise ValueError("key_vision_prompt returned an empty prompt")
         return output
+
+    async def clip_to_shots(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        audit_asset_name: str,
+        clip_text: str,
+        asset_index: str,
+        previous_context: str,
+        next_context: str,
+    ) -> ClipToShotsModelOutput:
+        """Plan provider-sized shots without leaking project/workflow metadata."""
+        prompt = self.prompts.render(
+            "clip_to_shots",
+            clip_text=clip_text,
+            asset_index=asset_index,
+            previous_context=previous_context,
+            next_context=next_context,
+        )
+        return await provider.generate_json(
+            prompt,
+            ClipToShotsModelOutput,
+            temperature=0.35,
+            metadata={
+                "node_name": "clip_to_shots",
+                "project_id": state.project_id,
+                "prompt_asset_name": audit_asset_name,
+            },
+        )
 
 
 __all__ = ["DirectorService"]

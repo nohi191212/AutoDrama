@@ -8,7 +8,7 @@ import subprocess
 from typing import Any
 
 from autodrama.config import AuditSettings
-from autodrama.editing.ffmpeg import ffmpeg_base_command, run_ffmpeg
+from autodrama.editing.ffmpeg import ffmpeg_base_command, run_ffmpeg, write_concat_file
 from autodrama.postgen.schemas import (
     PostgenFinalAuditReport,
     PostgenSourceAuditReport,
@@ -98,6 +98,58 @@ async def extract_audit_video(video_path: Path, output_path: Path, *, ffmpeg_pat
     return output_path
 
 
+async def build_review_reel(
+    clips: list[PostgenSourceClip],
+    *,
+    project_dir: Path,
+    work_dir: Path,
+    ffmpeg_path: str,
+) -> tuple[Path, list[dict[str, Any]]]:
+    """Build one low-bitrate continuous video so a multimodal editor can inspect every clip."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    proxies: list[Path] = []
+    ranges: list[dict[str, Any]] = []
+    cursor = 0.0
+    for clip in clips:
+        source_path = project_dir / clip.source_path if not Path(clip.source_path).is_absolute() else Path(clip.source_path)
+        proxy = await extract_audit_video(
+            source_path,
+            work_dir / f"{clip.shot_id}_review.mp4",
+            ffmpeg_path=ffmpeg_path,
+        )
+        proxies.append(proxy)
+        end = cursor + clip.duration_seconds
+        ranges.append(
+            {
+                "shot_id": clip.shot_id,
+                "review_start": round(cursor, 3),
+                "review_end": round(end, 3),
+                "source_duration_seconds": clip.duration_seconds,
+            }
+        )
+        cursor = end
+
+    concat_path = work_dir / "review_reel.concat.txt"
+    write_concat_file(concat_path, proxies)
+    output_path = work_dir / "review_reel.mp4"
+    command = [
+        *ffmpeg_base_command(ffmpeg_path),
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_path),
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    await run_ffmpeg(command, cwd=work_dir)
+    return output_path, ranges
+
+
 async def probe_media(path: Path, *, ffmpeg_path: str) -> dict[str, Any]:
     ffmpeg = Path(ffmpeg_path)
     candidates = [str(ffmpeg.with_name("ffprobe" + ffmpeg.suffix)), "ffprobe"]
@@ -162,6 +214,17 @@ async def audit_source_clips(
         for item in (source_transcripts or {}).get("clips", [])
         if isinstance(item, dict) and item.get("shot_id")
     }
+    review_ranges: dict[str, dict[str, Any]] = {}
+    if settings.include_audio:
+        review_reel, ranges = await build_review_reel(
+            clips,
+            project_dir=project_dir,
+            work_dir=work_dir / "review_reel",
+            ffmpeg_path=ffmpeg_path,
+        )
+        refs.append(AssetRef(id="episode_review_reel", type="video", path=str(review_reel)))
+        review_ranges = {str(item["shot_id"]): item for item in ranges}
+
     for clip in clips:
         source_path = project_dir / clip.source_path if not Path(clip.source_path).is_absolute() else Path(clip.source_path)
         sheet = await extract_contact_sheet(
@@ -172,15 +235,7 @@ async def audit_source_clips(
             ffmpeg_path=ffmpeg_path,
         )
         refs.append(AssetRef(id=clip.shot_id, type="image", path=str(sheet)))
-        audit_video_ref = None
-        if settings.include_audio:
-            audit_video = await extract_audit_video(
-                source_path,
-                work_dir / f"{clip.shot_id}_audit.mp4",
-                ffmpeg_path=ffmpeg_path,
-            )
-            audit_video_ref = f"{clip.shot_id}_video"
-            refs.append(AssetRef(id=audit_video_ref, type="video", path=str(audit_video)))
+        review_range = review_ranges.get(clip.shot_id)
         clip_payload.append(
             {
                 "shot_id": clip.shot_id,
@@ -189,12 +244,14 @@ async def audit_source_clips(
                 "asr_segments": transcript_by_shot.get(clip.shot_id, {}).get("segments", []),
                 "content": clip.content,
                 "contact_sheet_ref": clip.shot_id,
-                "audit_video_ref": audit_video_ref,
+                "audit_video_ref": "episode_review_reel" if review_range else None,
+                "review_range": review_range,
             }
         )
 
     audio_instruction = (
-        "每个镜头还附有含音频的低码率连续视频。检查实际对白是否与 dialogue_lines 一致、说话角色是否正确、"
+        "所有镜头已按输入顺序拼成一条含音频的低码率连续审片视频；每段在 review_range 中标明时间范围。"
+        "检查相邻片段切点的动作、构图、光线和声音是否顺滑，并检查实际对白是否与 dialogue_lines 一致、说话角色是否正确、"
         "角色间音色是否串换、口型是否同步，以及爆音、断音、环境声遮挡。ASR 仅作为辅助证据，"
         "应结合实际听感判断；明显错词、漏词、串角色或口型错误应 trim/reject。"
         if settings.include_audio
@@ -285,6 +342,7 @@ async def audit_final_video(
 __all__ = [
     "audit_final_video",
     "audit_source_clips",
+    "build_review_reel",
     "extract_audit_audio",
     "extract_audit_video",
     "extract_contact_sheet",

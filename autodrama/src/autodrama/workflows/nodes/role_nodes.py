@@ -771,51 +771,14 @@ class RoleboardPromptNode(RoleNodeBase):
         identity_reference_index: int | None,
         key_vision_reference_index: int,
     ) -> str:
-        style_prefix = self.roleboard_style_prefix(
-            style_reference_count=style_reference_count,
-            identity_reference_index=identity_reference_index,
-        )
-        key_vision_note = (
-            f"参考图片{key_vision_reference_index}是本剧主视觉原图，只作为世界观、真人剧质感、"
-            "光影色彩、摄影审美和美术气质参考；不要照搬其中人物、服装、脸或构图。"
-        )
-        variant_requirement = ""
-        if identity_reference_index is not None:
-            variant_requirement = (
-                "这是同一角色的多造型资产；必须以身份参考图锁定同一张脸、同一身形比例、"
-                "同一发型基底、肤色和核心视觉标志，只改变本造型提示词明确要求的服装、妆造、发型变化或状态。"
+        del role_name, appearance_name, asset_role, negative_prompt, style_reference_count, identity_reference_index, key_vision_reference_index
+        return "\n".join(
+            (
+                "Photorealistic cinematic character reference sheet.",
+                core_prompt.strip(),
+                "Full-body front, side and back views, plus one face close-up. Neutral standing pose, clean light background.",
+                "Avoid identity drift, duplicate bodies, extra limbs, text, logos and watermarks.",
             )
-        roleboard_requirement = (
-            variant_requirement
-            + "生成一张角色身份板：同一角色必须包含正面全身、侧面全身、背面全身、头部近景、"
-            "表情组、常用动作姿态、服装材质细节和可复用配饰/道具细节。所有视图必须统一年龄感、"
-            "脸型、五官、发型、服装、身高比例、体型和材质，不得变脸、换衣服或年龄漂移。"
-            f"画面应是清晰可复用的设计板，必须在左上角或底部边缘以小号清晰文字标注"
-            f"“角色：{role_name} | {appearance_name}”。"
-            "各视图区边缘可添加小号功能性标签：正面、侧面、背面、头部、表情、动作、"
-            "服装细节、配饰细节。所有文字必须远离人物脸部、身体轮廓、服装和道具，"
-            "不得遮挡任何可复用视觉细节。除指定角色名和视图标签外，不得出现字幕、水印、"
-            "logo、片段编号、项目编号、文件名、ID、剧情台词、乱码文字或错误角色名。"
-        )
-        label_negative_prompt = (
-            "除指定角色名和视图标签外的可读文字，字幕，水印，logo，片段编号，项目编号，"
-            "文件名，ID，剧情台词，乱码文字，错误角色名，文字遮挡人物脸部或服装细节"
-        )
-        combined_negative_prompt = "；".join(
-            part for part in (str(negative_prompt or "").strip(), label_negative_prompt) if part
-        )
-        return "\n\n".join(
-            part
-            for part in (
-                style_prefix,
-                key_vision_note,
-                f"角色：{role_name}",
-                f"造型：{appearance_name}（{asset_role or 'base'}）",
-                core_prompt,
-                roleboard_requirement,
-                f"负向约束：{combined_negative_prompt}",
-            )
-            if part
         )
 
     @staticmethod
@@ -995,7 +958,7 @@ class RoleboardPromptNode(RoleNodeBase):
             "model_id": str(getattr(binding, "model_id", "") or ""),
         }
 
-    def _roleboard_prompt_template_candidates(self, image_context: dict[str, str]) -> list[str]:
+    def _roleboard_prompt_variant_candidates(self, image_context: dict[str, str]) -> list[str]:
         params = self._node_params("roleboard_image_generation")
         configured = str(
             params.get("roleboard_prompt_template")
@@ -1010,11 +973,10 @@ class RoleboardPromptNode(RoleNodeBase):
         model_id = str(image_context.get("model_id", "") or "")
         model_id_slug = slugify(model_id.replace(":", "_"), fallback="model").lower()
         candidates = [
-            f"roleboard_prompt/{provider_name}_{model_name}",
-            f"roleboard_prompt/{model_id_slug}",
-            f"roleboard_prompt/{provider_name}",
-            "roleboard_prompt/default",
-            "roleboard_prompt",
+            f"{provider_name}_{model_name}",
+            model_id_slug,
+            provider_name,
+            "default",
         ]
         result: list[str] = []
         for candidate in candidates:
@@ -1022,16 +984,16 @@ class RoleboardPromptNode(RoleNodeBase):
                 result.append(candidate)
         return result
 
-    def _resolve_roleboard_prompt_template(self, image_context: dict[str, str]) -> str:
+    def _resolve_roleboard_prompt_variant(self, image_context: dict[str, str]) -> str:
         last_error: FileNotFoundError | None = None
-        for template_name in self._roleboard_prompt_template_candidates(image_context):
-            path = self.workflow.prompts.prompt_dir / f"{template_name}.md"
+        for variant in self._roleboard_prompt_variant_candidates(image_context):
+            path = self.workflow.prompts.prompt_dir / "roleboard_prompt" / f"{variant}.md"
             if path.exists():
-                return template_name
+                return variant
             last_error = FileNotFoundError(f"Prompt template not found: {path}")
         if last_error is not None:
             raise last_error
-        raise FileNotFoundError("No roleboard prompt template candidates were available")
+        raise FileNotFoundError("No roleboard prompt template variants were available")
 
     def _prompt_item_from_model_output(
         self,
@@ -1236,11 +1198,11 @@ class RoleboardPromptNode(RoleNodeBase):
         role_novel_extract: dict[str, str] | None = None
         key_vision_asset = self._key_vision_asset_for_prompt(state)
         roleboard_image_context = self._roleboard_image_binding_context()
-        prompt_template = self._resolve_roleboard_prompt_template(roleboard_image_context)
+        prompt_variant = self._resolve_roleboard_prompt_variant(roleboard_image_context)
         style_reference_count = self.roleboard_style_reference_count()
         self.logger.info(
-            "roleboard_prompt template=%s image_provider=%s image_model=%s style_refs=%d",
-            prompt_template,
+            "roleboard_prompt variant=%s image_provider=%s image_model=%s style_refs=%d",
+            prompt_variant,
             roleboard_image_context.get("provider_name") or "-",
             roleboard_image_context.get("model_name") or "-",
             style_reference_count,
@@ -1284,7 +1246,7 @@ class RoleboardPromptNode(RoleNodeBase):
                     role_index=role_index,
                     key_vision_asset=key_vision_asset,
                     appearance_asset=self._appearance_asset_payload(extract_item, appearance_asset, state),
-                    prompt_template=prompt_template,
+                    prompt_variant=prompt_variant,
                     roleboard_image_provider=roleboard_image_context.get("provider_name"),
                     roleboard_image_model=roleboard_image_context.get("model_name"),
                 )

@@ -45,14 +45,6 @@
         type: boolean
       prompt_template:
         type: string
-      clip_storyboard_prompt_concurrency:
-        type: integer
-        min: 1
-        max: 8
-      clip_storyboard_prompt_batch_concurrency:
-        type: integer
-        min: 1
-        max: 8
       text_generation_concurrency:
         type: integer
         min: 1
@@ -167,6 +159,8 @@
       max_output_tokens:
         type: integer
         min: 1
+      negative_prompt:
+        type: string
 
   aibox:gpt-image-2-guan:
     provider: aibox
@@ -218,14 +212,6 @@
         type: integer
         min: 1
         max: 10
-      clip_storyboard_keyframe_generation_concurrency:
-        type: integer
-        min: 1
-        max: 10
-      storyboard_keyframe_concurrency:
-        type: integer
-        min: 1
-        max: 10
       output_dir:
         type: string
       layout_image_generation_concurrency:
@@ -244,13 +230,10 @@
         type: integer
         min: 1
         max: 5
-      clip_storyboard_image_generation_concurrency:
-        type: integer
-        min: 1
-        max: 5
-      storyboard_panel_aspect_ratio:
+      anchor_role:
         type: string
-        enum: ["4:3"]
+      anchor_appearance:
+        type: string
       image_generation_concurrency:
         type: integer
         min: 1
@@ -291,14 +274,6 @@
         type: integer
         min: 1
         max: 10
-      clip_storyboard_keyframe_generation_concurrency:
-        type: integer
-        min: 1
-        max: 10
-      storyboard_keyframe_concurrency:
-        type: integer
-        min: 1
-        max: 10
       output_dir:
         type: string
       layout_image_generation_concurrency:
@@ -317,13 +292,6 @@
         type: integer
         min: 1
         max: 5
-      clip_storyboard_image_generation_concurrency:
-        type: integer
-        min: 1
-        max: 5
-      storyboard_panel_aspect_ratio:
-        type: string
-        enum: ["4:3"]
       image_generation_concurrency:
         type: integer
         min: 1
@@ -361,14 +329,6 @@
         min: 0
         max: 16
       concurrency:
-        type: integer
-        min: 1
-        max: 10
-      clip_storyboard_keyframe_generation_concurrency:
-        type: integer
-        min: 1
-        max: 10
-      storyboard_keyframe_concurrency:
         type: integer
         min: 1
         max: 10
@@ -429,14 +389,6 @@
         type: integer
         min: 1
         max: 10
-      clip_storyboard_keyframe_generation_concurrency:
-        type: integer
-        min: 1
-        max: 10
-      storyboard_keyframe_concurrency:
-        type: integer
-        min: 1
-        max: 10
       output_dir:
         type: string
       layout_image_generation_concurrency:
@@ -489,14 +441,6 @@
         min: 0
         max: 14
       concurrency:
-        type: integer
-        min: 1
-        max: 10
-      clip_storyboard_keyframe_generation_concurrency:
-        type: integer
-        min: 1
-        max: 10
-      storyboard_keyframe_concurrency:
         type: integer
         min: 1
         max: 10
@@ -578,7 +522,7 @@
       max_reference_video_total_duration_seconds:
         type: number
         min: 0
-      clip_video_generation_concurrency:
+      shot_video_generation_concurrency:
         type: integer
         min: 1
         max: 5
@@ -600,8 +544,9 @@
     limits:
       min_duration_seconds: 3
       max_duration_seconds: 15
-      max_reference_images: 3
+      max_reference_images: 7
       max_reference_elements: 3
+      reference_elements_consume_image_limit: true
       max_reference_audio: 0
       max_reference_videos: 0
     params_schema:
@@ -668,7 +613,7 @@
         type: integer
         min: 1
         max: 5
-      clip_video_generation_concurrency:
+      shot_video_generation_concurrency:
         type: integer
         min: 1
         max: 5

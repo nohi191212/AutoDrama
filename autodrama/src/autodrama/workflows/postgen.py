@@ -14,7 +14,7 @@ from autodrama.postgen.audio_pipeline import (
     mix_and_mux,
     separate_stems,
 )
-from autodrama.postgen.audit import audit_final_video, audit_source_clips
+from autodrama.postgen.audit import audit_final_video, audit_source_clips, build_review_reel
 from autodrama.postgen.edit_plan_validator import estimate_timeline_duration, validate_edit_plan
 from autodrama.postgen.edit_prompt import build_postgen_edit_plan_prompt
 from autodrama.postgen.ffmpeg_composer import PostgenFfmpegComposer
@@ -31,6 +31,7 @@ from autodrama.postgen.schemas import (
 )
 from autodrama.postgen.source_collect import collect_episode_source_clips
 from autodrama.postgen.subtitle_pipeline import build_cues, burn_subtitles, transcribe, write_subtitle_files
+from autodrama.providers.base import AssetRef
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.utils.prompts import PromptStore
@@ -82,6 +83,7 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
             raise ValueError(f"Unsupported postgen only node: {only}")
 
         logger = setup_logging(project_dir)
+        self.router.set_prompt_audit_project_dir(project_dir)
         state = self.repo.load_state(project_dir)
         selected_episode_keys = select_episode_keys(state, episode_keys)
         target_nodes = [only] if only else POSTGEN_NODES[: POSTGEN_NODES.index(until) + 1]
@@ -342,7 +344,7 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
             clips = self._load_source_clips(project_dir, episode_key)
             audit = PostgenSourceAuditReport.model_validate_json(self._source_audit_path(project_dir, episode_key).read_text(encoding="utf-8"))
             output_path = self._relative(project_dir, self._edited_video_path(project_dir, episode_key))
-            plan = await self._generate_edit_plan(state, episode_key, clips, audit, output_path)
+            plan = await self._generate_edit_plan(project_dir, state, episode_key, clips, audit, output_path)
             path = self._raw_plan_path(project_dir, episode_key)
             self.repo.write_json(path, plan)
             outputs.append({"episode_key": episode_key, "path": self._relative(project_dir, path), "timeline_count": len(plan.timeline), "mode": plan.metadata.get("mode")})
@@ -352,6 +354,7 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
 
     async def _generate_edit_plan(
         self,
+        project_dir: Path,
         state: ProjectState,
         episode_key: str,
         clips: list[PostgenSourceClip],
@@ -370,11 +373,26 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
             height=settings.render_height,
             fps=settings.fps,
         )
+        review_reel, review_ranges = await build_review_reel(
+            clips,
+            project_dir=project_dir,
+            work_dir=self._tmp_dir(project_dir, episode_key, "edit_plan_review"),
+            ffmpeg_path=self.repo.settings.runtime.ffmpeg_path,
+        )
+        prompt += (
+            "\n\n你还会收到一条名为 episode_review_reel 的连续审片视频，它按 source_clips 顺序拼接，"
+            "包含全部源视频和声音。必须直接观看视频后再决定 source_in/source_out；重点检查每段头尾的"
+            "静止余量、动作是否完整、相邻段人物姿态与视线、构图、光线、运动方向和声音衔接。"
+            "优先选择动作结果能接续下一段动作起点的切点，让整体观看更丝滑；不得只依据文字描述机械拼接。"
+            "审片视频时间范围如下：\n"
+            f"{json.dumps(review_ranges, ensure_ascii=False, indent=2)}"
+        )
         with log_context(node_name="postgen_edit_plan_generation", episode_key=episode_key):
             plan = await provider.generate_json(
                 prompt,
                 PostgenEditPlan,
                 temperature=0.2,
+                refs=[AssetRef(id="episode_review_reel", type="video", path=str(review_reel))],
                 metadata={"node_name": "postgen_edit_plan_generation", "episode_key": episode_key},
             )
         plan.metadata.update({"provider": getattr(provider, "name", "unknown"), "model": getattr(provider, "model", None), "mode": "llm"})

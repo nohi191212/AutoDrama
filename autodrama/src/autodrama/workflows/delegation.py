@@ -13,7 +13,7 @@ class PregenWorkflowDelegateMixin:
 
     Generation and editing no longer need to inherit the pregen business
     workflow directly, but they still depend on shared layout, media, state,
-    storyboard, and prompt helpers. This mixin keeps that reuse explicit while
+    shot-manifest, and prompt helpers. This mixin keeps that reuse explicit while
     those helpers are migrated into smaller shared services.
     """
 
@@ -35,7 +35,7 @@ class PregenWorkflowDelegateMixin:
             "role_service",
             "asset_service",
             "media_store",
-            "storyboards",
+            "shot_manifests",
             "runner",
         ):
             setattr(self, name, getattr(delegate, name))

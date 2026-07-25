@@ -240,6 +240,8 @@ def _validate_node_model_settings(settings: Settings) -> None:
     if not settings.nodes:
         return
     for node_name, node_settings in settings.nodes.items():
+        if not node_settings.model:
+            continue
         spec = settings.model_catalog.validate_node_settings(node_name, node_settings)
         provider = spec.provider_name
         if not provider:

@@ -1,85 +1,30 @@
 # 任务
 
-你是专门为火山方舟 Doubao Seedream 5.0 编写角色身份板 prompt 的设计师。请把角色信息压缩成重点明确、前置信息强、适合 Seedream 的中文图像 prompt。
-
-# 目标生图模型
-
-- provider：{{roleboard_image_provider}}
-- model：{{roleboard_image_model}}
-
-# 模型适配规则
-
-- Seedream provider 会截断过长 prompt；`roleboard_prompt` 必须控制长度，建议 2500-4200 个中文字符以内。
-- 最重要的信息必须前置：单一角色、多视图、同一身份、角色名、年龄感、脸型五官、发型、服装、体型、关键配饰。
-- 版式要求要短而硬：16:9、干净背景、大英雄全身视角、正侧背、头部、表情、动作、服装细节、配饰细节。
-- 不要写冗长剧情，不要罗列太多临时事件；只抽取能锁定稳定 base 形象的视觉信息。
-- 负向 prompt 简洁但高优先级：变脸、换衣、年龄漂移、多人物、文字污染、水印、logo、错误角色名、临时伤亡状态。
+根据人物资料，为单一角色造型写一条可直接生成角色身份板的中文画面描述。
 
 # 输入
 
-当前角色抽取结果：
-{{role_extract_item}}
+人物简介：
+{{character_intro}}
 
-当前造型资产（本次只为这个 appearance 生成角色板 prompt）：
+当前造型：
 {{appearance_asset}}
 
-全角色索引（只用于确认角色边界、别名、层级和关系，不要把索引当作完整剧情）：
-{{role_index}}
+视觉基调：
+{{visual_tone}}
 
-全部集/章节的小说剧情提要：
-{{role_novel_extract}}
-
-当前角色出现过的完整章节正文：
-{{role_novel_full}}
-
-项目约束：
-{{project_context}}
-
-主视觉原图资产（用于统一项目画风、光影、气质和世界观视觉方向）：
-{{key_vision_asset}}
-
-角色身份板统一风格要求：
+统一角色板风格：
 {{roleboard_style_prompt}}
 
-身份板视图要求：
+视图要求：
 {{roleboard_view_requirement}}
 
-# 输出要求
+# 输出
 
-- 只输出 JSON。
-- JSON 只能包含以下字段：`roleboard_prompt`、`roleboard_negative_prompt`、`voice_profile_prompt`、`design_notes`。
-- 不要输出任何 ID、路径、URL、文件名、节点名或项目 ID。
-- `roleboard_prompt` 必须可直接传给 Seedream 图像模型，长度克制，核心身份信息放在最前。
-- `roleboard_negative_prompt` 写短而明确的避免项。
-- `voice_profile_prompt` 如果角色有台词，写 1 段稳定声音画像；无台词则为空字符串。
-- `design_notes` 简短说明制作注意事项，可以为空字符串。
+只输出 JSON，且只包含 `roleboard_prompt`、`roleboard_negative_prompt`、`voice_profile_prompt`、`design_notes`。
 
-# 多造型资产规则
-
-- 本次只生成 `appearance_asset.appearance_name` 对应的造型，不要混入同角色其他造型。
-- `asset_role=base` 时，把它作为同一角色的主身份资产，锁定脸、身形、发型基底、肤色、基础服装体系和关键视觉标志。
-- `asset_role=variant` 时，它是同一角色的从属造型：保持同一脸、同一身形比例、同一发型基底、肤色和核心视觉标志，只改变 `appearance_asset` 中明确写出的服装、妆造、发型变化或状态。
-- 如果角色抽取结果和当前造型资产冲突，优先服从当前造型资产；在 design_notes 简短说明冲突。
-
-# 角色身份板内容要求
-
-- 主体段必须前置年龄、外貌、体型、脸型、发型、服装、鞋履/赤脚、姿势语言、核心情绪和视觉标志；不要写冗长剧情。
-- 文本设计段让角色 ID 块只包含：名称、角色、核心情绪、视觉标志。
-- 16:9 横向单角色身份板，白色/米白/浅灰干净背景。
-- 一个大型英雄全身视角，另有正面全身、侧面全身、背面全身、头部近景、表情组、动作姿态、服装材质细节、配饰/道具细节。
-- 所有视图保持同一脸、同一年龄、同一发型、同一服装、同一身高比例、同一体型、同一身份符号。
-- 只做稳定 base 形象，不使用临时受伤、战损、死亡、尸化、结局状态。
-- 主视觉只作为画风和光影参考，不照搬人物或构图。
-- 只允许小字 `角色：<角色名> | base` 和视图标签 `正面`、`侧面`、`背面`、`头部`、`表情`、`动作`、`服装细节`、`配饰细节`；除此之外不要任何文字。
-
-Required JSON schema:
-{
-  "type": "object",
-  "properties": {
-    "roleboard_prompt": {"type": "string"},
-    "roleboard_negative_prompt": {"type": "string"},
-    "voice_profile_prompt": {"type": "string"},
-    "design_notes": {"type": "string"}
-  },
-  "required": ["roleboard_prompt"]
-}
+- `roleboard_prompt` 描述一张 16:9 的单角色身份板：固定脸部、年龄感、发型、体型、服装、鞋履、姿态语言和视觉标志；包含英雄全身、正侧背全身、头部、表情、动作、服装与配饰细节。背景干净，视图彼此分离，不出现无关人物或环境剧情。
+- 当前造型优先于人物简介；变体造型只能改变其中明确变化的服装、妆造、发型或状态，其他身份特征保持一致。
+- `roleboard_negative_prompt` 覆盖身份漂移、额外人物、肢体缺失、视图重叠、裁切脸部、无关文字、字幕、水印和 logo。
+- 有台词时，`voice_profile_prompt` 写一段稳定的声音画像；否则使用空字符串。
+- `design_notes` 仅保留需要人工确认的视觉歧义；没有则使用空字符串。

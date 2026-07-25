@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from autodrama.config import Settings
@@ -33,7 +34,7 @@ from autodrama.providers.local.mock.fake import (
     FakeVideoProvider,
     FakeVoiceDesignProvider,
 )
-from autodrama.providers.media_refs import is_remote_url_expired, local_ref_path
+from autodrama.providers.media_refs import is_remote_url_expired, local_ref_path, signed_url_expiration
 from autodrama.providers.minimax.music.music_26 import MiniMaxMusicProvider
 from autodrama.providers.registry import ProviderRegistry
 from autodrama.providers.rightcode.image.gpt_image import RightCodeImageProvider
@@ -43,6 +44,7 @@ from autodrama.providers.volcengine.audio.seed_icl import VolcengineVoiceProvide
 from autodrama.providers.volcengine.audio.seed_tts import VolcengineSeedTTSProvider
 from autodrama.providers.volcengine.image.seedream import VolcengineSeedreamImageProvider
 from autodrama.providers.volcengine.video.seedance import VolcengineSeedanceVideoProvider
+from autodrama.utils.prompts import PromptAuditLogger
 
 
 ALIYUN_TEXT_PROVIDER_NAMES = {"aliyun", "qwen", "bailian"}
@@ -62,21 +64,29 @@ class BoundProviderProxy:
     def __init__(
         self,
         provider: Any,
-        binding: ModelBinding,
+        binding: ModelBinding | None,
         *,
         reference_image_uploader: ToAPIImageProvider | None = None,
+        prompt_audit: PromptAuditLogger | None = None,
+        fallback_provider_name: str | None = None,
     ) -> None:
         self._provider = provider
         self._reference_image_uploader = reference_image_uploader
         self.model_binding = binding
-        self.name = getattr(provider, "name", binding.provider)
-        self.model = binding.provider_model_name
+        self._prompt_audit = prompt_audit
+        self._prompt_attempts: dict[tuple[str, str], int] = {}
+        self.name = getattr(provider, "name", fallback_provider_name or "unknown")
+        self.model = binding.provider_model_name if binding is not None else str(
+            getattr(provider, "model", "") or ""
+        )
         self._apply_provider_model()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._provider, name)
 
     def _apply_provider_model(self) -> None:
+        if self.model_binding is None:
+            return
         for attr in ("model",):
             if hasattr(self._provider, attr):
                 try:
@@ -105,6 +115,8 @@ class BoundProviderProxy:
 
     def _metadata(self, metadata: dict[str, Any] | None) -> dict[str, Any]:
         merged = dict(metadata or {})
+        if self.model_binding is None:
+            return merged
         merged.update(self.model_binding.params)
         merged.setdefault("node_name", self.model_binding.node_name)
         merged["model"] = self.model_binding.provider_model_name
@@ -117,6 +129,8 @@ class BoundProviderProxy:
         duration: Any = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        if self.model_binding is None:
+            return
         context = f"node {self.model_binding.node_name} model {self.model_binding.model_id}"
         self.model_binding.spec.validate_refs(refs, context=context)
         effective_duration = duration
@@ -125,9 +139,13 @@ class BoundProviderProxy:
         self.model_binding.spec.validate_duration(effective_duration, context=context)
 
     async def _resolve_reference_image_urls(self, refs: list[Any] | None) -> None:
+        # Unbound providers historically receive references unchanged.  Binding
+        # is what supplies the shared uploader and media contract.
+        if self.model_binding is None:
+            return
         if bool(getattr(self._provider, "supports_local_refs", False)):
             return
-        targets = [
+        missing_or_expired_targets = [
             ref
             for ref in refs or []
             if str(getattr(ref, "type", "") or "") == "image"
@@ -137,21 +155,96 @@ class BoundProviderProxy:
                 or is_remote_url_expired(str(ref.url))
             )
         ]
-        if not targets:
+        signed_targets = [
+            ref
+            for ref in refs or []
+            if str(getattr(ref, "type", "") or "") == "image"
+            and local_ref_path(ref) is not None
+            and bool(getattr(ref, "url", None))
+            and signed_url_expiration(str(ref.url)) is not None
+            and ref not in missing_or_expired_targets
+        ]
+        if not missing_or_expired_targets and not signed_targets:
             return
         if self._reference_image_uploader is None:
+            node_name = self.model_binding.node_name if self.model_binding is not None else "unknown"
             raise ProviderBadResponseError(
-                f"node {self.model_binding.node_name} has local or expired reference image URL(s), "
+                f"node {node_name} has local or signed reference image URL(s), "
                 "but the shared ToAPI reference uploader is not configured"
             )
-        await self._reference_image_uploader.ensure_reference_image_urls(targets)
+        if missing_or_expired_targets:
+            await self._reference_image_uploader.ensure_reference_image_urls(missing_or_expired_targets)
+        if signed_targets:
+            await self._reference_image_uploader.ensure_reference_image_urls(signed_targets, force=True)
+
+    @staticmethod
+    def _audit_asset_type(metadata: dict[str, Any]) -> str:
+        explicit = str(metadata.get("prompt_asset_type") or "").strip()
+        if explicit:
+            return explicit
+        node_name = str(metadata.get("node_name") or "").strip()
+        return {
+            "image_prompt_safety_rewrite": "prompt_safety_rewrite",
+            "roleboard_image_generation": "roleboard",
+            "prop_image_generation": "prop",
+            "layout_image_generation": "layout",
+            "shot_background_image_generation": "shot_background",
+            "shot_keyframe_image_generation": "shot_keyframe",
+            "shot_video_generation": "shot_video",
+            "bgm_generation": "bgm",
+        }.get(node_name, node_name or "unclassified")
+
+    @staticmethod
+    def _audit_asset_name(metadata: dict[str, Any]) -> str:
+        for key in (
+            "prompt_asset_name",
+            "asset_id",
+            "background_id",
+            "keyframe_id",
+            "shot_id",
+            "clip_id",
+            "role_id",
+            "role_name",
+            "prop_id",
+            "prop_name",
+            "layout_id",
+            "layout_name",
+            "episode_key",
+        ):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value
+        return str(metadata.get("node_name") or "request")
+
+    def _audit_prompt(self, prompt: Any, metadata: dict[str, Any]) -> None:
+        if self._prompt_audit is None or not isinstance(prompt, str) or not prompt:
+            return
+        asset_type = self._audit_asset_type(metadata)
+        asset_name = self._audit_asset_name(metadata)
+        retry_index = metadata.get("prompt_attempt", metadata.get("safety_prompt_rewrite_attempt"))
+        if retry_index is None:
+            attempt = self._prompt_attempts.get((asset_type, asset_name), 0) + 1
+        else:
+            attempt = int(retry_index) + 1
+        self._prompt_attempts[(asset_type, asset_name)] = max(
+            attempt,
+            self._prompt_attempts.get((asset_type, asset_name), 0),
+        )
+        self._prompt_audit.write(
+            asset_type=asset_type,
+            asset_name=asset_name,
+            prompt=prompt,
+            attempt=attempt,
+        )
 
     async def generate_json(self, prompt, schema, *, temperature: float = 0.7, metadata=None, refs=None):
-        temperature = self.model_binding.params.get("temperature", temperature)
+        if self.model_binding is not None:
+            temperature = self.model_binding.params.get("temperature", temperature)
         merged_metadata = self._metadata(metadata)
         if refs:
             await self._resolve_reference_image_urls(refs)
             self._validate_media_request(refs=refs, metadata=merged_metadata)
+        self._audit_prompt(prompt, merged_metadata)
         return await self._provider.generate_json(
             prompt,
             schema,
@@ -161,21 +254,25 @@ class BoundProviderProxy:
         )
 
     async def judge_audio_json(self, prompt, schema, *, refs, temperature: float = 0.2, metadata=None):
-        temperature = self.model_binding.params.get("temperature", temperature)
+        if self.model_binding is not None:
+            temperature = self.model_binding.params.get("temperature", temperature)
         await self._resolve_reference_image_urls(refs)
-        self._validate_media_request(refs=refs, metadata=metadata)
+        merged_metadata = self._metadata(metadata)
+        self._validate_media_request(refs=refs, metadata=merged_metadata)
+        self._audit_prompt(prompt, merged_metadata)
         return await self._provider.judge_audio_json(
             prompt,
             schema,
             refs=refs,
             temperature=temperature,
-            metadata=self._metadata(metadata),
+            metadata=merged_metadata,
         )
 
     async def generate_image(self, prompt, refs=None, *, size=None, metadata=None):
         merged_metadata = self._metadata(metadata)
         await self._resolve_reference_image_urls(refs)
         self._validate_media_request(refs=refs, metadata=merged_metadata)
+        self._audit_prompt(prompt, merged_metadata)
         return await self._provider.generate_image(
             prompt,
             refs=refs,
@@ -186,12 +283,14 @@ class BoundProviderProxy:
     async def generate_music(self, prompt, *, lyrics=None, metadata=None):
         merged_metadata = self._metadata(metadata)
         self._validate_media_request(metadata=merged_metadata)
+        self._audit_prompt(prompt, merged_metadata)
         return await self._provider.generate_music(prompt, lyrics=lyrics, metadata=merged_metadata)
 
     async def submit_video(self, prompt, refs=None, *, duration=None, metadata=None):
         merged_metadata = self._metadata(metadata)
         await self._resolve_reference_image_urls(refs)
         self._validate_media_request(refs=refs, duration=duration, metadata=merged_metadata)
+        self._audit_prompt(prompt, merged_metadata)
         return await self._provider.submit_video(prompt, refs=refs, duration=duration, metadata=merged_metadata)
 
     async def query_video_task(self, task_id):
@@ -201,6 +300,7 @@ class BoundProviderProxy:
         merged_metadata = self._metadata(metadata)
         await self._resolve_reference_image_urls(refs)
         self._validate_media_request(refs=refs, duration=duration, metadata=merged_metadata)
+        self._audit_prompt(prompt, merged_metadata)
         return await self._provider.generate_video(
             prompt,
             refs=refs,
@@ -220,6 +320,7 @@ class BoundProviderProxy:
         metadata=None,
     ):
         await self._resolve_reference_image_urls(image_refs)
+        self._audit_prompt(element_description, self._metadata(metadata))
         return await self._provider.create_subject_element(
             element_name=element_name,
             element_description=element_description,
@@ -252,6 +353,7 @@ class BoundProviderProxy:
         metadata=None,
     ):
         await self._resolve_reference_image_urls(image_refs)
+        self._audit_prompt(element_description, self._metadata(metadata))
         return await self._provider.generate_subject_element(
             element_name=element_name,
             element_description=element_description,
@@ -291,6 +393,7 @@ class BoundProviderProxy:
         )
 
     async def create_voice(self, *, voice_prompt, preview_text, preferred_name, metadata=None):
+        self._audit_prompt(voice_prompt, self._metadata(metadata))
         return await self._provider.create_voice(
             voice_prompt=voice_prompt,
             preview_text=preview_text,
@@ -323,6 +426,7 @@ class ProviderRouter:
         self._fake_video = FakeVideoProvider()
         self._fake_voice = FakeVoiceDesignProvider()
         self._fake_judge = FakeAudioJudgeProvider()
+        self._prompt_audit: PromptAuditLogger | None = None
         toapi_settings = self.settings.providers.get("toapi")
         self._reference_image_uploader = (
             ToAPIImageProvider(toapi_settings, self.settings.runtime)
@@ -520,19 +624,25 @@ class ProviderRouter:
         if factory is None:
             raise ValueError(f"Unsupported {capability} provider: {provider_name}")
         provider = factory(provider_name=provider_name, purpose=purpose)
-        if binding is None:
+        if binding is None and self._prompt_audit is None:
             return provider
         return BoundProviderProxy(
             provider,
             binding,
             reference_image_uploader=self._reference_image_uploader,
+            prompt_audit=self._prompt_audit,
+            fallback_provider_name=provider_name,
         )
+
+    def set_prompt_audit_project_dir(self, project_dir: Path | None) -> None:
+        """Set the per-run destination used by provider-boundary prompt logging."""
+        self._prompt_audit = PromptAuditLogger(project_dir) if project_dir is not None else None
 
     def _binding_for_node(self, capability: ModelCapability, node_name: str | None) -> ModelBinding | None:
         if self.provider_override or not node_name:
             return None
         node_settings = self.settings.nodes.get(node_name)
-        if node_settings is None:
+        if node_settings is None or not node_settings.model:
             return None
         spec = self.settings.model_catalog.validate_node_settings(node_name, node_settings)
         if spec.capability != capability:

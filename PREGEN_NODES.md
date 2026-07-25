@@ -1,64 +1,29 @@
-# Pregen Nodes
+# 预生成节点
 
-Last updated: 2026-07-08
-
-This file records the current `PREGEN_NODES` order used by the default
-`run pregen` workflow.
-
-Source of truth:
-
-- `autodrama/src/autodrama/workflows/nodes/__init__.py`
-- `autodrama/src/autodrama/workflows/pregen.py`
-
-Default stop node:
-
-- `clip_manifest_generation`
-
-## Default PREGEN_NODES Order
+默认预生成链路在 `shot_manifest_generation` 结束：
 
 1. `script_import`
 2. `script_detail_expand`
 3. `script_novel_extract`
 4. `key_vision_prompt`
 5. `key_vision_image_generation`
-6. `role_extract_primary`
-7. `role_extract_functional`
-8. `role_finalize`
-9. `roleboard_prompt`
-10. `roleboard_image_generation`
-11. `prop_extract`
-12. `prop_finalize`
-13. `layout_extract`
-14. `layout_finalize`
-15. `layout_prop_boundary_review`
-16. `prop_prompt`
-17. `layout_prompt`
-18. `prop_image_generation`
-19. `layout_image_generation`
-19. `clip_segment`
-20. `clip_prompt`
-21. `clip_storyboard_prompt`
-22. `clip_storyboard_image_generation`
-23. `clip_storyboard_keyframe_generation`
-24. `clip_manifest_generation`
+6. 角色、道具和场景静态资产节点
+7. `clip_segment`
+8. `clip_to_shots`
+9. `layout_to_background_prompt`
+10. `shot_background_image_generation`
+11. `shot_keyframe_prompt`
+12. `shot_keyframe_image_generation`
+13. `shot_manifest_generation`
 
-## Deferred Manual-Only Pregen Nodes
+镜头链路合同：每个 shot 必须有唯一、非空的 `narrative_angle`，并且只映射到一个背景。背景可被兼容 shot 复用；背景图与关键帧图分别写入 `assets/images/shot_backgrounds/` 和 `assets/images/shot_keyframes/`。
 
-These nodes remain implemented and available through `run pregen --only NODE`,
-but they are not part of the default `PREGEN_NODES` chain.
+`--episodes` 可用于单节点重跑。`--shots` 仅可用于背景、关键帧和 manifest 节点；选择共享背景的任一 shot 都会解析该背景。强制重建背景会使其关联关键帧和 manifest 失效。
 
-1. `script_outline`
-2. `script_novel`
-3. `role_subject_video_generation`
-4. `role_subject_element_generation`
-5. `role_voice_select`
-6. `bgm_design`
-7. `bgm_generation`
+示例：
 
-## Legacy `--only` Aliases
-
-These aliases are accepted for compatibility, but they are not separate nodes in
-the default chain.
-
-- `prop_design` -> `prop_prompt`
-- `prop_generation` -> `prop_image_generation`
+```powershell
+run\start.cmd --config config.yaml --project <project_id> --only layout_to_background_prompt --episodes 1 --shots 1-3 --force
+run\start.cmd --config config.yaml --project <project_id> --only shot_background_image_generation --episodes 1 --shots 1-3 --force
+run\start.cmd --config config.yaml --project <project_id> --only shot_keyframe_image_generation --episodes 1 --shots 1-3 --force
+```

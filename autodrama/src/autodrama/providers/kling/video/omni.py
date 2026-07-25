@@ -242,7 +242,7 @@ class KlingOmniVideoProvider:
         if any(item["type"] == "base_video" for item in contents) and audio == "native":
             audio = "original"
         settings: dict[str, Any] = {
-            "multi_shot": bool(metadata.get("multi_shot", self.settings.options.get("multi_shot", False))),
+            "multi_shot": bool(metadata.get("multi_shot", self.settings.options.get("multi_shot", True))),
             "audio": audio,
             "resolution": str(metadata.get("resolution") or self.resolution),
             "aspect_ratio": str(metadata.get("aspect_ratio") or metadata.get("ratio") or self.aspect_ratio),

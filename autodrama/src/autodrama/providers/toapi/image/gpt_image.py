@@ -193,8 +193,8 @@ class ToAPIImageProvider:
 
     def _purpose_model(self, metadata: dict[str, Any]) -> str | None:
         node_name = self._purpose_node_name(metadata)
-        if node_name == "clip_storyboard_image_generation":
-            return self.settings.models.get("storyboard")
+        if node_name == "shot_keyframe_image_generation":
+            return self.settings.models.get("shot_keyframe") or self.settings.models.get("shot") or self.settings.models.get("layout")
         if node_name == "roleboard_image_generation":
             return self.settings.models.get("roleboard")
         if node_name in {"prop_generation", "prop_image_generation"}:
@@ -207,8 +207,8 @@ class ToAPIImageProvider:
 
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
         node_name = self._purpose_node_name(metadata)
-        if node_name == "clip_storyboard_image_generation":
-            return self.settings.options.get("storyboard_size") or "16:9"
+        if node_name == "shot_keyframe_image_generation":
+            return self.settings.options.get("shot_keyframe_size") or self.settings.options.get("shot_size") or "9:16"
         if node_name == "roleboard_image_generation":
             return (
                 self.settings.options.get("roleboard_size")
@@ -224,8 +224,8 @@ class ToAPIImageProvider:
 
     def _purpose_resolution(self, metadata: dict[str, Any]) -> object | None:
         node_name = self._purpose_node_name(metadata)
-        if node_name == "clip_storyboard_image_generation":
-            return self.settings.options.get("storyboard_resolution")
+        if node_name == "shot_keyframe_image_generation":
+            return self.settings.options.get("shot_keyframe_resolution") or self.settings.options.get("shot_resolution")
         if node_name == "roleboard_image_generation":
             return self.settings.options.get("roleboard_resolution")
         if node_name in {"prop_generation", "prop_image_generation"}:

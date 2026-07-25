@@ -5,8 +5,8 @@ from autodrama.core.schemas import (
     Role,
     RoleAppearance,
     RoleAudio,
-    StoryboardEpisodeOutput,
-    StoryboardShot,
+    ShotManifestEpisodeOutput,
+    ShotManifestItem,
 )
 
 __all__ = [
@@ -16,6 +16,6 @@ __all__ = [
     "Role",
     "RoleAppearance",
     "RoleAudio",
-    "StoryboardEpisodeOutput",
-    "StoryboardShot",
+    "ShotManifestEpisodeOutput",
+    "ShotManifestItem",
 ]

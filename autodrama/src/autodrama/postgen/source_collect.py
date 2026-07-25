@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autodrama.core.schemas import StoryboardEpisodeOutput
+from autodrama.core.schemas import ShotManifestEpisodeOutput
 from autodrama.postgen.schemas import PostgenSourceClip
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.workflows.selection import active_shots_for_episode
@@ -31,13 +31,13 @@ def collect_episode_source_clips(
     if not shot_path.exists():
         raise FileNotFoundError(f"Shot manifest is missing for {episode_key}: {shot_path}")
 
-    episode = StoryboardEpisodeOutput.model_validate_json(shot_path.read_text(encoding="utf-8"))
+    episode = ShotManifestEpisodeOutput.model_validate_json(shot_path.read_text(encoding="utf-8"))
     warnings: list[str] = []
     clips: list[PostgenSourceClip] = []
     for shot in sorted(active_shots_for_episode(episode, shot_selectors), key=lambda item: item.index):
         source_path = resolve_project_path(project_dir, shot.video_asset_path)
         if source_path is None or not source_path.is_file() or source_path.stat().st_size <= 0:
-            warnings.append(f"{shot.shot_id}: missing shot video asset; run generation through clip_video_generation")
+            warnings.append(f"{shot.shot_id}: missing shot video asset; run generation through shot_video_generation")
             continue
         if len(clips) >= max_clips:
             warnings.append(f"clip limit reached: using first {max_clips} usable clips for {episode_key}")

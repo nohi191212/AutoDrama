@@ -96,6 +96,9 @@ class ModelSpec(BaseModel):
             elif ref_type == "element":
                 counts["max_reference_elements"] += 1
 
+        if bool(self.limits.get("reference_elements_consume_image_limit", False)):
+            counts["max_reference_images"] += counts["max_reference_elements"]
+
         for key, actual in counts.items():
             limit = self._int_limit(key)
             if limit is not None and actual > limit:
@@ -166,7 +169,9 @@ class ModelCatalog(BaseModel):
 
 
 class NodeModelSettings(BaseModel):
-    model: str
+    # Pure local nodes may still expose workflow parameters without declaring a
+    # model binding.
+    model: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
 
 

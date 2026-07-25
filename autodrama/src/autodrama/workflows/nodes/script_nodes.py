@@ -594,10 +594,10 @@ class ScriptNovelExtractNode(ScriptNodeBase):
 
 class ClipSegmentNode(ScriptNodeBase):
     name = "clip_segment"
-    MIN_CLIP_SECONDS = 8
-    MAX_CLIP_SECONDS = 15
-    SHORT_TEXT_WARNING_CHARS = 20
-    LONG_TEXT_WARNING_CHARS = 900
+    MIN_CLIP_SECONDS = 60
+    MAX_CLIP_SECONDS = 120
+    SHORT_TEXT_WARNING_CHARS = 160
+    LONG_TEXT_WARNING_CHARS = 3200
 
     @staticmethod
     def _one_line(value: object, *, max_chars: int = 120) -> str:

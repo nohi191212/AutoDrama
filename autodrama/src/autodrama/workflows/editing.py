@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from autodrama.core.schemas import ProjectState, StoryboardEpisodeOutput, StoryboardShot
+from autodrama.core.schemas import ProjectState, ShotManifestEpisodeOutput, ShotManifestItem
 from autodrama.editing import ffmpeg as ffmpeg_tools
 from autodrama.editing import planner as edit_planner
 from autodrama.editing import subtitles as subtitle_tools
@@ -24,7 +24,7 @@ EDITING_NODES = [
 
 
 class EditMissingAsset(BaseModel):
-    asset_type: Literal["clip_video", "dialogue_audio", "bgm"]
+    asset_type: Literal["shot_video", "dialogue_audio", "bgm"]
     episode_key: str
     shot_id: str | None = None
     asset_id: str | None = None
@@ -138,6 +138,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
             raise ValueError(f"Unsupported editing stop node: {until}")
 
         logger = setup_logging(project_dir)
+        self.router.set_prompt_audit_project_dir(project_dir)
         state = self.repo.load_state(project_dir)
         self._apply_script_plan_settings(state)
         selected_episode_keys = self._select_episode_keys(state, episode_keys)
@@ -283,7 +284,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
     async def _run_edit_plan_generation(self, project_dir: Path, state: ProjectState) -> ProjectState:
         get_logger().info("node=edit_plan_generation provider=local model=deterministic")
         plans: list[EpisodeEditPlan] = []
-        for episode in self._iter_storyboard_episodes(project_dir, state):
+        for episode in self._iter_shot_manifest_episodes(project_dir, state):
             plan = self._build_episode_edit_plan(project_dir, state, episode)
             self.repo.write_json(self._edit_plan_path(project_dir, episode.episode_key), plan)
             plans.append(plan)
@@ -305,7 +306,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         self,
         project_dir: Path,
         state: ProjectState,
-        episode: StoryboardEpisodeOutput,
+        episode: ShotManifestEpisodeOutput,
     ) -> EpisodeEditPlan:
         width, height, fps, aspect_ratio = self._target_profile()
         clips: list[EditClip] = []
@@ -369,7 +370,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         self,
         project_dir: Path,
         episode_key: str,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         start_time: float,
         duration: float,
     ) -> tuple[EditClip, list[EditMissingAsset]]:
@@ -381,7 +382,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         if not self._project_path_exists(project_dir, source_path):
             missing.append(
                 EditMissingAsset(
-                    asset_type="clip_video",
+                    asset_type="shot_video",
                     episode_key=episode_key,
                     shot_id=shot.shot_id,
                     asset_id=shot.video_asset_id,
@@ -417,7 +418,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         self,
         project_dir: Path,
         episode_key: str,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         shot_start: float,
         shot_duration: float,
     ) -> tuple[list[EditAudioLayer], list[EditMissingAsset]]:
@@ -472,7 +473,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
 
     def _build_subtitle_cues(
         self,
-        shot: StoryboardShot,
+        shot: ShotManifestItem,
         shot_start: float,
         shot_duration: float,
         existing_count: int,
@@ -506,7 +507,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         self,
         project_dir: Path,
         state: ProjectState,
-        episode: StoryboardEpisodeOutput,
+        episode: ShotManifestEpisodeOutput,
         total_duration: float,
     ) -> tuple[EditAudioLayer | None, list[EditMissingAsset], list[str]]:
         missing: list[EditMissingAsset] = []
@@ -562,7 +563,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         )
 
     @staticmethod
-    def _select_bgm_id(state: ProjectState, episode: StoryboardEpisodeOutput) -> str | None:
+    def _select_bgm_id(state: ProjectState, episode: ShotManifestEpisodeOutput) -> str | None:
         return edit_planner.select_bgm_id(state, episode)
 
     async def _run_final_video_composition(self, project_dir: Path, state: ProjectState) -> ProjectState:
@@ -605,7 +606,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         path = self._edit_plan_path(project_dir, episode_key)
         if path.exists():
             return EpisodeEditPlan.model_validate_json(path.read_text(encoding="utf-8"))
-        episode = self._load_storyboard_episode(project_dir, episode_key)
+        episode = self._load_shot_manifest(project_dir, episode_key)
         plan = self._build_episode_edit_plan(project_dir, state, episode)
         self.repo.write_json(path, plan)
         return plan
