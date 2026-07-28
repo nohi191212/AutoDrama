@@ -53,11 +53,12 @@ class DirectorService:
         self,
         state: ProjectState,
         provider: TextLLM,
+        *,
+        story_context: str | None = None,
     ) -> KeyVisionPromptOutput:
         prompt = self.prompts.render(
             "key_vision_prompt",
-            title=state.title,
-            raw_script=state.raw_script,
+            story_context=str(story_context or state.script.outline or "").strip(),
             visual_style_prompt=self.visual_style_prompt(state) or "（未单独配置。请以原始故事为准。）",
         )
         output = await provider.generate_json(

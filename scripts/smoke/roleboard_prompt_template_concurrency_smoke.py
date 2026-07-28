@@ -12,6 +12,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from autodrama.config import load_settings
+from autodrama.services.role_service import RoleService
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.nodes.static_asset_nodes import RoleAppearanceGenerationBase
 
@@ -33,27 +34,33 @@ def render_roleboard_templates() -> None:
         "key_vision_asset": "{}",
         "appearance_asset": '{"appearance_name":"base","asset_role":"base","appearance_desc":"稳定基础造型","clothing":"素色日常装","visual_features":"清晰脸型和发型"}',
         "roleboard_style_prompt": "统一角色板风格",
-        "roleboard_view_requirement": "角色板视图要求",
+        "roleboard_view_requirement": RoleService.roleboard_view_requirement(),
         "roleboard_image_provider": "aibox",
         "roleboard_image_model": "gpt-image-2-guan",
     }
-    template_names = [
-        "roleboard_prompt/default",
-        "roleboard_prompt/toapi_gpt_image_2",
-        "roleboard_prompt/toapi_gpt_image_2_high",
-        "roleboard_prompt/aibox_gpt_image_2_guan",
-        "roleboard_prompt/rightcode_gpt_image_2",
-        "roleboard_prompt/rightcode_gpt_image_2_vip",
-        "roleboard_prompt/volcengine_doubao_seedream_5_0_260128",
+    template_variants = [
+        "default",
+        "toapi_gpt_image_2",
+        "toapi_gpt_image_2_high",
+        "aibox_gpt_image_2_guan",
+        "rightcode_gpt_image_2",
+        "rightcode_gpt_image_2_vip",
+        "volcengine_doubao_seedream_5_0_260128",
     ]
-    for template_name in template_names:
-        rendered = prompts.render(template_name, **variables)
+    for template_variant in template_variants:
+        rendered = prompts.render_context("roleboard_prompt", variables, variant=template_variant)
         if "roleboard_prompt" not in rendered:
-            raise AssertionError(f"{template_name} did not render expected schema text")
+            raise AssertionError(f"{template_variant} did not render expected schema text")
+        for required_text in ("正面", "侧面", "背面", "三个"):
+            if required_text not in rendered:
+                raise AssertionError(f"{template_variant} is missing strict three-view requirement: {required_text}")
+        for forbidden_text in ("六个视图", "英雄全身", "头部、表情、动作"):
+            if forbidden_text in rendered:
+                raise AssertionError(f"{template_variant} still requests extra roleboard views: {forbidden_text}")
 
 
 def validate_configs() -> None:
-    for config_name in ("config.yaml.example", "config.yaml"):
+    for config_name in ("config.yushou_xianchao.yaml",):
         settings = load_settings(ROOT / config_name)
         params = settings.nodes["roleboard_image_generation"].params
         if "roleboard_prompt_template" not in params:

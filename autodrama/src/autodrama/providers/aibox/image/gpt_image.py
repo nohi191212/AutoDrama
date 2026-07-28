@@ -22,6 +22,7 @@ class AiboxImageProvider:
     name = "aibox"
     supports_reference_images = True
     DEFAULT_MAX_ATTEMPTS = 3
+    MAX_REFERENCE_IMAGES = 10
     RETRYABLE_HTTP_STATUS_CODES = {
         408,
         409,
@@ -105,10 +106,13 @@ class AiboxImageProvider:
             or settings.options.get("max_wait_seconds")
             or 900
         )
-        self.max_reference_images = int(
-            settings.options.get("aibox_max_reference_images")
-            or settings.options.get("max_reference_images")
-            or 14
+        self.max_reference_images = min(
+            self.MAX_REFERENCE_IMAGES,
+            int(
+                settings.options.get("aibox_max_reference_images")
+                or settings.options.get("max_reference_images")
+                or self.MAX_REFERENCE_IMAGES
+            ),
         )
         self.max_attempts = self._int_option(
             "aibox_max_attempts",
@@ -341,7 +345,10 @@ class AiboxImageProvider:
 
     def _reference_images(self, refs: list[AssetRef], *, metadata: dict[str, Any]) -> list[str]:
         images: list[str] = []
-        max_reference_images = int(metadata.get("max_reference_images") or self.max_reference_images)
+        max_reference_images = min(
+            self.MAX_REFERENCE_IMAGES,
+            int(metadata.get("max_reference_images") or self.max_reference_images),
+        )
         for ref in refs:
             if ref.type != "image":
                 continue
@@ -363,7 +370,10 @@ class AiboxImageProvider:
         del client
         images: list[str] = []
         uploaded: list[dict[str, Any]] = []
-        max_reference_images = int(metadata.get("max_reference_images") or self.max_reference_images)
+        max_reference_images = min(
+            self.MAX_REFERENCE_IMAGES,
+            int(metadata.get("max_reference_images") or self.max_reference_images),
+        )
         unresolved_local_refs = [
             ref
             for ref in refs

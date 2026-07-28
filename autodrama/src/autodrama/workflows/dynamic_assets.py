@@ -469,41 +469,6 @@ class DynamicAssetNodeMixin:
             image_result,
         )
 
-    def _shot_video_inheritance_ready(
-        self,
-        project_dir: Path,
-        episode: ShotManifestEpisodeOutput,
-        shot: ShotManifestItem,
-    ) -> bool:
-        if shot.start_frame_source != "previous_shot_last_frame":
-            return True
-        previous_shot = self._previous_shot(episode, shot)
-        if previous_shot is None:
-            return False
-        return self._path_exists(project_dir, previous_shot.video_last_frame_asset_path)
-
-    def _shot_video_inheritance_blocked_message(
-        self,
-        project_dir: Path,
-        episode: ShotManifestEpisodeOutput,
-        shot: ShotManifestItem,
-    ) -> str:
-        previous_shot = self._previous_shot(episode, shot)
-        if previous_shot is None:
-            return (
-                f"{shot.shot_id} is configured to start from previous_shot_last_frame, "
-                "but there is no previous shot."
-            )
-        if not previous_shot.video_last_frame_asset_path:
-            return (
-                f"{shot.shot_id} is configured to start from {previous_shot.shot_id}'s last frame, "
-                f"but {previous_shot.shot_id} has no saved last frame yet."
-            )
-        return (
-            f"{shot.shot_id} is configured to start from {previous_shot.shot_id}'s last frame, "
-            f"but the file is missing: {project_dir / previous_shot.video_last_frame_asset_path}"
-        )
-
     async def _run_shot_video_generation_for_episode_impl(
         self,
         project_dir: Path,
@@ -1017,26 +982,14 @@ class DynamicAssetNodeMixin:
 
             raise ProviderError(f"Video task for {shot.shot_id} ended without returning an item")
 
-        async def run_shot(
-            shot: ShotManifestItem,
-            previous_task: asyncio.Task[ShotVideoGenerationItem] | None,
-        ) -> ShotVideoGenerationItem:
-            if previous_task is not None:
-                await previous_task
+        async def run_shot(shot: ShotManifestItem) -> ShotVideoGenerationItem:
             async with semaphore:
                 return await process_shot(shot)
 
         tasks: list[asyncio.Task[ShotVideoGenerationItem]] = []
-        tasks_by_shot_id: dict[str, asyncio.Task[ShotVideoGenerationItem]] = {}
         for shot in shots:
-            previous_task: asyncio.Task[ShotVideoGenerationItem] | None = None
-            if shot.start_frame_source == "previous_shot_last_frame":
-                previous_shot = self._previous_shot(episode, shot)
-                if previous_shot is not None:
-                    previous_task = tasks_by_shot_id.get(previous_shot.shot_id)
-            task = asyncio.create_task(run_shot(shot, previous_task))
+            task = asyncio.create_task(run_shot(shot))
             tasks.append(task)
-            tasks_by_shot_id[shot.shot_id] = task
 
         try:
             generated = list(await asyncio.gather(*tasks))

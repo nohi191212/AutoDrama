@@ -42,12 +42,9 @@ class RoleService:
     def role_character_intro(cls, role_item: RoleExtractItem) -> str:
         payload = {
             "name": role_item.name,
-            "aliases": role_item.aliases,
             "role_tier": role_item.role_tier,
             "brief": role_item.brief or "",
-            "appearance_notes": role_item.appearance_notes,
             "has_dialogue": role_item.has_dialogue,
-            "visual_reuse_required": role_item.visual_reuse_required,
         }
         return cls.format_json(payload)
 
@@ -64,11 +61,11 @@ class RoleService:
     @staticmethod
     def roleboard_view_requirement() -> str:
         return (
-            "角色身份板一次生成：创建艺术性的 16:9 高端动画工作室角色身份板，不是标准网格参考表。"
-            "画面使用白色或柔和米白色背景，布局不对称、留白充足、所有角色视角彼此分离且不重叠。"
-            "必须包含偏离中心的大型英雄全身视角，并以干净间距加入中性全身、背面、侧面、坐姿、"
-            "倾斜姿势、蹲姿、俯视身体角度、仰视身体角度、表情研究、黑色轮廓研究和面部/头发/服装细节研究。"
-            "所有视图必须统一同一脸、同一发型、同一服装、同一身体比例、同一姿势语言和同一视觉个性。"
+            "一张 16:9 单角色（或单生物）身份板，米白宣纸质感的干净背景、留白充足。"
+            "构图固定为恰好三个等尺度完整全身视图：正面、侧面、背面。"
+            "三个视图中人物保持同一张脸、发型、服装和身体比例，生物保持同一体态、纹理和关键结构；"
+            "视图彼此分离、不重叠、不裁切。不要主视觉大图、近景、材质细节格、动作分解、复杂姿势、"
+            "额外视角、环境剧情、标签或任何可读文字。"
         )
 
 
@@ -137,8 +134,6 @@ class RoleService:
     ) -> RoleFinalizeAuditReviewOutput:
         prompt = self.prompts.render(
             "role_finalize_audit",
-            title=state.title,
-            raw_script=state.raw_script,
             novel_full_context=novel_full_context,
             primary_roles=self.format_json(primary_roles),
             functional_roles=self.format_json(functional_roles),

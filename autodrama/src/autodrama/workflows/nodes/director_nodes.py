@@ -12,6 +12,7 @@ from autodrama.core.schemas import (
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
+from autodrama.repositories.script_content_repo import ScriptContentRepository
 from autodrama.services.director_service import DirectorService
 from autodrama.services.media_store import MediaStore
 from autodrama.workflows.runner import WorkflowNode
@@ -84,7 +85,24 @@ class DesignKeyVisionPromptNode(DirectorNodeBase):
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.director_service.key_vision_prompt(state, provider)
+        script_contents = ScriptContentRepository(self.repo, self.layout)
+        episode_keys = sorted(state.script.novel_extract)
+        extracts = script_contents.load_contents(
+            project_dir,
+            state.script.novel_extract,
+            episode_keys,
+            label="script_novel_extract.novel_extract",
+        )
+        story_context = "\n\n".join(
+            extracts[episode_key] for episode_key in episode_keys if extracts.get(episode_key)
+        )
+        if not story_context:
+            raise ValueError("key_vision_prompt requires non-empty script_novel_extract content")
+        output = await self.director_service.key_vision_prompt(
+            state,
+            provider,
+            story_context=story_context,
+        )
         path = self.repo.save_node_output(project_dir, self.name, output)
         state.metadata["key_vision_prompt"] = output.model_dump(mode="json")
         state.metadata["key_vision_prompt_path"] = self.layout.project_relative(project_dir, path)

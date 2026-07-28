@@ -25,6 +25,7 @@ from autodrama.core.schemas import (
     LayoutToBackgroundPromptEpisodeOutput,
     LayoutToBackgroundPromptOutput,
     ProjectState,
+    StaticAssetGenerationOutput,
     ShotBackgroundImageGenerationEpisodeOutput,
     ShotBackgroundImageGenerationItem,
     ShotBackgroundImageGenerationOutput,
@@ -123,6 +124,48 @@ class ShotAssetNodeBase(StaticAssetNodeBase):
             metadata={"asset_type": "roleboard", "role_id": role.id, "appearance_id": appearance.id},
         )
 
+    def _hydrate_layout_asset_refs_from_generation_output(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+    ) -> None:
+        """Recover layout references after independently-run nodes save stale state."""
+        missing = [layout for layout in state.layouts.values() if not (layout.asset_path or layout.asset_url)]
+        if not missing:
+            return
+        path = self.layout.node_output_path(project_dir, "layout_image_generation")
+        if not path.exists():
+            return
+        try:
+            output = StaticAssetGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self.logger.warning("could not hydrate layout references from %s: %s", path, exc)
+            return
+        by_asset_id = {item.asset_id: item for item in output.generated_assets}
+        restored = 0
+        for layout in missing:
+            item = by_asset_id.get(layout.id) or by_asset_id.get(layout.asset_id or "")
+            if item is not None and (item.asset_path or item.asset_url):
+                layout.asset_id = item.asset_id
+                layout.asset_path = item.asset_path
+                layout.asset_url = item.asset_url
+                layout.provider = item.provider
+                layout.model = item.model
+                layout.request_id = item.request_id
+                layout.usage = item.usage
+            else:
+                image_path = self.layout.image_asset_path(project_dir, "layouts", layout.id)
+                if not image_path.is_file():
+                    continue
+                layout.asset_id = layout.id
+                layout.asset_path = self.layout.project_relative(project_dir, image_path)
+            restored += 1
+        if restored:
+            self.logger.info(
+                "hydrated %d missing layout reference(s) from layout_image_generation output",
+                restored,
+            )
+
     def _asset_index(
         self,
         project_dir: Path,
@@ -130,6 +173,7 @@ class ShotAssetNodeBase(StaticAssetNodeBase):
         *,
         clip: Any,
     ) -> tuple[str, dict[str, dict[str, Any]]]:
+        self._hydrate_layout_asset_refs_from_generation_output(project_dir, state)
         wanted_roles = {self._clean(name) for name in getattr(clip, "role_names", [])}
         wanted_props = {self._clean(name) for name in getattr(clip, "prop_names", [])}
         wanted_layouts = {self._clean(name) for name in getattr(clip, "layout_names", [])}
@@ -262,7 +306,15 @@ class ShotAssetNodeBase(StaticAssetNodeBase):
             )
         manifest_path = self.layout.shot_path(project_dir, episode_key)
         if manifest_path.exists():
-            output = ShotManifestEpisodeOutput.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+            try:
+                output = ShotManifestEpisodeOutput.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                self.logger.warning(
+                    "ignored incompatible existing shot manifest while invalidating backgrounds %s: %s",
+                    manifest_path,
+                    exc,
+                )
+                return
             output.shots = [item for item in output.shots if item.shot_id not in shot_ids]
             self.repo.write_json(manifest_path, output)
 
@@ -436,8 +488,6 @@ class LayoutToBackgroundPromptNode(ShotAssetNodeBase):
             for layout_id, layout_shots in by_layout.items():
                 layout_item = assets[layout_id]
                 layout = layout_item["object"]
-                if layout.reference_image_kind != "three_view":
-                    raise ValueError(f"layout {layout_id} must be regenerated as a three-view reference")
                 layout_ref = self._asset_ref(project_dir, layout_item)
                 if not (layout_ref.path or layout_ref.url):
                     raise ValueError(f"layout {layout_id} has no usable reference image")
@@ -759,6 +809,28 @@ class ShotKeyframeImageGenerationNode(ShotAssetNodeBase):
                     and self.layout.existing_project_file(project_dir, old.keyframe_asset_path)
                 ):
                     return old
+                recovered_path = self.layout.image_asset_path(project_dir, "shot_keyframes", shot.shot_id)
+                if not self._force(self.workflow) and recovered_path.is_file():
+                    self.logger.warning(
+                        "recovered generated keyframe without node JSON episode=%s shot=%s path=%s",
+                        episode_key,
+                        shot.shot_id,
+                        recovered_path,
+                    )
+                    return ShotKeyframeImageGenerationItem(
+                        episode_key=episode_key,
+                        clip_id=shot.clip_id,
+                        shot_id=shot.shot_id,
+                        background_id=background.background_id,
+                        ref_ids=shot.ref_ids,
+                        keyframe_asset_id=f"{shot.shot_id}_keyframe",
+                        keyframe_asset_path=self.layout.project_relative(project_dir, recovered_path),
+                        prompt=prompt.prompt,
+                        fingerprint=fingerprint,
+                        provider="recovered_local_image",
+                        model=str(getattr(provider, "model", "")),
+                        raw_response={"recovered_from": "existing_local_image_after_interrupted_generation"},
+                    )
                 limit = int(getattr(provider, "max_reference_images", 99) or 99)
                 if len(refs) > limit:
                     raise ValueError(f"{shot.shot_id} needs {len(refs)} references but provider limit is {limit}; split the shot")
@@ -804,13 +876,13 @@ class ShotKeyframeImageGenerationNode(ShotAssetNodeBase):
             generated = await asyncio.gather(*(generate(shot) for shot in targets))
             for item in generated:
                 by_id[item.shot_id] = item
-            missing = {shot.shot_id for shot in rows}.difference(by_id)
+            missing = {shot.shot_id for shot in targets}.difference(by_id)
             if missing:
                 raise ValueError(f"shot_keyframe_image_generation missing keyframes: {', '.join(sorted(missing))}")
             self.repo.write_json(
                 path,
                 ShotKeyframeImageGenerationOutput(
-                    generated_keyframes=[by_id[shot.shot_id] for shot in rows],
+                    generated_keyframes=[by_id[shot.shot_id] for shot in rows if shot.shot_id in by_id],
                 ),
             )
         return state
@@ -833,14 +905,20 @@ class ShotManifestGenerationNode(ShotAssetNodeBase):
             assets = self._all_assets(project_dir, state)
             existing_by_id: dict[str, ShotManifestItem] = {}
             output_path = self.layout.shot_path(project_dir, episode_key)
-            if output_path.exists() and not self._force(self.workflow):
-                existing = ShotManifestEpisodeOutput.model_validate_json(output_path.read_text(encoding="utf-8"))
-                existing_by_id = {shot.shot_id: shot for shot in existing.shots}
+            if output_path.exists():
+                try:
+                    existing = ShotManifestEpisodeOutput.model_validate_json(output_path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    self.logger.warning("ignored incompatible existing shot manifest %s: %s", output_path, exc)
+                else:
+                    existing_by_id = {shot.shot_id: shot for shot in existing.shots}
             selected_ids = {shot.shot_id for shot in self._selected_shots(episode_key, rows)}
             shots: list[ShotManifestItem] = []
             for row in rows:
                 if row.shot_id not in selected_ids and row.shot_id in existing_by_id:
                     shots.append(existing_by_id[row.shot_id])
+                    continue
+                if row.shot_id not in selected_ids:
                     continue
                 prompt = prompt_by_id.get(row.shot_id)
                 image = image_by_id.get(row.shot_id)
@@ -868,6 +946,74 @@ class ShotManifestGenerationNode(ShotAssetNodeBase):
                         prop_ids.append(item["object"][0].id)
                 if not row.narrative_angle or not row.video_prompt:
                     raise ValueError(f"shot manifest requires narrative_angle and video_prompt for {row.shot_id}")
+                video_inputs = [
+                    ShotVideoInput(
+                        slot="image_1",
+                        asset_type="shot_keyframe",
+                        asset_id=image.keyframe_asset_id,
+                        asset_path=image.keyframe_asset_path,
+                        asset_url=image.keyframe_asset_url,
+                        source_node="shot_keyframe_image_generation",
+                        required=True,
+                        order=0,
+                        metadata={
+                            "reference_role": "shot_keyframe_anchor",
+                            "kling_content_id": "shot_keyframe",
+                        },
+                    )
+                ]
+                seen_role_ids: set[str] = set()
+                for ref_id in row.ref_ids:
+                    item = assets.get(ref_id)
+                    if item is None or item["kind"] != "roleboard":
+                        continue
+                    role, appearance = item["object"]
+                    if role.id in seen_role_ids:
+                        continue
+                    roleboard_path = appearance.asset_path or appearance.design_image_asset_path
+                    roleboard_url = appearance.asset_url or appearance.design_image_asset_url
+                    if not (roleboard_path or roleboard_url):
+                        raise ValueError(
+                            f"shot_manifest_generation missing roleboard for "
+                            f"{row.shot_id}/{role.name}/{appearance.name}"
+                        )
+                    if roleboard_path and not self.layout.existing_project_file(project_dir, roleboard_path):
+                        raise FileNotFoundError(f"shot roleboard asset is missing: {roleboard_path}")
+                    seen_role_ids.add(role.id)
+                    role_index = len(seen_role_ids)
+                    video_inputs.append(
+                        ShotVideoInput(
+                            slot=f"image_{len(video_inputs) + 1}",
+                            asset_type="roleboard",
+                            asset_id=(
+                                appearance.asset_id
+                                or appearance.design_image_asset_id
+                                or f"{appearance.id}_roleboard"
+                            ),
+                            asset_path=roleboard_path,
+                            asset_url=roleboard_url,
+                            source_node="roleboard_image_generation",
+                            label=f"{role.name}/{appearance.name}",
+                            role_id=role.id,
+                            role_name=role.name,
+                            appearance_id=appearance.id,
+                            appearance_name=appearance.name,
+                            required=True,
+                            order=len(video_inputs),
+                            metadata={
+                                "reference_role": "character_turnaround_identity",
+                                "kling_content_id": f"role_{role_index}",
+                            },
+                        )
+                    )
+                missing_role_ids = [
+                    role_id for role_id in dict.fromkeys(role_ids) if role_id not in seen_role_ids
+                ]
+                if missing_role_ids:
+                    raise ValueError(
+                        f"shot_manifest_generation missing involved character roleboards for "
+                        f"{row.shot_id}: {', '.join(missing_role_ids)}"
+                    )
                 shots.append(
                     ShotManifestItem(
                         shot_id=row.shot_id,
@@ -893,21 +1039,7 @@ class ShotManifestGenerationNode(ShotAssetNodeBase):
                         background_asset_id=background.background_id,
                         background_asset_path=background.asset_path,
                         background_asset_url=background.asset_url,
-                        start_frame_asset_id=image.keyframe_asset_id,
-                        start_frame_asset_path=image.keyframe_asset_path,
-                        start_frame_asset_url=image.keyframe_asset_url,
-                        video_inputs=[
-                            ShotVideoInput(
-                                slot="image_1",
-                                asset_type="shot_keyframe",
-                                asset_id=image.keyframe_asset_id,
-                                asset_path=image.keyframe_asset_path,
-                                asset_url=image.keyframe_asset_url,
-                                source_node="shot_keyframe_image_generation",
-                                required=True,
-                                order=0,
-                            )
-                        ],
+                        video_inputs=video_inputs,
                     )
                 )
             episode = ShotManifestEpisodeOutput(episode_key=episode_key, shots=shots)

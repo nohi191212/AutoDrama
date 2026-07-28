@@ -159,16 +159,23 @@
       max_output_tokens:
         type: integer
         min: 1
+      reasoning_effort:
+        type: string
+      response_format:
+        type: string
+      max_iterations:
+        type: integer
+        min: 1
       negative_prompt:
         type: string
 
-  aibox:gpt-image-2-guan:
+  aibox:gpt-image-2-guan: &aibox_gpt_image_2
     provider: aibox
     family: gpt-image
     capability: image
     input_modalities: [text, image]
     output_modalities: [image]
-    limits:
+    limits: &aibox_gpt_image_limits
       max_reference_images: 14
       max_images: 4
     params_schema:
@@ -242,6 +249,12 @@
         type: integer
         min: 1
         max: 5
+
+  aibox:gpt-image-2:
+    <<: *aibox_gpt_image_2
+    limits:
+      <<: *aibox_gpt_image_limits
+      max_reference_images: 10
 
   toapi:gpt-image-2:
     provider: toapi

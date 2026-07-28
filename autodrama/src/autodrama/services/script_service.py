@@ -116,7 +116,6 @@ class ScriptService:
         prompt = self.prompts.render(
             "script_detail_expand",
             raw_script=raw_script,
-            episode_outline=episode_outline,
         )
         return await provider.generate_json(
             prompt,

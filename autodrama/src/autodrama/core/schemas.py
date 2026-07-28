@@ -631,6 +631,24 @@ class StaticAssetGenerationOutput(BaseModel):
     generated_assets: list[StaticAssetGenerationItem]
 
 
+class ImageAssetAuditItem(BaseModel):
+    """Visual acceptance decision for one generated image asset."""
+
+    asset_id: str
+    asset_type: str
+    episode_key: str | None = None
+    approved: bool
+    issues: list[str] = Field(default_factory=list)
+    revised_prompt: str = ""
+    rationale: str = ""
+    attempts: int = Field(default=1, ge=1)
+
+
+class ImageAssetAuditOutput(BaseModel):
+    source_node: str
+    audited_assets: list[ImageAssetAuditItem] = Field(default_factory=list)
+
+
 class SafeImagePromptRewriteOutput(BaseModel):
     prompt: str
     notes: str = ""
@@ -985,6 +1003,21 @@ class ShotVideoGenerationOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     generated_videos: list[ShotVideoGenerationItem]
+
+
+class VideoAssetAuditItem(BaseModel):
+    episode_key: str
+    shot_id: str
+    asset_id: str
+    approved: bool
+    issues: list[str] = Field(default_factory=list)
+    revised_prompt: str = ""
+    rationale: str = ""
+    attempts: int = Field(default=1, ge=1)
+
+
+class VideoAssetAuditOutput(BaseModel):
+    audited_videos: list[VideoAssetAuditItem] = Field(default_factory=list)
 
 
 class RoleSubjectVideoGenerationItem(BaseModel):

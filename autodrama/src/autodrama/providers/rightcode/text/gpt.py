@@ -63,6 +63,10 @@ class RightCodeTextProvider:
             ),
             default=False,
         )
+        self.httpx_trust_env = self._bool_option(
+            settings.options.get("httpx_trust_env"),
+            default=True,
+        )
 
     def refresh_endpoint(self) -> None:
         self.endpoint = self._resolve_endpoint(self.base_url)
@@ -379,7 +383,10 @@ class RightCodeTextProvider:
                 console_stream_label=console_stream_label,
             )
 
-        async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
+        async with httpx.AsyncClient(
+            timeout=self.runtime.request_timeout_seconds,
+            trust_env=self.httpx_trust_env,
+        ) as client:
             response = await client.post(
                 self.endpoint,
                 headers={
@@ -419,7 +426,10 @@ class RightCodeTextProvider:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient(timeout=self.runtime.request_timeout_seconds) as client:
+        async with httpx.AsyncClient(
+            timeout=self.runtime.request_timeout_seconds,
+            trust_env=self.httpx_trust_env,
+        ) as client:
             try:
                 async with client.stream("POST", self.endpoint, headers=headers, json=payload) as response:
                     if response.status_code >= 400:

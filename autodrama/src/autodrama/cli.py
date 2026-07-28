@@ -53,6 +53,13 @@ def parse_role_names(value: str | None) -> list[str] | None:
     return items or None
 
 
+def parse_asset_ids(value: str | None) -> list[str] | None:
+    if value is None:
+        return None
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items or None
+
+
 def build_parser() -> argparse.ArgumentParser:
     pregen_only_choices = [*PREGEN_ONLY_NODES]
 
@@ -149,6 +156,13 @@ def build_parser() -> argparse.ArgumentParser:
     pregen_parser.add_argument(
         "--shots",
         help="Comma-separated shot indexes or ids for pregen --only layout_to_background_prompt, shot_background_image_generation, shot_keyframe_prompt, shot_keyframe_image_generation, or shot_manifest_generation.",
+    )
+    pregen_parser.add_argument(
+        "--assets",
+        help=(
+            "Comma-separated image asset ids for a precise --only image-generation or image-audit repair run. "
+            "Selected assets are regenerated without rerunning unrelated assets."
+        ),
     )
     pregen_parser.add_argument("--provider", choices=["fake", "configured"], default="configured")
     pregen_parser.add_argument("--force", action="store_true")
@@ -712,6 +726,7 @@ async def cmd_run_pregen(args: argparse.Namespace) -> int:
         role_names=parse_role_names(args.roles),
         clip_selectors=parse_clip_selectors(args.clips),
         shot_selectors=parse_shot_selectors(args.shots),
+        asset_ids=parse_asset_ids(args.assets),
     )
     get_logger().info(
         "run summary project_id=%s current_node=%s role_count=%d project_dir=%s",

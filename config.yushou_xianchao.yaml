@@ -42,8 +42,8 @@ budget:
 generation:
   roleboard_style_reference_dir: ./.assets/roleboard_styles/yushou_ink_animation
   visual_style_prompt: 东方玄幻题材的水墨国风漫剧风格，结合传统写意水墨、工笔设色与高完成度二维国漫造型。画面保留宣纸纤维、飞白笔触、水墨晕染和低饱和矿物色质感，并以轻微三渲二体积增强人物、环境和动态元素的空间层次。主色使用墨黑、纸白、石青与黛绿，朱砂和金色仅作为克制的视觉强调。构图借鉴中国长卷、山水留白与书画散点透视，同时保持电影级纵深、清晰动作剪影和竖屏阅读性。所有具体人物、场景、生物和物件均以剧本内容为准。避免日漫Q版、欧美奇幻造型、真人照片质感、霓虹赛博、可读文字、水印和logo。
-  roleboard_style_prompt: 使用参考图片统一中国古典人物画的衣冠结构、线描节奏、低饱和矿物设色和宣纸水墨气质，并转译为高完成度二维国漫角色设定。人物比例稳定、轮廓清晰，脸部采用非真人摄影的东方国漫表现，衣褶由工笔线描与写意墨色共同塑造。服装的形制、材质、色彩、纹样和磨损程度必须服从角色的时代、身份、职业、阶层与性格，不预设具体人物造型。超自然特征与能量效果应克制并保持同一水墨体系。背景干净，除指定角色名和视图标签外，不出现其他文字、水印或logo。
-  prop_design_style_prompt: 采用东方玄幻水墨国风的通用道具设计语言，以工笔结构表现清晰造型，以写意墨色和矿物设色表现材质与气韵。道具的材料、工艺、纹样、磨损、能量状态和使用方式必须符合其功能、时代与持有者身份；金属、木材、石材、织物、纸张和超自然材质应具有明确差异。不预设具体道具类型，造型完整、比例准确、便于不同镜头复用。无人物、手持、可读文字、水印或logo。
+  roleboard_style_prompt: 使用参考图片统一中国古典人物画的衣冠结构、线描节奏、低饱和矿物设色和宣纸水墨气质，并转译为高完成度二维国漫角色设定。人物比例稳定、轮廓清晰，脸部采用非真人摄影的东方国漫表现，衣褶由工笔线描与写意墨色共同塑造。服装的形制、材质、色彩、纹样和磨损程度必须服从角色的时代、身份、职业、阶层与性格，不预设具体人物造型。超自然特征与能量效果应克制并保持同一水墨体系。背景干净，不出现可读文字、水印或 logo。
+  prop_design_style_prompt: 采用东方玄幻水墨国风的手绘二维道具设计语言，以工笔线描表现清晰造型，以写意墨色和低饱和矿物设色表现材质与气韵。画面必须像高完成度二维国漫插画，不得出现写实摄影、3D/PBR 产品渲染、塑料质感、CAD、工程图、正交多视图、拼图或网格。道具的材料、工艺、纹样、磨损、能量状态和使用方式必须符合其功能、时代与持有者身份；金属、木材、石材、织物、纸张和超自然材质应具有明确差异。不预设具体道具类型，造型完整、比例准确、便于不同镜头复用。无人物、手持、可读文字、水印或logo。
   layout_design_style_prompt: 采用东方玄幻水墨设色国风漫剧的通用场景设计语言。具体空间的建筑形制、自然环境、功能分区、尺度、陈设和交通关系必须依据剧情地点生成，并在同一世界观中保持结构与美术一致。以黑白墨韵为基础，使用石青黛绿塑造空间层次，朱砂和金色仅作克制强调；通过留白、雾气、飞白和稳定光源形成纵深。空间需兼顾竖屏人物表演、动作调度、大景展示与多种摄影机位，不预设具体地点或剧情事件。无人物、字幕、水印或logo。
 postgen:
   max_source_clips_per_plan: 9
@@ -99,16 +99,34 @@ nodes:
     params:
       concurrency: 2
       size: 1088x1920
+  shot_background_image_audit:
+    model: rightcode:gpt-5.6-terra
+    params:
+      temperature: 0.1
+      reasoning_effort: high
+      max_iterations: 2
   shot_keyframe_prompt:
     model: aibox:gemini-3.5-flash
     params:
       temperature: 0.3
-      negative_prompt: extra people, duplicate bodies, identity drift, malformed hands, inconsistent scale, floating objects, text, subtitles, logo, watermark
+      negative_prompt: extra people, duplicate bodies, identity drift, malformed hands, inconsistent scale, floating objects, subtitles, logo, watermark
   shot_keyframe_image_generation:
     model: aibox:gpt-image-2-guan
     params:
       concurrency: 2
       size: 1088x1920
+  shot_keyframe_image_audit:
+    model: rightcode:gpt-5.6-terra
+    params:
+      temperature: 0.1
+      reasoning_effort: high
+      max_iterations: 2
+  shot_video_audit:
+    model: rightcode:gpt-5.6-terra
+    params:
+      temperature: 0.1
+      reasoning_effort: high
+      max_iterations: 2
   shot_manifest_generation:
     params: {}
   script_outline:
@@ -140,6 +158,12 @@ nodes:
     params:
       size: 3840x2160
       quality: high
+  key_vision_image_audit:
+    model: rightcode:gpt-5.6-terra
+    params:
+      temperature: 0.1
+      reasoning_effort: high
+      max_iterations: 2
   role_extract_primary:
     model: rightcode:gpt-5.6-terra
     params:
@@ -170,12 +194,24 @@ nodes:
       roleboard_prompt_template: aibox_gpt_image_2_guan
       roleboard_image_generation_concurrency: 3
       size: 3840x2160
+  roleboard_image_audit:
+    model: rightcode:gpt-5.6-terra
+    params:
+      temperature: 0.1
+      reasoning_effort: high
+      max_iterations: 2
   role_subject_frontal_image_generation:
     model: aibox:gpt-image-2-guan
     params:
       size: 1088x1920
       quality: high
       image_generation_concurrency: 3
+  role_subject_frontal_image_audit:
+    model: rightcode:gpt-5.6-terra
+    params:
+      temperature: 0.1
+      reasoning_effort: high
+      max_iterations: 2
   prop_extract:
     model: rightcode:gpt-5.6-terra
     params:
@@ -201,6 +237,12 @@ nodes:
       size: 2048x2048
       prop_image_generation_concurrency: 1
       max_attempts: 5
+  prop_image_audit:
+    model: rightcode:gpt-5.6-terra
+    params:
+      temperature: 0.1
+      reasoning_effort: high
+      max_iterations: 2
   layout_extract:
     model: rightcode:gpt-5.6-terra
     params:
@@ -229,8 +271,14 @@ nodes:
   layout_image_generation:
     model: aibox:gpt-image-2-guan
     params:
-      size: 3840x2160
+      size: 2160x3840
       concurrency: 3
+  layout_image_audit:
+    model: rightcode:gpt-5.6-terra
+    params:
+      temperature: 0.1
+      reasoning_effort: high
+      max_iterations: 2
   bgm_design:
     model: rightcode:gpt-5.6-terra
     params:

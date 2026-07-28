@@ -631,12 +631,17 @@ class RoleFinalizeNode(RoleNodeBase):
         return role_refs
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        provider = self.router.text("role", node_name=self.name)
-        self.logger.info(
-            "node=role_finalize provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
+        audit_enabled = bool(self.repo.settings.app.enable_llm_audit)
+        provider = None
+        if audit_enabled:
+            provider = self.router.text("role", node_name=self.name)
+            self.logger.info(
+                "node=role_finalize provider=%s model=%s",
+                getattr(provider, "name", "unknown"),
+                getattr(provider, "model", "-"),
+            )
+        else:
+            self.logger.info("node=role_finalize LLM audit disabled; preserving extracted roles")
         episode_keys = self.expected_episode_keys(state)
         self.validate_episode_keys("script_novel.novel_full", state.script.novel_full, state)
         novel_full_context = self.novel_full_context(project_dir, state, episode_keys)
@@ -664,33 +669,39 @@ class RoleFinalizeNode(RoleNodeBase):
         if not roles:
             raise ValueError("role_finalize requires at least one primary or functional role")
 
-        review = await self.role_service.role_finalize_audit(
-            state,
-            provider,
-            novel_full_context=novel_full_context,
-            primary_roles=self._role_payloads(primary_roles),
-            functional_roles=self._role_payloads(functional_roles),
-        )
-        state.budget.used_text_calls += 1
-        episode_updates = self._apply_episode_updates(
-            roles=roles,
-            updates=review.episode_updates,
-            episode_keys=episode_keys,
-            warnings=warnings,
-        )
-        roles, duplicate_groups = self._apply_duplicate_groups(
-            roles=roles,
-            groups=review.duplicate_groups,
-            episode_keys=episode_keys,
-            warnings=warnings,
-        )
-        roles, dropped_roles = self._apply_drop_roles(
-            roles=roles,
-            drops=review.drop_roles,
-            warnings=warnings,
-        )
-        for note in self.dedupe_texts(review.notes):
-            warnings.append(note)
+        episode_updates: list[RoleFinalizeEpisodeUpdate] = []
+        duplicate_groups: list[RoleFinalizeDuplicateGroup] = []
+        dropped_roles: list[RoleFinalizeDropItem] = []
+        if audit_enabled:
+            review = await self.role_service.role_finalize_audit(
+                state,
+                provider,
+                novel_full_context=novel_full_context,
+                primary_roles=self._role_payloads(primary_roles),
+                functional_roles=self._role_payloads(functional_roles),
+            )
+            state.budget.used_text_calls += 1
+            episode_updates = self._apply_episode_updates(
+                roles=roles,
+                updates=review.episode_updates,
+                episode_keys=episode_keys,
+                warnings=warnings,
+            )
+            roles, duplicate_groups = self._apply_duplicate_groups(
+                roles=roles,
+                groups=review.duplicate_groups,
+                episode_keys=episode_keys,
+                warnings=warnings,
+            )
+            roles, dropped_roles = self._apply_drop_roles(
+                roles=roles,
+                drops=review.drop_roles,
+                warnings=warnings,
+            )
+            for note in self.dedupe_texts(review.notes):
+                warnings.append(note)
+        else:
+            warnings.append("role_finalize LLM audit disabled; no LLM-driven role merges or drops were applied.")
 
         role_refs = self._save_final_roles(project_dir, state, roles)
         self.repo.save_node_output(
@@ -772,14 +783,7 @@ class RoleboardPromptNode(RoleNodeBase):
         key_vision_reference_index: int,
     ) -> str:
         del role_name, appearance_name, asset_role, negative_prompt, style_reference_count, identity_reference_index, key_vision_reference_index
-        return "\n".join(
-            (
-                "Photorealistic cinematic character reference sheet.",
-                core_prompt.strip(),
-                "Full-body front, side and back views, plus one face close-up. Neutral standing pose, clean light background.",
-                "Avoid identity drift, duplicate bodies, extra limbs, text, logos and watermarks.",
-            )
-        )
+        return core_prompt.strip()
 
     @staticmethod
     def _appearance_desc(extract_item: RoleExtractItem) -> str:
@@ -904,13 +908,9 @@ class RoleboardPromptNode(RoleNodeBase):
             "appearance_name": self._appearance_name(appearance_asset),
             "asset_role": appearance_asset.asset_role or "base",
             "reference_asset_name": appearance_asset.reference_asset_name,
-            "episode_keys": self._appearance_episode_keys(extract_item, appearance_asset, state),
-            "source_chapters": self._appearance_source_chapters(extract_item, appearance_asset),
             "brief": appearance_asset.brief or "",
             "clothing": appearance_asset.clothing or "",
-            "visual_features": appearance_asset.visual_features or "",
-            "appearance_desc": self._appearance_desc_for_asset(extract_item, appearance_asset),
-            "prompt_hint": appearance_asset.prompt_hint or "",
+            "appearance_desc": appearance_asset.appearance_desc or "",
         }
 
     def _key_vision_asset_for_prompt(self, state: ProjectState) -> dict[str, object]:

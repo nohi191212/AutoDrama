@@ -281,8 +281,12 @@ class RoleSubjectFrontalImageGenerationNode(RoleSubjectNodeBase):
     def _asset_id(appearance: RoleAppearance) -> str:
         return normalize_id("role_subject_frontal", appearance.id)
 
-    @staticmethod
-    def _prompt(role: Role, appearance: RoleAppearance) -> str:
+    def _prompt(self, state: ProjectState, role: Role, appearance: RoleAppearance) -> str:
+        revised_prompts = state.metadata.get("role_subject_frontal_image_prompts")
+        if isinstance(revised_prompts, dict):
+            revised = str(revised_prompts.get(self._asset_id(appearance)) or "").strip()
+            if revised:
+                return revised
         appearance_text = str(appearance.desc or appearance.visual_features or "").strip()
         return "\n".join(
             [
@@ -339,7 +343,7 @@ class RoleSubjectFrontalImageGenerationNode(RoleSubjectNodeBase):
             role: Role,
             appearance: RoleAppearance,
         ) -> RoleSubjectFrontalImageGenerationItem:
-            prompt = self._prompt(role, appearance)
+            prompt = self._prompt(state, role, appearance)
             existing = self.layout.existing_project_file(project_dir, appearance.subject_frontal_image_asset_path)
             if not force and existing is not None:
                 appearance.subject_frontal_image_asset_path = existing
@@ -394,9 +398,26 @@ class RoleSubjectFrontalImageGenerationNode(RoleSubjectNodeBase):
             )
             return self._item_from_appearance(role, appearance, prompt=prompt)
 
+        all_targets = self._target_role_appearances(state)
+        selected_asset_ids = {
+            str(item).strip()
+            for item in getattr(self.workflow, "_active_asset_ids", set())
+            if str(item).strip()
+        }
+        targets = [
+            (role, appearance)
+            for role, appearance in all_targets
+            if not selected_asset_ids
+            or self._asset_id(appearance) in selected_asset_ids
+            or appearance.id in selected_asset_ids
+        ]
+        if selected_asset_ids and not targets:
+            raise ValueError(
+                f"{self.name} could not find selected frontal image asset(s): {', '.join(sorted(selected_asset_ids))}"
+            )
         tasks = [
             asyncio.create_task(generate_one(role, appearance))
-            for role, appearance in self._target_role_appearances(state)
+            for role, appearance in targets
         ]
         try:
             generated = await asyncio.gather(*tasks)
@@ -406,10 +427,31 @@ class RoleSubjectFrontalImageGenerationNode(RoleSubjectNodeBase):
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
+        generated_by_asset_id = {item.asset_id: item for item in generated}
+        skipped: list[dict[str, Any]] = []
+        if selected_asset_ids:
+            path = self.layout.node_output_path(project_dir, self.name)
+            if path.exists():
+                existing = RoleSubjectFrontalImageGenerationOutput.model_validate_json(path.read_text(encoding="utf-8"))
+                generated_by_asset_id = {
+                    **{item.asset_id: item for item in existing.generated_frontal_images},
+                    **generated_by_asset_id,
+                }
+                skipped = existing.skipped_frontal_images
+            ordered = [
+                generated_by_asset_id[self._asset_id(appearance)]
+                for _, appearance in all_targets
+                if self._asset_id(appearance) in generated_by_asset_id
+            ]
+        else:
+            ordered = generated
         self.repo.save_node_output(
             project_dir,
             self.name,
-            RoleSubjectFrontalImageGenerationOutput(generated_frontal_images=generated),
+            RoleSubjectFrontalImageGenerationOutput(
+                generated_frontal_images=ordered,
+                skipped_frontal_images=skipped,
+            ),
         )
         return state
 

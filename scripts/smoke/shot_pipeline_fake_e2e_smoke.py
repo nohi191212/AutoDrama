@@ -17,7 +17,7 @@ from autodrama.config import load_settings
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.workflows.generation import GenerationWorkflow
-from autodrama.workflows.pregen import PregenWorkflow
+from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow
 
 
 def main() -> None:
@@ -44,7 +44,12 @@ providers: {}
     repo = ProjectRepository(settings)
     project_dir = repo.create_project_from_config()
     workflow = PregenWorkflow(repo=repo, router=ProviderRouter(settings, provider_override="fake"))
-    asyncio.run(workflow.run(project_dir, until="shot_manifest_generation"))
+    # This smoke targets the shot generation contract. Image audit nodes have
+    # their own provider fixtures and are intentionally exercised separately.
+    for node_name in PREGEN_NODES[: PREGEN_NODES.index("shot_manifest_generation") + 1]:
+        if node_name.endswith("_audit"):
+            continue
+        asyncio.run(workflow.run(project_dir, only=node_name))
 
     episode_key = "episode_001"
     backgrounds = json.loads(
@@ -108,6 +113,17 @@ providers: {}
         raise AssertionError("shot_video_generation did not persist a video asset")
     if selected_shot.get("video_inputs", [{}])[0].get("asset_type") != "shot_keyframe":
         raise AssertionError("shot video input must begin with the generated shot keyframe")
+    role_inputs = [
+        item for item in selected_shot.get("video_inputs", [])
+        if item.get("asset_type") == "roleboard"
+    ]
+    if {item.get("role_id") for item in role_inputs} != set(selected_shot.get("role_ids", [])):
+        raise AssertionError("shot video inputs must include one character turnaround per involved role")
+    if any(
+        item.get("asset_type") in {"shot_last_frame", "role_subject_element"}
+        for item in selected_shot.get("video_inputs", [])
+    ):
+        raise AssertionError("shot video inputs must not require last frames or subject elements")
     print(f"shot_pipeline_fake_e2e_smoke: ok ({project_dir})")
 
 

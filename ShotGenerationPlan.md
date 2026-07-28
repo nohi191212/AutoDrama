@@ -381,13 +381,19 @@ assets/json/nodes/shot_manifest_generation/<episode_key>.json
       "final_video_prompt": "镜头1-...",
       "background_asset_id": "episode_001_clip_001_shot_001_background",
       "background_asset_path": "assets/images/shot_backgrounds/episode_001_clip_001_shot_001.png",
-      "start_frame_asset_id": "episode_001_clip_001_shot_001_keyframe",
-      "start_frame_asset_path": "assets/images/shot_keyframes/episode_001_clip_001_shot_001.png",
       "video_inputs": [
         {
           "slot": "image_1",
-          "asset_type": "shot_start_frame",
+          "asset_type": "shot_keyframe",
           "source_node": "shot_keyframe_image_generation",
+          "required": true
+        },
+        {
+          "slot": "image_2",
+          "asset_type": "roleboard",
+          "role_id": "role_001",
+          "appearance_id": "role_001_base",
+          "source_node": "roleboard_image_generation",
           "required": true
         }
       ]
@@ -396,7 +402,7 @@ assets/json/nodes/shot_manifest_generation/<episode_key>.json
 }
 ```
 
-视频输入默认只包含最终首帧关键帧。角色主体 element 仍由 generation 阶段按 `role_ids` 动态追加，不把角色板、场景三视图或道具图直接重复提交给视频模型。
+视频输入固定为一张剧情关键帧参考图，加上当前 shot 涉及人物各自的角色身份板（三视核心身份参考）。关键帧作为普通剧情与构图参考，不强制映射为 provider 的 `first_frame`；不生成或要求 `last_frame` 输入，也不再由 generation 阶段动态追加角色主体 element。场景母版和道具图不重复提交给视频模型。
 
 ## 4. 角色板锚点实现
 
@@ -868,7 +874,7 @@ provider 默认图片模型
 - 解析 `ref_ids`；
 - 分离 role、appearance、prop、layout ID；
 - 验证每个引用资产真实存在；
-- 绑定 shot 首帧；
+- 绑定 shot 剧情关键帧；
 - 保存 dialogue；
 - 保存原始和最终 video prompt；
 - 生成 provider 无关的视频输入列表；
@@ -876,23 +882,23 @@ provider 默认图片模型
 
 ### 9.2 视频输入合同
 
-默认图片输入只有：
+默认图片输入为：
 
 ```text
-image_1: shot_start_frame
+image_1: shot_keyframe
+image_2..N: involved_character_roleboards
 ```
 
-Kling 主体 element 不进入静态 manifest 的图片列表，由 generation 阶段根据 `role_ids` 动态追加。
+角色身份板按 `role_ids / role_appearance_ids` 进入静态 manifest，并与 `@role_N` 一一对应。所有图片都作为普通参考图提交；generation 阶段不再动态追加 Kling 主体 element。
 
 不再默认提交：
 
 - 十二宫格 storyboard；
 - 尾帧；
-- 角色板；
 - 场景三视图；
 - 道具图。
 
-这些视觉信息已经在 shot 首帧中完成融合。
+场景和道具信息已经在 shot 关键帧中完成融合；人物身份由关键帧与角色身份板共同约束。
 
 ### 9.3 完整性校验
 
@@ -1188,7 +1194,7 @@ fake provider 增加 `ClipToShotsModelOutput` 的稳定 fixture，便于本地 s
 | `autodrama/src/autodrama/workflows/nodes/__init__.py` | 新默认链、旧 storyboard deferred |
 | `autodrama/src/autodrama/workflows/pregen.py` | 新节点 runner、episode/clip/shot scope |
 | `autodrama/src/autodrama/workflows/generation.py` | 读取 shot manifest 和 shot 视频输入 |
-| `autodrama/src/autodrama/workflows/dynamic_assets.py` | shot 命名、首帧输入、`multi_shot=true` |
+| `autodrama/src/autodrama/workflows/dynamic_assets.py` | shot 命名、关键帧与人物身份板输入、`multi_shot=true` |
 | `autodrama/src/autodrama/workflows/selection.py` | pregen shot selector |
 | `autodrama/src/autodrama/repositories/project_layout.py` | 新 node 目录和两类 shot 图片目录 |
 | `autodrama/src/autodrama/providers/kling/video/omni.py` | multi_shot 默认 true |
@@ -1327,7 +1333,7 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/shot_pipeline_fake_e2e_smo
 
 - 不生成十二宫格；
 - 每个非空镜 shot 先生成无人背景，再生成人物首帧；
-- 最终视频只依赖融合后的首帧作为主要图片输入；
+- 最终视频依赖剧情关键帧与当前 shot 涉及人物的角色身份板；
 - 局部失败可复用已成功背景；
 - `--shots` 不覆盖未选中 shot。
 

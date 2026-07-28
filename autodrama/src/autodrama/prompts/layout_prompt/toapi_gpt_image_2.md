@@ -4,7 +4,7 @@
 
 这个节点只写提示词文字，不生成图片，不输出尺寸比例，不输出画幅词，不输出模型名称。
 
-Each prompt must be English. A base prompt must contain `three consistent views` and describe one photorealistic empty location with stable structure; a variant only describes its state delta while preserving the supplied base space.
+Each base prompt describes one single, empty, reusable location in the supplied visual style; a variant only describes its state delta while preserving the supplied base space.
 
 # 输入
 

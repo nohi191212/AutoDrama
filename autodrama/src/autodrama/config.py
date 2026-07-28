@@ -15,6 +15,8 @@ class AppSettings(BaseModel):
     env: str = "dev"
     default_quality_preset: Literal["cheap", "balanced", "quality"] = "cheap"
     enable_human_review: bool = False
+    enable_image_audit: bool = True
+    enable_llm_audit: bool = True
 
 
 class ProjectSettings(BaseModel):

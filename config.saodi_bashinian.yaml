@@ -2,13 +2,15 @@ app:
   env: dev
   default_quality_preset: cheap
   enable_human_review: false
+  enable_image_audit: false
+  enable_llm_audit: false
 apikeys_file: ./apikeys.yaml
 model_catalog_file: ./model_catalog.yaml.example
 project:
   id: saodi_bashinian
   title: 扫地八十年，从宗门杂役飞升成仙
-  script_outline_file: ./inputs/扫地八十年，从宗门杂役飞升成仙.txt
-  episode_count: 3
+  script_outline_file: ./inputs/扫地八十年，从宗门杂役飞升成仙_第1集.txt
+  episode_count: 1
   episode_duration_seconds: 150
   bgm_count: 1
 output:
@@ -85,7 +87,7 @@ postgen:
     max_output_tokens: 8192
 nodes:
   clip_to_shots:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       temperature: 0.35
       response_format: json_object
@@ -94,7 +96,7 @@ nodes:
     params:
       temperature: 0.25
   shot_background_image_generation:
-    model: aibox:gpt-image-2-guan
+    model: aibox:gpt-image-2
     params:
       concurrency: 2
       size: 1088x1920
@@ -104,134 +106,134 @@ nodes:
       temperature: 0.3
       negative_prompt: extra people, duplicate bodies, identity drift, malformed hands, inconsistent scale, floating objects, text, subtitles, logo, watermark
   shot_keyframe_image_generation:
-    model: aibox:gpt-image-2-guan
+    model: aibox:gpt-image-2
     params:
       concurrency: 2
       size: 1088x1920
   shot_manifest_generation:
     params: {}
   script_outline:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
   script_novel:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.7
       response_format: json_object
   script_novel_extract:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   key_vision_prompt:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.45
       response_format: json_object
   key_vision_image_generation:
-    model: aibox:gpt-image-2-guan
+    model: aibox:gpt-image-2
     params:
       size: 3840x2160
       quality: high
   role_extract_primary:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   role_extract_functional:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   role_finalize:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
   roleboard_prompt:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
   roleboard_image_generation:
-    model: aibox:gpt-image-2-guan
+    model: aibox:gpt-image-2
     params:
       roleboard_prompt_template: aibox_gpt_image_2_guan
       roleboard_image_generation_concurrency: 3
       size: 3840x2160
   role_subject_frontal_image_generation:
-    model: aibox:gpt-image-2-guan
+    model: aibox:gpt-image-2
     params:
       size: 1088x1920
       quality: high
       image_generation_concurrency: 3
   prop_extract:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   prop_finalize:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
       max_iterations: 1
   prop_prompt:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
   prop_image_generation:
-    model: aibox:gpt-image-2-guan
+    model: aibox:gpt-image-2
     params:
       size: 2048x2048
       prop_image_generation_concurrency: 1
       max_attempts: 5
   layout_extract:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
   layout_prompt:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.4
       response_format: json_object
   layout_finalize:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
       max_iterations: 1
   layout_prop_boundary_review:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
   layout_image_generation:
-    model: aibox:gpt-image-2-guan
+    model: aibox:gpt-image-2
     params:
       size: 3840x2160
       concurrency: 3
   bgm_design:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.4
@@ -258,7 +260,7 @@ nodes:
       max_reference_elements: 3
       role_subject_video_generation_concurrency: 5
   role_subject_video_intro_text:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: low
       temperature: 0.5
@@ -292,7 +294,7 @@ nodes:
       response_format: mp3
       max_generated_audio_duration_seconds: 10
   role_voice_select:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: low
       temperature: 0.2
@@ -302,7 +304,7 @@ nodes:
     params:
       temperature: 0.2
   image_prompt_safety_rewrite:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       reasoning_effort: low
       temperature: 0.2
@@ -376,6 +378,7 @@ providers:
         gpt-5.6-terra: /codex
         gpt-image-2: /draw
         gpt-image-2-vip: /draw
+      httpx_trust_env: false
       text_response_format: true
       reasoning_effort: xhigh
       shot_reasoning_effort: xhigh
@@ -391,12 +394,12 @@ providers:
     models:
       text: gemini-3.5-flash
       postgen_audit: gemini-3.5-flash
-      image: gpt-image-2-guan
-      key_vision: gpt-image-2-guan
-      roleboard: gpt-image-2-guan
-      shot: gpt-image-2-guan
-      prop: gpt-image-2-guan
-      layout: gpt-image-2-guan
+      image: gpt-image-2
+      key_vision: gpt-image-2
+      roleboard: gpt-image-2
+      shot: gpt-image-2
+      prop: gpt-image-2
+      layout: gpt-image-2
     options:
       size: auto
       quality: auto
@@ -406,7 +409,7 @@ providers:
       shot_size: 2048x2048
       prop_size: 2048x2048
       layout_size: 2160x3840
-      max_reference_images: 14
+      max_reference_images: 10
       aibox_request_timeout_seconds: 240
       aibox_max_attempts: 3
       aibox_retry_initial_delay_seconds: 2
@@ -645,18 +648,18 @@ providers:
       max_polls: 120
 routing:
   text:
-    script: rightcode
-    director: rightcode
-    role: rightcode
-    role_voice_select: rightcode
-    prop: rightcode
-    layout: rightcode
-    shot: rightcode
-    shot_bgm: rightcode
+    script: aibox
+    director: aibox
+    role: aibox
+    role_voice_select: aibox
+    prop: aibox
+    layout: aibox
+    shot: aibox
+    shot_bgm: aibox
     postgen_edit_plan: google
     postgen_audit: aibox
-    edit_plan: rightcode
-    bgm_plan: rightcode
+    edit_plan: aibox
+    bgm_plan: aibox
   image:
     role: aibox
     key_vision: aibox

@@ -43,8 +43,18 @@ def main() -> None:
     if leaked:
         raise AssertionError(f"legacy storyboard node(s) remain selectable: {leaked}")
     start = PREGEN_NODES.index("clip_segment")
-    if PREGEN_NODES[start : start + len(SHOT_CHAIN)] != SHOT_CHAIN:
+    actual_shot_chain = [
+        node_name for node_name in PREGEN_NODES[start:]
+        if node_name in SHOT_CHAIN
+    ]
+    if actual_shot_chain != SHOT_CHAIN:
         raise AssertionError("default reusable-background shot chain has an invalid order")
+    if any(node_name in PREGEN_NODES for node_name in (
+        "role_subject_frontal_image_generation",
+        "role_kling_voice_generation",
+        "role_subject_element_generation",
+    )):
+        raise AssertionError("subject-element preparation must not run in the default pregen chain")
     if PREGEN_NODES[-1] != "shot_manifest_generation":
         raise AssertionError("shot_manifest_generation must finish default pregen")
     if signature(PregenWorkflow.run).parameters["until"].default != "shot_manifest_generation":

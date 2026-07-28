@@ -46,6 +46,7 @@ from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.context import WorkflowRunContext
 from autodrama.workflows.nodes import (
     AVAILABLE_PREGEN_NODE_NAMES,
+    IMAGE_AUDIT_NODE_NAMES,
     PREGEN_NODE_NAMES,
     build_manual_pregen_nodes,
     build_pregen_nodes,
@@ -98,9 +99,22 @@ CLIP_SCOPED_PREGEN_ONLY_NODES = {
 SHOT_SCOPED_PREGEN_ONLY_NODES = {
     "layout_to_background_prompt",
     "shot_background_image_generation",
+    "shot_background_image_audit",
     "shot_keyframe_prompt",
     "shot_keyframe_image_generation",
+    "shot_keyframe_image_audit",
     "shot_manifest_generation",
+}
+ASSET_SCOPED_PREGEN_ONLY_NODES = {
+    "key_vision_image_audit",
+    "roleboard_image_generation",
+    "roleboard_image_audit",
+    "role_subject_frontal_image_generation",
+    "role_subject_frontal_image_audit",
+    "prop_image_generation",
+    "layout_image_generation",
+    "prop_image_audit",
+    "layout_image_audit",
 }
 
 
@@ -584,6 +598,7 @@ class PregenWorkflow:
         role_names: list[str] | None = None,
         clip_selectors: list[str] | None = None,
         shot_selectors: list[str] | None = None,
+        asset_ids: list[str] | None = None,
     ) -> ProjectState:
 
         if only is not None and only not in PREGEN_ONLY_NODES:
@@ -601,10 +616,15 @@ class PregenWorkflow:
         state = self.repo.load_state(project_dir)
         self._apply_script_plan_settings(state)
         target_nodes = [only] if only else PREGEN_NODES[: PREGEN_NODES.index(until) + 1]
+        if only is None and not self.settings.app.enable_image_audit:
+            target_nodes = [node_name for node_name in target_nodes if node_name not in IMAGE_AUDIT_NODE_NAMES]
+        if only is None and not self.settings.app.enable_llm_audit:
+            target_nodes = [node_name for node_name in target_nodes if node_name != "layout_prop_boundary_review"]
         selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
         selected_role_names = self._select_role_names(role_names) if role_names else None
         selected_clip_selectors = normalize_clip_selectors(clip_selectors) if clip_selectors else set()
         selected_shot_selectors = normalize_shot_selectors(shot_selectors) if shot_selectors else set()
+        selected_asset_ids = {str(item).strip() for item in asset_ids or [] if str(item).strip()}
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
                 "--episodes is only supported for pregen --only clip_segment, roleboard_prompt, roleboard_image_generation, "
@@ -627,8 +647,10 @@ class PregenWorkflow:
             )
         if selected_shot_selectors and (len(target_nodes) != 1 or target_nodes[0] not in SHOT_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError("--shots is only supported for pregen --only layout_to_background_prompt, shot_background_image_generation, shot_keyframe_prompt, shot_keyframe_image_generation, or shot_manifest_generation.")
+        if selected_asset_ids and (len(target_nodes) != 1 or target_nodes[0] not in ASSET_SCOPED_PREGEN_ONLY_NODES):
+            raise ValueError("--assets is only supported for pregen --only roleboard_image_generation, role_subject_frontal_image_generation, prop_image_generation, layout_image_generation, prop_image_audit, or layout_image_audit.")
         logger.info(
-            "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s completed=%s",
+            "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s assets=%s completed=%s",
             state.project_id,
             until,
             only or "-",
@@ -636,6 +658,7 @@ class PregenWorkflow:
             ",".join(selected_episode_keys or []) or "-",
             ",".join(selected_role_names or []) or "-",
             ",".join(sorted(selected_clip_selectors)) or "-",
+            ",".join(sorted(selected_asset_ids)) or "-",
             ",".join(state.completed_nodes) or "-",
         )
 
@@ -643,6 +666,7 @@ class PregenWorkflow:
         previous_active_role_names = getattr(self, "_active_role_names", None)
         previous_active_clip_selectors = getattr(self, "_active_clip_selectors", None)
         previous_active_shot_selectors = getattr(self, "_active_shot_selectors", None)
+        previous_active_asset_ids = getattr(self, "_active_asset_ids", None)
         previous_force_pregen = getattr(self, "_force_pregen", None)
         previous_run_context = getattr(self, "_run_context", None)
         self._run_context = WorkflowRunContext(
@@ -669,6 +693,10 @@ class PregenWorkflow:
             self._active_shot_selectors = set(selected_shot_selectors)
         elif hasattr(self, "_active_shot_selectors"):
             delattr(self, "_active_shot_selectors")
+        if selected_asset_ids:
+            self._active_asset_ids = set(selected_asset_ids)
+        elif hasattr(self, "_active_asset_ids"):
+            delattr(self, "_active_asset_ids")
         try:
             node_by_name = {
                 node.name: node
@@ -705,6 +733,11 @@ class PregenWorkflow:
                     delattr(self, "_active_shot_selectors")
             else:
                 self._active_shot_selectors = previous_active_shot_selectors
+            if previous_active_asset_ids is None:
+                if hasattr(self, "_active_asset_ids"):
+                    delattr(self, "_active_asset_ids")
+            else:
+                self._active_asset_ids = previous_active_asset_ids
             if previous_force_pregen is None:
                 if hasattr(self, "_force_pregen"):
                     delattr(self, "_force_pregen")
