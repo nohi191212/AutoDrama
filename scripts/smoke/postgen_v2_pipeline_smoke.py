@@ -52,7 +52,15 @@ async def main() -> None:
         {
             "output": {"root_dir": str(run_root / "projects")},
             "runtime": {"ffmpeg_path": "ffmpeg"},
+            "generation": {
+                "visual_style": {
+                    "schema_version": 2,
+                    "medium": "smoke_fixture",
+                    "render_engine_language": ["Deterministic postgen smoke fixture."],
+                }
+            },
             "postgen": {
+                "max_source_clips_per_plan": 3,
                 "render_width": 360,
                 "render_height": 640,
                 "fps": 25,
@@ -102,8 +110,25 @@ async def main() -> None:
         dialogue_lines=["测试对白"],
         content="single synthetic smoke shot",
     )
+    clips = [
+        clip.model_copy(
+            update={
+                "shot_id": f"episode_001_shot_{index:03d}",
+                "shot_index": index,
+                "title": f"smoke {index}",
+            }
+        )
+        for index in range(1, 6)
+    ]
     source_path = project_dir / "assets" / "json" / "postgen" / "source_clips" / "episode_001.json"
-    repo.write_json(source_path, {"episode_key": "episode_001", "source_clips": [clip.model_dump(mode="json")], "warnings": []})
+    repo.write_json(
+        source_path,
+        {
+            "episode_key": "episode_001",
+            "source_clips": [item.model_dump(mode="json") for item in clips],
+            "warnings": [],
+        },
+    )
 
     sidecar = project_dir / "assets" / "audios" / "postgen" / "episode_001" / "subtitle_audio.whisperx.json"
     repo.write_json(
@@ -130,9 +155,14 @@ async def main() -> None:
     for node in POSTGEN_NODES[1:]:
         await workflow.run(project_dir, only=node, force=True, episode_keys=["episode_001"])
 
-    final_video = project_dir / "outputs" / "videos" / "episode_001_postgen.mp4"
+    preview_video = project_dir / "outputs" / "videos" / "episode_001_preview.mp4"
+    final_video = project_dir / "outputs" / "videos" / "episode_001_deliverable.mp4"
     final_audit = project_dir / "assets" / "json" / "postgen" / "audits" / "episode_001.final.json"
+    source_audit = project_dir / "assets" / "json" / "postgen" / "audits" / "episode_001.source.json"
+    assert preview_video.exists() and preview_video.stat().st_size > 0
     assert final_video.exists() and final_video.stat().st_size > 0
+    source_report = json.loads(source_audit.read_text(encoding="utf-8"))
+    assert len(source_report["clips"]) == 5, source_report
     audit = json.loads(final_audit.read_text(encoding="utf-8"))
     assert audit["verdict"] == "pass", audit
     print(json.dumps({"ok": True, "project_dir": str(project_dir), "final_video": str(final_video)}, ensure_ascii=False))

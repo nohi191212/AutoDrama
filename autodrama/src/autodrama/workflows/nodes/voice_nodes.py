@@ -9,6 +9,8 @@ from typing import Any
 from autodrama.core.schemas import (
     ProjectState,
     Role,
+    RoleVoiceRequirements,
+    SemanticProvenance,
 )
 from autodrama.core.voice_catalog import (
     RoleVoiceSelectionItem,
@@ -154,7 +156,8 @@ class VoiceNodeBase:
 
 class RoleVoiceSelectNode(VoiceNodeBase):
     name = "role_voice_select"
-    selection_prompt_version = "role_voice_select.text_shortlist.filtered_flash_top3.visual_refs.v4"
+    selection_prompt_version = "role_voice_select.structured_contract.v5"
+    voice_contract_version = 2
     candidate_limit = 3
     text_shortlist_model = "deepseek-v4-flash"
     text_shortlist_batch_size = 80
@@ -173,13 +176,10 @@ class RoleVoiceSelectNode(VoiceNodeBase):
         payload = {
             "role_id": role.id,
             "role_name": role.name,
-            "intro": role.intro,
-            "personality": role.personality,
             "role_tier": role.role_tier,
             "has_dialogue": role.has_dialogue,
-            "importance": role.importance,
             "episode_keys": role.episode_keys,
-            "voice_summary": role.voice_summary,
+            "voice_requirements": role.voice_requirements.model_dump(mode="json"),
             "appearances": {
                 name: {
                     "id": appearance.id,
@@ -191,18 +191,99 @@ class RoleVoiceSelectNode(VoiceNodeBase):
                 }
                 for name, appearance in sorted(role.appearances.items())
             },
-            "audio": {
-                emotion: {
-                    "id": audio.id,
-                    "emotion": audio.emotion,
-                    "desc": audio.desc,
-                    "sample_text": audio.sample_text,
-                }
-                for emotion, audio in sorted(role.audio.items())
-            },
         }
         data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def voice_requirements_need_extraction(role: Role) -> bool:
+        requirements = role.voice_requirements
+        return (
+            requirements.provenance.source == "migration"
+            and requirements.language == "unspecified"
+            and requirements.gender_presentation == "unspecified"
+            and requirements.age_impression == "unspecified"
+            and not requirements.performance_traits
+            and requirements.baseline_emotion is None
+            and not requirements.hard_constraints
+        )
+
+    async def ensure_role_voice_requirements(self, role: Role) -> RoleVoiceRequirements:
+        if not self.voice_requirements_need_extraction(role):
+            return role.voice_requirements
+        provider, provider_error = self.text_shortlist_provider()
+        prompts = getattr(self.workflow, "prompts", None)
+        if provider is None or prompts is None:
+            self.logger.warning(
+                "role_voice_requirements extraction skipped role=%s reason=%s",
+                role.name,
+                provider_error or "workflow prompt store is unavailable",
+            )
+            return role.voice_requirements
+        role_context = {
+            "role_name": role.name,
+            "intro": role.intro,
+            "personality": role.personality,
+            "role_tier": role.role_tier,
+            "voice_summary": role.voice_summary,
+            "appearance_age_bands": [
+                appearance.age_band
+                for appearance in role.appearances.values()
+                if appearance.age_band
+            ],
+            "stable_identity_invariants": [
+                invariant
+                for appearance in role.appearances.values()
+                for invariant in appearance.identity_invariants
+            ],
+            "voice_performance_notes": [
+                {
+                    "emotion": audio.emotion,
+                    "description": audio.desc,
+                }
+                for audio in role.audio.values()
+                if audio.desc
+            ],
+        }
+        prompt = prompts.render(
+            "role_voice_requirements",
+            role_context=json.dumps(role_context, ensure_ascii=False, indent=2),
+        )
+        try:
+            extracted = await provider.generate_json(
+                prompt,
+                RoleVoiceRequirements,
+                temperature=0.1,
+                metadata={
+                    "node_name": "role_voice_requirements",
+                    "role_id": role.id,
+                    "role_name": role.name,
+                },
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "role_voice_requirements extraction failed role=%s error=%r",
+                role.name,
+                exc,
+            )
+            return role.voice_requirements
+        provider_model = (
+            getattr(provider, "model", None)
+            or getattr(provider, "target_model", None)
+            or getattr(provider, "name", None)
+        )
+        extracted = extracted.model_copy(
+            update={
+                "provenance": SemanticProvenance(
+                    source="model",
+                    evidence=list(extracted.provenance.evidence),
+                    confidence=extracted.provenance.confidence,
+                    model=str(provider_model) if provider_model else None,
+                )
+            }
+        )
+        role.voice_requirements = extracted
+        return extracted
 
     def load_existing_output(self, project_dir: Path) -> VoiceSelectOutput | None:
         path = self.layout.node_output_path(project_dir, self.name)
@@ -277,6 +358,10 @@ class RoleVoiceSelectNode(VoiceNodeBase):
         if catalog_repo.voice_by_type(manifest, existing.selected_voice_type) is None:
             return None
         if existing.raw_response.get("selection_prompt_version") != self.selection_prompt_version:
+            return None
+        if existing.raw_response.get("voice_contract_version") != self.voice_contract_version:
+            return None
+        if existing.selection_source == "catalog_heuristic":
             return None
         if existing.raw_response.get("selection_model") != self.selection_model(manifest):
             return None
@@ -360,6 +445,7 @@ class RoleVoiceSelectNode(VoiceNodeBase):
     ) -> RoleVoiceSelectionItem:
         raw_response = dict(selection.raw_response)
         raw_response.setdefault("selection_prompt_version", self.selection_prompt_version)
+        raw_response.setdefault("voice_contract_version", self.voice_contract_version)
         raw_response.setdefault("selection_model", self.selection_model(manifest))
         if extra_raw_response:
             raw_response.update(extra_raw_response)
@@ -423,19 +509,8 @@ class RoleVoiceSelectNode(VoiceNodeBase):
         profile = {
             "role_id": role.id,
             "role_name": role.name,
-            "intro": role.intro,
-            "personality": role.personality,
             "role_tier": role.role_tier,
-            "importance": role.importance,
-            "voice_summary": role.voice_summary,
-            "audio": [
-                {
-                    "emotion": audio.emotion,
-                    "desc": audio.desc,
-                    "sample_text": audio.sample_text,
-                }
-                for audio in role.audio.values()
-            ],
+            "voice_requirements": role.voice_requirements.model_dump(mode="json"),
         }
         visual_refs = cls.role_visual_refs_for_prompt(project_dir, role)
         if visual_refs:
@@ -453,12 +528,12 @@ class RoleVoiceSelectNode(VoiceNodeBase):
         service: VoiceCatalogService,
         manifest: VoiceCatalogManifest,
         role: Role,
-        heuristic_candidates: list[VoiceCandidateItem],
+        structured_candidates: list[VoiceCandidateItem],
         candidate_pool: list[VoiceCandidateItem] | None = None,
         filter_metadata: dict[str, Any] | None = None,
         limit: int = 3,
     ) -> tuple[list[VoiceCandidateItem], dict[str, Any]]:
-        del heuristic_candidates
+        del structured_candidates
         if candidate_pool is None or filter_metadata is None:
             candidate_pool, filter_metadata = service.role_voice_select_candidate_pool(role, manifest)
         fallback_candidates = candidate_pool[:limit]
@@ -704,6 +779,8 @@ class RoleVoiceSelectNode(VoiceNodeBase):
             )
             return self.with_selection_metadata(selection, manifest)
 
+        await self.ensure_role_voice_requirements(role)
+        role_hash = self.role_profile_hash(role)
         cached = self.cached_selection(
             existing=existing,
             role_profile_hash=role_hash,
@@ -717,8 +794,8 @@ class RoleVoiceSelectNode(VoiceNodeBase):
 
         limit = max(1, int(self.candidate_limit))
         candidate_pool, filter_metadata = service.role_voice_select_candidate_pool(role, manifest)
-        heuristic_candidates = candidate_pool[:limit]
-        top_candidates = heuristic_candidates
+        structured_candidates = candidate_pool[:limit]
+        top_candidates = structured_candidates
         shortlist_response: dict[str, Any] = {
             "text_shortlist_filters": filter_metadata,
         }
@@ -728,7 +805,7 @@ class RoleVoiceSelectNode(VoiceNodeBase):
                 service=service,
                 manifest=manifest,
                 role=role,
-                heuristic_candidates=heuristic_candidates,
+                structured_candidates=structured_candidates,
                 candidate_pool=candidate_pool,
                 filter_metadata=filter_metadata,
                 limit=limit,
@@ -771,7 +848,7 @@ class RoleVoiceSelectNode(VoiceNodeBase):
                 selection_source=(
                     "omni_judge"
                     if judged is not None
-                    else ("text_shortlist" if text_shortlist_used else "catalog_heuristic")
+                    else ("text_shortlist" if text_shortlist_used else "structured_catalog")
                 ),
                 selected_reason=(
                     judged_output.selected_reason if judged is not None else selected_candidate.reason

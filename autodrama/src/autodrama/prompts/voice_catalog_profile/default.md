@@ -18,8 +18,10 @@
 - 不要使用“很好听”“很有特色”这类敷衍万能词，要用具象材质、温度、触感和空间感来描绘听觉。
 - 在行文中自然融合频段与腔体、材质与温度纹理、咬字与呼吸节奏、年龄与社会形象联想、常态情绪底色和适用戏剧场景。
 - 忽略样例台词内容，不要把台词里的身份或剧情当成音色事实。
-- 不要把官方名称当成事实，以实际听感为准；如果官方 metadata 与实际听感冲突，优先相信实际听感。
-- `gender_presentation`、`age_impression`、`texture`、`performance_style`、`strengths`、`weaknesses`、`best_role_types`、`avoid_role_types`、`emotion_quality` 仍需按 schema 填写，便于检索，但不要让 `summary` 呈现为列表。
+- 不要从官方名称、voice type 或样例台词内容推断语言、年龄或性别呈现。
+- `language`、`gender_presentation`、`age_impression`、`texture`、`performance_style`、`strengths`、`weaknesses`、`best_role_types`、`avoid_role_types`、`emotion_quality` 仍需按 schema 填写，便于检索，但不要让 `summary` 呈现为列表。
+- 无法从音频判断的枚举字段必须填写 `unspecified`。为实际填写的字段在 `field_sources` 中记录 `audio_judge`。
+- 官方 metadata 与实际听感冲突时，两者不得互相覆盖；按实际听感填写画像字段，并在 `conflicts` 中记录冲突。
 
 # 风格参考
 

@@ -41,10 +41,20 @@ from autodrama.core.schemas import (
     ShotManifestEpisodeOutput,
     ShotManifestItem,
     ShotVideoInput,
+    GateResult,
+    ImageAssetAuditOutput,
+    VisualStyleSpec,
+)
+from autodrama.core.visual_contract import (
+    assert_duration_gate,
+    identity_brief,
+    normalize_shot_durations,
+    render_visual_style_brief,
 )
 from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef
 from autodrama.workflows.nodes.static_asset_nodes import StaticAssetNodeBase
+from autodrama.workflows.output_scope import configured_episode_output_selection
 from autodrama.workflows.runner import WorkflowNode
 from autodrama.workflows.selection import clip_matches_selectors, shot_matches_selectors
 
@@ -87,10 +97,22 @@ class ShotAssetNodeBase(StaticAssetNodeBase):
     def _active_shot_selectors(self) -> set[str]:
         return set(getattr(self.workflow, "_active_shot_selectors", set()) or set())
 
-    def _selected_shots(self, episode_key: str, shots: list[ShotPlanItem]) -> list[ShotPlanItem]:
+    def _selected_shots(
+        self,
+        project_dir: Path,
+        plan: ClipToShotsEpisodeOutput,
+    ) -> list[ShotPlanItem]:
+        episode_key = plan.episode_key
+        shots = [shot for clip in plan.clips for shot in clip.shots]
         selectors = self._active_shot_selectors()
         if not selectors:
-            return shots
+            selection = configured_episode_output_selection(
+                self.repo,
+                project_dir,
+                plan,
+            )
+            selected_ids = set(selection.selected_shot_ids)
+            return [shot for shot in shots if shot.shot_id in selected_ids]
         shadow = ShotManifestEpisodeOutput(
             episode_key=episode_key,
             shots=[
@@ -193,7 +215,7 @@ class ShotAssetNodeBase(StaticAssetNodeBase):
                 asset_id = appearance.asset_id or appearance.design_image_asset_id or f"{appearance.id}_roleboard"
                 assets[asset_id] = {
                     "kind": "roleboard",
-                    "label": appearance.desc or role.intro or role.name,
+                    "label": identity_brief(appearance),
                     "object": (role, appearance),
                 }
         for prop in state.props.values():
@@ -206,7 +228,17 @@ class ShotAssetNodeBase(StaticAssetNodeBase):
                     "label": asset.desc or prop.intro or prop.name,
                     "object": (prop, asset),
                 }
-        return "\n".join(f"{asset_id}: {item['label']}" for asset_id, item in assets.items()) or "(none)", assets
+        index_rows: list[str] = []
+        for asset_id, item in assets.items():
+            metadata = ""
+            if item["kind"] == "roleboard":
+                role, appearance = item["object"]
+                metadata = f" [role_id={role.id}; appearance_id={appearance.id}]"
+            elif item["kind"] == "prop":
+                prop, _asset = item["object"]
+                metadata = f" [prop_id={prop.id}]"
+            index_rows.append(f"{asset_id}: {item['label']}{metadata}")
+        return "\n".join(index_rows) or "(none)", assets
 
     def _all_assets(self, project_dir: Path, state: ProjectState) -> dict[str, dict[str, Any]]:
         return self._asset_index(project_dir, state, clip=type("AllAssets", (), {})())[1]
@@ -331,6 +363,30 @@ class ShotAssetNodeBase(StaticAssetNodeBase):
         ordered.sort(key=lambda value: value[0])
         if [index for index, _ in ordered] != list(range(1, len(ordered) + 1)):
             raise ValueError("clip_to_shots local shot keys must be continuously numbered from 1")
+        valid_role_ids = {
+            role.id
+            for asset in assets.values()
+            if asset["kind"] == "roleboard"
+            for role in [asset["object"][0]]
+        }
+        valid_appearance_ids = {
+            appearance.id
+            for asset in assets.values()
+            if asset["kind"] == "roleboard"
+            for appearance in [asset["object"][1]]
+        }
+        appearance_role_ids = {
+            appearance.id: role.id
+            for asset in assets.values()
+            if asset["kind"] == "roleboard"
+            for role, appearance in [asset["object"]]
+        }
+        valid_prop_ids = {
+            prop.id
+            for asset in assets.values()
+            if asset["kind"] == "prop"
+            for prop in [asset["object"][0]]
+        }
         for _, item in ordered:
             item.shot_description = cls._clean(item.shot_description)
             item.narrative_angle = cls._clean(item.narrative_angle)
@@ -347,22 +403,93 @@ class ShotAssetNodeBase(StaticAssetNodeBase):
             layouts = [ref_id for ref_id in item.ref_ids if assets[ref_id]["kind"] == "layout"]
             if len(layouts) != 1:
                 raise ValueError("each shot must reference exactly one layout")
+            referenced_role_ids = {
+                assets[ref_id]["object"][0].id
+                for ref_id in item.ref_ids
+                if assets[ref_id]["kind"] == "roleboard"
+            }
+            if [line.line_index for line in item.dialogue_lines] != list(
+                range(1, len(item.dialogue_lines) + 1)
+            ):
+                raise ValueError("dialogue line_index values must be continuously numbered from 1")
+            for line in item.dialogue_lines:
+                line.text = cls._clean(line.text)
+                if not line.text:
+                    raise ValueError("dialogue text must contain spoken content")
+                if line.speaker_role_id is not None and line.speaker_role_id not in valid_role_ids:
+                    raise ValueError(f"dialogue references unavailable role: {line.speaker_role_id}")
+            unknown_allowed_props = sorted(set(item.allowed_props).difference(valid_prop_ids))
+            if unknown_allowed_props:
+                raise ValueError(
+                    f"allowed_props references unavailable props: {', '.join(unknown_allowed_props)}"
+                )
+            entity_ids: set[str] = set()
+            for entity_state in item.entity_states:
+                if entity_state.entity_id not in valid_role_ids:
+                    raise ValueError(f"entity state references unavailable role: {entity_state.entity_id}")
+                if entity_state.entity_id not in referenced_role_ids:
+                    raise ValueError(
+                        f"entity state role must have a visual reference: {entity_state.entity_id}"
+                    )
+                if entity_state.entity_id in entity_ids:
+                    raise ValueError(f"duplicate entity state for role: {entity_state.entity_id}")
+                entity_ids.add(entity_state.entity_id)
+                if (
+                    entity_state.appearance_id is not None
+                    and entity_state.appearance_id not in valid_appearance_ids
+                ):
+                    raise ValueError(
+                        f"entity state references unavailable appearance: {entity_state.appearance_id}"
+                    )
+                if (
+                    entity_state.appearance_id is not None
+                    and appearance_role_ids[entity_state.appearance_id] != entity_state.entity_id
+                ):
+                    raise ValueError(
+                        f"appearance {entity_state.appearance_id} does not belong to "
+                        f"{entity_state.entity_id}"
+                    )
+                unknown_held_props = sorted(
+                    set(entity_state.held_props).difference(item.allowed_props)
+                )
+                if unknown_held_props:
+                    raise ValueError(
+                        f"held_props must be declared in allowed_props: {', '.join(unknown_held_props)}"
+                    )
+            for line in item.dialogue_lines:
+                if (
+                    line.delivery_mode == "on_screen"
+                    and line.speaker_role_id is not None
+                    and line.speaker_role_id not in entity_ids
+                ):
+                    raise ValueError(
+                        f"on-screen dialogue speaker must have an entity state: {line.speaker_role_id}"
+                    )
+            overlay = item.overlay_text_spec
+            if overlay is not None:
+                if overlay.start_seconds is not None and overlay.start_seconds > item.duration_seconds:
+                    raise ValueError("overlay start_seconds exceeds shot duration")
+                if overlay.end_seconds is not None and overlay.end_seconds > item.duration_seconds:
+                    raise ValueError("overlay end_seconds exceeds shot duration")
         return [item for _, item in ordered]
 
     @staticmethod
     def _visual_quality(state: ProjectState) -> str:
-        return "\n".join(
-            value
-            for value in (
-                str(state.metadata.get("visual_style_prompt") or "").strip(),
-                str(state.metadata.get("visual_tone") or "").strip(),
-            )
-            if value
-        )
+        raw_spec = state.metadata.get("visual_style_spec")
+        if raw_spec is None:
+            raise ValueError("project metadata is missing required visual_style_spec")
+        return render_visual_style_brief(VisualStyleSpec.model_validate(raw_spec))
 
 
 class ClipToShotsNode(ShotAssetNodeBase):
     name = "clip_to_shots"
+
+    def _reference_budget(self) -> int:
+        params = getattr(self.repo.settings.nodes.get(self.name), "params", {}) or {}
+        try:
+            return max(1, int(params.get("reference_budget", 4)))
+        except (TypeError, ValueError):
+            return 4
 
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("shot", node_name=self.name)
@@ -376,6 +503,18 @@ class ClipToShotsNode(ShotAssetNodeBase):
             existing_by_clip = {item.clip_id: item for item in existing.clips}
             plans: list[ClipShotPlan] = []
             source_clips = list(segment.root.items())
+            target_duration = int(state.metadata.get("episode_duration_seconds") or 30)
+            clip_budgets = [
+                float(clip.allocated_seconds)
+                if clip.allocated_seconds is not None
+                else target_duration / max(1, len(source_clips))
+                for _, clip in source_clips
+            ]
+            budget_total = sum(clip_budgets)
+            if budget_total <= 0:
+                raise ValueError(f"clip_to_shots has no positive duration budget for {episode_key}")
+            clip_budgets = [target_duration * value / budget_total for value in clip_budgets]
+            reference_budget = self._reference_budget()
             for clip_index, (_, clip) in enumerate(source_clips, start=1):
                 clip_id = f"{episode_key}_clip_{clip_index:03d}"
                 if self._active_clip_selectors() and not clip_matches_selectors(episode_key, clip_id, clip_index, self._active_clip_selectors()):
@@ -393,8 +532,15 @@ class ClipToShotsNode(ShotAssetNodeBase):
                     asset_index=asset_index,
                     previous_context=previous,
                     next_context=following,
+                    available_seconds=clip_budgets[clip_index - 1],
+                    reference_budget=reference_budget,
                 )
                 rows = self._validate_model_output(raw, assets)
+                for row in rows:
+                    if len(row.ref_ids) > reference_budget:
+                        raise ValueError(
+                            f"{clip_id} uses {len(row.ref_ids)} references; provider budget is {reference_budget}"
+                        )
                 plans.append(
                     ClipShotPlan(
                         clip_id=clip_id,
@@ -412,7 +558,12 @@ class ClipToShotsNode(ShotAssetNodeBase):
                                 ref_ids=item.ref_ids,
                                 video_prompt=item.video_prompt,
                                 duration_seconds=item.duration_seconds,
-                                dialogue=item.dialogue,
+                                entity_states=item.entity_states,
+                                dialogue_lines=item.dialogue_lines,
+                                overlay_text_spec=item.overlay_text_spec,
+                                allowed_props=item.allowed_props,
+                                duration_budget=clip_budgets[clip_index - 1],
+                                reference_budget=reference_budget,
                             )
                             for shot_index, item in enumerate(rows, start=1)
                         ],
@@ -420,12 +571,46 @@ class ClipToShotsNode(ShotAssetNodeBase):
                 )
                 state.budget.used_text_calls += 1
             counter = 0
+            all_shots = [shot for plan in plans for shot in plan.shots]
+            normalized = normalize_shot_durations(
+                [shot.duration_seconds for shot in all_shots],
+                target_duration,
+            )
+            for shot, duration in zip(all_shots, normalized):
+                shot.duration_seconds = duration
             for plan in plans:
                 for shot in plan.shots:
                     counter += 1
                     shot.episode_shot_index = counter
-            output = ClipToShotsEpisodeOutput(episode_key=episode_key, clips=plans)
+            total_duration = float(sum(shot.duration_seconds for shot in all_shots))
+            assert_duration_gate(total_duration, float(target_duration))
+            output = ClipToShotsEpisodeOutput(
+                episode_key=episode_key,
+                clips=plans,
+                target_duration_seconds=float(target_duration),
+                total_duration_seconds=total_duration,
+                duration_gate_status="accepted",
+            )
             self.repo.write_json(path, output)
+            selection = configured_episode_output_selection(
+                self.repo,
+                project_dir,
+                output,
+            )
+            state.metadata["expected_output_selection_path"] = self.layout.project_relative(
+                project_dir,
+                self.layout.expected_output_selection_path(project_dir),
+            )
+            selection_summaries = state.metadata.get("expected_output_selection")
+            if not isinstance(selection_summaries, dict):
+                selection_summaries = {}
+                state.metadata["expected_output_selection"] = selection_summaries
+            selection_summaries[episode_key] = {
+                "planned_output_seconds": selection.planned_output_seconds,
+                "selected_clip_count": selection.selected_clip_count,
+                "selected_shot_count": selection.selected_shot_count,
+                "target_reached": selection.target_reached,
+            }
             episodes.append(output)
         self.repo.save_node_output(project_dir, self.name, ClipToShotsOutput(episodes=episodes))
         return state
@@ -471,8 +656,7 @@ class LayoutToBackgroundPromptNode(ShotAssetNodeBase):
         outputs: list[LayoutToBackgroundPromptEpisodeOutput] = []
         for episode_key in self.active_episode_keys(state):
             plan = self._load_episode_output(project_dir, "clip_to_shots", episode_key, ClipToShotsEpisodeOutput)
-            rows = [shot for clip in plan.clips for shot in clip.shots]
-            targets = self._selected_shots(episode_key, rows)
+            targets = self._selected_shots(project_dir, plan)
             assets = self._all_assets(project_dir, state)
             existing = self._existing(project_dir, episode_key)
             retained = [
@@ -491,6 +675,15 @@ class LayoutToBackgroundPromptNode(ShotAssetNodeBase):
                 layout_ref = self._asset_ref(project_dir, layout_item)
                 if not (layout_ref.path or layout_ref.url):
                     raise ValueError(f"layout {layout_id} has no usable reference image")
+                background_prefix = f"{layout_id}_background_"
+                retained_indices = [
+                    int(item.background_id[len(background_prefix) :])
+                    for item in backgrounds
+                    if item.layout_id == layout_id
+                    and item.background_id.startswith(background_prefix)
+                    and item.background_id[len(background_prefix) :].isdigit()
+                ]
+                background_index_offset = max(retained_indices, default=0)
                 shot_rows = [
                     {
                         "index": index,
@@ -533,7 +726,10 @@ class LayoutToBackgroundPromptNode(ShotAssetNodeBase):
                     )
                     backgrounds.append(
                         ShotBackgroundPromptItem(
-                            background_id=f"{layout_id}_background_{background_index:03d}",
+                            background_id=(
+                                f"{layout_id}_background_"
+                                f"{background_index_offset + background_index:03d}"
+                            ),
                             layout_id=layout_id,
                             shot_ids=[shot.shot_id for shot in assigned_shots],
                             description=item.description,
@@ -568,8 +764,9 @@ class ShotBackgroundImageGenerationNode(ShotAssetNodeBase):
         for episode_key in self.active_episode_keys(state):
             plan = self._load_episode_output(project_dir, "clip_to_shots", episode_key, ClipToShotsEpisodeOutput)
             prompt_output = self._load_episode_output(project_dir, "layout_to_background_prompt", episode_key, LayoutToBackgroundPromptEpisodeOutput)
-            rows = [shot for clip in plan.clips for shot in clip.shots]
-            selected_ids = {shot.shot_id for shot in self._selected_shots(episode_key, rows)}
+            selected_ids = {
+                shot.shot_id for shot in self._selected_shots(project_dir, plan)
+            }
             assets = self._all_assets(project_dir, state)
             path = self.layout.node_episode_output_path(project_dir, self.name, episode_key)
             existing = ShotBackgroundImageGenerationEpisodeOutput(episode_key=episode_key)
@@ -671,15 +868,31 @@ class ShotKeyframePromptNode(ShotAssetNodeBase):
         params = getattr(self.repo.settings.nodes.get(self.name), "params", {}) or {}
         return self._clean(params.get("negative_prompt"))
 
+    @staticmethod
+    def _requires_clean_plate(shot: ShotPlanItem) -> bool:
+        return bool(
+            shot.overlay_text_spec is not None
+            and shot.overlay_text_spec.render_mode == "postproduction"
+        )
+
+    @classmethod
+    def _text_rendering_instruction(cls, shot: ShotPlanItem) -> str:
+        if cls._requires_clean_plate(shot):
+            return "生成无任何可读文字的 clean plate，并为后期叠字保留指定位置。"
+        if shot.overlay_text_spec is not None:
+            return f"场景内准确呈现文字：{shot.overlay_text_spec.text}"
+        return "本镜头没有精确文字渲染要求。"
+
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         provider = self.router.text("shot", node_name=self.name)
         negative = self._negative_prompt()
         for episode_key in self.active_episode_keys(state):
             plan = self._load_episode_output(project_dir, "clip_to_shots", episode_key, ClipToShotsEpisodeOutput)
-            backgrounds = self._load_episode_output(project_dir, "shot_background_image_generation", episode_key, ShotBackgroundImageGenerationEpisodeOutput)
             rows = [shot for clip in plan.clips for shot in clip.shots]
-            targets = self._selected_shots(episode_key, rows)
+            backgrounds = self._load_episode_output(project_dir, "shot_background_image_generation", episode_key, ShotBackgroundImageGenerationEpisodeOutput)
+            targets = self._selected_shots(project_dir, plan)
             assets = self._all_assets(project_dir, state)
+            style_spec = VisualStyleSpec.model_validate(state.metadata.get("visual_style_spec"))
             background_by_shot: dict[str, ShotBackgroundImageGenerationItem] = {}
             for background in backgrounds.generated_backgrounds:
                 for shot_id in background.shot_ids:
@@ -717,6 +930,7 @@ class ShotKeyframePromptNode(ShotAssetNodeBase):
                     opening_state=shot.opening_state,
                     reference_guide="\n".join(guide),
                     visual_quality=self._visual_quality(state),
+                    text_rendering_instruction=self._text_rendering_instruction(shot),
                 )
                 response = await provider.generate_json(
                     request_prompt,
@@ -736,6 +950,9 @@ class ShotKeyframePromptNode(ShotAssetNodeBase):
                     self._clean(response.prompt_content),
                     {"reference_guide": "\n".join(guide), "negative_prompt": negative},
                 )
+                clean_plate = self._requires_clean_plate(shot)
+                if clean_plate:
+                    final_prompt += "\n画面必须是无可读文字的 clean plate，精确文字将在后期叠加。"
                 by_id[shot.shot_id] = ShotKeyframePromptItem(
                     episode_key=episode_key,
                     clip_id=shot.clip_id,
@@ -746,6 +963,18 @@ class ShotKeyframePromptNode(ShotAssetNodeBase):
                     ref_ids=shot.ref_ids,
                     prompt=final_prompt,
                     negative_prompt=negative or None,
+                    style_spec_version=style_spec.version,
+                    included_fields=["identity_invariants", "current_shot_state", "allowed_props", "camera", "visual_style"],
+                    excluded_state_fields=["legacy_desc", "future_events", "future_prop_states", "exact_text"],
+                    prompt_provenance={
+                        "appearance_ids": [
+                            ref.metadata.get("appearance_id") for _, ref in role_refs if ref.metadata.get("appearance_id")
+                        ],
+                        "prop_ref_ids": [ref.id for _, ref in prop_refs],
+                        "background_id": background.background_id,
+                    },
+                    clean_plate=clean_plate,
+                    overlay_text_spec=shot.overlay_text_spec,
                 )
             output = ShotKeyframePromptOutput(prompts=[by_id[shot.shot_id] for shot in rows if shot.shot_id in by_id])
             self.repo.write_json(path, output)
@@ -771,7 +1000,7 @@ class ShotKeyframeImageGenerationNode(ShotAssetNodeBase):
             prompt_output = self._load_episode_output(project_dir, "shot_keyframe_prompt", episode_key, ShotKeyframePromptOutput)
             backgrounds = self._load_episode_output(project_dir, "shot_background_image_generation", episode_key, ShotBackgroundImageGenerationEpisodeOutput)
             rows = [shot for clip in plan.clips for shot in clip.shots]
-            targets = self._selected_shots(episode_key, rows)
+            targets = self._selected_shots(project_dir, plan)
             assets = self._all_assets(project_dir, state)
             prompts_by_id = {item.shot_id: item for item in prompt_output.prompts}
             backgrounds_by_id = {item.background_id: item for item in backgrounds.generated_backgrounds}
@@ -809,28 +1038,6 @@ class ShotKeyframeImageGenerationNode(ShotAssetNodeBase):
                     and self.layout.existing_project_file(project_dir, old.keyframe_asset_path)
                 ):
                     return old
-                recovered_path = self.layout.image_asset_path(project_dir, "shot_keyframes", shot.shot_id)
-                if not self._force(self.workflow) and recovered_path.is_file():
-                    self.logger.warning(
-                        "recovered generated keyframe without node JSON episode=%s shot=%s path=%s",
-                        episode_key,
-                        shot.shot_id,
-                        recovered_path,
-                    )
-                    return ShotKeyframeImageGenerationItem(
-                        episode_key=episode_key,
-                        clip_id=shot.clip_id,
-                        shot_id=shot.shot_id,
-                        background_id=background.background_id,
-                        ref_ids=shot.ref_ids,
-                        keyframe_asset_id=f"{shot.shot_id}_keyframe",
-                        keyframe_asset_path=self.layout.project_relative(project_dir, recovered_path),
-                        prompt=prompt.prompt,
-                        fingerprint=fingerprint,
-                        provider="recovered_local_image",
-                        model=str(getattr(provider, "model", "")),
-                        raw_response={"recovered_from": "existing_local_image_after_interrupted_generation"},
-                    )
                 limit = int(getattr(provider, "max_reference_images", 99) or 99)
                 if len(refs) > limit:
                     raise ValueError(f"{shot.shot_id} needs {len(refs)} references but provider limit is {limit}; split the shot")
@@ -871,6 +1078,9 @@ class ShotKeyframeImageGenerationNode(ShotAssetNodeBase):
                     request_id=result.request_id,
                     usage=result.usage,
                     raw_response=result.raw_response,
+                    input_fingerprint=fingerprint,
+                    audit_status="generated",
+                    resume_provenance={"reused": False, "fingerprint_verified": True},
                 )
 
             generated = await asyncio.gather(*(generate(shot) for shot in targets))
@@ -891,6 +1101,13 @@ class ShotKeyframeImageGenerationNode(ShotAssetNodeBase):
 class ShotManifestGenerationNode(ShotAssetNodeBase):
     name = "shot_manifest_generation"
 
+    def _accepted_assets(self, project_dir: Path, node_name: str) -> set[str]:
+        path = self.layout.node_output_path(project_dir, node_name)
+        if not path.exists():
+            return set()
+        output = ImageAssetAuditOutput.model_validate_json(path.read_text(encoding="utf-8"))
+        return {item.asset_id for item in output.audited_assets if item.approved}
+
     async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
         generated: list[ShotManifestGenerationEpisodeItem] = []
         for episode_key in self.active_episode_keys(state):
@@ -902,6 +1119,9 @@ class ShotManifestGenerationNode(ShotAssetNodeBase):
             prompt_by_id = {item.shot_id: item for item in prompts.prompts}
             image_by_id = {item.shot_id: item for item in images.generated_keyframes}
             background_by_id = {item.background_id: item for item in backgrounds.generated_backgrounds}
+            accepted_keyframes = self._accepted_assets(project_dir, "shot_keyframe_image_audit")
+            accepted_backgrounds = self._accepted_assets(project_dir, "shot_background_image_audit")
+            accepted_roleboards = self._accepted_assets(project_dir, "roleboard_image_audit")
             assets = self._all_assets(project_dir, state)
             existing_by_id: dict[str, ShotManifestItem] = {}
             output_path = self.layout.shot_path(project_dir, episode_key)
@@ -912,7 +1132,9 @@ class ShotManifestGenerationNode(ShotAssetNodeBase):
                     self.logger.warning("ignored incompatible existing shot manifest %s: %s", output_path, exc)
                 else:
                     existing_by_id = {shot.shot_id: shot for shot in existing.shots}
-            selected_ids = {shot.shot_id for shot in self._selected_shots(episode_key, rows)}
+            selected_ids = {
+                shot.shot_id for shot in self._selected_shots(project_dir, plan)
+            }
             shots: list[ShotManifestItem] = []
             for row in rows:
                 if row.shot_id not in selected_ids and row.shot_id in existing_by_id:
@@ -931,6 +1153,27 @@ class ShotManifestGenerationNode(ShotAssetNodeBase):
                     raise FileNotFoundError(f"shot background asset is missing: {background.asset_path}")
                 if not self.layout.existing_project_file(project_dir, image.keyframe_asset_path):
                     raise FileNotFoundError(f"shot keyframe asset is missing: {image.keyframe_asset_path}")
+                gate_results = [
+                    GateResult(
+                        name="duration",
+                        status="accepted" if plan.duration_gate_status == "accepted" else "rejected",
+                        details=f"episode total={plan.total_duration_seconds}s target={plan.target_duration_seconds}s",
+                    ),
+                    GateResult(
+                        name="background_audit",
+                        status="accepted" if background.background_id in accepted_backgrounds else "rejected",
+                        details=background.background_id,
+                    ),
+                    GateResult(
+                        name="keyframe_audit",
+                        status=(
+                            "accepted"
+                            if image.keyframe_asset_id in accepted_keyframes and image.audit_status == "accepted"
+                            else "rejected"
+                        ),
+                        details=image.keyframe_asset_id,
+                    ),
+                ]
                 layout_id, _ = self._shot_layout(row, assets)
                 role_ids: list[str] = []
                 appearance_ids: list[str] = []
@@ -944,6 +1187,7 @@ class ShotManifestGenerationNode(ShotAssetNodeBase):
                         appearance_ids.append(item["object"][1].id)
                     elif item["kind"] == "prop":
                         prop_ids.append(item["object"][0].id)
+                prop_ids.extend(row.allowed_props)
                 if not row.narrative_angle or not row.video_prompt:
                     raise ValueError(f"shot manifest requires narrative_angle and video_prompt for {row.shot_id}")
                 video_inputs = [
@@ -1006,14 +1250,41 @@ class ShotManifestGenerationNode(ShotAssetNodeBase):
                             },
                         )
                     )
-                missing_role_ids = [
-                    role_id for role_id in dict.fromkeys(role_ids) if role_id not in seen_role_ids
-                ]
+                    roleboard_asset_id = (
+                        appearance.asset_id
+                        or appearance.design_image_asset_id
+                        or f"{appearance.id}_roleboard"
+                    )
+                    gate_results.append(
+                        GateResult(
+                            name=f"roleboard_audit:{role.id}",
+                            status="accepted" if roleboard_asset_id in accepted_roleboards else "rejected",
+                            details=roleboard_asset_id,
+                        )
+                    )
+                required_visual_role_ids = {
+                    state.entity_id for state in row.entity_states
+                }
+                missing_role_ids = sorted(required_visual_role_ids.difference(seen_role_ids))
                 if missing_role_ids:
                     raise ValueError(
                         f"shot_manifest_generation missing involved character roleboards for "
                         f"{row.shot_id}: {', '.join(missing_role_ids)}"
                     )
+                reference_budget = row.reference_budget or 4
+                gate_results.append(
+                    GateResult(
+                        name="reference_budget",
+                        status="accepted" if len(row.ref_ids) <= reference_budget else "rejected",
+                        details=f"{len(row.ref_ids)}/{reference_budget}",
+                    )
+                )
+                ready_for_video = all(
+                    gate.status == "accepted" for gate in gate_results if gate.required
+                )
+                video_prompt = row.video_prompt
+                if prompt.clean_plate:
+                    video_prompt += "；不得生成可读文字、字幕、标识或人声，保持 clean plate。"
                 shots.append(
                     ShotManifestItem(
                         shot_id=row.shot_id,
@@ -1030,24 +1301,55 @@ class ShotManifestGenerationNode(ShotAssetNodeBase):
                         narrative_angle=row.narrative_angle,
                         opening_state=row.opening_state,
                         duration_seconds=float(row.duration_seconds),
-                        dialogue=row.dialogue,
+                        dialogue_lines=row.dialogue_lines,
                         role_ids=list(dict.fromkeys(role_ids)),
                         role_appearance_ids=list(dict.fromkeys(appearance_ids)),
                         prop_ids=list(dict.fromkeys(prop_ids)),
-                        video_prompt=row.video_prompt,
-                        final_video_prompt=row.video_prompt,
+                        video_prompt=video_prompt,
+                        final_video_prompt=video_prompt,
                         background_asset_id=background.background_id,
                         background_asset_path=background.asset_path,
                         background_asset_url=background.asset_url,
                         video_inputs=video_inputs,
+                        gate_results=gate_results,
+                        entity_state_snapshot=row.entity_states,
+                        reference_budget=reference_budget,
+                        text_overlay_spec=row.overlay_text_spec,
+                        input_fingerprints={
+                            "keyframe": image.fingerprint,
+                            "background": background.fingerprint,
+                        },
+                        ready_for_video=ready_for_video,
                     )
                 )
-            episode = ShotManifestEpisodeOutput(episode_key=episode_key, shots=shots)
+            target_duration = float(plan.target_duration_seconds or state.metadata.get("episode_duration_seconds") or 30)
+            total_duration = sum(shot.duration_seconds for shot in shots)
+            duration_ok = plan.duration_gate_status == "accepted"
+            episode_gates = [
+                GateResult(
+                    name="duration",
+                    status="accepted" if duration_ok else "rejected",
+                    details=f"{total_duration:.3f}/{target_duration:.3f}",
+                ),
+                GateResult(
+                    name="all_shots_ready",
+                    status="accepted" if shots and all(shot.ready_for_video for shot in shots) else "rejected",
+                    details=f"{sum(shot.ready_for_video for shot in shots)}/{len(shots)}",
+                ),
+            ]
+            episode_ready = all(gate.status == "accepted" for gate in episode_gates if gate.required)
+            episode = ShotManifestEpisodeOutput(
+                episode_key=episode_key,
+                shots=shots,
+                gate_results=episode_gates,
+                ready_for_video=episode_ready,
+            )
             self.workflow._save_shot_manifest(project_dir, episode)
             item = ShotManifestGenerationEpisodeItem(
                 episode_key=episode_key,
                 shot_count=len(shots),
                 shot_path=self.layout.project_relative(project_dir, output_path),
+                warnings=[] if episode_ready else ["required manifest gates rejected; video generation is blocked"],
             )
             self.repo.write_json(self.layout.node_episode_output_path(project_dir, self.name, episode_key), ShotManifestGenerationOutput(episodes=[item]))
             generated.append(item)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -10,9 +11,15 @@ from autodrama.core.schemas import (
     ClipSegmentNodeOutput,
     ClipSegmentOutput,
     ProjectState,
+    ScriptImportOutput,
     ScriptNovelExtractOutput,
     ScriptNovelOutput,
     ScriptOutlineOutput,
+    ScriptSourceSpan,
+    StoryFactBundle,
+    StoryFactEntity,
+    StoryFactEvent,
+    StoryFactPropObservation,
 )
 from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
@@ -34,6 +41,355 @@ SCRIPT_COMPLETION_ALIASES = {
     "script_import": ("script_outline",),
     "script_detail_expand": ("script_novel",),
 }
+
+
+def _fact_text(value: object) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _stable_fact_id(prefix: str, *parts: object) -> str:
+    payload = "\x1f".join(_fact_text(part) for part in parts)
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}_{digest}"
+
+
+def _dedupe_source_spans(spans: list[ScriptSourceSpan]) -> list[ScriptSourceSpan]:
+    seen: set[tuple[int, int, str]] = set()
+    rows: list[ScriptSourceSpan] = []
+    for span in sorted(spans, key=lambda item: (item.start_char, item.end_char, item.quote)):
+        key = (span.start_char, span.end_char, span.quote)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(span)
+    return rows
+
+
+def _source_spans(
+    raw_script: str,
+    evidence_quotes: list[str],
+    *,
+    label: str,
+) -> list[ScriptSourceSpan]:
+    spans: list[ScriptSourceSpan] = []
+    for raw_quote in evidence_quotes:
+        quote = str(raw_quote or "").strip()
+        if not quote:
+            raise ValueError(f"{label} contains an empty evidence quote")
+        start_char = raw_script.find(quote)
+        if start_char < 0:
+            raise ValueError(
+                f"{label} evidence quote cannot be located exactly in the source script: {quote[:80]!r}"
+            )
+        end_char = start_char + len(quote)
+        spans.append(
+            ScriptSourceSpan(
+                start_char=start_char,
+                end_char=end_char,
+                start_line=raw_script.count("\n", 0, start_char) + 1,
+                end_line=raw_script.count("\n", 0, end_char - 1) + 1,
+                quote=quote,
+            )
+        )
+    if not spans:
+        raise ValueError(f"{label} requires at least one evidence quote")
+    return _dedupe_source_spans(spans)
+
+
+def build_story_fact_bundle(raw_script: str, output: ScriptImportOutput) -> StoryFactBundle:
+    """Convert model semantics into stable, source-verifiable workflow facts."""
+
+    if not str(raw_script or "").strip():
+        raise ValueError("script_import cannot build facts from an empty source script")
+
+    entity_rows: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def add_entity(
+        entity_type: str,
+        raw_name: object,
+        *,
+        time_period: object | None = None,
+        evidence_quotes: list[str],
+        label: str,
+    ) -> tuple[str, str]:
+        name = _fact_text(raw_name)
+        if not name:
+            raise ValueError(f"{label} has an empty entity name")
+        key = (entity_type, name)
+        spans = _source_spans(raw_script, evidence_quotes, label=label)
+        row = entity_rows.get(key)
+        if row is None:
+            row = {
+                "entity_id": _stable_fact_id(entity_type, entity_type, name),
+                "entity_type": entity_type,
+                "name": name,
+                "time_periods": [],
+                "source_spans": [],
+                "aliases": {name},
+            }
+            entity_rows[key] = row
+        row["source_spans"] = _dedupe_source_spans([*row["source_spans"], *spans])
+        period = _fact_text(time_period)
+        if period and period not in row["time_periods"]:
+            row["time_periods"].append(period)
+        return key
+
+    for mention in output.facts.entity_mentions:
+        add_entity(
+            mention.entity_type,
+            mention.name,
+            time_period=mention.time_period,
+            evidence_quotes=mention.evidence_quotes,
+            label=f"script_import entity mention {mention.entity_type}:{mention.name}",
+        )
+
+    declared_keys: set[tuple[str, str]] = set()
+
+    def bind_declared_entity(
+        entity_type: str,
+        raw_name: object,
+        *,
+        aliases: list[str],
+        evidence_quotes: list[str],
+        label: str,
+    ) -> tuple[str, str]:
+        name = _fact_text(raw_name)
+        key = (entity_type, name)
+        if key not in entity_rows:
+            raise ValueError(
+                f"{label} must have a matching facts.entity_mentions entry for {entity_type}:{name}"
+            )
+        row = entity_rows[key]
+        row["source_spans"] = _dedupe_source_spans(
+            [*row["source_spans"], *_source_spans(raw_script, evidence_quotes, label=label)]
+        )
+        row["aliases"].update(_fact_text(alias) for alias in aliases if _fact_text(alias))
+        declared_keys.add(key)
+        return key
+
+    for role in output.roles:
+        key = bind_declared_entity(
+            "role",
+            role.name,
+            aliases=role.aliases,
+            evidence_quotes=role.evidence_quotes,
+            label=f"script_import role {role.name}",
+        )
+        for stage in role.appearance_stages:
+            row = entity_rows[key]
+            period = _fact_text(stage.time_period)
+            if period not in row["time_periods"]:
+                row["time_periods"].append(period)
+            row["source_spans"] = _dedupe_source_spans(
+                [
+                    *row["source_spans"],
+                    *_source_spans(
+                        raw_script,
+                        stage.evidence_quotes,
+                        label=f"script_import role stage {role.name}:{stage.time_period}",
+                    ),
+                ]
+            )
+    for prop in output.props:
+        bind_declared_entity(
+            "prop",
+            prop.name,
+            aliases=prop.aliases,
+            evidence_quotes=prop.evidence_quotes,
+            label=f"script_import prop {prop.name}",
+        )
+    for layout in output.layouts:
+        key = bind_declared_entity(
+            "layout",
+            layout.name,
+            aliases=[],
+            evidence_quotes=layout.evidence_quotes,
+            label=f"script_import layout {layout.name}",
+        )
+        row = entity_rows[key]
+        for period in layout.time_periods:
+            cleaned_period = _fact_text(period)
+            if cleaned_period and cleaned_period not in row["time_periods"]:
+                row["time_periods"].append(cleaned_period)
+
+    aliases_by_type: dict[tuple[str, str], str] = {}
+    for row in entity_rows.values():
+        for alias in row["aliases"]:
+            key = (row["entity_type"], _fact_text(alias))
+            existing = aliases_by_type.get(key)
+            if existing and existing != row["entity_id"]:
+                raise ValueError(f"script_import has ambiguous {row['entity_type']} alias: {alias}")
+            aliases_by_type[key] = row["entity_id"]
+
+    def resolve_entity_id(raw_name: object, allowed_types: tuple[str, ...], *, label: str) -> str:
+        name = _fact_text(raw_name)
+        matches = {
+            aliases_by_type[(entity_type, name)]
+            for entity_type in allowed_types
+            if (entity_type, name) in aliases_by_type
+        }
+        if not matches:
+            raise ValueError(f"{label} references an unknown entity: {name}")
+        if len(matches) != 1:
+            raise ValueError(f"{label} references an ambiguous entity: {name}")
+        return next(iter(matches))
+
+    event_rows: list[dict[str, Any]] = []
+    for index, event in enumerate(output.facts.events):
+        spans = _source_spans(
+            raw_script,
+            event.evidence_quotes,
+            label=f"script_import event {index + 1}",
+        )
+        event_rows.append(
+            {
+                "index": index,
+                "summary": _fact_text(event.summary),
+                "time_period": _fact_text(event.time_period) or None,
+                "participant_entity_ids": [
+                    resolve_entity_id(name, ("role", "group"), label=f"script_import event {index + 1}")
+                    for name in event.participant_names
+                ],
+                "prop_entity_ids": [
+                    resolve_entity_id(name, ("prop",), label=f"script_import event {index + 1}")
+                    for name in event.prop_names
+                ],
+                "layout_entity_ids": [
+                    resolve_entity_id(name, ("layout",), label=f"script_import event {index + 1}")
+                    for name in event.layout_names
+                ],
+                "precondition": _fact_text(event.precondition) or None,
+                "result": _fact_text(event.result) or None,
+                "source_spans": spans,
+            }
+        )
+    event_rows.sort(key=lambda row: (row["source_spans"][0].start_char, row["index"]))
+
+    events: list[StoryFactEvent] = []
+    for order, row in enumerate(event_rows, start=1):
+        event_id = f"event_{order:03d}_{_stable_fact_id('fact', row['summary'], *[span.quote for span in row['source_spans']]).removeprefix('fact_')}"
+        row["event_id"] = event_id
+        events.append(
+            StoryFactEvent(
+                event_id=event_id,
+                summary=row["summary"],
+                time_period=row["time_period"],
+                participant_entity_ids=list(dict.fromkeys(row["participant_entity_ids"])),
+                prop_entity_ids=list(dict.fromkeys(row["prop_entity_ids"])),
+                layout_entity_ids=list(dict.fromkeys(row["layout_entity_ids"])),
+                precondition=row["precondition"],
+                result=row["result"],
+                source_spans=row["source_spans"],
+            )
+        )
+
+    def event_for_spans(spans: list[ScriptSourceSpan], prop_entity_id: str) -> str:
+        for row in event_rows:
+            for event_span in row["source_spans"]:
+                if any(
+                    span.start_char < event_span.end_char and event_span.start_char < span.end_char
+                    for span in spans
+                ):
+                    return str(row["event_id"])
+        prop_events = [
+            row for row in event_rows if prop_entity_id in row["prop_entity_ids"]
+        ]
+        if prop_events:
+            observation_start = spans[0].start_char
+            closest = min(
+                prop_events,
+                key=lambda row: abs(row["source_spans"][0].start_char - observation_start),
+            )
+            return str(closest["event_id"])
+        raise ValueError("script_import prop observation is not linked to a source-backed event")
+
+    observations: list[StoryFactPropObservation] = []
+    observed_prop_ids: set[str] = set()
+    pending_observations: list[dict[str, Any]] = []
+    for index, observation in enumerate(output.facts.prop_observations):
+        spans = _source_spans(
+            raw_script,
+            observation.evidence_quotes,
+            label=f"script_import prop observation {index + 1}",
+        )
+        prop_entity_id = resolve_entity_id(
+            observation.prop_name,
+            ("prop",),
+            label=f"script_import prop observation {index + 1}",
+        )
+        holder_name = _fact_text(observation.holder_name) or None
+        holder_entity_id = (
+            resolve_entity_id(
+                holder_name,
+                ("role", "group"),
+                label=f"script_import prop observation {index + 1}",
+            )
+            if holder_name
+            else None
+        )
+        pending_observations.append(
+            {
+                "index": index,
+                "prop_entity_id": prop_entity_id,
+                "prop_name": _fact_text(observation.prop_name),
+                "action": _fact_text(observation.action),
+                "state": _fact_text(observation.state) or None,
+                "holder_name": holder_name,
+                "holder_entity_id": holder_entity_id,
+                "time_period": _fact_text(observation.time_period) or None,
+                "source_spans": spans,
+            }
+        )
+    pending_observations.sort(key=lambda row: (row["source_spans"][0].start_char, row["index"]))
+    for order, row in enumerate(pending_observations, start=1):
+        observation_id = f"prop_observation_{order:03d}_{_stable_fact_id('fact', row['prop_entity_id'], row['action'], *[span.quote for span in row['source_spans']]).removeprefix('fact_')}"
+        observations.append(
+            StoryFactPropObservation(
+                observation_id=observation_id,
+                prop_entity_id=row["prop_entity_id"],
+                prop_name=row["prop_name"],
+                action=row["action"],
+                state=row["state"],
+                holder_entity_id=row["holder_entity_id"],
+                holder_name=row["holder_name"],
+                time_period=row["time_period"],
+                event_id=event_for_spans(row["source_spans"], row["prop_entity_id"]),
+                source_spans=row["source_spans"],
+            )
+        )
+        observed_prop_ids.add(row["prop_entity_id"])
+
+    declared_prop_ids = {
+        entity_rows[key]["entity_id"]
+        for key in declared_keys
+        if key[0] == "prop"
+    }
+    missing_prop_observations = sorted(declared_prop_ids.difference(observed_prop_ids))
+    if missing_prop_observations:
+        raise ValueError(
+            "script_import facts require at least one source-backed observation for every prop: "
+            + ", ".join(missing_prop_observations)
+        )
+
+    entities = [
+        StoryFactEntity(
+            entity_id=row["entity_id"],
+            entity_type=row["entity_type"],
+            name=row["name"],
+            time_periods=list(row["time_periods"]),
+            source_spans=_dedupe_source_spans(row["source_spans"]),
+        )
+        for row in sorted(
+            entity_rows.values(),
+            key=lambda row: (row["source_spans"][0].start_char, row["entity_type"], row["name"]),
+        )
+    ]
+    return StoryFactBundle(
+        events=events,
+        entity_mentions=entities,
+        prop_observations=observations,
+        timeline_order=[event.event_id for event in events],
+    )
 
 
 
@@ -144,11 +500,47 @@ class ScriptImportNode(ScriptNodeBase):
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        output = await self.script_service.script_import(
-            state,
-            provider,
-            raw_script=source_script,
+        output: ScriptImportOutput | None = None
+        fact_bundle: StoryFactBundle | None = None
+        semantic_attempts = 0
+        semantic_feedback: str | None = None
+        max_semantic_attempts = max(
+            1,
+            int(getattr(self.script_service, "max_semantic_attempts", 1)),
         )
+        for semantic_attempt in range(max_semantic_attempts):
+            semantic_attempts = semantic_attempt + 1
+            candidate = await self.script_service.script_import(
+                state,
+                provider,
+                raw_script=source_script,
+                semantic_feedback=semantic_feedback,
+                prompt_attempt=semantic_attempt,
+            )
+            try:
+                candidate_facts = build_story_fact_bundle(source_script, candidate)
+            except ValueError as exc:
+                if semantic_attempt + 1 >= max_semantic_attempts:
+                    raise ValueError(
+                        "script_import fact validation failed after "
+                        f"{semantic_attempts} semantic attempt(s): {exc}"
+                    ) from exc
+                self.logger.warning(
+                    "script_import semantic validation failed attempt=%d/%d: %s; retrying",
+                    semantic_attempts,
+                    max_semantic_attempts,
+                    exc,
+                )
+                semantic_feedback = (
+                    "请只使用原文中可逐字定位的短句作为依据；确保每个可见、交接或状态变化的"
+                    "关键物件都有出现记录，并把稳定身份与不同时间阶段分开描述。"
+                )
+                continue
+            output = candidate
+            fact_bundle = candidate_facts
+            break
+        if output is None or fact_bundle is None:
+            raise RuntimeError("script_import did not produce a validated fact bundle")
         outline = str(output.outline or "").strip()
         if not outline:
             raise ValueError("script_import outline is empty")
@@ -159,10 +551,12 @@ class ScriptImportNode(ScriptNodeBase):
         ]
         if not episode_outlines:
             episode_outlines = [outline]
-        episode_outline_content = "\n\n".join(
-            f"第{index}集：{content}"
-            for index, content in enumerate(episode_outlines, start=1)
-        )
+        if len(episode_outlines) != 1:
+            raise ValueError(
+                "script_import must produce exactly one episode outline for one mature screenplay; "
+                f"got {len(episode_outlines)}"
+            )
+        episode_outline_content = episode_outlines[0]
 
         state.raw_script = source_script
         state.script.raw_script = source_script
@@ -189,9 +583,11 @@ class ScriptImportNode(ScriptNodeBase):
             )
         }
         state.script.novel_extract = {episode_key: state.script.novel_extract.get(episode_key) or False}
+        state.script.facts = fact_bundle
         roles = [role.model_dump(mode="json") for role in output.roles]
         props = [prop.model_dump(mode="json") for prop in output.props]
         layouts = [layout.model_dump(mode="json") for layout in output.layouts]
+        facts = fact_bundle.model_dump(mode="json")
         state.metadata.update(
             {
                 "script_mode": "mature_script",
@@ -202,6 +598,8 @@ class ScriptImportNode(ScriptNodeBase):
                 "script_import_roles": roles,
                 "script_import_props": props,
                 "script_import_layouts": layouts,
+                "script_import_facts": facts,
+                "script_import_semantic_attempts": semantic_attempts,
                 "script_import_notes": output.notes,
                 "script_novel_full_episode_paths": dict(state.script.novel_full),
             }
@@ -217,11 +615,12 @@ class ScriptImportNode(ScriptNodeBase):
                 "roles": roles,
                 "props": props,
                 "layouts": layouts,
+                "facts": facts,
                 "notes": output.notes,
                 "imported_mature_script": True,
             },
         )
-        state.budget.used_text_calls += 1
+        state.budget.used_text_calls += semantic_attempts
         return state
 
 

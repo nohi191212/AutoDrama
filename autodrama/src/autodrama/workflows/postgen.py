@@ -37,6 +37,11 @@ from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.utils.prompts import PromptStore
 from autodrama.workflows.context import WorkflowRunContext
 from autodrama.workflows.delegation import PregenWorkflowDelegateMixin
+from autodrama.workflows.output_scope import (
+    configured_output_shot_ids,
+    pending_expected_output_shot_ids,
+    synchronize_expected_output_scope,
+)
 from autodrama.workflows.selection import normalize_shot_selectors, select_episode_keys
 
 
@@ -85,6 +90,12 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
         logger = setup_logging(project_dir)
         self.router.set_prompt_audit_project_dir(project_dir)
         state = self.repo.load_state(project_dir)
+        scope_sync = synchronize_expected_output_scope(
+            self.repo,
+            project_dir,
+            state,
+            self._expected_episode_keys(state),
+        )
         selected_episode_keys = select_episode_keys(state, episode_keys)
         target_nodes = [only] if only else POSTGEN_NODES[: POSTGEN_NODES.index(until) + 1]
         if only is None and not self.repo.settings.postgen.voice_alignment.enabled:
@@ -98,14 +109,63 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
                     "postgen_voice_conversion",
                 }
             ]
+        explicit_shot_selectors = normalize_shot_selectors(shot_selectors)
+        pending_scope = pending_expected_output_shot_ids(
+            state,
+            selected_episode_keys,
+        )
+        if pending_scope and not explicit_shot_selectors:
+            pending_count = sum(len(values) for values in pending_scope.values())
+            raise RuntimeError(
+                "expected_output_seconds now includes "
+                f"{pending_count} shot(s) whose keyframe/manifest chain is pending; "
+                "run pregen through shot_manifest_generation, then generation, before postgen"
+            )
+        effective_shot_selectors = set(explicit_shot_selectors)
+        automatic_output_scope = False
+        if (
+            not explicit_shot_selectors
+            and self.repo.settings.generation.expected_output_seconds > 0
+        ):
+            effective_shot_selectors, selections = configured_output_shot_ids(
+                self.repo,
+                project_dir,
+                selected_episode_keys,
+            )
+            automatic_output_scope = True
+            state.metadata["expected_output_selection_path"] = self.layout.project_relative(
+                project_dir,
+                self.layout.expected_output_selection_path(project_dir),
+            )
+            logger.info(
+                "workflow=postgen automatic_output_scope expected_seconds=%d episodes=%s",
+                self.repo.settings.generation.expected_output_seconds,
+                ";".join(
+                    f"{item.episode_key}:{item.selected_clip_count}/{item.total_clip_count}"
+                    f" clips,{item.planned_output_seconds:.3f}s"
+                    for item in selections
+                ),
+            )
+        if scope_sync.config_changed:
+            logger.info(
+                "workflow=postgen expected_output_scope changed %s->%s added_shots=%d removed_shots=%d invalidated=%s",
+                scope_sync.previous_expected_output_seconds,
+                scope_sync.expected_output_seconds,
+                sum(len(values) for values in scope_sync.added_shot_ids_by_episode.values()),
+                sum(len(values) for values in scope_sync.removed_shot_ids_by_episode.values()),
+                ",".join(scope_sync.invalidated_nodes) or "-",
+            )
         logger.info(
-            "workflow=postgen project_id=%s until=%s only=%s force=%s episodes=%s shots=%s",
+            "workflow=postgen project_id=%s until=%s only=%s force=%s episodes=%s shots=%s scope=%s",
             state.project_id,
             until,
             only or "-",
             force,
             ",".join(selected_episode_keys) or "-",
-            ",".join(shot_selectors or []) or "-",
+            ",".join(sorted(effective_shot_selectors)) or "-",
+            "expected_output_seconds" if automatic_output_scope else (
+                "explicit" if explicit_shot_selectors else "all"
+            ),
         )
 
         previous_context = getattr(self, "_run_context", None)
@@ -116,7 +176,8 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
             only=only,
             force=force,
             selected_episode_keys=selected_episode_keys,
-            shot_selectors=normalize_shot_selectors(shot_selectors),
+            shot_selectors=effective_shot_selectors,
+            automatic_output_scope=automatic_output_scope,
             burn_subtitles=self.repo.settings.postgen.burn_subtitles,
         )
         try:
@@ -181,7 +242,10 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
         return project_dir / "outputs" / "videos" / f"{episode_key}_voice_aligned.mp4"
 
     def _final_video_path(self, project_dir: Path, episode_key: str) -> Path:
-        return project_dir / "outputs" / "videos" / f"{episode_key}_postgen.mp4"
+        return project_dir / "outputs" / "videos" / f"{episode_key}_preview.mp4"
+
+    def _deliverable_video_path(self, project_dir: Path, episode_key: str) -> Path:
+        return project_dir / "outputs" / "videos" / f"{episode_key}_deliverable.mp4"
 
     def _audio_manifest_path(self, project_dir: Path, episode_key: str, stage: str) -> Path:
         return self._json_dir(project_dir) / "audio" / stage / f"{episode_key}.json"
@@ -219,13 +283,16 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
     async def _run_postgen_source_collect(self, project_dir: Path, state: ProjectState, episode_keys: list[str]) -> ProjectState:
         outputs: list[dict[str, Any]] = []
         selectors = sorted(self._run_context.shot_selectors)
+        # max_source_clips_per_plan is a per-audit/model batch size, not a
+        # truncation rule for the deterministic source set.
+        max_clips = None
         for episode_key in episode_keys:
             clips, warnings = collect_episode_source_clips(
                 self.repo,
                 project_dir,
                 episode_key,
                 shot_selectors=selectors,
-                max_clips=self.repo.settings.postgen.max_source_clips_per_plan,
+                max_clips=max_clips,
             )
             path = self._source_clips_path(project_dir, episode_key)
             self.repo.write_json(path, {"episode_key": episode_key, "source_clips": [item.model_dump(mode="json") for item in clips], "warnings": warnings})
@@ -302,19 +369,59 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
                 )
                 mode = "disabled"
             else:
-                with log_context(node_name="postgen_source_audit", episode_key=episode_key):
-                    report = await audit_source_clips(
-                        provider,
-                        episode_key=episode_key,
-                        clips=clips,
-                        project_dir=project_dir,
-                        work_dir=self._tmp_dir(project_dir, episode_key, "source_audit"),
-                        settings=settings,
-                        ffmpeg_path=self.repo.settings.runtime.ffmpeg_path,
-                        source_transcripts=source_transcripts,
-                    )
+                batch_size = self.repo.settings.postgen.max_source_clips_per_plan
+                batches: list[list[PostgenSourceClip]] = []
+                start = 0
+                while start < len(clips):
+                    end = min(len(clips), start + batch_size)
+                    batches.append(clips[start:end])
+                    if end >= len(clips):
+                        break
+                    start = end - 1 if batch_size > 1 else end
+                reports: list[PostgenSourceAuditReport] = []
+                for batch_index, batch in enumerate(batches, start=1):
+                    with log_context(node_name="postgen_source_audit", episode_key=episode_key):
+                        batch_report = await audit_source_clips(
+                            provider,
+                            episode_key=episode_key,
+                            clips=batch,
+                            project_dir=project_dir,
+                            work_dir=self._tmp_dir(
+                                project_dir,
+                                episode_key,
+                                f"source_audit/batch_{batch_index:03d}",
+                            ),
+                            settings=settings,
+                            ffmpeg_path=self.repo.settings.runtime.ffmpeg_path,
+                            source_transcripts=source_transcripts,
+                        )
+                    self._validate_source_audit(batch_report, batch)
+                    reports.append(batch_report)
+                audit_by_shot = {
+                    item.shot_id: item
+                    for batch_report in reports
+                    for item in batch_report.clips
+                }
+                report = PostgenSourceAuditReport(
+                    episode_key=episode_key,
+                    clips=[
+                        audit_by_shot[clip.shot_id]
+                        for clip in clips
+                        if clip.shot_id in audit_by_shot
+                    ],
+                    continuity_notes=[
+                        note
+                        for batch_report in reports
+                        for note in batch_report.continuity_notes
+                    ],
+                    overall_notes=" | ".join(
+                        batch_report.overall_notes
+                        for batch_report in reports
+                        if batch_report.overall_notes
+                    ),
+                )
                 self._validate_source_audit(report, clips)
-                mode = "gemini"
+                mode = "gemini_batched" if len(batches) > 1 else "gemini"
             path = self._source_audit_path(project_dir, episode_key)
             self.repo.write_json(path, report)
             outputs.append({"episode_key": episode_key, "path": self._relative(project_dir, path), "mode": mode})
@@ -655,6 +762,8 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
                 "ass_path": self._relative(project_dir, ass_path) if ass_path.exists() else None,
                 "output_video_path": self._relative(project_dir, output),
                 "subtitles_burned": burned,
+                "quality_tier": "review_preview",
+                "deliverable": False,
             }
             self.repo.write_json(self._subtitle_manifest_path(project_dir, episode_key), manifest)
             outputs.append(manifest)
@@ -687,7 +796,24 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
                 mode = "gemini"
             path = self._final_audit_path(project_dir, episode_key)
             self.repo.write_json(path, report)
-            outputs.append({"episode_key": episode_key, "path": self._relative(project_dir, path), "mode": mode, "verdict": report.verdict, "score": report.score})
+            deliverable_path = None
+            if report.verdict == "pass":
+                deliverable = self._deliverable_video_path(project_dir, episode_key)
+                deliverable.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(self._final_video_path(project_dir, episode_key), deliverable)
+                deliverable_path = self._relative(project_dir, deliverable)
+            outputs.append(
+                {
+                    "episode_key": episode_key,
+                    "path": self._relative(project_dir, path),
+                    "mode": mode,
+                    "verdict": report.verdict,
+                    "score": report.score,
+                    "deliverable": deliverable_path is not None,
+                    "deliverable_video_path": deliverable_path,
+                    "preview_video_path": self._relative(project_dir, self._final_video_path(project_dir, episode_key)),
+                }
+            )
             if settings.fail_on_reject and report.verdict == "fail":
                 raise RuntimeError(f"final Gemini audit rejected {episode_key}; see {path}")
         self.repo.save_node_output(project_dir, "postgen_final_audit", {"episodes": outputs})

@@ -15,6 +15,7 @@ class WorkflowRunContext:
     selected_role_names: list[str] | None = None
     shot_selectors: set[str] = field(default_factory=set)
     clip_selectors: set[str] = field(default_factory=set)
+    automatic_output_scope: bool = False
     burn_subtitles: bool = True
 
     def episode_selected(self, episode_key: str) -> bool:

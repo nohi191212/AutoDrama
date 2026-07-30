@@ -34,6 +34,9 @@ class ProjectLayout:
     def node_episode_output_path(self, project_dir: Path, node_name: str, episode_key: str) -> Path:
         return project_dir / "assets" / "json" / "nodes" / node_name / f"{episode_key}.json"
 
+    def expected_output_selection_path(self, project_dir: Path) -> Path:
+        return project_dir / "assets" / "json" / "expected_output_selection.json"
+
     def dynamic_assets_index_path(self, project_dir: Path) -> Path:
         return project_dir / "assets" / "json" / "assets" / "dynamic_assets.json"
 

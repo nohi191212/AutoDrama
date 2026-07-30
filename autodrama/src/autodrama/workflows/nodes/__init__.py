@@ -60,8 +60,10 @@ DEFERRED_PREGEN_NODE_NAMES = [
 
 
 def _image_audits_enabled(workflow: Any) -> bool:
-    settings = getattr(workflow, "settings", None) or getattr(getattr(workflow, "repo", None), "settings", None)
-    return bool(getattr(getattr(settings, "app", None), "enable_image_audit", True))
+    # Visual acceptance is a required delivery gate.  The historical switch
+    # only disabled optional audits; it may no longer bypass required gates.
+    del workflow
+    return True
 
 
 def build_pregen_nodes(workflow: Any) -> list[WorkflowNode]:

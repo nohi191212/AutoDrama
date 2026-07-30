@@ -33,6 +33,13 @@ async def main() -> None:
     settings = Settings(
         project=ProjectSettings(id="script_novel_extract_parallel_smoke", title="Smoke", episode_count=3),
         output=OutputSettings(root_dir=output_root),
+        generation={
+            "visual_style": {
+                "schema_version": 2,
+                "medium": "smoke_fixture",
+                "render_engine_language": ["Deterministic script smoke fixture."],
+            }
+        },
     )
     repo = ProjectRepository(settings)
     project_dir = repo.create_project(

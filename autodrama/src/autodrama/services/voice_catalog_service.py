@@ -35,7 +35,7 @@ class VoiceCatalogService:
     def __init__(self, repo: VoiceCatalogRepository) -> None:
         self.repo = repo
 
-    PROFILE_PROMPT_VERSION = "voice_catalog_profile.natural_sketch.v1"
+    PROFILE_PROMPT_VERSION = "voice_catalog_profile.structured_metadata.v2"
     PROFILE_BUILD_CONCURRENCY = 5
 
     @staticmethod
@@ -381,27 +381,11 @@ class VoiceCatalogService:
 
     @staticmethod
     def _voice_language_key(voice: VoiceCatalogVoiceItem) -> str:
-        language = str(voice.official.get("language") or "").casefold()
-        voice_type = voice.voice_type.casefold()
-        label = voice.voice_label.casefold()
-        text = " ".join([language, label])
-        if voice_type.startswith(("zh_", "icl_zh_")):
-            return "zh"
-        if voice_type.startswith(("en_", "icl_en_")):
-            return "en"
-        if voice_type.startswith(("ja_", "jp_", "icl_ja_", "icl_jp_")):
-            return "ja"
-        if voice_type.startswith(("es_", "icl_es_")):
-            return "es"
-        if "中文" in text or "汉语" in text or "chinese" in text:
-            return "zh"
-        if "英语" in text or "english" in text:
-            return "en"
-        if "日语" in text or "日文" in text or "japanese" in text:
-            return "ja"
-        if "西语" in text or "西班牙" in text or "spanish" in text:
-            return "es"
-        return "zh"
+        if voice.language != "unspecified":
+            return voice.language
+        if voice.omni_profile is not None:
+            return voice.omni_profile.language
+        return "unspecified"
 
     @classmethod
     def _sample_text_for_voice(cls, voice: VoiceCatalogVoiceItem, emotion: str) -> str:
@@ -537,10 +521,22 @@ class VoiceCatalogService:
         profile_prompt_version: str = PROFILE_PROMPT_VERSION,
     ) -> str:
         payload = {
-            "voice_label": voice.voice_label,
             "voice_type": voice.voice_type,
             "voice_resource_id": voice.voice_resource_id,
-            "official": voice.official,
+            "voice_model_family": voice.voice_model_family,
+            "language": voice.language,
+            "gender_presentation": voice.gender_presentation,
+            "official_capabilities": {
+                key: voice.official.get(key)
+                for key in (
+                    "abilities",
+                    "emotion_capable",
+                    "supported_emotions",
+                    "model_family",
+                    "resource_id",
+                )
+                if key in voice.official
+            },
             "samples": {
                 emotion: sample.sample_hash
                 for emotion, sample in sorted(voice.samples.items())
@@ -551,6 +547,20 @@ class VoiceCatalogService:
         }
         data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def profile_official_metadata(voice: VoiceCatalogVoiceItem) -> dict[str, Any]:
+        """Expose official structured metadata without display labels or inferred semantics."""
+
+        return {
+            "language": voice.language,
+            "gender_presentation": voice.gender_presentation,
+            "model_family": voice.voice_model_family,
+            "abilities": voice.official.get("abilities") or [],
+            "emotion_capable": bool(voice.official.get("emotion_capable")),
+            "supported_emotions": voice.official.get("supported_emotions") or [],
+            "metadata_sources": voice.metadata_sources,
+        }
 
     @staticmethod
     def profile_sample_ref_payload(refs: list[AssetRef]) -> list[dict[str, Any]]:
@@ -587,6 +597,54 @@ class VoiceCatalogService:
                 )
             )
         return refs
+
+    @staticmethod
+    def _profile_with_provenance(
+        voice: VoiceCatalogVoiceItem,
+        profile: VoiceCatalogProfile,
+    ) -> VoiceCatalogProfile:
+        sources = dict(profile.field_sources)
+        for field_name in (
+            "language",
+            "gender_presentation",
+            "age_impression",
+            "texture",
+            "performance_style",
+            "strengths",
+            "weaknesses",
+            "best_role_types",
+            "avoid_role_types",
+            "emotion_quality",
+        ):
+            value = getattr(profile, field_name)
+            if value not in (None, "", "unspecified", [], {}):
+                sources.setdefault(field_name, "audio_judge")
+
+        conflicts = list(profile.conflicts)
+        if (
+            voice.language != "unspecified"
+            and profile.language != "unspecified"
+            and voice.language != profile.language
+        ):
+            conflicts.append(
+                f"language: official_metadata={voice.language}, audio_judge={profile.language}"
+            )
+        if (
+            voice.gender_presentation != "unspecified"
+            and profile.gender_presentation != "unspecified"
+            and voice.gender_presentation != profile.gender_presentation
+        ):
+            conflicts.append(
+                "gender_presentation: "
+                f"official_metadata={voice.gender_presentation}, "
+                f"audio_judge={profile.gender_presentation}"
+            )
+        return profile.model_copy(
+            update={
+                "field_sources": sources,
+                "conflicts": list(dict.fromkeys(conflicts)),
+            }
+        )
 
     async def build_profiles(
         self,
@@ -636,7 +694,11 @@ class VoiceCatalogService:
             sample_refs = self.profile_sample_ref_payload(refs)
             prompt = prompts.render(
                 "voice_catalog_profile",
-                official_metadata=json.dumps(updated_voice.official, ensure_ascii=False, indent=2),
+                official_metadata=json.dumps(
+                    self.profile_official_metadata(updated_voice),
+                    ensure_ascii=False,
+                    indent=2,
+                ),
                 sample_refs=json.dumps(sample_refs, ensure_ascii=False, indent=2),
             )
             profile_jobs.append(
@@ -667,7 +729,7 @@ class VoiceCatalogService:
                         "voice_label": updated_voice.voice_label,
                     },
                 )
-            updated_voice.omni_profile = profile
+            updated_voice.omni_profile = self._profile_with_provenance(updated_voice, profile)
             updated_voice.profile_hash = job["profile_hash"]
             self.repo.save_voice_profile(
                 manifest,
@@ -732,136 +794,35 @@ class VoiceCatalogService:
         )
 
     @staticmethod
-    def _role_text(role: Role) -> str:
-        audio_text = " ".join(
-            " ".join(
-                str(value or "")
-                for value in (audio.emotion, audio.desc, audio.sample_text)
-            )
-            for audio in role.audio.values()
-        )
-        return " ".join(
-            str(value or "")
-            for value in (
-                role.name,
-                role.intro,
-                role.personality,
-                role.voice_summary,
-                role.importance,
-                audio_text,
-            )
-        )
-
-    @staticmethod
-    def _infer_role_gender(role_text: str) -> str | None:
-        female_markers = (
-            "女性",
-            "女声",
-            "女主",
-            "女孩",
-            "少女",
-            "母亲",
-            "妈妈",
-            "妻子",
-            "姐姐",
-            "妹妹",
-            "她",
-        )
-        male_markers = (
-            "男性",
-            "男声",
-            "男主",
-            "青年男",
-            "父亲",
-            "爸爸",
-            "丈夫",
-            "哥哥",
-            "弟弟",
-            "主管",
-            "他",
-        )
-        female_score = sum(1 for marker in female_markers if marker in role_text)
-        male_score = sum(1 for marker in male_markers if marker in role_text)
-        if female_score > male_score:
-            return "female"
-        if male_score > female_score:
-            return "male"
-        return None
-
-    @staticmethod
-    def _voice_gender(voice: VoiceCatalogVoiceItem) -> str | None:
-        gender = str(voice.official.get("gender") or "").strip().lower()
-        label = voice.voice_label.lower()
-        voice_type = voice.voice_type.lower()
-        gender_text = " ".join([gender, label, voice_type])
-        if gender in {"female", "woman", "girl", "女", "女性", "女声"}:
-            return "female"
-        if gender in {"male", "man", "boy", "男", "男性", "男声"}:
-            return "male"
-        if any(marker in gender_text for marker in ("female", "woman", "girl", "女", "女生", "少女", "御姐")):
-            return "female"
-        if any(
-            marker in gender_text
-            for marker in ("male", " man ", "boy", "男", "男生", "少年", "青年", "青叔", "大叔", "叔", "爷")
-        ):
-            return "male"
-        if voice.voice_type.startswith("zh_female"):
-            return "female"
-        if voice.voice_type.startswith("zh_male"):
-            return "male"
-        return None
-
-    @staticmethod
-    def _profile_text(voice: VoiceCatalogVoiceItem) -> str:
-        parts: list[str] = [
-            voice.voice_label,
-            voice.voice_type,
-            str(voice.official.get("scene") or ""),
-            str(voice.official.get("language") or ""),
-            " ".join(str(item) for item in voice.official.get("abilities") or []),
-            " ".join(str(item) for item in voice.official.get("tags") or []),
-        ]
-        if voice.omni_profile:
-            profile = voice.omni_profile
-            parts.extend(
-                [
-                    profile.summary,
-                    profile.gender_presentation or "",
-                    profile.age_impression or "",
-                    " ".join(profile.texture),
-                    " ".join(profile.performance_style),
-                    " ".join(profile.best_role_types),
-                    " ".join(profile.avoid_role_types),
-                ]
-            )
-        return " ".join(parts)
+    def _voice_gender(voice: VoiceCatalogVoiceItem) -> str:
+        if voice.gender_presentation != "unspecified":
+            return voice.gender_presentation
+        if voice.omni_profile is not None:
+            return voice.omni_profile.gender_presentation
+        return "unspecified"
 
     @staticmethod
     def _voice_is_doubao_2_0(voice: VoiceCatalogVoiceItem) -> bool:
         official = voice.official
-        values = [
+        resource_ids = [
             voice.voice_resource_id,
-            voice.voice_model_family,
             official.get("resource_id"),
             official.get("voice_resource_id"),
-            official.get("model_family"),
-            official.get("voice_model_family"),
         ]
-        text = " ".join(str(value or "") for value in values)
-        return "seed-tts-2.0" in text or "豆包语音合成模型2.0" in text
+        return any(str(value or "").strip().casefold() == "seed-tts-2.0" for value in resource_ids)
 
     def role_voice_select_candidate_pool(
         self,
         role: Role,
         manifest: VoiceCatalogManifest,
     ) -> tuple[list[VoiceCandidateItem], dict[str, Any]]:
-        role_text = self._role_text(role)
-        role_gender = self._infer_role_gender(role_text)
+        requirements = role.voice_requirements
+        role_gender = requirements.gender_presentation
+        role_language = requirements.language
         require_doubao_2 = str(manifest.provider or "").strip().lower() == "volcengine"
         skipped = {
             "not_auto_selectable": 0,
-            "non_chinese": 0,
-            "unknown_gender": 0,
+            "language_mismatch": 0,
             "gender_mismatch": 0,
             "non_doubao_2_0": 0,
         }
@@ -870,17 +831,22 @@ class VoiceCatalogService:
             if voice.official.get("auto_selectable") is False:
                 skipped["not_auto_selectable"] += 1
                 continue
-            if self._voice_language_key(voice) != "zh":
-                skipped["non_chinese"] += 1
+            voice_language = self._voice_language_key(voice)
+            if (
+                role_language != "unspecified"
+                and voice_language != "unspecified"
+                and role_language != voice_language
+            ):
+                skipped["language_mismatch"] += 1
                 continue
             voice_gender = self._voice_gender(voice)
-            if role_gender:
-                if voice_gender is None:
-                    skipped["unknown_gender"] += 1
-                    continue
-                if role_gender != voice_gender:
-                    skipped["gender_mismatch"] += 1
-                    continue
+            if (
+                role_gender != "unspecified"
+                and voice_gender != "unspecified"
+                and role_gender != voice_gender
+            ):
+                skipped["gender_mismatch"] += 1
+                continue
             if require_doubao_2 and not self._voice_is_doubao_2_0(voice):
                 skipped["non_doubao_2_0"] += 1
                 continue
@@ -898,12 +864,13 @@ class VoiceCatalogService:
             for position, (score, _index, voice, reason) in enumerate(scored, start=1)
         ]
         metadata = {
-            "role_gender": role_gender or "unknown",
-            "require_language": "zh",
-            "require_same_gender": bool(role_gender),
+            "role_gender": role_gender,
+            "require_language": role_language,
+            "require_same_gender": role_gender != "unspecified",
             "require_doubao_2_0": require_doubao_2,
             "candidate_count": len(candidates),
             "skipped": skipped,
+            "voice_contract_version": requirements.schema_version,
         }
         return candidates, metadata
 
@@ -928,7 +895,7 @@ class VoiceCatalogService:
             "candidate_id": candidate.candidate_id,
             "voice_label": candidate.voice_label,
             "voice_type": candidate.voice_type,
-            "gender": VoiceCatalogService._voice_gender(voice),
+            "gender_presentation": VoiceCatalogService._voice_gender(voice),
             "language": VoiceCatalogService._voice_language_key(voice),
             "model_family": voice.voice_model_family or official.get("model_family"),
             "scene": official.get("scene"),
@@ -957,47 +924,43 @@ class VoiceCatalogService:
         return profiles
 
     def score_voice_for_role(self, role: Role, voice: VoiceCatalogVoiceItem) -> tuple[float, str]:
-        role_text = self._role_text(role)
-        profile_text = self._profile_text(voice)
         score = 5.0
         reasons: list[str] = []
 
-        role_gender = self._infer_role_gender(role_text)
+        requirements = role.voice_requirements
+        role_gender = requirements.gender_presentation
         voice_gender = self._voice_gender(voice)
-        if role_gender and voice_gender:
-            if role_gender == voice_gender:
-                score += 2.0
-                reasons.append("性别呈现匹配")
-            else:
-                score -= 3.0
-                reasons.append("性别呈现可能不匹配")
+        if role_gender != "unspecified" and voice_gender == role_gender:
+            score += 2.0
+            reasons.append("结构化性别呈现匹配")
+
+        voice_language = self._voice_language_key(voice)
+        if requirements.language != "unspecified" and voice_language == requirements.language:
+            score += 1.0
+            reasons.append("结构化语言匹配")
+
+        profile = voice.omni_profile
+        if (
+            profile is not None
+            and requirements.age_impression != "unspecified"
+            and profile.age_impression == requirements.age_impression
+        ):
+            score += 0.8
+            reasons.append("结构化年龄感匹配")
 
         official = voice.official
         if official.get("emotion_capable") or official.get("supported_emotions"):
             score += 0.7
             reasons.append("官方标注支持情绪变化")
-        if any(key in role_text for key in ("克制", "冷静", "理性", "沉稳")) and any(
-            key in profile_text for key in ("清晰", "稳定", "通用", "理性", "自然")
-        ):
-            score += 0.6
-            reasons.append("适合克制自然的短剧对白")
-        if any(key in role_text for key in ("强势", "压迫", "反派", "主管", "控制")) and any(
-            key in profile_text for key in ("低沉", "成熟", "力量", "情感")
-        ):
-            score += 0.6
-            reasons.append("可能适合强势或压迫型角色")
-        if voice.omni_profile and voice.omni_profile.avoid_role_types:
-            avoid_hits = [
-                item
-                for item in voice.omni_profile.avoid_role_types
-                if item and item in role_text
-            ]
-            if avoid_hits:
-                score -= 1.0
-                reasons.append("画像中存在规避角色类型")
+        if profile is not None and profile.emotion_quality:
+            score += min(1.0, sum(profile.emotion_quality.values()) / len(profile.emotion_quality) / 10.0)
+            reasons.append("结构化情绪样本质量可用")
+        if voice.samples:
+            score += min(0.5, len(voice.samples) * 0.1)
+            reasons.append("本地音频样本可用")
 
         if not reasons:
-            reasons.append("基于官方元数据和音色画像文本的基础匹配")
+            reasons.append("未设置可比较的结构化声音约束")
         return round(score, 2), "，".join(reasons) + "。"
 
     def shortlist(self, role: Role, manifest: VoiceCatalogManifest, *, limit: int = 5) -> list[VoiceCandidateItem]:
@@ -1016,19 +979,8 @@ class VoiceCatalogService:
         return {
             "role_id": role.id,
             "role_name": role.name,
-            "intro": role.intro,
-            "personality": role.personality,
             "role_tier": role.role_tier,
-            "importance": role.importance,
-            "voice_summary": role.voice_summary,
-            "audio": [
-                {
-                    "emotion": audio.emotion,
-                    "desc": audio.desc,
-                    "sample_text": audio.sample_text,
-                }
-                for audio in role.audio.values()
-            ],
+            "voice_requirements": role.voice_requirements.model_dump(mode="json"),
         }
 
     def candidates_from_shortlist_output(
@@ -1158,9 +1110,7 @@ class VoiceCatalogService:
             voice_type = resolver(
                 role_id=role.id,
                 role_name=role.name,
-                role_intro=role.intro,
-                role_voice_summary=role.voice_summary,
-                role_personality=role.personality,
+                voice_requirements=role.voice_requirements.model_dump(mode="json"),
             )
         if not voice_type:
             voice_type = getattr(provider, "default_speaker", None)

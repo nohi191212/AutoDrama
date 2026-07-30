@@ -30,7 +30,12 @@ from autodrama.workflows.context import WorkflowRunContext
 from autodrama.workflows.dynamic_assets import DynamicAssetNodeMixin
 from autodrama.workflows.generation_tasks import load_generation_tasks, save_generation_tasks
 from autodrama.workflows.nodes import GENERATION_NODE_NAMES, build_generation_episode_nodes
-from autodrama.workflows.selection import sort_episode_keys_in_story_order
+from autodrama.workflows.output_scope import (
+    configured_output_shot_ids,
+    pending_expected_output_shot_ids,
+    synchronize_expected_output_scope,
+)
+from autodrama.workflows.selection import normalize_shot_selectors, sort_episode_keys_in_story_order
 
 GENERATION_NODES = GENERATION_NODE_NAMES
 
@@ -228,9 +233,14 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                 f"- @role_{role_index} 是角色“{role.name}”的身份板；"
                 "仅用于保持脸、发型、体型、服装和整体造型一致。"
             )
-        if shot.dialogue:
+        if shot.dialogue_lines:
             lines.append("对白必须按以下顺序和角色归属逐字说出；角色依次说话，不要抢词、串音或互换音色：")
-            lines.extend(f"- {str(line).strip()}" for line in shot.dialogue if str(line).strip())
+            for line in shot.dialogue_lines:
+                speaker = state.roles.get(line.speaker_role_id) if line.speaker_role_id else None
+                speaker_label = speaker.name if speaker is not None else (line.speaker_name or "未指定说话人")
+                lines.append(
+                    f"- {speaker_label}（{line.delivery_mode}，{line.emotion}）：{line.text}"
+                )
         lines.append(
             "以镜头关键帧为构图、机位和剧情状态锚点；仅延续关键帧中已有画面元素，"
             "禁止新增、重绘、强化、显现或变形出任何文字、字幕、标语、logo、水印或假文字。"
@@ -457,8 +467,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         episode_key: str,
     ) -> ShotVideoGenerationOutput:
         episode = self._load_shot_manifest(project_dir, episode_key)
-        if episode.schema_version != 4:
-            raise ValueError("shot_video_generation requires the schema_version=4 shot manifest")
+        if episode.schema_version != 5:
+            raise ValueError("shot_video_generation requires the schema_version=5 shot manifest")
         previous = getattr(self, "_active_video_node_name", None)
         self._active_video_node_name = "shot_video_generation"
         try:
@@ -502,12 +512,19 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         logger = setup_logging(project_dir)
         self.router.set_prompt_audit_project_dir(project_dir)
         state = self.repo.load_state(project_dir)
+        scope_sync = synchronize_expected_output_scope(
+            self.repo,
+            project_dir,
+            state,
+            self._expected_episode_keys(state),
+        )
         self._apply_script_plan_settings(state)
         self._hydrate_roles_from_design_files(project_dir, state)
         if only is None and target_nodes and target_nodes[-1] != "shot_dialogue_audio_generation":
             shot_provider = self.router.video("shot", node_name="shot_video_generation")
             if bool(getattr(shot_provider, "supports_kling_omni_placeholders", False)):
                 target_nodes = [node for node in target_nodes if node != "shot_dialogue_audio_generation"]
+        explicit_shot_selectors = normalize_shot_selectors(shot_selectors)
         selected_episode_keys, checklist = selected_episode_keys_from_checklist(
             self.repo,
             project_dir,
@@ -529,16 +546,64 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             raise ValueError(f"Unknown episode keys: {', '.join(unknown_episode_keys)}")
         selected_episode_keys = self._sort_episode_keys_in_story_order(state, selected_episode_keys)
         selected_set = set(selected_episode_keys)
+        pending_scope = pending_expected_output_shot_ids(
+            state,
+            selected_episode_keys,
+        )
+        if pending_scope and not explicit_shot_selectors:
+            pending_count = sum(len(values) for values in pending_scope.values())
+            raise RuntimeError(
+                "expected_output_seconds now includes "
+                f"{pending_count} shot(s) whose keyframe/manifest chain is pending; "
+                "run pregen through shot_manifest_generation before generation"
+            )
+        effective_shot_selectors = set(explicit_shot_selectors)
+        automatic_output_scope = False
+        if (
+            not explicit_shot_selectors
+            and self.repo.settings.generation.expected_output_seconds > 0
+        ):
+            effective_shot_selectors, selections = configured_output_shot_ids(
+                self.repo,
+                project_dir,
+                selected_episode_keys,
+            )
+            automatic_output_scope = True
+            state.metadata["expected_output_selection_path"] = self.layout.project_relative(
+                project_dir,
+                self.layout.expected_output_selection_path(project_dir),
+            )
+            logger.info(
+                "workflow=generation automatic_output_scope expected_seconds=%d episodes=%s",
+                self.repo.settings.generation.expected_output_seconds,
+                ";".join(
+                    f"{item.episode_key}:{item.selected_clip_count}/{item.total_clip_count}"
+                    f" clips,{item.planned_output_seconds:.3f}s"
+                    for item in selections
+                ),
+            )
+        if scope_sync.config_changed:
+            logger.info(
+                "workflow=generation expected_output_scope changed %s->%s added_shots=%d removed_shots=%d invalidated=%s",
+                scope_sync.previous_expected_output_seconds,
+                scope_sync.expected_output_seconds,
+                sum(len(values) for values in scope_sync.added_shot_ids_by_episode.values()),
+                sum(len(values) for values in scope_sync.removed_shot_ids_by_episode.values()),
+                ",".join(scope_sync.invalidated_nodes) or "-",
+            )
 
         run_outputs = self._empty_run_outputs(target_nodes)
         logger.info(
-            "workflow=generation project_id=%s until=%s only=%s force=%s episodes=%s shots=%s",
+            "workflow=generation project_id=%s until=%s only=%s force=%s episodes=%s shots=%s scope=%s",
             state.project_id,
             until,
             only or "-",
             force,
             ",".join(selected_episode_keys),
-            ",".join(shot_selectors or []) or "-",
+            ",".join(sorted(effective_shot_selectors)) or "-",
+            "expected_output_seconds" if automatic_output_scope else (
+                "explicit" if explicit_shot_selectors else "all"
+            ),
         )
 
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
@@ -552,19 +617,12 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             only=only,
             force=force,
             selected_episode_keys=selected_episode_keys,
-            shot_selectors={
-                str(selector).strip().lower().replace("-", "_")
-                for selector in shot_selectors or []
-                if str(selector).strip()
-            },
+            shot_selectors=effective_shot_selectors,
+            automatic_output_scope=automatic_output_scope,
         )
         self._force_generation = bool(force)
-        if shot_selectors:
-            self._active_shot_selectors = {
-                str(selector).strip().lower().replace("-", "_")
-                for selector in shot_selectors
-                if str(selector).strip()
-            }
+        if effective_shot_selectors:
+            self._active_shot_selectors = set(effective_shot_selectors)
         elif hasattr(self, "_active_shot_selectors"):
             delattr(self, "_active_shot_selectors")
         try:
@@ -609,7 +667,10 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
                     )
                     logger.exception("episode %s failed", episode_key)
                     raise
-                if target_nodes[-1] == GENERATION_NODES[-1]:
+                if (
+                    target_nodes[-1] == GENERATION_NODES[-1]
+                    and not explicit_shot_selectors
+                ):
                     update_checklist_from_state(
                         self.repo,
                         project_dir,
@@ -640,7 +701,12 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
             else:
                 self._run_context = previous_run_context
 
-        processed_episode_keys = selected_set if target_nodes[-1] == GENERATION_NODES[-1] else None
+        processed_episode_keys = (
+            selected_set
+            if target_nodes[-1] == GENERATION_NODES[-1]
+            and not explicit_shot_selectors
+            else None
+        )
         update_checklist_from_state(
             self.repo,
             project_dir,

@@ -70,16 +70,19 @@ def write_ass(
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
         f"0,0,0,0,100,100,0,0,1,2,1,2,60,60,{margin_v},1",
+        f"Style: Overlay,{font_name},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
+        "0,0,0,0,100,100,0,0,1,2,1,5,60,60,60,1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     for cue in plan.subtitle_cues:
         text = ass_escape(subtitle_text(cue))
+        style = "Overlay" if getattr(cue, "cue_type", "dialogue") == "overlay" else "Default"
         lines.append(
             "Dialogue: "
             f"0,{ass_time(cue.start_time)},{ass_time(cue.end_time)},"
-            f"Default,,0,0,0,,{text}"
+            f"{style},,0,0,0,,{text}"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

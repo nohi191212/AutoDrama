@@ -34,7 +34,7 @@ class AssetService:
 
     @staticmethod
     def visual_tone(state: ProjectState) -> str:
-        return str(state.metadata.get("visual_tone") or "").strip()
+        return DirectorService.visual_style_prompt(state)
 
     @classmethod
     def clip_segments_context(cls, state: ProjectState, episode_keys: list[str] | None = None) -> str:

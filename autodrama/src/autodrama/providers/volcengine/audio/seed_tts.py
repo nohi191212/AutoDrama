@@ -236,9 +236,7 @@ class VolcengineSeedTTSProvider:
         *,
         role_id: str,
         role_name: str,
-        role_intro: str | None = None,
-        role_voice_summary: str | None = None,
-        role_personality: str | None = None,
+        voice_requirements: dict[str, Any] | None = None,
     ) -> str:
         role_speakers = self.settings.options.get("role_speakers")
         if isinstance(role_speakers, dict):
@@ -246,15 +244,16 @@ class VolcengineSeedTTSProvider:
                 if key and role_speakers.get(key):
                     return str(role_speakers[key])
 
-        hint = " ".join(
-            item
-            for item in (role_name, role_intro, role_voice_summary, role_personality)
-            if item
-        )
-        gender_hint = self._infer_gender_hint(hint)
-        if gender_hint == "female":
+        requirements = voice_requirements if isinstance(voice_requirements, dict) else {}
+        gender_presentation = requirements.get("gender_presentation")
+        configured_defaults = self.settings.options.get("default_speakers_by_gender_presentation")
+        if isinstance(configured_defaults, dict):
+            configured_voice = configured_defaults.get(gender_presentation)
+            if configured_voice:
+                return str(configured_voice)
+        if gender_presentation == "female":
             return self.default_female_speaker
-        if gender_hint == "male":
+        if gender_presentation == "male":
             return self.default_male_speaker
         return self.default_speaker
 
@@ -465,49 +464,6 @@ class VolcengineSeedTTSProvider:
     def _normalize_emotion_key(cls, emotion: str) -> str:
         key = str(emotion or "normal").strip().lower()
         return cls._EMOTION_ALIASES.get(key, key or "normal")
-
-    @staticmethod
-    def _infer_gender_hint(text: str) -> str | None:
-        normalized = text.lower()
-        words = set(normalized.replace("/", " ").replace(",", " ").replace(";", " ").split())
-        female_words = {"female", "woman", "girl"}
-        male_words = {"male", "man", "boy"}
-        female_tokens = (
-            "女",
-            "她",
-            "母亲",
-            "妈妈",
-            "妻",
-            "姑娘",
-            "小姐",
-            "姐姐",
-            "妹妹",
-            "夫人",
-            "女孩",
-            "少女",
-        )
-        male_tokens = (
-            "男",
-            "他",
-            "父亲",
-            "爸爸",
-            "丈夫",
-            "哥哥",
-            "弟弟",
-            "先生",
-            "男孩",
-            "少年",
-            "叔",
-        )
-        female_score = sum(1 for token in female_words if token in words)
-        female_score += sum(1 for token in female_tokens if token in normalized)
-        male_score = sum(1 for token in male_words if token in words)
-        male_score += sum(1 for token in male_tokens if token in normalized)
-        if female_score > male_score:
-            return "female"
-        if male_score > female_score:
-            return "male"
-        return None
 
     @staticmethod
     def _parse_stream_event(line: str) -> dict[str, Any] | None:

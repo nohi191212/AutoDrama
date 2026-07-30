@@ -53,7 +53,7 @@ def build_postgen_edit_plan_prompt(
         '  "warnings": []\n'
         "}\n\n"
         "硬性约束：\n"
-        "- source_clips 数量必须是 1-9。\n"
+        "- source_clips 必须非空，并完整保留输入中的全部可用镜头。\n"
         "- timeline 每项 shot_id 必须来自 source_clips。\n"
         "- 0 <= source_in < source_out <= 对应 source clip 的 duration_seconds。\n"
         "- speed 范围 0.5 到 2.0。\n"

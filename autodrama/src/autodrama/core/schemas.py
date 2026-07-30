@@ -1,11 +1,167 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, RootModel, model_validator
 
 ScriptContentRef = str | Literal[False]
+
+
+class SemanticProvenance(BaseModel):
+    """Traceable origin for a value produced at a semantic extraction boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    source: Literal[
+        "user",
+        "model",
+        "official_metadata",
+        "migration",
+        "manual_review",
+    ]
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    model: str | None = None
+
+
+class VisualStyleSpec(BaseModel):
+    """Versioned, configuration-owned visual style contract."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[2] = 2
+    version: str = ""
+    medium: str = Field(min_length=1)
+    render_engine_language: list[str] = Field(default_factory=list)
+    materials: list[str] = Field(default_factory=list)
+    palette: list[str] = Field(default_factory=list)
+    lighting: list[str] = Field(default_factory=list)
+    camera: list[str] = Field(default_factory=list)
+    negative_constraints: list[str] = Field(default_factory=list)
+    source: Literal["yaml", "user_override", "migration"] = "yaml"
+
+    @model_validator(mode="after")
+    def normalize_and_fingerprint(self) -> "VisualStyleSpec":
+        self.medium = self.medium.strip()
+        if not self.medium:
+            raise ValueError("visual_style.medium must not be blank")
+        for field_name in (
+            "render_engine_language",
+            "materials",
+            "palette",
+            "lighting",
+            "camera",
+            "negative_constraints",
+        ):
+            normalized = list(
+                dict.fromkeys(
+                    text
+                    for value in getattr(self, field_name)
+                    if (text := " ".join(str(value).split()).strip())
+                )
+            )
+            setattr(self, field_name, normalized)
+        fingerprint_payload = self.model_dump(mode="json", exclude={"version"})
+        digest = hashlib.sha256(
+            json.dumps(fingerprint_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+        self.version = f"visual-style-v2-{digest}"
+        return self
+
+
+class ShotEntityState(BaseModel):
+    """Temporary entity state that is valid for one shot only."""
+
+    schema_version: Literal[1] = 1
+    entity_id: str
+    appearance_id: str | None = None
+    pose: str | None = None
+    emotion: str | None = None
+    injury: str | None = None
+    held_props: list[str] = Field(default_factory=list)
+    energy_state: str | None = None
+    event_refs: list[str] = Field(default_factory=list)
+
+
+class RoleVoiceRequirements(BaseModel):
+    """Versioned voice-casting requirements produced at a semantic boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[2] = 2
+    language: Literal["zh", "en", "ja", "es", "other", "unspecified"] = "unspecified"
+    gender_presentation: Literal["female", "male", "neutral", "unspecified"] = "unspecified"
+    age_impression: Literal[
+        "child",
+        "teen",
+        "young_adult",
+        "adult",
+        "mature",
+        "elderly",
+        "unspecified",
+    ] = "unspecified"
+    performance_traits: list[str] = Field(default_factory=list)
+    baseline_emotion: str | None = None
+    hard_constraints: list[str] = Field(default_factory=list)
+    provenance: SemanticProvenance = Field(
+        default_factory=lambda: SemanticProvenance(
+            source="migration",
+            evidence=["No structured voice requirements were provided."],
+            confidence=0.0,
+        )
+    )
+
+
+class DialogueLine(BaseModel):
+    """A single, explicitly attributed line of spoken dialogue."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    line_index: int = Field(ge=1)
+    speaker_role_id: str | None = None
+    speaker_name: str | None = None
+    text: str = Field(min_length=1)
+    emotion: Literal["normal", "angry", "sad", "happy", "tense", "whisper", "other"] = "normal"
+    intensity: float | None = Field(default=None, ge=0.0, le=1.0)
+    delivery_mode: Literal["on_screen", "offscreen", "voiceover"] = "on_screen"
+    source_text: str | None = None
+    provenance: SemanticProvenance
+
+
+class OverlayTextSpec(BaseModel):
+    """Exact readable text requested by shot planning."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    text: str = Field(min_length=1)
+    render_mode: Literal["postproduction", "in_scene"]
+    placement_hint: str | None = None
+    start_seconds: float | None = Field(default=None, ge=0.0)
+    end_seconds: float | None = Field(default=None, ge=0.0)
+    provenance: SemanticProvenance
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "OverlayTextSpec":
+        if (
+            self.start_seconds is not None
+            and self.end_seconds is not None
+            and self.end_seconds < self.start_seconds
+        ):
+            raise ValueError("overlay end_seconds must be greater than or equal to start_seconds")
+        return self
+
+
+class GateResult(BaseModel):
+    name: str
+    required: bool = True
+    status: Literal["accepted", "rejected", "skipped"]
+    details: str = ""
 
 
 class ScriptBundle(BaseModel):
@@ -17,6 +173,7 @@ class ScriptBundle(BaseModel):
         validation_alias=AliasChoices("novel_full", "novel_script"),
     )
     novel_extract: dict[str, ScriptContentRef] = Field(default_factory=dict)
+    facts: StoryFactBundle | None = None
 
 
 class RoleAudio(BaseModel):
@@ -40,6 +197,7 @@ class RoleAudio(BaseModel):
 
 
 class RoleAppearance(BaseModel):
+    schema_version: Literal[2] = 2
     id: str
     role_id: str
     name: str = "base"
@@ -48,6 +206,15 @@ class RoleAppearance(BaseModel):
     episode_keys: list[str] = Field(default_factory=list)
     source_chapters: list[str] = Field(default_factory=list)
     clothing: str | None = Field(default=None, exclude=True)
+    identity_invariants: list[str] = Field(default_factory=list)
+    wardrobe: list[str] = Field(default_factory=list)
+    time_period: str | None = None
+    age_band: str | None = None
+    valid_from_event: str | None = None
+    valid_to_event: str | None = None
+    provenance: SemanticProvenance | None = None
+    migration_warnings: list[str] = Field(default_factory=list)
+    legacy_source: str | None = Field(default=None, exclude=True)
     visual_features: str | None = None
     desc: str | None = None
     prompt: str | None = None
@@ -109,6 +276,7 @@ class Role(BaseModel):
     episode_keys: list[str] = Field(default_factory=list)
     source_chapters: list[str] = Field(default_factory=list)
     relationships: list[dict[str, Any]] = Field(default_factory=list)
+    voice_requirements: RoleVoiceRequirements = Field(default_factory=RoleVoiceRequirements)
     voice_summary: str | None = None
     voice_name: str | None = None
     voice_type: str | None = None
@@ -305,38 +473,221 @@ class NodeRecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
+class ScriptSourceSpan(BaseModel):
+    """A deterministic character and line range in the imported source script."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_char: int = Field(ge=0)
+    end_char: int = Field(gt=0)
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    quote: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "ScriptSourceSpan":
+        if self.end_char <= self.start_char:
+            raise ValueError("source span end_char must be greater than start_char")
+        if self.end_line < self.start_line:
+            raise ValueError("source span end_line must not precede start_line")
+        return self
+
+
+class StoryFactEntity(BaseModel):
+    """Stable, source-backed entity reference derived by workflow code."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str = Field(min_length=1)
+    entity_type: Literal["role", "prop", "layout", "group"]
+    name: str = Field(min_length=1)
+    time_periods: list[str] = Field(default_factory=list)
+    source_spans: list[ScriptSourceSpan] = Field(min_length=1)
+
+
+class StoryFactEvent(BaseModel):
+    """Narrative event with deterministic IDs and source spans."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    time_period: str | None = None
+    participant_entity_ids: list[str] = Field(default_factory=list)
+    prop_entity_ids: list[str] = Field(default_factory=list)
+    layout_entity_ids: list[str] = Field(default_factory=list)
+    precondition: str | None = None
+    result: str | None = None
+    source_spans: list[ScriptSourceSpan] = Field(min_length=1)
+
+
+class StoryFactPropObservation(BaseModel):
+    """A source-ordered prop appearance, transfer, or state transition."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    observation_id: str = Field(min_length=1)
+    prop_entity_id: str = Field(min_length=1)
+    prop_name: str = Field(min_length=1)
+    action: str = Field(min_length=1)
+    state: str | None = None
+    holder_entity_id: str | None = None
+    holder_name: str | None = None
+    time_period: str | None = None
+    event_id: str | None = None
+    source_spans: list[ScriptSourceSpan] = Field(min_length=1)
+
+
+class StoryFactBundle(BaseModel):
+    """The source-verifiable fact base produced by script_import."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    events: list[StoryFactEvent] = Field(min_length=1)
+    entity_mentions: list[StoryFactEntity] = Field(min_length=1)
+    prop_observations: list[StoryFactPropObservation] = Field(default_factory=list)
+    timeline_order: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_references(self) -> "StoryFactBundle":
+        event_ids = [event.event_id for event in self.events]
+        if len(set(event_ids)) != len(event_ids):
+            raise ValueError("story fact event IDs must be unique")
+        if self.timeline_order != event_ids:
+            raise ValueError("story fact timeline_order must match the source-ordered event IDs")
+        entity_ids = {entity.entity_id for entity in self.entity_mentions}
+        for event in self.events:
+            for entity_id in (
+                *event.participant_entity_ids,
+                *event.prop_entity_ids,
+                *event.layout_entity_ids,
+            ):
+                if entity_id not in entity_ids:
+                    raise ValueError(f"story fact event references unknown entity: {entity_id}")
+        for observation in self.prop_observations:
+            if observation.prop_entity_id not in entity_ids:
+                raise ValueError(
+                    f"story fact prop observation references unknown prop: {observation.prop_entity_id}"
+                )
+            if observation.holder_entity_id and observation.holder_entity_id not in entity_ids:
+                raise ValueError(
+                    "story fact prop observation references unknown holder: "
+                    f"{observation.holder_entity_id}"
+                )
+            if observation.event_id and observation.event_id not in event_ids:
+                raise ValueError(
+                    f"story fact prop observation references unknown event: {observation.event_id}"
+                )
+        return self
+
+
+class ScriptImportRoleStageOutput(BaseModel):
+    """A model-supplied, source-backed appearance stage for one role."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    time_period: str = Field(min_length=1)
+    appearance_notes: list[str] = Field(default_factory=list)
+    evidence_quotes: list[str] = Field(min_length=1)
+
+
 class ScriptImportRoleOutput(BaseModel):
+    """Stable role identity plus explicitly separated time-specific appearances."""
+
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     role_tier: Literal["primary", "functional"] | str = "primary"
     intro: str
     aliases: list[str] = Field(default_factory=list)
-    appearance_notes: list[str] = Field(default_factory=list)
+    identity_notes: list[str] = Field(default_factory=list)
+    appearance_stages: list[ScriptImportRoleStageOutput] = Field(default_factory=list)
     has_dialogue: bool = True
     visual_reuse_required: bool = True
-    evidence: str | None = None
+    evidence_quotes: list[str] = Field(min_length=1)
 
 
 class ScriptImportPropOutput(BaseModel):
+    """A stable prop identity; time-varying state lives in prop_observations."""
+
+    model_config = ConfigDict(extra="forbid")
+
     name: str
-    desc: str
-    status: str = "normal"
-    owner_role_name: str | None = None
-    evidence: str | None = None
+    identity_description: str = Field(min_length=1)
+    aliases: list[str] = Field(default_factory=list)
+    evidence_quotes: list[str] = Field(min_length=1)
 
 
 class ScriptImportLayoutOutput(BaseModel):
+    """A physical space identity, without actions or future visual state."""
+
+    model_config = ConfigDict(extra="forbid")
+
     name: str
-    desc: str
-    prompt: str
-    evidence: str | None = None
+    spatial_description: str = Field(min_length=1)
+    time_periods: list[str] = Field(default_factory=list)
+    evidence_quotes: list[str] = Field(min_length=1)
+
+
+class ScriptImportEntityMentionOutput(BaseModel):
+    """Model-supplied source evidence from which code creates stable entity IDs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    entity_type: Literal["role", "prop", "layout", "group"]
+    time_period: str | None = None
+    evidence_quotes: list[str] = Field(min_length=1)
+
+
+class ScriptImportEventOutput(BaseModel):
+    """Semantic event data; IDs and spans are generated by workflow code."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(min_length=1)
+    time_period: str | None = None
+    participant_names: list[str] = Field(default_factory=list)
+    prop_names: list[str] = Field(default_factory=list)
+    layout_names: list[str] = Field(default_factory=list)
+    precondition: str | None = None
+    result: str | None = None
+    evidence_quotes: list[str] = Field(min_length=1)
+
+
+class ScriptImportPropObservationOutput(BaseModel):
+    """A semantic prop occurrence with source evidence, before code assigns IDs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prop_name: str = Field(min_length=1)
+    action: str = Field(min_length=1)
+    state: str | None = None
+    holder_name: str | None = None
+    time_period: str | None = None
+    evidence_quotes: list[str] = Field(min_length=1)
+
+
+class ScriptImportFactsOutput(BaseModel):
+    """Model semantic output; all operational IDs and spans are code-owned."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    events: list[ScriptImportEventOutput] = Field(min_length=1)
+    entity_mentions: list[ScriptImportEntityMentionOutput] = Field(min_length=1)
+    prop_observations: list[ScriptImportPropObservationOutput] = Field(default_factory=list)
 
 
 class ScriptImportOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     outline: str
     episode_outlines: list[str] = Field(default_factory=list)
     roles: list[ScriptImportRoleOutput] = Field(default_factory=list)
     props: list[ScriptImportPropOutput] = Field(default_factory=list)
     layouts: list[ScriptImportLayoutOutput] = Field(default_factory=list)
+    facts: ScriptImportFactsOutput
     notes: str | None = None
 
 class ScriptOutlineOutput(BaseModel):
@@ -367,6 +718,11 @@ class ClipSegment(BaseModel):
     role_names: list[str] = Field(default_factory=list)
     prop_names: list[str] = Field(default_factory=list)
     layout_names: list[str] = Field(default_factory=list)
+    allocated_seconds: float | None = Field(default=None, gt=0)
+    event_ids: list[str] = Field(default_factory=list)
+    required_beats: list[str] = Field(default_factory=list)
+    coverage_goal: str | None = None
+    pace_class: str | None = None
 
 
 class ClipSegmentOutput(RootModel[dict[str, ClipSegment]]):
@@ -388,6 +744,7 @@ class ScriptNovelEpisodeOutput(BaseModel):
 
 
 class RoleAppearanceExtractItem(BaseModel):
+    schema_version: Literal[2] = 2
     name: str = "base"
     asset_role: Literal["base", "variant"] = Field(
         default="base",
@@ -407,6 +764,40 @@ class RoleAppearanceExtractItem(BaseModel):
     visual_features: str | None = None
     appearance_desc: str | None = None
     prompt_hint: str | None = None
+    time_period: str | None = None
+    age_band: str | None = None
+    identity_invariants: list[str] = Field(default_factory=list)
+    wardrobe: list[str] = Field(default_factory=list)
+    valid_from_event: str | None = None
+    valid_to_event: str | None = None
+    provenance: SemanticProvenance
+
+    @model_validator(mode="after")
+    def validate_visual_contract(self) -> "RoleAppearanceExtractItem":
+        self.identity_invariants = list(
+            dict.fromkeys(
+                text
+                for value in self.identity_invariants
+                if (text := " ".join(str(value).split()).strip())
+            )
+        )
+        self.wardrobe = list(
+            dict.fromkeys(
+                text
+                for value in self.wardrobe
+                if (text := " ".join(str(value).split()).strip())
+            )
+        )
+        if not self.identity_invariants:
+            raise ValueError("role appearance extraction requires explicit identity_invariants")
+        if self.asset_role == "base" and self.reference_asset_name:
+            raise ValueError("base role appearance must not reference another appearance")
+        if self.asset_role == "variant":
+            if not str(self.reference_asset_name or "").strip():
+                raise ValueError("variant role appearance requires reference_asset_name")
+            if not (self.valid_from_event or self.valid_to_event):
+                raise ValueError("variant role appearance requires an explicit event validity range")
+        return self
 
 
 class RoleExtractItem(BaseModel):
@@ -483,6 +874,10 @@ class RoleboardPromptItem(BaseModel):
     visual_reuse_required: bool = True
     episode_keys: list[str] = Field(default_factory=list)
     source_chapters: list[str] = Field(default_factory=list)
+    time_period: str | None = None
+    age_band: str | None = None
+    valid_from_event: str | None = None
+    valid_to_event: str | None = None
     role_brief: str | None = None
     appearance_desc: str | None = None
     clothing: str | None = None
@@ -492,6 +887,9 @@ class RoleboardPromptItem(BaseModel):
     roleboard_negative_prompt: str | None = None
     voice_profile_prompt: str | None = None
     design_notes: str | None = None
+    style_spec_version: str | None = None
+    included_fields: list[str] = Field(default_factory=list)
+    excluded_state_fields: list[str] = Field(default_factory=list)
 
 
 class RoleboardPromptOutput(BaseModel):
@@ -750,7 +1148,8 @@ class ShotManifestItem(BaseModel):
     transition: str | None = None
     start_frame_source: Literal["new_reference_frame", "previous_shot_last_frame", "own_start_frame", "previous_clip_end_frame"] | str = "new_reference_frame"
     start_frame_inheritance_reason: str | None = None
-    dialogue: list[str] = Field(default_factory=list)
+    dialogue_lines: list[DialogueLine] = Field(default_factory=list)
+    dialogue: list[str] = Field(default_factory=list, description="Derived display-only dialogue text")
     role_ids: list[str] = Field(default_factory=list)
     role_appearance_ids: list[str] = Field(default_factory=list)
     role_audio_ids: list[str] = Field(default_factory=list)
@@ -786,6 +1185,21 @@ class ShotManifestItem(BaseModel):
     video_usage: dict[str, Any] = Field(default_factory=dict)
     video_raw_response: dict[str, Any] = Field(default_factory=dict)
     solidified_asset_ids: list[str] = Field(default_factory=list)
+    contract_version: Literal[2] = 2
+    gate_results: list[GateResult] = Field(default_factory=list)
+    entity_state_snapshot: list[ShotEntityState] = Field(default_factory=list)
+    reference_budget: int | None = None
+    text_overlay_spec: OverlayTextSpec | None = None
+    input_fingerprints: dict[str, str] = Field(default_factory=dict)
+    ready_for_video: bool = False
+
+    @model_validator(mode="after")
+    def derive_dialogue_display(self) -> "ShotManifestItem":
+        expected = [line.text for line in self.dialogue_lines]
+        if self.dialogue and self.dialogue != expected:
+            raise ValueError("dialogue is display-only and must match dialogue_lines text")
+        self.dialogue = expected
+        return self
 
 class ShotManifestEpisodeOutput(BaseModel):
     """The persisted shot manifest for one episode.
@@ -796,8 +1210,10 @@ class ShotManifestEpisodeOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     episode_key: str
-    schema_version: Literal[4] = 4
+    schema_version: Literal[5] = 5
     shots: list[ShotManifestItem] = Field(default_factory=list)
+    gate_results: list[GateResult] = Field(default_factory=list)
+    ready_for_video: bool = False
 
 
 class ClipToShotsModelItem(BaseModel):
@@ -809,7 +1225,10 @@ class ClipToShotsModelItem(BaseModel):
     ref_ids: list[str] = Field(default_factory=list)
     video_prompt: str
     duration_seconds: int = Field(ge=3, le=15)
-    dialogue: list[str] = Field(default_factory=list)
+    entity_states: list[ShotEntityState] = Field(default_factory=list)
+    dialogue_lines: list[DialogueLine] = Field(default_factory=list)
+    overlay_text_spec: OverlayTextSpec | None = None
+    allowed_props: list[str] = Field(default_factory=list)
 
 
 class ClipToShotsModelOutput(RootModel[dict[str, ClipToShotsModelItem]]):
@@ -830,7 +1249,23 @@ class ShotPlanItem(BaseModel):
     ref_ids: list[str] = Field(default_factory=list)
     video_prompt: str
     duration_seconds: int = Field(ge=3, le=15)
-    dialogue: list[str] = Field(default_factory=list)
+    dialogue_lines: list[DialogueLine] = Field(default_factory=list)
+    dialogue: list[str] = Field(default_factory=list, description="Derived display-only dialogue text")
+    duration_budget: float | None = Field(default=None, gt=0)
+    event_ids: list[str] = Field(default_factory=list)
+    coverage_type: str | None = None
+    entity_states: list[ShotEntityState] = Field(default_factory=list)
+    allowed_props: list[str] = Field(default_factory=list)
+    reference_budget: int | None = Field(default=None, ge=1)
+    overlay_text_spec: OverlayTextSpec | None = None
+
+    @model_validator(mode="after")
+    def derive_legacy_display_fields(self) -> "ShotPlanItem":
+        expected = [line.text for line in self.dialogue_lines]
+        if self.dialogue and self.dialogue != expected:
+            raise ValueError("dialogue is display-only and must match dialogue_lines text")
+        self.dialogue = expected
+        return self
 
 
 class ClipShotPlan(BaseModel):
@@ -842,6 +1277,9 @@ class ClipShotPlan(BaseModel):
 class ClipToShotsEpisodeOutput(BaseModel):
     episode_key: str
     clips: list[ClipShotPlan] = Field(default_factory=list)
+    target_duration_seconds: float | None = None
+    total_duration_seconds: float | None = None
+    duration_gate_status: Literal["accepted", "rejected"] | None = None
 
 
 class ClipToShotsOutput(BaseModel):
@@ -928,6 +1366,12 @@ class ShotKeyframePromptItem(BaseModel):
     ref_ids: list[str] = Field(default_factory=list)
     prompt: str
     negative_prompt: str | None = None
+    style_spec_version: str | None = None
+    included_fields: list[str] = Field(default_factory=list)
+    excluded_state_fields: list[str] = Field(default_factory=list)
+    prompt_provenance: dict[str, Any] = Field(default_factory=dict)
+    clean_plate: bool = False
+    overlay_text_spec: OverlayTextSpec | None = None
 
 
 class ShotKeyframePromptOutput(BaseModel):
@@ -952,6 +1396,9 @@ class ShotKeyframeImageGenerationItem(BaseModel):
     request_id: str | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
     raw_response: dict[str, Any] = Field(default_factory=dict)
+    input_fingerprint: str | None = None
+    audit_status: Literal["generated", "accepted", "rejected"] = "generated"
+    resume_provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class ShotKeyframeImageGenerationOutput(BaseModel):

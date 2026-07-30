@@ -149,16 +149,16 @@ def extract_speakers(text: str) -> list[dict[str, Any]]:
     current_scene = ""
 
     for line in text.splitlines():
-        if "豆包语音合成模型2.0" in line and "音色列表" in line:
-            section = "tts2"
-            current_scene = ""
-            continue
-        if "端到端实时语音大模型" in line:
-            section = None
-            current_scene = ""
-            continue
-        if "豆包语音合成模型1.0" in line and "音色列表" in line:
-            section = "tts1"
+        if line.startswith("## "):
+            heading = clean_cell(line[3:]).strip('" ')
+            if heading == '豆包语音合成模型2.0" 音色列表':
+                section = "tts2"
+            elif heading == '端到端实时语音大模型 S2S-O版本和SC-2.0版本 "音色列表':
+                section = None
+            elif heading == '豆包语音合成模型1.0" 音色列表':
+                section = "tts1"
+            else:
+                section = None
             current_scene = ""
             continue
 
@@ -206,9 +206,12 @@ def extract_speakers(text: str) -> list[dict[str, Any]]:
         tags = split_list(row[5] if len(row) > 5 else "")
         corresponding_2_0_voice = row[6] if len(row) > 6 and row[6] else None
         supports_mix_value = row[7] if len(row) > 7 else ""
-        supports_mix = None
-        if supports_mix_value in {"是", "否"}:
-            supports_mix = supports_mix_value == "是"
+        if supports_mix_value == "是":
+            supports_mix = True
+        elif supports_mix_value == "否":
+            supports_mix = False
+        else:
+            supports_mix = None
         append_speaker(
             speakers,
             seen,

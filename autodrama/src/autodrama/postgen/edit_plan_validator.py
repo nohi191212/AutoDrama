@@ -60,8 +60,8 @@ def validate_edit_plan(
 
     expected_by_id = {clip.shot_id: clip for clip in expected_source_clips}
     audit_by_id = {item.shot_id: item for item in source_audit.clips} if source_audit is not None else {}
-    if not 1 <= len(expected_by_id) < 10:
-        raise ValueError("postgen source_clips must contain 1-9 usable clips")
+    if not expected_by_id:
+        raise ValueError("postgen source_clips must contain at least one usable clip")
     if not raw_plan.timeline:
         raise ValueError("postgen edit plan timeline is empty")
 

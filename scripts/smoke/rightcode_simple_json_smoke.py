@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -18,7 +19,7 @@ from autodrama.providers.router import ProviderRouter
 
 
 class SimpleJSONOutput(BaseModel):
-    answer: str
+    answer: Literal[2]
 
 
 async def run_smoke(config: Path, *, node_name: str, no_stream: bool) -> None:
@@ -35,7 +36,7 @@ async def run_smoke(config: Path, *, node_name: str, no_stream: bool) -> None:
         f" stream={getattr(getattr(provider, '_provider', provider), 'stream', '-')}"
     )
     output = await provider.generate_json(
-        "问题：1+1等于几？只输出 JSON，answer 字段填数字字符串。",
+        "问题：1+1等于几？只输出 JSON，answer 字段填整数。",
         SimpleJSONOutput,
         temperature=0,
         metadata={
@@ -43,7 +44,7 @@ async def run_smoke(config: Path, *, node_name: str, no_stream: bool) -> None:
             "project_id": "rightcode_simple_json_smoke",
         },
     )
-    if output.answer.strip() not in {"2", "二"}:
+    if output.answer != 2:
         raise AssertionError(f"unexpected answer: {output.answer!r}")
     tmp_dir = ROOT / ".tmp"
     tmp_dir.mkdir(exist_ok=True)

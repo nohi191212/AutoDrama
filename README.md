@@ -41,6 +41,17 @@ D:/miniforge3/envs/autodrama/python.exe -m autodrama.cli run generation --config
 run\start.cmd --config config.yaml --project <project_id> --only shot_keyframe_image_generation --episodes 1 --shots 1-3 --force
 ```
 
+用一分钟样片控制昂贵节点的成本：
+
+```yaml
+generation:
+  expected_output_seconds: 60
+```
+
+`clip_segment` 和 `clip_to_shots` 仍会完整规划整集。工作流在所有 shot 时长完成归一化后，按 clip 顺序选择累计时长首次达到目标的最小完整前缀；背景、关键帧、视频和 Postgen 只处理该前缀，不截断 clip。`-1` 表示完整生成。显式 `--shots` 的人工选择优先于自动前缀。选择结果写入 `assets/json/expected_output_selection.json`，便于逐节点核对。
+
+后续把目标从 60 秒调大或改成 `-1` 时，重新运行 Pregen 即会只补新增前缀的背景、关键帧和 manifest；已有前缀资产不会因范围扩大而被替换。Generation checklist 会自动重新打开对应集，随后可继续运行 Generation 和 Postgen，无需 `--force`。
+
 这是一项破坏性重构：旧 storyboard、旧关键帧和旧 manifest 产物不能复用。受影响项目必须从 `clip_to_shots` 或更早节点重新生成。
 
 仓库不使用 pytest。可运行：

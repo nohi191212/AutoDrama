@@ -20,6 +20,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from autodrama.config import load_settings  # noqa: E402
+from autodrama.core.voice_catalog import normalize_official_language  # noqa: E402
 from autodrama.providers.router import ProviderRouter  # noqa: E402
 from autodrama.providers.volcengine.audio.seed_tts import VolcengineSeedTTSProvider  # noqa: E402
 
@@ -28,38 +29,6 @@ SECRET_PATTERNS = (
     re.compile(r"('X-Api-(?:Key|Access-Key)'\s*:\s*')([^']+)(')", re.IGNORECASE),
     re.compile(r'("X-Api-(?:Key|Access-Key)"\s*:\s*")([^"]+)(")', re.IGNORECASE),
 )
-
-CHILD_VOICE_KEYWORDS = (
-    "儿童",
-    "少儿",
-    "童声",
-    "小孩",
-    "孩子",
-    "小朋友",
-    "少年",
-    "少女",
-    "男孩",
-    "女孩",
-    "佩奇",
-    "熊二",
-    "孙悟空",
-    "海绵",
-    "樱桃丸子",
-    "少儿故事",
-    "天才童声",
-    "萌丫头",
-    "xiaoxue",
-    "shaonian",
-    "shaoer",
-    "tongsheng",
-    "peiqi",
-    "xionger",
-    "sunwukong",
-    "haimian",
-    "yingtaowanzi",
-    "mengyatou",
-)
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -82,22 +51,8 @@ def sanitize_error(error: BaseException | str) -> str:
     return text[:1200]
 
 
-def is_chinese_adult_voice(speaker: dict[str, Any]) -> bool:
-    voice_type = str(speaker.get("voice_type") or "")
-    language = str(speaker.get("language") or "")
-    if not (voice_type.startswith("zh_") or voice_type.startswith("multi_zh") or "中文" in language):
-        return False
-
-    haystack_parts = [
-        speaker.get("name"),
-        speaker.get("voice_type"),
-        speaker.get("scene"),
-        speaker.get("language"),
-        " ".join(str(item) for item in speaker.get("tags") or []),
-        " ".join(str(item) for item in speaker.get("abilities") or []),
-    ]
-    haystack = " ".join(str(part or "") for part in haystack_parts).lower()
-    return not any(keyword.lower() in haystack for keyword in CHILD_VOICE_KEYWORDS)
+def is_chinese_voice(speaker: dict[str, Any]) -> bool:
+    return normalize_official_language(speaker.get("language")) == "zh"
 
 
 def selected_speakers() -> list[dict[str, Any]]:
@@ -105,11 +60,14 @@ def selected_speakers() -> list[dict[str, Any]]:
     seed_tts_2 = [
         speaker
         for speaker in speakers
-        if speaker.get("resource_id") == "seed-tts-2.0" and is_chinese_adult_voice(speaker)
+        if speaker.get("resource_id") == "seed-tts-2.0" and is_chinese_voice(speaker)
     ]
     if seed_tts_2:
         return seed_tts_2
-    return [speaker for speaker in speakers if is_chinese_adult_voice(speaker)] or speakers
+    chinese_speakers = [speaker for speaker in speakers if is_chinese_voice(speaker)]
+    if not chinese_speakers:
+        raise ValueError("No voices with explicit Chinese language metadata are available")
+    return chinese_speakers
 
 
 def result_audio_bytes(audio_data: str) -> bytes:

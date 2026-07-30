@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from autodrama.core.ids import normalize_id, slugify
+from autodrama.core.visual_contract import normalize_identity_values
 from autodrama.core.schemas import (
     ProjectState,
     Role,
@@ -802,17 +803,6 @@ class RoleboardPromptNode(RoleNodeBase):
     def _appearance_name(asset: RoleAppearanceExtractItem) -> str:
         return str(asset.name or "base").strip() or "base"
 
-    def _fallback_appearance_asset(self, extract_item: RoleExtractItem, state: ProjectState) -> RoleAppearanceExtractItem:
-        return RoleAppearanceExtractItem(
-            name="base",
-            asset_role="base",
-            episode_keys=self.workflow._role_episode_keys(extract_item, state),
-            source_chapters=self.dedupe_texts(extract_item.source_chapters),
-            brief="稳定可复用的基础身份造型。",
-            appearance_desc=self._appearance_desc(extract_item),
-            visual_features=self._appearance_desc(extract_item),
-        )
-
     def _role_appearance_assets(
         self,
         extract_item: RoleExtractItem,
@@ -820,7 +810,10 @@ class RoleboardPromptNode(RoleNodeBase):
     ) -> list[RoleAppearanceExtractItem]:
         raw_assets = list(extract_item.appearance_assets or [])
         if not raw_assets:
-            return [self._fallback_appearance_asset(extract_item, state)]
+            raise ValueError(
+                f"role {extract_item.name} has no structured appearance_assets; "
+                "rerun role_extract with the v2 visual contract"
+            )
 
         result: list[RoleAppearanceExtractItem] = []
         seen: set[str] = set()
@@ -854,7 +847,7 @@ class RoleboardPromptNode(RoleNodeBase):
             )
 
         if not has_base:
-            result.insert(0, self._fallback_appearance_asset(extract_item, state))
+            raise ValueError(f"role {extract_item.name} requires an explicit base appearance asset")
         base_names = {asset.name for asset in result if asset.asset_role == "base"}
         for asset in result:
             if asset.asset_role == "variant" and asset.reference_asset_name not in base_names:
@@ -887,15 +880,15 @@ class RoleboardPromptNode(RoleNodeBase):
         extract_item: RoleExtractItem,
         appearance_asset: RoleAppearanceExtractItem,
     ) -> str:
-        parts = [
-            appearance_asset.appearance_desc,
-            appearance_asset.brief,
-            appearance_asset.visual_features,
-            appearance_asset.clothing,
-            appearance_asset.prompt_hint,
-        ]
-        text = "；".join(str(part).strip("； ") for part in parts if str(part or "").strip())
-        return text or self._appearance_desc(extract_item)
+        clean = normalize_identity_values(
+            [*appearance_asset.identity_invariants, *appearance_asset.wardrobe]
+        )
+        if not clean:
+            raise ValueError(
+                f"role appearance {extract_item.name}/{appearance_asset.name} has no structured stable identity; "
+                "rerun role_extract with the v2 visual contract"
+            )
+        return "；".join(clean)
 
     def _appearance_asset_payload(
         self,
@@ -908,9 +901,13 @@ class RoleboardPromptNode(RoleNodeBase):
             "appearance_name": self._appearance_name(appearance_asset),
             "asset_role": appearance_asset.asset_role or "base",
             "reference_asset_name": appearance_asset.reference_asset_name,
-            "brief": appearance_asset.brief or "",
-            "clothing": appearance_asset.clothing or "",
-            "appearance_desc": appearance_asset.appearance_desc or "",
+            "identity_invariants": appearance_asset.identity_invariants,
+            "wardrobe": appearance_asset.wardrobe,
+            "time_period": appearance_asset.time_period,
+            "age_band": appearance_asset.age_band,
+            "valid_from_event": appearance_asset.valid_from_event,
+            "valid_to_event": appearance_asset.valid_to_event,
+            "provenance": appearance_asset.provenance.model_dump(mode="json"),
         }
 
     def _key_vision_asset_for_prompt(self, state: ProjectState) -> dict[str, object]:
@@ -1045,15 +1042,22 @@ class RoleboardPromptNode(RoleNodeBase):
             visual_reuse_required=extract_item.visual_reuse_required,
             episode_keys=self._appearance_episode_keys(extract_item, appearance_asset, state),
             source_chapters=self._appearance_source_chapters(extract_item, appearance_asset),
+            time_period=appearance_asset.time_period,
+            age_band=appearance_asset.age_band,
+            valid_from_event=appearance_asset.valid_from_event,
+            valid_to_event=appearance_asset.valid_to_event,
             role_brief=self._role_intro(extract_item),
             appearance_desc=self._appearance_desc_for_asset(extract_item, appearance_asset),
-            clothing=str(appearance_asset.clothing or "").strip() or None,
-            visual_features=str(appearance_asset.visual_features or "").strip() or None,
+            clothing="；".join(appearance_asset.wardrobe) or None,
+            visual_features="；".join(appearance_asset.identity_invariants) or None,
             core_roleboard_prompt=core_prompt,
             roleboard_prompt=final_prompt,
             roleboard_negative_prompt=negative_prompt,
             voice_profile_prompt=str(getattr(output, "voice_profile_prompt", "") or "").strip() or None,
             design_notes=str(getattr(output, "design_notes", "") or "").strip() or None,
+            style_spec_version=str(state.metadata.get("style_spec_version") or "") or None,
+            included_fields=["identity_invariants", "wardrobe", "time_period", "age_band"],
+            excluded_state_fields=["pose", "emotion", "injury", "held_props", "energy_state", "event_refs"],
         )
 
     def _apply_roleboard_prompt_item(
@@ -1061,6 +1065,7 @@ class RoleboardPromptNode(RoleNodeBase):
         state: ProjectState,
         item: RoleboardPromptItem,
         *,
+        appearance_asset: RoleAppearanceExtractItem,
         prompt_path: str | None = None,
         preserve_assets: bool = False,
     ) -> None:
@@ -1090,7 +1095,14 @@ class RoleboardPromptNode(RoleNodeBase):
             reference_asset_name=item.reference_asset_name,
             episode_keys=self.dedupe_texts(item.episode_keys),
             source_chapters=self.dedupe_texts(item.source_chapters),
-            clothing=item.clothing,
+            time_period=item.time_period,
+            age_band=item.age_band,
+            valid_from_event=item.valid_from_event,
+            valid_to_event=item.valid_to_event,
+            clothing="；".join(appearance_asset.wardrobe) or None,
+            identity_invariants=normalize_identity_values(appearance_asset.identity_invariants),
+            wardrobe=normalize_identity_values(appearance_asset.wardrobe),
+            provenance=appearance_asset.provenance,
             visual_features=item.visual_features,
             desc=item.appearance_desc,
             prompt=item.roleboard_prompt,
@@ -1182,6 +1194,16 @@ class RoleboardPromptNode(RoleNodeBase):
                 extract_item = extract_by_key.get(existing_role_key)
                 if extract_item is None:
                     continue
+                appearance_asset = next(
+                    (
+                        candidate
+                        for candidate in self._role_appearance_assets(extract_item, state)
+                        if self._appearance_name(candidate) == existing_item.appearance_name
+                    ),
+                    None,
+                )
+                if appearance_asset is None:
+                    continue
                 previous_role = previous_roles.get(existing_item.role_id)
                 if previous_role is not None:
                     state.roles[existing_item.role_id] = previous_role
@@ -1189,6 +1211,7 @@ class RoleboardPromptNode(RoleNodeBase):
                 self._apply_roleboard_prompt_item(
                     state,
                     existing_item,
+                    appearance_asset=appearance_asset,
                     prompt_path=prompt_path,
                     preserve_assets=True,
                 )
@@ -1258,7 +1281,12 @@ class RoleboardPromptNode(RoleNodeBase):
                     style_reference_count=style_reference_count,
                 )
                 prompt_path = self.roleboard_prompts.item_relative_path_for_name(project_dir, item.role_name)
-                self._apply_roleboard_prompt_item(state, item, prompt_path=prompt_path)
+                self._apply_roleboard_prompt_item(
+                    state,
+                    item,
+                    appearance_asset=appearance_asset,
+                    prompt_path=prompt_path,
+                )
                 prompt_by_key[prompt_key] = item
                 state.budget.used_text_calls += 1
 

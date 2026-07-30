@@ -14,6 +14,7 @@ from autodrama.core.schemas import (
     Role,
     RoleAppearance,
     RoleAudio,
+    DialogueLine,
     RoleExtractItem,
     RoleExtractOutput,
     RoleboardPromptItem,
@@ -61,6 +62,11 @@ from autodrama.workflows.nodes.role_nodes import RoleNodeBase, build_role_node_r
 from autodrama.workflows.nodes.static_asset_nodes import (
     StaticAssetNodeBase,
     build_static_asset_node_runners,
+)
+from autodrama.workflows.output_scope import (
+    clear_pending_expected_output_shot_ids,
+    pending_expected_output_shot_ids,
+    synchronize_expected_output_scope,
 )
 from autodrama.workflows.nodes.voice_nodes import VoiceNodeBase, build_voice_node_runners
 from autodrama.workflows.router_adapter import adapt_workflow_router
@@ -120,7 +126,6 @@ ASSET_SCOPED_PREGEN_ONLY_NODES = {
 
 class PregenWorkflow:
     SAMPLE_TEXT_FORBIDDEN_BRACKETS = frozenset("()（）[]【】{}《》<>")
-    SAMPLE_TEXT_FORBIDDEN_PHRASES = ("内心独白", "心理活动", "旁白说明", "舞台提示")
 
     def __init__(
         self,
@@ -134,7 +139,10 @@ class PregenWorkflow:
         self.layout = getattr(repo, "layout", ProjectLayout(self.settings))
         self.router = adapt_workflow_router(router)
         self.prompts = prompts or PromptStore()
-        self.script_service = ScriptService(self.prompts)
+        self.script_service = ScriptService(
+            self.prompts,
+            max_semantic_attempts=self.settings.runtime.max_text_retry,
+        )
         self.director_service = DirectorService(self.prompts)
         self.role_service = RoleService(self.prompts)
         self.asset_service = AssetService(self.prompts)
@@ -229,14 +237,11 @@ class PregenWorkflow:
         if not text:
             return
         bracket_chars = sorted({char for char in text if char in cls.SAMPLE_TEXT_FORBIDDEN_BRACKETS})
-        forbidden_phrases = [phrase for phrase in cls.SAMPLE_TEXT_FORBIDDEN_PHRASES if phrase in text]
-        if bracket_chars or forbidden_phrases:
-            details: list[str] = []
-            if bracket_chars:
-                details.append(f"contains bracket characters: {''.join(bracket_chars)}")
-            if forbidden_phrases:
-                details.append(f"contains forbidden phrases: {', '.join(forbidden_phrases)}")
-            raise ValueError(f"{label} must be direct spoken sample text without brackets or inner monologue; {'; '.join(details)}")
+        if bracket_chars:
+            raise ValueError(
+                f"{label} must be direct spoken sample text without bracketed directions; "
+                f"contains bracket characters: {''.join(bracket_chars)}"
+            )
 
     def _ensure_normal_role_audio(self, role: Role) -> None:
         if "normal" in role.audio:
@@ -281,10 +286,23 @@ class PregenWorkflow:
                 self._ensure_normal_role_audio(role)
 
     def _apply_script_plan_settings(self, state: ProjectState) -> None:
+        from autodrama.core.visual_contract import build_visual_style_spec
+
         state.metadata["episode_count"] = self.repo.settings.project.episode_count
         state.metadata["episode_duration_seconds"] = self.repo.settings.project.episode_duration_seconds
+        state.metadata["expected_output_seconds"] = (
+            self.repo.settings.generation.expected_output_seconds
+        )
         state.metadata["bgm_count"] = self.repo.settings.project.bgm_count
-        state.metadata["visual_style_prompt"] = self.repo.settings.generation.visual_style_prompt
+        configured_style = self.repo.settings.generation.visual_style
+        if configured_style is None:
+            raise ValueError(
+                "generation.visual_style is required; migrate legacy visual_style_prompt before pregen"
+            )
+        style_spec = build_visual_style_spec(configured_style)
+        state.metadata.pop("visual_style_prompt", None)
+        state.metadata["visual_style_spec"] = style_spec.model_dump(mode="json")
+        state.metadata["style_spec_version"] = style_spec.version
         state.metadata["roleboard_style_prompt"] = self.repo.settings.generation.roleboard_style_prompt
         state.metadata["prop_design_style_prompt"] = self.repo.settings.generation.prop_design_style_prompt
         state.metadata["layout_design_style_prompt"] = self.repo.settings.generation.layout_design_style_prompt
@@ -498,6 +516,11 @@ class PregenWorkflow:
         existing_appearance = None
         if existing_role is not None:
             existing_appearance = existing_role.appearances.get(item.appearance_name)
+        if existing_appearance is None:
+            raise ValueError(
+                f"cannot hydrate {item.role_name}/{item.appearance_name} without a structured "
+                "RoleAppearance; rerun role_extract and roleboard_prompt"
+            )
         role = existing_role or Role(
             id=item.role_id,
             name=item.role_name,
@@ -520,7 +543,15 @@ class PregenWorkflow:
             reference_asset_name=item.reference_asset_name,
             episode_keys=self._dedupe_texts(item.episode_keys),
             source_chapters=self._dedupe_texts(item.source_chapters),
-            clothing=item.clothing,
+            clothing=existing_appearance.clothing,
+            identity_invariants=list(existing_appearance.identity_invariants),
+            wardrobe=list(existing_appearance.wardrobe),
+            time_period=existing_appearance.time_period,
+            age_band=existing_appearance.age_band,
+            valid_from_event=existing_appearance.valid_from_event,
+            valid_to_event=existing_appearance.valid_to_event,
+            provenance=existing_appearance.provenance,
+            migration_warnings=list(existing_appearance.migration_warnings),
             visual_features=item.visual_features,
             desc=item.appearance_desc,
             prompt=item.roleboard_prompt,
@@ -614,16 +645,40 @@ class PregenWorkflow:
         logger = setup_logging(project_dir)
         self.router.set_prompt_audit_project_dir(project_dir)
         state = self.repo.load_state(project_dir)
+        scope_sync = synchronize_expected_output_scope(
+            self.repo,
+            project_dir,
+            state,
+            self._expected_episode_keys(state),
+        )
         self._apply_script_plan_settings(state)
         target_nodes = [only] if only else PREGEN_NODES[: PREGEN_NODES.index(until) + 1]
-        if only is None and not self.settings.app.enable_image_audit:
-            target_nodes = [node_name for node_name in target_nodes if node_name not in IMAGE_AUDIT_NODE_NAMES]
         if only is None and not self.settings.app.enable_llm_audit:
             target_nodes = [node_name for node_name in target_nodes if node_name != "layout_prop_boundary_review"]
         selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
         selected_role_names = self._select_role_names(role_names) if role_names else None
         selected_clip_selectors = normalize_clip_selectors(clip_selectors) if clip_selectors else set()
-        selected_shot_selectors = normalize_shot_selectors(shot_selectors) if shot_selectors else set()
+        explicit_shot_selectors = (
+            normalize_shot_selectors(shot_selectors) if shot_selectors else set()
+        )
+        selected_shot_selectors = set(explicit_shot_selectors)
+        pending_episode_keys = selected_episode_keys or self._expected_episode_keys(state)
+        pending_scope = pending_expected_output_shot_ids(
+            state,
+            pending_episode_keys,
+        )
+        automatic_pending_scope = bool(
+            not explicit_shot_selectors
+            and not force
+            and pending_scope
+            and set(target_nodes).intersection(SHOT_SCOPED_PREGEN_ONLY_NODES)
+        )
+        if automatic_pending_scope:
+            selected_shot_selectors = {
+                shot_id
+                for values in pending_scope.values()
+                for shot_id in values
+            }
         selected_asset_ids = {str(item).strip() for item in asset_ids or [] if str(item).strip()}
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
@@ -645,12 +700,15 @@ class PregenWorkflow:
             raise ValueError(
                 "--clips is only supported for pregen --only clip_to_shots."
             )
-        if selected_shot_selectors and (len(target_nodes) != 1 or target_nodes[0] not in SHOT_SCOPED_PREGEN_ONLY_NODES):
+        if explicit_shot_selectors and (
+            len(target_nodes) != 1
+            or target_nodes[0] not in SHOT_SCOPED_PREGEN_ONLY_NODES
+        ):
             raise ValueError("--shots is only supported for pregen --only layout_to_background_prompt, shot_background_image_generation, shot_keyframe_prompt, shot_keyframe_image_generation, or shot_manifest_generation.")
         if selected_asset_ids and (len(target_nodes) != 1 or target_nodes[0] not in ASSET_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError("--assets is only supported for pregen --only roleboard_image_generation, role_subject_frontal_image_generation, prop_image_generation, layout_image_generation, prop_image_audit, or layout_image_audit.")
         logger.info(
-            "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s assets=%s completed=%s",
+            "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s shots=%s shot_scope=%s assets=%s completed=%s",
             state.project_id,
             until,
             only or "-",
@@ -658,9 +716,22 @@ class PregenWorkflow:
             ",".join(selected_episode_keys or []) or "-",
             ",".join(selected_role_names or []) or "-",
             ",".join(sorted(selected_clip_selectors)) or "-",
+            ",".join(sorted(selected_shot_selectors)) or "-",
+            "expected_output_pending" if automatic_pending_scope else (
+                "explicit" if explicit_shot_selectors else "all"
+            ),
             ",".join(sorted(selected_asset_ids)) or "-",
             ",".join(state.completed_nodes) or "-",
         )
+        if scope_sync.config_changed:
+            logger.info(
+                "workflow=pregen expected_output_scope changed %s->%s added_shots=%d removed_shots=%d invalidated=%s",
+                scope_sync.previous_expected_output_seconds,
+                scope_sync.expected_output_seconds,
+                sum(len(values) for values in scope_sync.added_shot_ids_by_episode.values()),
+                sum(len(values) for values in scope_sync.removed_shot_ids_by_episode.values()),
+                ",".join(scope_sync.invalidated_nodes) or "-",
+            )
 
         previous_active_episode_keys = getattr(self, "_active_episode_keys", None)
         previous_active_role_names = getattr(self, "_active_role_names", None)
@@ -679,6 +750,7 @@ class PregenWorkflow:
             selected_role_names=selected_role_names,
             clip_selectors=selected_clip_selectors,
             shot_selectors=selected_shot_selectors,
+            automatic_output_scope=automatic_pending_scope,
         )
         self._force_pregen = bool(force)
         if selected_episode_keys is not None:
@@ -712,6 +784,16 @@ class PregenWorkflow:
                 force=force,
                 skip_completed=only is None,
             )
+            if (
+                pending_scope
+                and not explicit_shot_selectors
+                and "shot_manifest_generation" in target_nodes
+            ):
+                clear_pending_expected_output_shot_ids(
+                    state,
+                    list(pending_scope),
+                )
+                self.repo.save_state(project_dir, state)
         finally:
             if selected_episode_keys is not None:
                 if previous_active_episode_keys is None:
@@ -973,9 +1055,7 @@ class PregenWorkflow:
                 resolver(
                     role_id=role.id,
                     role_name=role.name,
-                    role_intro=role.intro,
-                    role_voice_summary=role.voice_summary,
-                    role_personality=role.personality,
+                    voice_requirements=role.voice_requirements.model_dump(mode="json"),
                 )
             )
         normal_audio = role.audio.get("normal")
@@ -1096,46 +1176,6 @@ class PregenWorkflow:
                     )
         return refs
 
-    @staticmethod
-    def _dialogue_speaker_prefix(line: str) -> str | None:
-        text = str(line or "").strip()
-        for separator in ("：", ":"):
-            if separator in text:
-                prefix, _suffix = text.split(separator, 1)
-                prefix = prefix.strip()
-                if prefix:
-                    return prefix
-        return None
-
-    @staticmethod
-    def _clean_dialogue_speaker_name(candidate: str) -> str:
-        cleaned = str(candidate or "").strip()
-        for marker in ("（", "("):
-            if marker in cleaned:
-                cleaned = cleaned.split(marker, 1)[0].strip()
-        return cleaned
-
-    @classmethod
-    def _dialogue_speaker_is_voiceover(cls, line: str) -> bool:
-        prefix = cls._dialogue_speaker_prefix(line)
-        if not prefix:
-            return False
-        lowered = prefix.casefold()
-        return any(
-            marker in lowered
-            for marker in (
-                "vo",
-                "v.o",
-                "voiceover",
-                "offscreen",
-                "os",
-                "o.s",
-                "旁白",
-                "画外",
-                "画外音",
-            )
-        )
-
     def _shot_speaking_role_ids(self, state: ProjectState, shot: ShotManifestItem) -> list[str]:
         role_ids: list[str] = []
         seen: set[str] = set()
@@ -1153,25 +1193,20 @@ class PregenWorkflow:
                     if audio.id in explicit_audio_ids or (audio.asset_id and audio.asset_id in explicit_audio_ids):
                         append(role.id)
 
-        for dialogue_line in shot.dialogue:
-            role, _dialogue_text, _speaker_name = self._role_for_dialogue_line(state, shot, dialogue_line)
-            if role is not None:
-                append(role.id)
-
-        if not role_ids and shot.dialogue and len(shot.role_ids) == 1:
-            append(shot.role_ids[0])
+        for dialogue_line in shot.dialogue_lines:
+            append(dialogue_line.speaker_role_id)
         return role_ids
 
     def _shot_voiceover_speaking_role_ids(self, state: ProjectState, shot: ShotManifestItem) -> list[str]:
         role_ids: list[str] = []
         seen: set[str] = set()
-        for dialogue_line in shot.dialogue:
-            if not self._dialogue_speaker_is_voiceover(dialogue_line):
+        for dialogue_line in shot.dialogue_lines:
+            if dialogue_line.delivery_mode != "voiceover":
                 continue
-            role, _dialogue_text, _speaker_name = self._role_for_dialogue_line(state, shot, dialogue_line)
-            if role is not None and role.id not in seen:
-                seen.add(role.id)
-                role_ids.append(role.id)
+            role_id = dialogue_line.speaker_role_id
+            if role_id is not None and role_id in state.roles and role_id not in seen:
+                seen.add(role_id)
+                role_ids.append(role_id)
         return role_ids
 
     @staticmethod
@@ -2055,55 +2090,10 @@ class PregenWorkflow:
         refs.extend(context_video_refs)
         return self._prioritize_clip_video_refs(refs, provider=provider)
 
-    def _role_for_dialogue_line(
-        self,
-        state: ProjectState,
-        shot: ShotManifestItem,
-        line: str,
-    ) -> tuple[Role | None, str, str | None]:
-        text = str(line).strip()
-        speaker_name: str | None = None
-        dialogue_text = text
-        for separator in ("：", ":"):
-            if separator in text:
-                prefix, suffix = text.split(separator, 1)
-                candidate = self._clean_dialogue_speaker_name(prefix)
-                if 0 < len(candidate) <= 20:
-                    speaker_name = candidate
-                    dialogue_text = suffix.strip()
-                    break
-
-        lookup = self._role_lookup(state)
-        role = self._resolve_role(lookup, speaker_name) if speaker_name else None
-        if role is None and speaker_name:
-            normalized = normalize_id("role", speaker_name)
-            role = state.roles.get(normalized)
-        if role is None and not speaker_name and len(shot.role_ids) == 1:
-            role = state.roles.get(shot.role_ids[0])
-        return role, dialogue_text or text, speaker_name
-
-    @staticmethod
-    def _shot_dialogue_emotion(role: Role | None, shot: ShotManifestItem) -> str:
-        if role is None:
-            return "normal"
-        available = list(role.audio)
-        content = f"{shot.title} {shot.video_prompt} {' '.join(shot.dialogue)}"
-        keyword_map = [
-            ("angry", ("怒", "吼", "质问", "逼问", "爆发", "愤")),
-            ("sad", ("哭", "低落", "崩溃", "难过", "哽咽", "失落")),
-            ("happy", ("笑", "开心", "轻松", "高兴")),
-            ("tense", ("紧张", "压低", "慌", "僵", "冷", "对峙", "沉默", "证据")),
-            ("whisper", ("耳语", "低声", "悄声")),
-        ]
-        for emotion, keywords in keyword_map:
-            if emotion in available and any(keyword in content for keyword in keywords):
-                return emotion
-        return "normal" if "normal" in available else (available[0] if available else "normal")
-
     def _shot_dialogue_role_audio(self, role: Role | None, emotion: str) -> RoleAudio | None:
         if role is None:
             return None
-        return role.audio.get(emotion) or role.audio.get("normal") or next(iter(role.audio.values()), None)
+        return role.audio.get(emotion)
 
     async def _generate_shot_dialogue_audio(
         self,
@@ -2114,29 +2104,30 @@ class PregenWorkflow:
         episode_key: str,
         shot: ShotManifestItem,
         line_index: int,
-        line: str,
+        line: DialogueLine,
     ) -> tuple[ShotDialogueAudioAsset | None, dict[str, Any] | None]:
-        role, dialogue_text, speaker_name = self._role_for_dialogue_line(state, shot, line)
+        role = state.roles.get(line.speaker_role_id) if line.speaker_role_id else None
         if role is None:
             return None, {
                 "episode_key": episode_key,
                 "shot_id": shot.shot_id,
                 "line_index": line_index,
-                "text": line,
-                "reason": "Could not resolve dialogue speaker",
-                "speaker_name": speaker_name,
+                "text": line.text,
+                "reason": "Dialogue line has no valid speaker_role_id",
+                "speaker_role_id": line.speaker_role_id,
+                "speaker_name": line.speaker_name,
             }
 
-        emotion = self._shot_dialogue_emotion(role, shot)
-        role_audio = self._shot_dialogue_role_audio(role, emotion)
+        role_audio = self._shot_dialogue_role_audio(role, line.emotion)
         if role_audio is None:
             return None, {
                 "episode_key": episode_key,
                 "shot_id": shot.shot_id,
                 "line_index": line_index,
-                "text": line,
+                "text": line.text,
                 "role_id": role.id,
-                "reason": "Resolved role has no audio design",
+                "emotion": line.emotion,
+                "reason": "Resolved role has no audio design for the explicit emotion",
             }
 
         voice = self._role_synthesis_voice(provider, role)
@@ -2146,7 +2137,7 @@ class PregenWorkflow:
         max_duration_seconds = provider_max_generated_audio_duration_seconds(provider)
         result = await provider.synthesize_speech(
             voice=voice,
-            text=dialogue_text[:1024],
+            text=line.text[:1024],
             metadata={
                 "node_name": "shot_dialogue_audio_generation",
                 "project_id": state.project_id,
@@ -2158,6 +2149,9 @@ class PregenWorkflow:
                 "audio_id": role_audio.id,
                 "asset_id": asset_id,
                 "emotion": role_audio.emotion,
+                "dialogue_emotion": line.emotion,
+                "dialogue_intensity": line.intensity,
+                "delivery_mode": line.delivery_mode,
                 "voice_prompt": role_audio.desc,
                 "emotion_instruction": emotion_instruction,
                 "emotion_params": emotion_params,

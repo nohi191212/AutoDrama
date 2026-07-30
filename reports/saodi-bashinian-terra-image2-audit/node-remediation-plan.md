@@ -43,6 +43,38 @@
 4. YAML 视觉设定必须先由代码检测冲突，再渲染为自然语言视觉简报。
 5. 项目特定人物、道具和镜头只允许出现在运行时输入与 golden fixture，不得写入通用模板。
 
+### 受监督回归的 Gate 0：`script_import` 人工检查点
+
+本次 60 秒回归运行在 `script_import` 完成后增加一个硬人工检查点。它属于执行 Agent 的监督协议，不属于发送给 API 裸模的提示词，也不能依赖当前尚未被工作流消费的 `app.enable_human_review` 开关。
+
+#### 运行与停止规则
+
+1. 使用一个全新的监督运行 project id，保留原失败项目作为审计基线，避免旧完成标记、缓存和中间产物污染回归结论。
+2. 首次只允许使用 `pregen --only script_import`；不得使用 `--until`、`--force`、fake provider 或任何下游节点。
+3. 节点完成后，执行 Agent 必须审计源剧本、节点输出、脚本内容文件、`state.json`、最终 API 提示词记录、节点日志和预算变化。
+4. 无论结论为 PASS 还是 BLOCK，执行 Agent 都必须停止；在用户明确批准 Gate 0 前，不得运行 `script_detail_expand`。
+5. 任何错误只能追溯到 YAML、工作流代码或通用提示词模板对应层修复；禁止直接编辑本次节点输出掩盖问题。
+6. 源剧本、配置、模板、工作流代码或节点输入 fingerprint 发生变化后，既有人工批准自动失效，必须重新运行并审计 Gate 0。
+
+#### Gate 0 阻断条件
+
+- 导入后的成熟剧本文本与源文件不一致，出现漏段、改写、提前扩写或顺序变化。
+- 剧集数量、episode key、人物、道具、场景或事件关系与原文不一致。
+- 少年/老年等时间阶段混淆，或把后续才出现、归还、持有、激活的状态提前写成永久事实。
+- 抽取结果包含无原文证据的具名实体、情节、动机、外观或状态。
+- 节点 JSON、脚本内容文件、状态、最终 API 提示词记录或日志缺失、不可解析或相互引用不一致。
+- 最终 API 提示词携带项目路径、project id、节点名等与内容任务无关的运行元数据，或者要求裸模执行 Agent/工作流职责。
+- 节点异常、静默降级、错误重试后仍落成 completed，或发现任何下游节点已被提前执行。
+
+#### Gate 0 报告最低内容
+
+- 明确写出“已到达人工检查点：`script_import`”。
+- 给出 PASS / BLOCK、阻断问题、非阻断问题、逐项证据路径和必要的原文/输出对照片段。
+- 列出节点前后状态、API 调用与预算变化，以及尚未运行的下一节点。
+- 最后一行必须写明“等待你的确认，尚未运行 `script_detail_expand`”。
+
+可直接交给执行 Agent 的完整提示词见 [`next-agent-supervised-run-prompt.md`](./next-agent-supervised-run-prompt.md)。
+
 ## 2. 实施优先级
 
 | 优先级 | 节点数 | 目标 |
@@ -98,7 +130,7 @@
 
 #### 验收与 Smoke
 
-- 现有剧本可定位“柳菡烟倒下”“玉瓶交付”“心血触炉”三个独立事件。
+- 现有剧本可定位“叶凡倒下”“玉瓶交付”“心血触炉”三个独立事件。
 - contract smoke 验证旧字段仍可读取，新字段能 round-trip。
 
 #### 上下游依赖
@@ -992,7 +1024,7 @@ variant 失败退回 base 并阻断依赖强事件光效的镜头，不接受全
 
 #### 验收与 Smoke
 
-- 150 秒目标被精确分配到 3 个 clip。
+- `clip_segment` 完整自然切分正文，不接收 clip 数量上限；即使返回 33 个 clip 也不得为样片强行合并成少量 clip。
 - smoke 对预算误差大于 0.5 秒直接失败。
 
 #### 上下游依赖
@@ -1051,6 +1083,61 @@ validator 返回结构化差异并仅重做违规 clip；不得把不合格计�
 #### 上下游依赖
 
 依赖 8、12、14、19；是 21、23、25、26 的 P0 前置。
+
+### 20A. `expected_output_seconds` 样片范围控制
+
+- 阶段：全量规划完成后的确定性工作流选择
+- 优先级：P0
+- 改造目标：保留完整叙事切分与完整镜头规划，只限制昂贵的背景、关键帧、视频和 Postgen 节点。
+
+#### 配置与分层
+
+```yaml
+generation:
+  expected_output_seconds: 60
+```
+
+- 这是剧集生成范围设置，放在 YAML，不属于任何模型节点参数。
+- `-1` 表示完整生成；正整数表示每集目标样片秒数；`0`、小数、字符串和小于 `-1` 的值由配置校验拒绝。
+- 不修改 `clip_segment` 或 `clip_to_shots` 提示词，不向裸模传递 `expected_output_seconds`、选中 clip ID、节点名或内部字段。
+
+#### 确定性算法
+
+1. `clip_segment` 完整生成全部自然 clip。
+2. `clip_to_shots` 对全部 clip 完成镜头规划，并先按整集目标时长归一化所有 `duration_seconds`。
+3. 工作流按 `clip_index` 顺序累加一个 clip 内全部 shot 的时长。
+4. 选择累计时长首次达到或超过目标秒数的最小完整 clip 前缀；边界 clip 必须整体保留，不截断其中的 shot。
+5. 若整集总时长仍小于目标，则选择全部 clip，并在选择清单中写入 `target_reached=false`。
+6. 显式 `--shots` 优先于自动前缀，便于人工局部修复；未传显式选择器时才应用自动前缀。
+7. 配置从较短样片扩大到更长时长或 `-1` 时，工作流比较旧、新完整前缀，只把新增 shot 记为待补范围；Pregen 不重跑 `clip_segment`/`clip_to_shots`，也不替换已有前缀资产。
+8. 范围变化会自动失效相关 Pregen、Generation、Postgen 完成标记并重新打开 generation checklist；新增 manifest 尚未补齐时，Generation/Postgen 明确阻断而不是静默漏跑。
+
+#### 下游传播
+
+- 保持全量：`clip_segment`、`clip_to_shots` 以及为完整规划所需的角色、道具、场景资产节点。
+- 自动限流：`layout_to_background_prompt`、背景生图/审计、关键帧提示/生图/审计、`shot_manifest_generation`。
+- 自动限流：对白音频、`shot_video_generation`、`shot_video_audit`、动态资产固化。
+- 自动限流：Postgen source collect、素材审计、剪辑计划、合成、字幕与最终审计。
+- Postgen 的单批素材审计仍遵守 `max_source_clips_per_plan`，但通过重叠批次审计全部已选镜头；不得再次静默截断总素材数。
+
+#### 可审计产物
+
+工作流写入 `assets/json/expected_output_selection.json`，每集至少记录：
+
+- `expected_output_seconds`
+- `planned_output_seconds`
+- `total_planned_seconds`
+- `selected_clip_ids` / `selected_shot_ids`
+- 已选与总 clip/shot 数
+- `target_reached`、`overshoot_seconds`、`first_excluded_clip_id`
+
+#### 验收与 Smoke
+
+- 构造 10 个完整 clip、整集 60 秒、目标 30 秒：`clip_to_shots` 保留 10 个，昂贵节点只处理累计 30 秒的前 5 个。
+- 构造 `[8, 7, 10, 12, 9, 8, 11, 5]` 秒：60 秒目标选择前 7 个，计划 65 秒；不得拆开第 7 个 clip。
+- `-1` 选择全部；显式 `--shots` 可选择自动前缀外的镜头。
+- Postgen 自动范围包含的镜头数超过单批上限时，source collect 仍完整，素材审计分批合并。
+- 先完成 30 秒前缀，再改为 `-1` 且不传 `--force`：Pregen/Generation 自动补齐后 5 个 clip，前 5 个关键帧路径保持不变，Postgen 收集全部 10 个 clip。
 
 ### 21. `layout_to_background_prompt`
 

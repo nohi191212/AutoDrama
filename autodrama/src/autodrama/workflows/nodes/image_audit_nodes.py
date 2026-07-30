@@ -29,11 +29,14 @@ from autodrama.core.schemas import (
     StaticAssetGenerationOutput,
 )
 from autodrama.logging import get_logger
+from autodrama.core.schemas import VisualStyleSpec
+from autodrama.core.visual_contract import identity_brief, render_visual_style_brief
 from autodrama.providers.base import AssetRef
 from autodrama.workflows.nodes.director_nodes import build_director_node_runners
 from autodrama.workflows.nodes.role_subject_nodes import build_role_subject_nodes
 from autodrama.workflows.nodes.shot_asset_nodes import build_shot_asset_nodes
 from autodrama.workflows.nodes.static_asset_nodes import build_static_asset_node_runners
+from autodrama.workflows.output_scope import configured_episode_output_selection
 from autodrama.workflows.runner import WorkflowNode
 
 
@@ -123,6 +126,16 @@ class ImageAuditNodeBase:
 
     def _asset_expectation(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
         raise NotImplementedError
+
+    @staticmethod
+    def _style_brief(state: ProjectState) -> str:
+        raw = state.metadata.get("visual_style_spec")
+        if not isinstance(raw, dict):
+            raise ValueError(
+                "project metadata has no visual_style_spec v2; run the visual contract migration"
+            )
+        spec = VisualStyleSpec.model_validate(raw)
+        return render_visual_style_brief(spec)
 
     def _save_revised_prompt(self, project_dir: Path, state: ProjectState, asset_id: str, prompt: str) -> None:
         raise NotImplementedError
@@ -248,7 +261,10 @@ class PropImageAuditNode(ImageAuditNodeBase):
             for value in (prop.intro, asset.desc, asset.visual_features, asset.state_change)
             if value
         )
-        return f"单件道具“{prop.name} / {asset.name}”。{details}。必须与项目统一的手绘二维水墨国漫风格一致，不是产品摄影、3D 渲染或技术多视图。"
+        return (
+            f"单件道具“{prop.name} / {asset.name}”。{details}。必须服从以下视觉契约："
+            f"{self._style_brief(state)}。不是技术多视图。"
+        )
 
     def _save_revised_prompt(self, project_dir: Path, state: ProjectState, asset_id: str, prompt: str) -> None:
         prop, asset = self._find_asset(state, asset_id)
@@ -262,8 +278,9 @@ class KeyVisionImageAuditNode(ImageAuditNodeBase):
 
     def _asset_expectation(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
         return (
-            "一张可作为全片风格与世界观锚点的主视觉。核心叙事主体、关键灵兽或标志物和东方玄幻氛围"
-            "必须清晰统一；二维水墨国漫手绘质感完整，没有额外主体、畸形、可读文字、logo 或水印。"
+            "一张可作为全片风格与世界观锚点的主视觉。核心叙事主体、关键灵兽或标志物和整体氛围"
+            f"必须清晰统一；服从以下视觉契约：{self._style_brief(state)}。"
+            "没有额外主体、畸形、可读文字、logo 或水印。"
         )
 
     def _save_revised_prompt(self, project_dir: Path, state: ProjectState, asset_id: str, prompt: str) -> None:
@@ -302,11 +319,11 @@ class RoleboardImageAuditNode(ImageAuditNodeBase):
 
     def _asset_expectation(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
         role, appearance = self._find_appearance(state, item.asset_id)
-        details = "；".join(value for value in (role.intro, appearance.desc, appearance.visual_features) if value)
+        details = identity_brief(appearance)
         return (
             f"单角色身份板“{role.name} / {appearance.name}”。{details}。"
             "必须严格只呈现同一主体的正面、侧面、背面三个等尺度完整全身视图，身份一致且结构自然；"
-            "二维水墨国漫手绘风格，无其他角色、文字、logo、水印或畸形肢体。"
+            f"服从以下视觉契约：{self._style_brief(state)}。无其他角色、文字、logo、水印或畸形肢体。"
         )
 
     def _save_revised_prompt(self, project_dir: Path, state: ProjectState, asset_id: str, prompt: str) -> None:
@@ -361,7 +378,7 @@ class RoleSubjectFrontalImageAuditNode(ImageAuditNodeBase):
 
     def _asset_expectation(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
         role, appearance = self._find_appearance(state, item.asset_id)
-        details = "；".join(value for value in (appearance.desc, appearance.visual_features) if value)
+        details = identity_brief(appearance)
         return (
             f"单主体正面参考图“{role.name} / {appearance.name}”。{details}。"
             "主体必须全身正对镜头、居中完整、五官和关键结构无遮挡，严格保持角色板身份；"
@@ -410,7 +427,10 @@ class LayoutImageAuditNode(ImageAuditNodeBase):
     def _asset_expectation(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
         layout = self._find_layout(state, item.asset_id)
         space = "；".join(layout.space_features)
-        return f"单幅可用于镜头调度的场景母版“{layout.name}”。{layout.desc}。空间要点：{space}。无人、无文字、无三视图或拼图；保持手绘二维水墨国漫风格。"
+        return (
+            f"单幅可用于镜头调度的场景母版“{layout.name}”。{layout.desc}。空间要点：{space}。"
+            f"无人、无文字、无三视图或拼图；服从以下视觉契约：{self._style_brief(state)}。"
+        )
 
     def _save_revised_prompt(self, project_dir: Path, state: ProjectState, asset_id: str, prompt: str) -> None:
         self._find_layout(state, asset_id).prompt = prompt
@@ -434,7 +454,11 @@ class ShotImageAuditNodeBase(ImageAuditNodeBase):
         wanted = {str(key) for key in active}
         return [episode_key for episode_key in expected if episode_key in wanted]
 
-    def _selected_shot_ids(self, plan: ClipToShotsEpisodeOutput) -> set[str]:
+    def _selected_shot_ids(
+        self,
+        project_dir: Path,
+        plan: ClipToShotsEpisodeOutput,
+    ) -> set[str]:
         selectors = {
             str(value).strip().lower().replace("-", "_")
             for value in getattr(self.workflow, "_active_shot_selectors", set()) or set()
@@ -442,7 +466,12 @@ class ShotImageAuditNodeBase(ImageAuditNodeBase):
         }
         rows = [shot for clip in plan.clips for shot in clip.shots]
         if not selectors:
-            return {shot.shot_id for shot in rows}
+            selection = configured_episode_output_selection(
+                self.repo,
+                project_dir,
+                plan,
+            )
+            return set(selection.selected_shot_ids)
         selected: set[str] = set()
         for shot in rows:
             index = shot.episode_shot_index
@@ -609,7 +638,7 @@ class ShotBackgroundImageAuditNode(ShotImageAuditNodeBase):
                 raise FileNotFoundError(f"{self.name} requires {self.source_node} and clip_to_shots output for {episode_key}")
             plan = ClipToShotsEpisodeOutput.model_validate_json(plan_path.read_text(encoding="utf-8"))
             output = ShotBackgroundImageGenerationEpisodeOutput.model_validate_json(output_path.read_text(encoding="utf-8"))
-            selected_shots = self._selected_shot_ids(plan)
+            selected_shots = self._selected_shot_ids(project_dir, plan)
             for row in output.generated_backgrounds:
                 if not selected_shots.intersection(row.shot_ids):
                     continue
@@ -638,7 +667,8 @@ class ShotBackgroundImageAuditNode(ShotImageAuditNodeBase):
     def _asset_expectation_for_candidate(self, state: ProjectState, candidate: ShotImageAuditCandidate) -> str:
         return (
             "单幅可直接用作镜头背景的无人场景板。保持空间结构、机位与透视可信，"
-            "符合二维水墨国漫风格；无人物、可读文字、logo、水印、拼图、多视图或畸形建筑。"
+            f"服从以下视觉契约：{self._style_brief(state)}；"
+            "无人物、可读文字、logo、水印、拼图、多视图或畸形建筑。"
         )
 
     def _save_revised_prompt_for_candidate(
@@ -666,6 +696,27 @@ class ShotKeyframeImageAuditNode(ShotImageAuditNodeBase):
     source_node = "shot_keyframe_image_generation"
     asset_type = "shot_keyframe"
 
+    async def run(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        state = await super().run(project_dir, state)
+        audit_path = self.layout.node_output_path(project_dir, self.name)
+        audit = ImageAssetAuditOutput.model_validate_json(audit_path.read_text(encoding="utf-8"))
+        status_by_asset = {
+            item.asset_id: ("accepted" if item.approved else "rejected")
+            for item in audit.audited_assets
+        }
+        for episode_key in self._episode_keys(state):
+            output_path = self.layout.node_episode_output_path(project_dir, self.source_node, episode_key)
+            if not output_path.exists():
+                continue
+            output = ShotKeyframeImageGenerationOutput.model_validate_json(
+                output_path.read_text(encoding="utf-8")
+            )
+            for row in output.generated_keyframes:
+                if row.keyframe_asset_id in status_by_asset:
+                    row.audit_status = status_by_asset[row.keyframe_asset_id]
+            self.repo.write_json(output_path, output)
+        return state
+
     def _candidates(self, project_dir: Path, state: ProjectState) -> list[ShotImageAuditCandidate]:
         candidates: list[ShotImageAuditCandidate] = []
         for episode_key in self._episode_keys(state):
@@ -675,7 +726,7 @@ class ShotKeyframeImageAuditNode(ShotImageAuditNodeBase):
                 raise FileNotFoundError(f"{self.name} requires {self.source_node} and clip_to_shots output for {episode_key}")
             plan = ClipToShotsEpisodeOutput.model_validate_json(plan_path.read_text(encoding="utf-8"))
             output = ShotKeyframeImageGenerationOutput.model_validate_json(output_path.read_text(encoding="utf-8"))
-            selected_shots = self._selected_shot_ids(plan)
+            selected_shots = self._selected_shot_ids(project_dir, plan)
             for row in output.generated_keyframes:
                 if row.shot_id not in selected_shots:
                     continue
@@ -705,8 +756,8 @@ class ShotKeyframeImageAuditNode(ShotImageAuditNodeBase):
         return (
             "单幅可作为视频起始帧的剧情关键帧。严格核对候选提示词要求的主体、道具、空间关系与动作起势，"
             "保持背景机位和视觉风格统一；未被候选提示词要求的角色、道具或动作不应作为拒绝理由。"
-            "无身份漂移、重复主体或肢体错误。候选提示词明确要求的剧情文字可以保留；"
-            "仍须拒绝无关文字、假文字、字幕、logo 或水印。"
+            "无身份漂移、重复主体或肢体错误。所有精确剧情文字均应由后期叠加，关键帧必须是无字 clean plate；"
+            "拒绝可读文字、假文字、字幕、logo 或水印。"
         )
 
     def _save_revised_prompt_for_candidate(

@@ -3,7 +3,8 @@
 import json
 from typing import Any
 
-from autodrama.core.schemas import ClipToShotsModelOutput, KeyVisionPromptOutput, ProjectState
+from autodrama.core.schemas import ClipToShotsModelOutput, KeyVisionPromptOutput, ProjectState, VisualStyleSpec
+from autodrama.core.visual_contract import render_visual_style_brief
 from autodrama.providers.base import TextLLM
 from autodrama.utils.prompts import PromptStore
 
@@ -40,14 +41,17 @@ class DirectorService:
         visual_style_prompt = cls.visual_style_prompt(state)
         if visual_style_prompt:
             payload["visual_style_prompt"] = visual_style_prompt
-        visual_tone = str(state.metadata.get("visual_tone") or "").strip()
-        if visual_tone:
-            payload["visual_tone"] = visual_tone
         return cls.format_json(payload) if payload else cls._fallback_context()
 
     @staticmethod
     def visual_style_prompt(state: ProjectState) -> str:
-        return str(state.metadata.get("visual_style_prompt") or "").strip()
+        raw = state.metadata.get("visual_style_spec")
+        if not isinstance(raw, dict):
+            raise ValueError(
+                "project metadata has no visual_style_spec v2; run the visual contract migration"
+            )
+        spec = VisualStyleSpec.model_validate(raw)
+        return render_visual_style_brief(spec)
 
     async def key_vision_prompt(
         self,
@@ -85,6 +89,8 @@ class DirectorService:
         asset_index: str,
         previous_context: str,
         next_context: str,
+        available_seconds: float = 30.0,
+        reference_budget: int = 4,
     ) -> ClipToShotsModelOutput:
         """Plan provider-sized shots without leaking project/workflow metadata."""
         prompt = self.prompts.render(
@@ -93,6 +99,8 @@ class DirectorService:
             asset_index=asset_index,
             previous_context=previous_context,
             next_context=next_context,
+            available_seconds=f"{available_seconds:.1f}",
+            reference_budget=str(reference_budget),
         )
         return await provider.generate_json(
             prompt,

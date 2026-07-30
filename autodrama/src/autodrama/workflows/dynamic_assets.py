@@ -267,14 +267,14 @@ class DynamicAssetNodeMixin:
                 if shot.dialogue_audio_assets:
                     changed = True
                 shot.dialogue_audio_assets = []
-                for line_index, line in enumerate(shot.dialogue, start=1):
+                for line in shot.dialogue_lines:
                     asset, skip = await self._generate_shot_dialogue_audio(
                         provider=provider,
                         project_dir=project_dir,
                         state=state,
                         episode_key=episode.episode_key,
                         shot=shot,
-                        line_index=line_index,
+                        line_index=line.line_index,
                         line=line,
                     )
                     if skip is not None:
@@ -482,7 +482,23 @@ class DynamicAssetNodeMixin:
             getattr(provider, "model", "-"),
         )
         episode = self._load_shot_manifest(project_dir, episode_key)
+        if not episode.ready_for_video:
+            rejected = [
+                f"{gate.name}: {gate.details}"
+                for gate in episode.gate_results
+                if gate.required and gate.status != "accepted"
+            ]
+            raise ValueError(
+                "shot_video_generation requires manifest.ready_for_video=true; "
+                + ("; ".join(rejected) if rejected else "required shot gates are not accepted")
+            )
         shots = self._active_shots_for_episode(episode)
+        blocked_shots = [shot.shot_id for shot in shots if not shot.ready_for_video]
+        if blocked_shots:
+            raise ValueError(
+                "shot_video_generation rejected shots without accepted gates: "
+                + ", ".join(blocked_shots)
+            )
         concurrency = self._bounded_concurrency(
             provider,
             "shot_video_generation_concurrency",

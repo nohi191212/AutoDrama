@@ -22,6 +22,11 @@ class PostgenSourceClip(BaseModel):
     video_prompt: str | None = None
     camera_movement: str | None = None
     transition_hint: str | None = None
+    video_audit_status: Literal["accepted", "rejected"] = "rejected"
+    quality_tier: Literal["deliverable", "review_only"] = "deliverable"
+    allowed_ranges: list[tuple[float, float]] = Field(default_factory=list)
+    expected_dialogue: list[str] = Field(default_factory=list)
+    gate_provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class PostgenTransition(BaseModel):

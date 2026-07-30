@@ -36,7 +36,7 @@ class RoleService:
 
     @staticmethod
     def visual_tone(state: ProjectState) -> str:
-        return str(state.metadata.get("visual_tone") or "").strip()
+        return DirectorService.visual_style_prompt(state)
 
     @classmethod
     def role_character_intro(cls, role_item: RoleExtractItem) -> str:

@@ -9,6 +9,7 @@ from PIL import Image, ImageOps
 
 from autodrama.core.errors import ProviderBadResponseError, ProviderError
 from autodrama.core.ids import normalize_id
+from autodrama.core.visual_contract import identity_brief
 from autodrama.core.schemas import (
     ProjectState,
     Role,
@@ -287,7 +288,7 @@ class RoleSubjectFrontalImageGenerationNode(RoleSubjectNodeBase):
             revised = str(revised_prompts.get(self._asset_id(appearance)) or "").strip()
             if revised:
                 return revised
-        appearance_text = str(appearance.desc or appearance.visual_features or "").strip()
+        appearance_text = identity_brief(appearance)
         return "\n".join(
             [
                 "严格参考输入的角色身份板，为同一个主体生成一张独立的正面标准参考图。",
@@ -778,7 +779,7 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
                 "",
                 f"角色名：{role.name}",
                 f"角色简介：{role.intro}",
-                f"外观设定：{appearance.desc or appearance.prompt or appearance.roleboard_prompt or ''}",
+                f"外观设定：{identity_brief(appearance)}",
             ]
         )
 
@@ -865,7 +866,7 @@ class RoleSubjectVideoGenerationNode(RoleSubjectNodeBase):
             [
                 f"角色名：{role.name}",
                 f"角色简介：{role.intro}",
-                f"外观描述：{appearance.desc or appearance.prompt or appearance.roleboard_prompt or ''}",
+                f"外观描述：{identity_brief(appearance)}",
                 f"自我介绍口播台词：{intro_text}",
                 "声音要求：角色必须用自然中文口播完整说出上面的自我介绍台词；口型、表情和节奏必须与台词同步，声音清晰靠前，不要背景音乐、旁白、混响夸张音效或字幕。",
                 "动作设计：角色先以三分之二侧身静立，然后缓慢转向镜头旁侧，微微抬眼，进行一次自然呼吸和轻微手部动作；口播时表情克制自然，不要夸张表演。",
@@ -1129,16 +1130,7 @@ class RoleSubjectElementGenerationNode(RoleSubjectNodeBase):
 
     @staticmethod
     def _element_description(role: Role, appearance: RoleAppearance) -> str:
-        text = " ".join(
-            str(part or "").strip()
-            for part in (
-                role.name,
-                role.intro,
-                appearance.desc,
-                appearance.prompt,
-            )
-            if str(part or "").strip()
-        )
+        text = " ".join((role.name, identity_brief(appearance)))
         return text[:100] or role.name[:100]
 
     def _image_refs(self, project_dir: Path, role: Role, appearance: RoleAppearance) -> list[AssetRef]:

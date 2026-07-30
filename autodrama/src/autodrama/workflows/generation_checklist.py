@@ -56,9 +56,9 @@ def _episode_status(project_dir: Path, episode_key: str) -> dict[str, EpisodeGen
         return {field: "pending" for field in DYNAMIC_STATUS_FIELDS}
 
     dialogue_done = all(
-        len(shot.dialogue_audio_assets) >= len(shot.dialogue)
+        len(shot.dialogue_audio_assets) >= len(shot.dialogue_lines)
         for shot in episode.shots
-        if shot.dialogue
+        if shot.dialogue_lines
     )
     video_done = all(bool(shot.video_asset_path or shot.video_task_id) for shot in episode.shots)
     solidified_done = all(bool(shot.solidified_asset_ids) for shot in episode.shots)
@@ -97,6 +97,36 @@ def load_checklist(project_dir: Path) -> dict[str, Any]:
 
 def write_checklist(repo: ProjectRepository, project_dir: Path, checklist: dict[str, Any]) -> None:
     repo.write_json(checklist_path(project_dir), checklist)
+
+
+def mark_episode_keys_for_regeneration(
+    repo: ProjectRepository,
+    project_dir: Path,
+    episode_keys: list[str],
+    *,
+    expected_output_seconds: int,
+) -> bool:
+    """Re-open completed episodes when a duration scope includes new shots."""
+
+    checklist = load_checklist(project_dir)
+    if not checklist:
+        return False
+    wanted = set(episode_keys)
+    changed = False
+    for item in checklist.get("episodes", []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("episode_key")) not in wanted:
+            continue
+        item["generate"] = True
+        item["generation_status"] = "pending"
+        changed = True
+    if not changed:
+        return False
+    checklist["expected_output_seconds"] = expected_output_seconds
+    checklist["scope_updated_at"] = datetime.now().isoformat(timespec="seconds")
+    write_checklist(repo, project_dir, checklist)
+    return True
 
 
 def update_checklist_from_state(

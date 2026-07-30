@@ -24,6 +24,7 @@ from autodrama.core.schemas import (
     PropPromptOutput,
     RoleExtractOutput,
     RoleFinalizeAuditReviewOutput,
+    RoleVoiceRequirements,
     RoleSubjectVideoIntroTextOutput,
     RoleboardPromptModelOutput,
     SafeImagePromptRewriteOutput,
@@ -121,65 +122,71 @@ class FakeTextProvider:
             episode_keys = [str(key) for key in expected_keys]
             episode_count = len(episode_keys)
 
-        if schema is ScriptImportOutput or node_name == "script_import":
+        if schema is RoleVoiceRequirements or node_name == "role_voice_requirements":
+            fixture_requirements = {
+                "role-fake-female": {
+                    "gender_presentation": "female",
+                    "age_impression": "young_adult",
+                },
+                "role-fake-mature": {
+                    "gender_presentation": "male",
+                    "age_impression": "mature",
+                },
+            }
+            fixture = fixture_requirements.get(str(metadata.get("role_id") or ""), {})
+            data = {
+                "schema_version": 2,
+                "language": "zh",
+                "gender_presentation": fixture.get("gender_presentation", "unspecified"),
+                "age_impression": fixture.get("age_impression", "unspecified"),
+                "performance_traits": [],
+                "baseline_emotion": None,
+                "hard_constraints": [],
+                "provenance": {
+                    "source": "model",
+                    "evidence": ["fake structured voice requirement fixture"],
+                    "confidence": 1.0,
+                    "model": "fake-text",
+                },
+            }
+        elif schema is ScriptImportOutput or node_name == "script_import":
+            source_section = prompt.partition("原始剧本文本：")[2]
+            source_section = source_section.partition("返回由系统提供结构约束的纯 JSON")[0]
+            source_excerpt = next(
+                (line.strip() for line in source_section.splitlines() if line.strip()),
+                "原始剧本",
+            )
             data = {
                 "outline": "江未晞在破败殿宇中醒来，遇见由银白光点凝聚成形的乐园AI管家九韶，得知自己被乐园令牌选中，并可通过运营密室夺回被掠夺的气运与人生。九韶演示山海经主题新手区，九尾狐密室的真实触感和狐爪机关让江未晞第一次贡献恐惧与惊喜能量，也激起她开启密室的欲望。",
                 "episode_outlines": [
-                    "江未晞在破败殿宇醒来，确认自己进入万象神话乐园，并与AI管家九韶完成绑定。",
-                    "九韶演示异兽九尾狐密室，真实场景和机关惊吓让江未晞贡献情绪能量，决定开启第一个密室。",
+                    "原始剧本中的角色围绕核心冲突推进事件，并在结尾保留后续悬念。",
                 ],
-                "roles": [
-                    {
-                        "name": "江未晞",
-                        "role_tier": "primary",
-                        "intro": "体弱多病、长期倒霉的少女，被万象神话乐园选中后决定运营密室夺回命运。",
-                        "aliases": [],
-                        "appearance_notes": ["校服狼狈", "脸色蜡黄", "颧骨有雀斑", "嘴唇干裂"],
-                        "has_dialogue": True,
-                        "visual_reuse_required": True,
-                        "evidence": "原文围绕江未晞醒来、绑定乐园并决定开启密室展开。",
-                    },
-                    {
-                        "name": "九韶",
-                        "role_tier": "primary",
-                        "intro": "万象神话乐园的AI管家，以少年形态出现并向江未晞说明规则。",
-                        "aliases": ["乐园AI管家"],
-                        "appearance_notes": ["银白长发", "黑袍", "瞳色极淡", "非人般精密完美"],
-                        "has_dialogue": True,
-                        "visual_reuse_required": True,
-                        "evidence": "原文写九韶由光点拼合成形并讲解乐园规则。",
-                    },
-                ],
-                "props": [
-                    {
-                        "name": "乐园令牌",
-                        "desc": "选中江未晞成为万象神话乐园继任者的关键物件。",
-                        "status": "normal",
-                        "owner_role_name": "江未晞",
-                        "evidence": "九韶说明宿主被乐园令牌选中。",
-                    },
-                    {
-                        "name": "石灯机关",
-                        "desc": "九尾狐密室中的机关，触碰后会迷惑游客并触发狐爪追捕。",
-                        "status": "normal",
-                        "owner_role_name": "",
-                        "evidence": "九韶指向庭院石灯讲解机关规则。",
-                    },
-                ],
-                "layouts": [
-                    {
-                        "name": "破败殿宇",
-                        "desc": "殿顶半塌、蛛网厚重、残垣断壁环绕的乐园初始空间。",
-                        "prompt": "半塌的古旧殿宇，断裂雕花木梁，厚蛛网，灰蒙天光，中央石台积满灰尘。",
-                        "evidence": "原文开场描写江未晞在破败殿宇中醒来。",
-                    },
-                    {
-                        "name": "九尾狐庭院密室",
-                        "desc": "山海经主题新手区中的庭院密室，假山、回廊、绣楼和红灯笼构成危险暧昧的空间。",
-                        "prompt": "中式庭院密室，假山林立，青石板小径，精致绣楼，红灯笼缓慢闪烁，紫红花丛。",
-                        "evidence": "九韶演示异兽九尾狐场景时庭院完整铺展。",
-                    },
-                ],
+                "roles": [],
+                "props": [],
+                "layouts": [],
+                "facts": {
+                    "events": [
+                        {
+                            "summary": "原始剧本中的核心事件推进。",
+                            "time_period": None,
+                            "participant_names": [],
+                            "prop_names": [],
+                            "layout_names": [],
+                            "precondition": None,
+                            "result": None,
+                            "evidence_quotes": [source_excerpt],
+                        }
+                    ],
+                    "entity_mentions": [
+                        {
+                            "name": "叙事片段",
+                            "entity_type": "group",
+                            "time_period": None,
+                            "evidence_quotes": [source_excerpt],
+                        }
+                    ],
+                    "prop_observations": [],
+                },
                 "notes": "fake script_import output",
             }
         elif schema is ScriptOutlineOutput or node_name == "script_outline":
@@ -274,6 +281,14 @@ class FakeTextProvider:
                                     "clothing": "简洁深色通勤装",
                                     "visual_features": "青年男性，短发，身形偏瘦，眼神疲惫但冷静",
                                     "appearance_desc": "青年男性，短发，身形偏瘦，简洁深色通勤装。",
+                                    "identity_invariants": ["青年男性", "短发", "身形偏瘦"],
+                                    "wardrobe": ["简洁深色通勤装"],
+                                    "provenance": {
+                                        "source": "model",
+                                        "evidence": ["第1章-第2章角色设定"],
+                                        "confidence": 0.95,
+                                        "model": "fake-text",
+                                    },
                                 },
                                 {
                                     "name": "雨夜办公室",
@@ -285,6 +300,16 @@ class FakeTextProvider:
                                     "clothing": "被雨水打湿的深色衬衫和外套",
                                     "visual_features": "保持林舟同一脸、短发和偏瘦身形，衣料微湿",
                                     "appearance_desc": "同一林舟，短发偏瘦，深色衬衫外套被雨水打湿。",
+                                    "identity_invariants": ["青年男性", "短发", "身形偏瘦"],
+                                    "wardrobe": ["深色衬衫", "深色外套"],
+                                    "valid_from_event": "雨夜办公室开始",
+                                    "valid_to_event": "雨夜办公室结束",
+                                    "provenance": {
+                                        "source": "model",
+                                        "evidence": ["第1章-第2章雨夜办公室事件"],
+                                        "confidence": 0.9,
+                                        "model": "fake-text",
+                                    },
                                 },
                             ],
                             "has_dialogue": True,
@@ -299,6 +324,24 @@ class FakeTextProvider:
                             "source_chapters": ["第1章-第2章"],
                             "brief": "二十六岁数据分析师，提供证据线索并帮助林舟理清时间线。",
                             "appearance_notes": ["青年女性", "气质清冷", "身形修长"],
+                            "appearance_assets": [
+                                {
+                                    "name": "base",
+                                    "asset_role": "base",
+                                    "episode_keys": episode_keys,
+                                    "source_chapters": ["第1章-第2章"],
+                                    "brief": "苏晚稳定基础身份造型。",
+                                    "visual_features": "青年女性，气质清冷，身形修长",
+                                    "identity_invariants": ["青年女性", "身形修长"],
+                                    "wardrobe": ["简洁通勤装"],
+                                    "provenance": {
+                                        "source": "model",
+                                        "evidence": ["第1章-第2章角色设定"],
+                                        "confidence": 0.9,
+                                        "model": "fake-text",
+                                    },
+                                }
+                            ],
                             "has_dialogue": True,
                             "visual_reuse_required": True,
                         },
@@ -311,6 +354,24 @@ class FakeTextProvider:
                             "source_chapters": ["第1章-第2章"],
                             "brief": "三十五岁部门主管，操控会议节奏并压制林舟。",
                             "appearance_notes": ["成熟男性", "体型中等偏壮", "神情强势"],
+                            "appearance_assets": [
+                                {
+                                    "name": "base",
+                                    "asset_role": "base",
+                                    "episode_keys": episode_keys,
+                                    "source_chapters": ["第1章-第2章"],
+                                    "brief": "赵启稳定基础身份造型。",
+                                    "visual_features": "成熟男性，体型中等偏壮，神情强势",
+                                    "identity_invariants": ["成熟男性", "体型中等偏壮"],
+                                    "wardrobe": ["管理层商务装"],
+                                    "provenance": {
+                                        "source": "model",
+                                        "evidence": ["第1章-第2章角色设定"],
+                                        "confidence": 0.9,
+                                        "model": "fake-text",
+                                    },
+                                }
+                            ],
                             "has_dialogue": True,
                             "visual_reuse_required": True,
                         },
@@ -337,7 +398,21 @@ class FakeTextProvider:
         elif schema is ClipToShotsModelOutput or node_name == "clip_to_shots":
             available_ids = re.findall(r"^([a-zA-Z0-9_\-\u4e00-\u9fff]+):", prompt, flags=re.MULTILINE)
             layout_ids = [value for value in available_ids if value.startswith("layout_")]
-            role_ids = [value for value in available_ids if "_roleboard" in value]
+            roleboard_rows = re.findall(
+                r"^([^:\s]+):.*?\[role_id=([^;\]]+);\s*appearance_id=([^\]]+)",
+                prompt,
+                flags=re.MULTILINE,
+            )
+            roleboard_by_role = {
+                role_id: (asset_id, appearance_id)
+                for asset_id, role_id, appearance_id in roleboard_rows
+            }
+            role_ids = [asset_id for asset_id, _appearance_id in roleboard_by_role.values()]
+            entity_bindings = [
+                (role_id, appearance_id)
+                for role_id, (_asset_id, appearance_id) in roleboard_by_role.items()
+            ]
+            prop_ids = re.findall(r"\[prop_id=([^\]]+)", prompt)
             data = {
                 "shot_1": {
                     "shot_description": "林舟在办公室查看合同，苏晚在桌边递出邮件截图。",
@@ -346,7 +421,23 @@ class FakeTextProvider:
                     "ref_ids": [*layout_ids[:1], *role_ids[:2]],
                     "video_prompt": "中景固定镜头，林舟翻看合同，苏晚把旧邮件截图推到他面前。",
                     "duration_seconds": 8,
-                    "dialogue": [],
+                    "entity_states": [
+                        {
+                            "schema_version": 1,
+                            "entity_id": role_id,
+                            "appearance_id": appearance_id,
+                            "pose": "位于办公室桌边",
+                            "emotion": "专注",
+                            "injury": None,
+                            "held_props": [],
+                            "energy_state": None,
+                            "event_refs": [],
+                        }
+                        for role_id, appearance_id in entity_bindings[:2]
+                    ],
+                    "dialogue_lines": [],
+                    "overlay_text_spec": None,
+                    "allowed_props": prop_ids[:1],
                 }
             }
         elif schema is LayoutBackgroundPromptModelOutput or node_name == "layout_to_background_prompt":
@@ -866,7 +957,7 @@ class FakeTextProvider:
                         "title": clip.get("title"),
                         "source_path": source_path,
                         "duration_seconds": duration,
-                        "dialogue_lines": list(clip.get("dialogue_lines") or clip.get("dialogue") or []),
+                        "dialogue_lines": list(clip.get("dialogue_lines") or []),
                         "role_ids": list(clip.get("role_ids") or []),
                         "prop_ids": list(clip.get("prop_ids") or []),
                         "content": clip.get("content"),
@@ -915,6 +1006,13 @@ class FakeTextProvider:
                 ),
                 "notes": "fake safety rewrite",
             }
+        elif schema.__name__ in {"ImageAuditDecision", "VideoAuditDecision"}:
+            data = {
+                "approved": True,
+                "issues": [],
+                "revised_prompt": "",
+                "rationale": "fake provider accepted the deterministic audit fixture",
+            }
         elif schema is ShotManifestEpisodeOutput:
             episode_key = str(metadata.get("episode_key") or episode_keys[0])
             data = {
@@ -929,7 +1027,7 @@ class FakeTextProvider:
                         "transition": "结尾停在可硬切状态",
                         "start_frame_source": "new_reference_frame",
                         "start_frame_inheritance_reason": "本片段重新建立雨夜办公室调查空间，不继承前序片段尾帧。",
-                        "dialogue": [],
+                        "dialogue_lines": [],
                         "role_ids": ["role_林舟"],
                         "role_appearance_ids": ["role_林舟_appearance_base"],
                         "role_audio_ids": [],
@@ -951,7 +1049,26 @@ class FakeTextProvider:
                         "transition": "硬切到公开对峙",
                         "start_frame_source": "new_reference_frame",
                         "start_frame_inheritance_reason": "本片段从办公室调查跳到会议室反击，需要重新建立空间和人物站位。",
-                        "dialogue": ["林舟：这份合同被换过，时间线就在这里。"],
+                        "dialogue_lines": [
+                            {
+                                "schema_version": 1,
+                                "line_index": 1,
+                                "speaker_role_id": "role_林舟",
+                                "speaker_name": "林舟",
+                                "text": "这份合同被换过，时间线就在这里。",
+                                "emotion": "normal",
+                                "intensity": 0.6,
+                                "delivery_mode": "on_screen",
+                                "source_text": "林舟：这份合同被换过，时间线就在这里。",
+                                "provenance": {
+                                    "schema_version": 1,
+                                    "source": "model",
+                                    "evidence": ["林舟：这份合同被换过，时间线就在这里。"],
+                                    "confidence": 1.0,
+                                    "model": "fake",
+                                },
+                            }
+                        ],
                         "role_ids": ["role_林舟", "role_赵启"],
                         "role_appearance_ids": ["role_林舟_appearance_base", "role_赵启_appearance_base"],
                         "role_audio_ids": ["role_林舟_audio_normal"],
@@ -1176,7 +1293,12 @@ class FakeAudioJudgeProvider:
         if schema is VoiceCatalogProfile:
             voice_label = str(metadata.get("voice_label") or metadata.get("voice_type") or "Fake Voice")
             voice_type = str(metadata.get("voice_type") or "")
-            gender = "female" if "female" in voice_type else ("male" if "male" in voice_type else None)
+            fixture_gender = {
+                "fake_male_voice": "male",
+                "fake_female_voice": "female",
+                "fake_mature_voice": "male",
+            }
+            gender = fixture_gender.get(voice_type, "unspecified")
             data = {
                 "summary": (
                     f"{voice_label} 的声线在 fake 评测中呈现出干净稳定的中频轮廓，像一块被打磨过的温润木片，"
@@ -1184,8 +1306,9 @@ class FakeAudioJudgeProvider:
                     "带一点贴近现实对白的松弛感，闭眼时容易联想到一个说话有分寸、反应清醒的短剧人物。"
                     "这种声音不追求夸张的戏剧爆点，更适合职场、悬疑或生活流场景里需要长期复用的角色配音。"
                 ),
+                "language": "zh",
                 "gender_presentation": gender,
-                "age_impression": "young_adult_to_adult",
+                "age_impression": "young_adult",
                 "texture": ["clear", "stable"],
                 "performance_style": ["natural", "restrained"],
                 "strengths": ["普通对白自然", "多情绪样例稳定"],
@@ -1195,6 +1318,11 @@ class FakeAudioJudgeProvider:
                 "emotion_quality": {
                     str(ref.metadata.get("emotion") or ref.id or "normal"): 8.0
                     for ref in refs
+                },
+                "field_sources": {
+                    "language": "audio_judge",
+                    "gender_presentation": "audio_judge",
+                    "age_impression": "audio_judge",
                 },
             }
         elif schema is VoiceSelectAudioJudgeOutput:
@@ -1282,20 +1410,20 @@ class FakeVoiceDesignProvider:
         *,
         role_id: str,
         role_name: str,
-        role_intro: str | None = None,
-        role_voice_summary: str | None = None,
-        role_personality: str | None = None,
+        voice_requirements: dict[str, Any] | None = None,
     ) -> str:
-        del role_id
-        hint = " ".join(
-            item
-            for item in (role_name, role_intro, role_voice_summary, role_personality)
-            if item
-        )
-        if any(marker in hint for marker in ("女", "她", "母亲", "妻子", "姐姐", "妹妹")):
+        del role_name
+        requirements = voice_requirements if isinstance(voice_requirements, dict) else {}
+        if requirements.get("gender_presentation") == "female":
             return "fake_female_voice"
-        if any(marker in hint for marker in ("成熟", "主管", "父亲", "反派", "强势")):
+        if requirements.get("age_impression") in {"mature", "elderly"}:
             return "fake_mature_voice"
+        fixture_voices = {
+            "role-fake-female": "fake_female_voice",
+            "role-fake-mature": "fake_mature_voice",
+        }
+        if role_id in fixture_voices:
+            return fixture_voices[role_id]
         return "fake_male_voice"
 
     def resolve_voice_resource_id(self, voice_type: str | None) -> str:

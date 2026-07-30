@@ -72,6 +72,8 @@ class EditSubtitleCue(BaseModel):
     text: str
     role_name: str | None = None
     shot_id: str | None = None
+    cue_type: Literal["dialogue", "overlay"] = "dialogue"
+    placement_hint: str | None = None
 
 
 class EpisodeEditPlan(BaseModel):
@@ -332,6 +334,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
             audio_layers.extend(dialogue_layers)
             missing_assets.extend(dialogue_missing)
             subtitle_cues.extend(self._build_subtitle_cues(shot, cursor, duration, len(subtitle_cues)))
+            subtitle_cues.extend(self._build_overlay_cues(shot, cursor, duration, len(subtitle_cues)))
             cursor += duration
 
         bgm_layer, bgm_missing, bgm_warnings = self._build_bgm_layer(project_dir, state, episode, cursor)
@@ -408,7 +411,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
                 layout_id=shot.layout_id,
                 role_ids=shot.role_ids,
                 prop_ids=shot.prop_ids,
-                dialogue_lines=shot.dialogue,
+                dialogue_lines=[line.text for line in shot.dialogue_lines],
                 notes=notes,
             ),
             missing,
@@ -426,7 +429,7 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         missing: list[EditMissingAsset] = []
         assets = list(shot.dialogue_audio_assets)
         if not assets:
-            if shot.dialogue:
+            if shot.dialogue_lines:
                 missing.append(
                     EditMissingAsset(
                         asset_type="dialogue_audio",
@@ -478,30 +481,50 @@ class EditingWorkflow(PregenWorkflowDelegateMixin):
         shot_duration: float,
         existing_count: int,
     ) -> list[EditSubtitleCue]:
-        if not shot.dialogue:
+        if not shot.dialogue_lines:
             return []
 
         cues: list[EditSubtitleCue] = []
-        line_duration = shot_duration / max(len(shot.dialogue), 1)
-        for index, raw_line in enumerate(shot.dialogue):
+        line_duration = shot_duration / max(len(shot.dialogue_lines), 1)
+        for index, dialogue_line in enumerate(shot.dialogue_lines):
             start = shot_start + line_duration * index + min(0.2, line_duration * 0.2)
             end = min(shot_start + shot_duration, start + max(1.0, line_duration * 0.75))
-            role_name, text = self._parse_dialogue_line(raw_line)
             cues.append(
                 EditSubtitleCue(
                     index=existing_count + index + 1,
                     start_time=round(start, 3),
                     end_time=round(max(start + 0.25, end), 3),
-                    text=text,
-                    role_name=role_name,
+                    text=dialogue_line.text,
+                    role_name=dialogue_line.speaker_name,
                     shot_id=shot.shot_id,
+                    cue_type="dialogue",
                 )
             )
         return cues
 
     @staticmethod
-    def _parse_dialogue_line(raw_line: str) -> tuple[str | None, str]:
-        return edit_planner.parse_dialogue_line(raw_line)
+    def _build_overlay_cues(
+        shot: ShotManifestItem,
+        shot_start: float,
+        shot_duration: float,
+        existing_count: int,
+    ) -> list[EditSubtitleCue]:
+        spec = shot.text_overlay_spec
+        if spec is None or spec.render_mode != "postproduction":
+            return []
+        relative_start = spec.start_seconds if spec.start_seconds is not None else 0.0
+        relative_end = spec.end_seconds if spec.end_seconds is not None else shot_duration
+        return [
+            EditSubtitleCue(
+                index=existing_count + 1,
+                start_time=round(shot_start + relative_start, 3),
+                end_time=round(shot_start + relative_end, 3),
+                text=spec.text,
+                shot_id=shot.shot_id,
+                cue_type="overlay",
+                placement_hint=spec.placement_hint,
+            )
+        ]
 
     def _build_bgm_layer(
         self,

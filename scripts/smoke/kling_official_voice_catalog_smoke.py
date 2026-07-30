@@ -14,8 +14,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from autodrama.config import OutputSettings, ProviderSettings, RuntimeSettings, Settings
-from autodrama.core.schemas import Role
-from autodrama.core.voice_catalog import RoleVoiceSelectionItem
+from autodrama.core.schemas import Role, RoleVoiceRequirements
+from autodrama.core.voice_catalog import RoleVoiceSelectionItem, VoiceCatalogProfile
 from autodrama.providers.kling.video.omni import KlingOmniVideoProvider
 from autodrama.repositories.voice_catalog_repo import VoiceCatalogRepository
 from autodrama.services.voice_catalog_service import VoiceCatalogService
@@ -153,8 +153,32 @@ async def main() -> None:
             assert sample_path.read_bytes().startswith(b"ID3")
             assert repo.sample_manifest_path(manifest.provider, manifest.model, voice.voice_type).exists()
 
-        girl = Role(id="role_girl", name="小晞", intro="年轻女性，温柔少女，女主角")
-        man = Role(id="role_man", name="九叔", intro="成熟男性，沉稳大叔，父亲")
+        manifest.voices[0].omni_profile = VoiceCatalogProfile(
+            summary="fixture",
+            language="zh",
+            gender_presentation="female",
+            age_impression="young_adult",
+            field_sources={"gender_presentation": "audio_judge"},
+        )
+        manifest.voices[1].omni_profile = VoiceCatalogProfile(
+            summary="fixture",
+            language="zh",
+            gender_presentation="male",
+            age_impression="mature",
+            field_sources={"gender_presentation": "audio_judge"},
+        )
+        girl = Role(
+            id="role_girl",
+            name="小晞",
+            intro="角色展示文本",
+            voice_requirements=RoleVoiceRequirements(language="zh", gender_presentation="female"),
+        )
+        man = Role(
+            id="role_man",
+            name="九叔",
+            intro="角色展示文本",
+            voice_requirements=RoleVoiceRequirements(language="zh", gender_presentation="male"),
+        )
         girl_pool, _ = service.role_voice_select_candidate_pool(girl, manifest)
         man_pool, _ = service.role_voice_select_candidate_pool(man, manifest)
         assert girl_pool[0].voice_type == "voice-girl"
@@ -169,7 +193,7 @@ async def main() -> None:
             selected_voice_model_family="kling-3.0-omni",
             selected_voice_catalog_key="kling_omni:kling-v3-omni:voice-girl",
             selected_reason="角色画像匹配",
-            selection_source="catalog_heuristic",
+            selection_source="structured_catalog",
             role_profile_hash="role-hash",
             catalog_version=manifest.catalog_version,
             catalog_hash=repo.manifest_hash(manifest),
@@ -184,7 +208,7 @@ async def main() -> None:
         )
         assert girl.kling_voice_id == "voice-girl"
         assert girl.kling_voice_source == "preset"
-        assert girl.kling_voice_raw_response["voice_selection"]["selection_source"] == "catalog_heuristic"
+        assert girl.kling_voice_raw_response["voice_selection"]["selection_source"] == "structured_catalog"
 
         provider.settings.options["role_voice_map"] = {girl.id: "manual-voice"}
         assert RoleKlingVoiceGenerationNode._voice_spec(provider, girl)["voice_id"] == "manual-voice"

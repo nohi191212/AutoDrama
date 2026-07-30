@@ -310,13 +310,24 @@ budget:
   max_text_calls: 200
 
 generation:
+  # -1 generates the full episode. A positive value keeps full clip planning,
+  # then limits expensive downstream work to the smallest complete clip prefix
+  # whose normalized shot durations reach this per-episode target.
+  expected_output_seconds: -1
   # Used by roleboard_image_generation as Image 2 style references.
   roleboard_style_reference_dir: ./.assets/sample
-  # Global visual style prompt used by key_vision_prompt.
-  visual_style_prompt: >
-    保持国漫CG/动画电影短剧主视觉质感，人物、场景、道具和光影属于同一美术体系；
-    画面有明确戏剧冲突、纵深层次和电影镜头感，色彩克制但记忆点清晰。
-    避免真人照片质感、可读文字、字幕、水印、logo和无关装饰。
+  # Versioned visual contract consumed by all visual generation nodes.
+  visual_style:
+    schema_version: 2
+    medium: stylized_3d_cg
+    render_engine_language:
+      - 国漫 CG 动画电影短剧主视觉，人物、场景、道具和光影属于同一美术体系。
+      - 画面具有明确戏剧冲突、纵深层次和电影镜头感。
+    materials: [风格化皮肤, 布料, 金属, 石材]
+    palette: [克制主色, 清晰视觉记忆点]
+    lighting: [电影化主光, 明确空间层次]
+    camera: [竖屏构图, 戏剧性景别, 清晰主体关系]
+    negative_constraints: [真人照片质感, 可读文字, 字幕, 水印, logo, 无关装饰]
   # Unified role image style prompt used by roleboard_prompt and roleboard_image_generation.
   roleboard_style_prompt: >
     使用参考图片作为统一人物美术风格、材质质感、光影、色彩和画面气质参考。

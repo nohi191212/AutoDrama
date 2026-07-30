@@ -34,6 +34,9 @@ def main() -> None:
                     "appearance_desc": "青年男性，短发，偏瘦，深色通勤装。",
                     "clothing": "深色通勤装",
                     "visual_features": "短发，偏瘦，冷静疲惫",
+                    "identity_invariants": ["青年男性", "短发", "偏瘦"],
+                    "wardrobe": ["深色通勤装"],
+                    "provenance": {"source": "model", "evidence": ["第1章"], "confidence": 1.0},
                 },
                 {
                     "name": "雨夜办公室",
@@ -43,6 +46,11 @@ def main() -> None:
                     "appearance_desc": "同一林舟，深色衬衫外套微湿。",
                     "clothing": "被雨水打湿的深色衬衫和外套",
                     "visual_features": "保持同一脸、短发和偏瘦身形",
+                    "identity_invariants": ["青年男性", "短发", "偏瘦"],
+                    "wardrobe": ["深色衬衫", "深色外套"],
+                    "valid_from_event": "雨夜办公室开始",
+                    "valid_to_event": "雨夜办公室结束",
+                    "provenance": {"source": "model", "evidence": ["第1章"], "confidence": 1.0},
                 },
             ],
             "has_dialogue": True,
@@ -52,7 +60,7 @@ def main() -> None:
     if len(item.appearance_assets) != 2:
         raise AssertionError("appearance_assets schema did not retain two items")
 
-    settings = load_settings(ROOT / "config.yaml")
+    settings = load_settings(ROOT / "config.saodi_bashinian.yaml")
     repo = ProjectRepository(settings)
     prompts = RoleboardPromptRepository(repo, repo.layout)
     project_dir = ROOT / ".tmp" / "roleboard_multi_appearance_contract"
@@ -94,6 +102,8 @@ def main() -> None:
         id=base_prompt.appearance_id,
         role_id=role_id,
         name="base",
+        identity_invariants=["青年男性", "短发", "偏瘦"],
+        wardrobe=["深色通勤装"],
         roleboard_prompt="base prompt",
     )
     role.appearances["雨夜办公室"] = RoleAppearance(
@@ -102,6 +112,10 @@ def main() -> None:
         name="雨夜办公室",
         asset_role="variant",
         reference_asset_name="base",
+        identity_invariants=["青年男性", "短发", "偏瘦"],
+        wardrobe=["深色衬衫", "深色外套"],
+        valid_from_event="雨夜办公室开始",
+        valid_to_event="雨夜办公室结束",
         roleboard_prompt="variant prompt",
     )
 

@@ -17,8 +17,9 @@ from autodrama.utils.prompts import PromptStore
 
 
 class ScriptService:
-    def __init__(self, prompts: PromptStore) -> None:
+    def __init__(self, prompts: PromptStore, *, max_semantic_attempts: int = 1) -> None:
         self.prompts = prompts
+        self.max_semantic_attempts = max(1, int(max_semantic_attempts))
 
     @staticmethod
     def episode_count(state: ProjectState) -> int:
@@ -72,11 +73,15 @@ class ScriptService:
         provider: TextLLM,
         *,
         raw_script: str,
+        semantic_feedback: str | None = None,
+        prompt_attempt: int = 0,
     ) -> ScriptImportOutput:
         prompt = self.prompts.render(
             "script_import",
             raw_script=raw_script,
         )
+        if semantic_feedback:
+            prompt = f"{prompt.rstrip()}\n\n{semantic_feedback.strip()}\n"
         return await provider.generate_json(
             prompt,
             ScriptImportOutput,
@@ -84,6 +89,7 @@ class ScriptService:
             metadata={
                 "node_name": "script_import",
                 "project_id": state.project_id,
+                "prompt_attempt": prompt_attempt,
             },
         )
     async def script_outline(self, state: ProjectState, provider: TextLLM) -> ScriptOutlineOutput:
