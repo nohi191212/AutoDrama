@@ -97,12 +97,12 @@ postgen:
     max_output_tokens: 8192
 nodes:
   clip_to_shots:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.6-flash
     params:
       temperature: 0.35
       response_format: json_object
   layout_to_background_prompt:
-    model: aibox:gemini-3.5-flash
+    model: aibox:gemini-3.6-flash
     params:
       temperature: 0.25
   shot_background_image_generation:
@@ -111,7 +111,7 @@ nodes:
       concurrency: 2
       size: 1088x1920
   shot_keyframe_prompt:
-    model: aibox:gemini-3.5-flash
+    model: aibox:gemini-3.6-flash
     params:
       temperature: 0.3
       negative_prompt: extra people, duplicate bodies, identity drift, malformed hands, inconsistent scale, floating objects, text, subtitles, logo, watermark
@@ -141,7 +141,7 @@ nodes:
       temperature: 0.3
       response_format: json_object
   key_vision_prompt:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.6-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.45
@@ -170,7 +170,7 @@ nodes:
       temperature: 0.2
       response_format: json_object
   roleboard_prompt:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.6-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.4
@@ -201,7 +201,7 @@ nodes:
       response_format: json_object
       max_iterations: 1
   prop_prompt:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.6-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.4
@@ -219,7 +219,7 @@ nodes:
       temperature: 0.3
       response_format: json_object
   layout_prompt:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.6-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.4
@@ -232,7 +232,7 @@ nodes:
       response_format: json_object
       max_iterations: 1
   layout_prop_boundary_review:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.6-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.2
@@ -270,7 +270,7 @@ nodes:
       max_reference_elements: 3
       role_subject_video_generation_concurrency: 5
   role_subject_video_intro_text:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.6-flash
     params:
       reasoning_effort: low
       temperature: 0.5
@@ -314,23 +314,56 @@ nodes:
     params:
       temperature: 0.2
   image_prompt_safety_rewrite:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.6-flash
     params:
       reasoning_effort: low
       temperature: 0.2
       response_format: json_object
   postgen_edit_plan_generation:
-    model: google:gemini-3.5-flash
+    model: aibox:gemini-3.6-flash
     params:
       temperature: 0.2
       response_format: json_object
   postgen_source_audit:
-    model: aibox:gemini-3.5-flash
+    model: aibox:gemini-3.6-flash
     params:
       temperature: 0.1
       max_output_tokens: 8192
   postgen_final_audit:
-    model: aibox:gemini-3.5-flash
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+      max_output_tokens: 8192
+  key_vision_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  roleboard_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  role_subject_frontal_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  prop_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  layout_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  shot_background_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  shot_keyframe_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  shot_video_audit:
+    model: aibox:gemini-3.6-flash
     params:
       temperature: 0.1
       max_output_tokens: 8192
@@ -401,8 +434,8 @@ providers:
     base_url: https://api.lk888.ai
     api_key_env: AIBOX_API_KEY
     models:
-      text: gemini-3.5-flash
-      postgen_audit: gemini-3.5-flash
+      text: gemini-3.6-flash
+      postgen_audit: gemini-3.6-flash
       image: gpt-image-2-guan
       key_vision: gpt-image-2-guan
       roleboard: gpt-image-2-guan
@@ -470,8 +503,8 @@ providers:
     base_url: https://generativelanguage.googleapis.com
     api_key_env: GOOGLE_API_KEY
     models:
-      text: gemini-3.5-flash
-      postgen_edit_plan: gemini-3.5-flash
+      text: gemini-3.6-flash
+      postgen_edit_plan: gemini-3.6-flash
     options:
       response_format: json_object
       temperature: 0.2
@@ -663,9 +696,9 @@ routing:
     role_voice_select: rightcode
     prop: rightcode
     layout: rightcode
-    shot: rightcode
+    shot: aibox
     shot_bgm: rightcode
-    postgen_edit_plan: google
+    postgen_edit_plan: aibox
     postgen_audit: aibox
     edit_plan: rightcode
     bgm_plan: rightcode

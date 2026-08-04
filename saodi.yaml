@@ -7,7 +7,7 @@ app:
 apikeys_file: ./apikeys.yaml
 model_catalog_file: ./model_catalog.yaml.example
 project:
-  id: saodi_bashinian
+  id: saodi_0803
   title: 扫地八十年，从宗门杂役飞升成仙
   script_outline_file: ./inputs/扫地八十年，从宗门杂役飞升成仙_第1集.txt
   episode_count: 1
@@ -97,43 +97,11 @@ postgen:
     fail_on_reject: false
     max_output_tokens: 8192
 nodes:
-  clip_to_shots:
-    model: aibox:gemini-3.6-flash
+  script_import:
+    model: rightcode:gpt-5.6-terra
     params:
-      temperature: 0.35
-      response_format: json_object
-  layout_to_background_prompt:
-    model: aibox:gemini-3.6-flash
-    params:
+      reasoning_effort: xhigh
       temperature: 0.25
-  shot_background_image_generation:
-    model: aibox:gpt-image-2
-    params:
-      concurrency: 2
-      size: 1088x1920
-  shot_keyframe_prompt:
-    model: aibox:gemini-3.6-flash
-    params:
-      temperature: 0.3
-      negative_prompt: extra people, duplicate bodies, identity drift, malformed hands, inconsistent scale, floating objects, text, subtitles, logo, watermark
-  shot_keyframe_image_generation:
-    model: aibox:gpt-image-2
-    params:
-      concurrency: 2
-      size: 1088x1920
-  shot_manifest_generation:
-    params: {}
-  script_outline:
-    model: aibox:gemini-3.6-flash
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-  script_novel:
-    model: aibox:gemini-3.6-flash
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.7
       response_format: json_object
   script_novel_extract:
     model: aibox:gemini-3.6-flash
@@ -201,29 +169,11 @@ nodes:
       temperature: 0.2
       response_format: json_object
       max_iterations: 1
-  prop_prompt:
-    model: aibox:gemini-3.6-flash
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
-      response_format: json_object
-  prop_image_generation:
-    model: aibox:gpt-image-2
-    params:
-      size: 2048x2048
-      prop_image_generation_concurrency: 1
-      max_attempts: 5
   layout_extract:
     model: aibox:gemini-3.6-flash
     params:
       reasoning_effort: xhigh
       temperature: 0.3
-      response_format: json_object
-  layout_prompt:
-    model: aibox:gemini-3.6-flash
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.4
       response_format: json_object
   layout_finalize:
     model: aibox:gemini-3.6-flash
@@ -238,11 +188,105 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.2
       response_format: json_object
+  prop_prompt:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  layout_prompt:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  prop_image_generation:
+    model: aibox:gpt-image-2
+    params:
+      size: 2048x2048
+      prop_image_generation_concurrency: 1
+      max_attempts: 5
   layout_image_generation:
     model: aibox:gpt-image-2
     params:
       size: 3840x2160
       concurrency: 3
+  clip_to_shots:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.35
+      response_format: json_object
+  layout_to_background_prompt:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.25
+  shot_background_image_generation:
+    model: aibox:gpt-image-2
+    params:
+      concurrency: 2
+      size: 1088x1920
+  shot_keyframe_prompt:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.3
+      negative_prompt: extra people, duplicate bodies, identity drift, malformed hands, inconsistent scale, floating objects, text, subtitles, logo, watermark
+  shot_keyframe_image_generation:
+    model: aibox:gpt-image-2
+    params:
+      concurrency: 2
+      size: 1088x1920
+  shot_manifest_generation:
+    params: {}
+  script_outline:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  script_novel:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.7
+      response_format: json_object
+  role_kling_voice_generation:
+    model: kling:kling-v3-omni
+    params:
+      require_dialogue_voice: true
+  role_subject_video_intro_text:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: low
+      temperature: 0.5
+      response_format: json_object
+  role_subject_video_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: '9:16'
+      mode: pro
+      sound: 'on'
+      watermark: false
+      max_reference_images: 2
+      max_reference_elements: 3
+      role_subject_video_generation_concurrency: 5
+  role_subject_element_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: '9:16'
+      mode: pro
+      sound: native
+      watermark: false
+      subject_reference_type: image_refer
+  role_voice_select:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: low
+      temperature: 0.2
+      response_format: json_object
+  role_voice_select_audio_judge:
+    model: aliyun_omni:qwen3.5-omni-plus
+    params:
+      temperature: 0.2
   bgm_design:
     model: aibox:gemini-3.6-flash
     params:
@@ -256,34 +300,18 @@ nodes:
       sample_rate: 44100
       output_format: url
       is_instrumental: true
-  role_kling_voice_generation:
-    model: kling:kling-v3-omni
-    params:
-      require_dialogue_voice: true
-  role_subject_video_generation:
-    model: kling:kling-v3-omni
-    params:
-      aspect_ratio: '9:16'
-      mode: pro
-      sound: 'on'
-      watermark: false
-      max_reference_images: 2
-      max_reference_elements: 3
-      role_subject_video_generation_concurrency: 5
-  role_subject_video_intro_text:
+  image_prompt_safety_rewrite:
     model: aibox:gemini-3.6-flash
     params:
       reasoning_effort: low
-      temperature: 0.5
+      temperature: 0.2
       response_format: json_object
-  role_subject_element_generation:
-    model: kling:kling-v3-omni
+  shot_dialogue_audio_generation:
+    model: volcengine:seed-tts-2.0
     params:
-      aspect_ratio: '9:16'
-      mode: pro
-      sound: native
-      watermark: false
-      subject_reference_type: image_refer
+      sample_rate: 24000
+      response_format: mp3
+      max_generated_audio_duration_seconds: 10
   shot_video_generation:
     model: kling:kling-v3-omni
     params:
@@ -298,38 +326,16 @@ nodes:
       - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示场景三视图、人物三视图。
       max_reference_images: 7
       shot_video_generation_concurrency: 5
-  shot_dialogue_audio_generation:
-    model: volcengine:seed-tts-2.0
-    params:
-      sample_rate: 24000
-      response_format: mp3
-      max_generated_audio_duration_seconds: 10
-  role_voice_select:
-    model: aibox:gemini-3.6-flash
-    params:
-      reasoning_effort: low
-      temperature: 0.2
-      response_format: json_object
-  role_voice_select_audio_judge:
-    model: aliyun_omni:qwen3.5-omni-plus
-    params:
-      temperature: 0.2
-  image_prompt_safety_rewrite:
-    model: aibox:gemini-3.6-flash
-    params:
-      reasoning_effort: low
-      temperature: 0.2
-      response_format: json_object
-  postgen_edit_plan_generation:
-    model: aibox:gemini-3.6-flash
-    params:
-      temperature: 0.2
-      response_format: json_object
   postgen_source_audit:
     model: aibox:gemini-3.6-flash
     params:
       temperature: 0.1
       max_output_tokens: 8192
+  postgen_edit_plan_generation:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.2
+      response_format: json_object
   postgen_final_audit:
     model: aibox:gemini-3.6-flash
     params:
@@ -409,7 +415,7 @@ providers:
     options:
       omni_response_format: false
   rightcode:
-    base_url: https://www.right.codes
+    base_url: https://rightapi.ai
     api_key_env: RIGHTCODE_API_KEY
     models:
       text: gpt-5.6-terra

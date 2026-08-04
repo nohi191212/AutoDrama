@@ -33,7 +33,7 @@ class GeminiTextProvider:
         self.settings = settings
         self.runtime = runtime
         self.model_key = model_key
-        self.model = settings.models.get(model_key) or settings.models.get("text") or "gemini-3.5-flash"
+        self.model = settings.models.get(model_key) or settings.models.get("text") or "gemini-3.6-flash"
         self.base_url = (settings.base_url or "https://generativelanguage.googleapis.com").rstrip("/")
         self.api_key = settings.secret("api_key_env")
         self.timeout = float(runtime.request_timeout_seconds)
@@ -43,6 +43,22 @@ class GeminiTextProvider:
         if base_url.endswith("/v1beta") or base_url.endswith("/v1"):
             return f"{base_url}/models/{self.model}:generateContent"
         return f"{base_url}/v1beta/models/{self.model}:generateContent"
+
+    def _uses_aibox_auth(self) -> bool:
+        return self.name in {"aibox", "aibox_gemini"} or "lk888.ai" in self.base_url
+
+    def _headers(self) -> dict[str, str]:
+        if not self.api_key:
+            raise ProviderAuthError("Missing Gemini API key environment variable")
+        headers = {"Content-Type": "application/json"}
+        if self._uses_aibox_auth():
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        else:
+            headers["x-goog-api-key"] = self.api_key
+        return headers
+
+    def _request_params(self) -> dict[str, str]:
+        return {} if self._uses_aibox_auth() else {"key": self.api_key or ""}
 
     @classmethod
     def _gemini_json_schema(cls, schema: type[BaseModel]) -> dict[str, Any]:
@@ -152,11 +168,10 @@ class GeminiTextProvider:
 
         merged_metadata = {**dict(metadata or {})}
         payload = self.build_payload(prompt, schema, temperature=temperature, metadata=merged_metadata, refs=refs)
-        headers = {
-            "Content-Type": "application/json",
-        }
+        headers = self._headers()
+        request_params = self._request_params()
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(self._endpoint(), params={"key": self.api_key}, headers=headers, json=payload)
+            response = await client.post(self._endpoint(), params=request_params, headers=headers, json=payload)
         if response.status_code >= 400:
             raise ProviderBadResponseError(
                 f"Gemini generateContent failed with HTTP {response.status_code}: {response.text[:2000]}"
@@ -183,7 +198,7 @@ class GeminiTextProvider:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 repair_response = await client.post(
                     self._endpoint(),
-                    params={"key": self.api_key},
+                    params=request_params,
                     headers=headers,
                     json=repair_payload,
                 )

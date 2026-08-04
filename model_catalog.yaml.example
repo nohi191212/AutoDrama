@@ -161,6 +161,39 @@
         min: 1
       reasoning_effort:
         type: string
+      console_stream:
+        type: boolean
+      response_format:
+        type: string
+      max_iterations:
+        type: integer
+        min: 1
+      negative_prompt:
+        type: string
+
+  aibox:gemini-3.6-flash:
+    provider: aibox
+    family: gemini
+    capability: text
+    input_modalities: [text, image, audio, video]
+    output_modalities: [json]
+    limits:
+      max_reference_images: 24
+      max_reference_audio: 1
+      max_reference_videos: 1
+      max_output_tokens: 8192
+    params_schema:
+      temperature:
+        type: number
+        min: 0
+        max: 2
+      max_output_tokens:
+        type: integer
+        min: 1
+      reasoning_effort:
+        type: string
+      console_stream:
+        type: boolean
       response_format:
         type: string
       max_iterations:
