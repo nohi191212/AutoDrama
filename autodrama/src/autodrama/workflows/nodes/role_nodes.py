@@ -1055,7 +1055,6 @@ class RoleboardPromptNode(RoleNodeBase):
             roleboard_negative_prompt=negative_prompt,
             voice_profile_prompt=str(getattr(output, "voice_profile_prompt", "") or "").strip() or None,
             design_notes=str(getattr(output, "design_notes", "") or "").strip() or None,
-            style_spec_version=str(state.metadata.get("style_spec_version") or "") or None,
             included_fields=["identity_invariants", "wardrobe", "time_period", "age_band"],
             excluded_state_fields=["pose", "emotion", "injury", "held_props", "energy_state", "event_refs"],
         )

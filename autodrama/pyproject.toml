@@ -33,8 +33,14 @@ where = ["src"]
 [tool.setuptools.package-data]
 autodrama = [
   "prompts/*.md",
+  "prompts/image_asset_audit/*.md",
+  "prompts/key_vision_prompt/*.md",
+  "prompts/key_vision_image_audit/*.md",
   "prompts/roleboard_prompt/*.md",
   "prompts/clip_video/*.md",
+  "prompts/visual_styles/*.md",
+  "prompts/image_rubrics/*.json",
+  "prompts/image_rubrics/*.md",
   "providers/volcengine/audio/*.json",
 ]
 

@@ -4,14 +4,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from autodrama.core.schemas import VisualStyleSpec
-
 
 class ProjectMetadata(BaseModel):
     episode_count: int = 1
     episode_duration_seconds: int = 30
     bgm_count: int = 3
-    visual_style_spec: VisualStyleSpec | None = None
+    visual_style_name: str | None = None
+    visual_style_prompt: str | None = None
     roleboard_style_prompt: str | None = None
     prop_design_style_prompt: str | None = None
     layout_design_style_prompt: str | None = None
@@ -23,7 +22,8 @@ class ProjectMetadata(BaseModel):
             "episode_count",
             "episode_duration_seconds",
             "bgm_count",
-            "visual_style_spec",
+            "visual_style_name",
+            "visual_style_prompt",
             "roleboard_style_prompt",
             "prop_design_style_prompt",
             "layout_design_style_prompt",

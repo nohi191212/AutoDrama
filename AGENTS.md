@@ -1,5 +1,11 @@
 ﻿# Repository Agent Rules
 
+## No Backward Compatibility
+
+- Do not preserve backward compatibility unless the user explicitly requests it.
+- When replacing a design, delete the obsolete implementation, schemas, migrations, fallbacks, adapters, dual-read paths, legacy configuration, and dead tests. Keep one current production path only.
+- Do not add compatibility layers “for safety.” Update all in-repository callers and fixtures to the new contract in the same change.
+
 ## python environment
 Python Environment: `D:/miniforge3/envs/autodrama/python.exe`
 

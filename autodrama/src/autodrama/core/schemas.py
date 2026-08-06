@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import datetime
 from typing import Any, Literal
 
@@ -26,51 +24,6 @@ class SemanticProvenance(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     model: str | None = None
-
-
-class VisualStyleSpec(BaseModel):
-    """Versioned, configuration-owned visual style contract."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    schema_version: Literal[2] = 2
-    version: str = ""
-    medium: str = Field(min_length=1)
-    render_engine_language: list[str] = Field(default_factory=list)
-    materials: list[str] = Field(default_factory=list)
-    palette: list[str] = Field(default_factory=list)
-    lighting: list[str] = Field(default_factory=list)
-    camera: list[str] = Field(default_factory=list)
-    negative_constraints: list[str] = Field(default_factory=list)
-    source: Literal["yaml", "user_override", "migration"] = "yaml"
-
-    @model_validator(mode="after")
-    def normalize_and_fingerprint(self) -> "VisualStyleSpec":
-        self.medium = self.medium.strip()
-        if not self.medium:
-            raise ValueError("visual_style.medium must not be blank")
-        for field_name in (
-            "render_engine_language",
-            "materials",
-            "palette",
-            "lighting",
-            "camera",
-            "negative_constraints",
-        ):
-            normalized = list(
-                dict.fromkeys(
-                    text
-                    for value in getattr(self, field_name)
-                    if (text := " ".join(str(value).split()).strip())
-                )
-            )
-            setattr(self, field_name, normalized)
-        fingerprint_payload = self.model_dump(mode="json", exclude={"version"})
-        digest = hashlib.sha256(
-            json.dumps(fingerprint_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:16]
-        self.version = f"visual-style-v2-{digest}"
-        return self
 
 
 class ShotEntityState(BaseModel):
@@ -734,6 +687,10 @@ class ClipSegmentNodeOutput(RootModel[dict[str, dict[str, ClipSegment]]]):
 
 
 class KeyVisionPromptOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shot_contract: str
+    scene_style_contract: str
     prompt: str
 
 
@@ -887,7 +844,6 @@ class RoleboardPromptItem(BaseModel):
     roleboard_negative_prompt: str | None = None
     voice_profile_prompt: str | None = None
     design_notes: str | None = None
-    style_spec_version: str | None = None
     included_fields: list[str] = Field(default_factory=list)
     excluded_state_fields: list[str] = Field(default_factory=list)
 
@@ -1029,6 +985,49 @@ class StaticAssetGenerationOutput(BaseModel):
     generated_assets: list[StaticAssetGenerationItem]
 
 
+class ImageAuditRegion(BaseModel):
+    """Normalized visible evidence region for an image-audit defect."""
+
+    label: str = ""
+    x1: float = Field(ge=0, le=1)
+    y1: float = Field(ge=0, le=1)
+    x2: float = Field(ge=0, le=1)
+    y2: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "ImageAuditRegion":
+        if self.x2 <= self.x1 or self.y2 <= self.y1:
+            raise ValueError("image audit region must have positive normalized width and height")
+        return self
+
+
+class ImageAuditDimensionAssessment(BaseModel):
+    """Visible-evidence score for one production image-audit dimension."""
+
+    dimension_id: str
+    category: Literal["physical", "contract", "cinematic", "style"]
+    weight: float = Field(gt=0)
+    gate: bool = False
+    applicable: bool = True
+    score: float | None = Field(default=None, ge=0, le=10)
+    severity: Literal["none", "minor", "major", "critical"] = "none"
+    evidence: str = Field(min_length=1)
+    defect: str = ""
+    regions: list[ImageAuditRegion] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_assessment(self) -> "ImageAuditDimensionAssessment":
+        if self.applicable and self.score is None:
+            raise ValueError("applicable image-audit dimensions require a score")
+        if not self.applicable and self.score is not None:
+            raise ValueError("non-applicable image-audit dimensions require score=null")
+        if self.applicable and self.score is not None and self.score < 10 and not self.defect.strip():
+            raise ValueError("every sub-perfect image-audit score requires a concrete defect")
+        if self.severity in {"major", "critical"} and not self.regions:
+            raise ValueError("major and critical image-audit defects require normalized regions")
+        return self
+
+
 class ImageAssetAuditItem(BaseModel):
     """Visual acceptance decision for one generated image asset."""
 
@@ -1040,6 +1039,11 @@ class ImageAssetAuditItem(BaseModel):
     revised_prompt: str = ""
     rationale: str = ""
     attempts: int = Field(default=1, ge=1)
+    rubric_name: str = ""
+    rubric_revision: str = ""
+    weighted_score: float | None = Field(default=None, ge=0, le=10)
+    category_scores: dict[str, float] = Field(default_factory=dict)
+    dimension_assessments: list[ImageAuditDimensionAssessment] = Field(default_factory=list)
 
 
 class ImageAssetAuditOutput(BaseModel):
@@ -1366,7 +1370,6 @@ class ShotKeyframePromptItem(BaseModel):
     ref_ids: list[str] = Field(default_factory=list)
     prompt: str
     negative_prompt: str | None = None
-    style_spec_version: str | None = None
     included_fields: list[str] = Field(default_factory=list)
     excluded_state_fields: list[str] = Field(default_factory=list)
     prompt_provenance: dict[str, Any] = Field(default_factory=dict)

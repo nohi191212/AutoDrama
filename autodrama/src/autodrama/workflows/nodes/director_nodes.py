@@ -55,23 +55,16 @@ class DirectorNodeBase:
         image_urls = getattr(result, "image_urls", None)
         return image_urls[0] if image_urls else None
 
-    def load_key_vision_prompt_output(self, project_dir: Path, state: ProjectState) -> KeyVisionPromptOutput:
+    def load_key_vision_prompt_output(self, state: ProjectState) -> KeyVisionPromptOutput:
         payload = state.metadata.get("key_vision_prompt")
-        if isinstance(payload, dict):
-            output = KeyVisionPromptOutput.model_validate(payload)
-            output.prompt = str(output.prompt or "").strip()
-            if output.prompt:
-                return output
-
-        path = self.layout.node_output_path(project_dir, DesignKeyVisionPromptNode.name)
-        if not path.exists():
-            raise FileNotFoundError(
-                "key_vision_prompt output is missing; run pregen --only key_vision_prompt first"
-            )
-        output = KeyVisionPromptOutput.model_validate_json(path.read_text(encoding="utf-8"))
-        output.prompt = str(output.prompt or "").strip()
-        if not output.prompt:
-            raise ValueError("key_vision_prompt output has an empty prompt")
+        if not isinstance(payload, dict):
+            raise ValueError("key_vision_prompt metadata is missing; run key_vision_prompt first")
+        output = KeyVisionPromptOutput.model_validate(payload)
+        for field_name in ("shot_contract", "scene_style_contract", "prompt"):
+            value = str(getattr(output, field_name) or "").strip()
+            if not value:
+                raise ValueError(f"key_vision_prompt output has an empty {field_name}")
+            setattr(output, field_name, value)
         return output
 
 
@@ -98,10 +91,18 @@ class DesignKeyVisionPromptNode(DirectorNodeBase):
         )
         if not story_context:
             raise ValueError("key_vision_prompt requires non-empty script_novel_extract content")
+        image_provider = self.router.image(
+            "key_vision",
+            node_name=DesignKeyVisionImageNode.name,
+        )
+        image_canvas = str(getattr(image_provider, "size", "") or "").strip()
+        if not image_canvas or image_canvas.lower() == "auto":
+            raise ValueError("key_vision image provider must declare an image size")
         output = await self.director_service.key_vision_prompt(
             state,
             provider,
             story_context=story_context,
+            image_canvas=image_canvas,
         )
         path = self.repo.save_node_output(project_dir, self.name, output)
         state.metadata["key_vision_prompt"] = output.model_dump(mode="json")
@@ -122,7 +123,7 @@ class DesignKeyVisionImageNode(DirectorNodeBase):
             getattr(provider, "name", "unknown"),
             getattr(provider, "model", "-"),
         )
-        prompt_output = self.load_key_vision_prompt_output(project_dir, state)
+        prompt_output = self.load_key_vision_prompt_output(state)
         prompt = prompt_output.prompt
         result = await provider.generate_image(
             prompt,

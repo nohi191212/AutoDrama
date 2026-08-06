@@ -74,7 +74,7 @@ Mock 必须根据明确输入生成确定输出：
 - provider 缺少绑定时猜测性别或情绪。
 - 旧 `dialogue` 字符串在运行时重新解析。
 - 缺失 `overlay_text_spec` 时扫描引号。
-- 缺失 `VisualStyleSpec` 时解析 style prompt。
+- 缺失项目指定的全局视觉风格 Markdown 时使用内联或默认风格。
 - 缺失稳定身份时从 `desc` 过滤生成。
 
 允许保留的兼容能力：

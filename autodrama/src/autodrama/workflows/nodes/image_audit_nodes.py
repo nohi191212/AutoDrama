@@ -9,8 +9,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from autodrama.core.schemas import (
+    ImageAuditDimensionAssessment,
     ImageAssetAuditItem,
     ImageAssetAuditOutput,
+    KeyVisionPromptOutput,
     Layout,
     ProjectState,
     Prop,
@@ -28,9 +30,14 @@ from autodrama.core.schemas import (
     StaticAssetGenerationItem,
     StaticAssetGenerationOutput,
 )
+from autodrama.image_audit_rubrics import (
+    ProductionRubricBundle,
+    aggregate_dimension_scores,
+    load_production_rubric_bundle,
+    render_production_rubric,
+)
 from autodrama.logging import get_logger
-from autodrama.core.schemas import VisualStyleSpec
-from autodrama.core.visual_contract import identity_brief, render_visual_style_brief
+from autodrama.core.visual_contract import identity_brief
 from autodrama.providers.base import AssetRef
 from autodrama.workflows.nodes.director_nodes import build_director_node_runners
 from autodrama.workflows.nodes.role_subject_nodes import build_role_subject_nodes
@@ -56,6 +63,12 @@ class ImageAuditDecision(BaseModel):
     issues: list[str] = Field(default_factory=list)
     revised_prompt: str = ""
     rationale: str = ""
+
+
+class KeyVisionAuditDecision(ImageAuditDecision):
+    assessments: list[ImageAuditDimensionAssessment] = Field(min_length=1)
+    weighted_score: float | None = Field(default=None, ge=0, le=10)
+    category_scores: dict[str, float] = Field(default_factory=dict)
 
 
 class ImageAuditNodeBase:
@@ -129,16 +142,64 @@ class ImageAuditNodeBase:
 
     @staticmethod
     def _style_brief(state: ProjectState) -> str:
-        raw = state.metadata.get("visual_style_spec")
-        if not isinstance(raw, dict):
-            raise ValueError(
-                "project metadata has no visual_style_spec v2; run the visual contract migration"
-            )
-        spec = VisualStyleSpec.model_validate(raw)
-        return render_visual_style_brief(spec)
+        value = str(state.metadata.get("visual_style_prompt") or "").strip()
+        if not value:
+            raise ValueError("project metadata has no global visual style prompt")
+        return value
 
     def _save_revised_prompt(self, project_dir: Path, state: ProjectState, asset_id: str, prompt: str) -> None:
         raise NotImplementedError
+
+    def _render_audit_request(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
+        return self.prompts.render(
+            "image_asset_audit",
+            asset_type=self.asset_type,
+            asset_name=item.name,
+            expectation=self._asset_expectation(state, item),
+            current_prompt=item.prompt,
+        )
+
+    def _decision_model(self) -> type[ImageAuditDecision]:
+        return ImageAuditDecision
+
+    def _audit_metadata(self, state: ProjectState, item: StaticAssetGenerationItem) -> dict[str, Any]:
+        return {
+            "node_name": self.name,
+            "project_id": state.project_id,
+            "asset_id": item.asset_id,
+            "prompt_asset_type": "image_audit",
+            "prompt_asset_name": item.asset_id,
+            "reasoning_effort": "high",
+        }
+
+    def _normalize_decision(
+        self,
+        decision: ImageAuditDecision,
+        *,
+        state: ProjectState,
+        item: StaticAssetGenerationItem,
+    ) -> ImageAuditDecision:
+        del state, item
+        decision.issues = [str(issue).strip() for issue in decision.issues if str(issue).strip()]
+        decision.revised_prompt = str(decision.revised_prompt or "").strip()
+        decision.rationale = str(decision.rationale or "").strip()
+        return decision
+
+    def _audit_output_item(
+        self,
+        *,
+        item: StaticAssetGenerationItem,
+        decision: ImageAuditDecision,
+        attempt: int,
+    ) -> ImageAssetAuditItem:
+        return ImageAssetAuditItem(
+            asset_id=item.asset_id,
+            asset_type=self.asset_type,
+            approved=True,
+            issues=decision.issues,
+            rationale=decision.rationale,
+            attempts=attempt,
+        )
 
     async def _regenerate_one(self, project_dir: Path, state: ProjectState, asset_id: str) -> None:
         previous_force = getattr(self.workflow, "_force_pregen", None)
@@ -168,39 +229,20 @@ class ImageAuditNodeBase:
         item = initial_item
         max_repairs = self._max_attempts()
         for attempt in range(1, max_repairs + 2):
-            request = self.prompts.render(
-                "image_asset_audit",
-                asset_type=self.asset_type,
-                asset_name=item.name,
-                expectation=self._asset_expectation(state, item),
-                current_prompt=item.prompt,
-            )
+            request = self._render_audit_request(state, item)
             decision = await provider.generate_json(
                 request,
-                ImageAuditDecision,
+                self._decision_model(),
                 temperature=0.1,
                 refs=[self._asset_ref(project_dir, item)],
-                metadata={
-                    "node_name": self.name,
-                    "project_id": state.project_id,
-                    "asset_id": item.asset_id,
-                    "prompt_asset_type": "image_audit",
-                    "prompt_asset_name": item.asset_id,
-                    "reasoning_effort": "high",
-                },
+                metadata=self._audit_metadata(state, item),
             )
             state.budget.used_text_calls += 1
-            decision.issues = [str(issue).strip() for issue in decision.issues if str(issue).strip()]
-            decision.revised_prompt = str(decision.revised_prompt or "").strip()
+            if not isinstance(decision, ImageAuditDecision):
+                raise TypeError(f"{self.name} returned an invalid audit decision")
+            decision = self._normalize_decision(decision, state=state, item=item)
             if decision.approved:
-                return ImageAssetAuditItem(
-                    asset_id=item.asset_id,
-                    asset_type=self.asset_type,
-                    approved=True,
-                    issues=decision.issues,
-                    rationale=str(decision.rationale or "").strip(),
-                    attempts=attempt,
-                )
+                return self._audit_output_item(item=item, decision=decision, attempt=attempt)
             if not decision.revised_prompt:
                 raise ValueError(f"{self.name} rejected {item.asset_id} without a revised_prompt")
             if attempt > max_repairs:
@@ -275,6 +317,168 @@ class KeyVisionImageAuditNode(ImageAuditNodeBase):
     name = "key_vision_image_audit"
     source_node = "key_vision_image_generation"
     asset_type = "key_vision"
+
+    @staticmethod
+    def _uses_xuanhuan_style_rubric(state: ProjectState) -> bool:
+        return str(state.metadata.get("visual_style_name") or "").startswith("xuanhuan-")
+
+    def _rubric_bundle(self, state: ProjectState) -> ProductionRubricBundle:
+        return load_production_rubric_bundle(
+            include_xuanhuan_style=self._uses_xuanhuan_style_rubric(state)
+        )
+
+    def _approval_threshold(self, bundle: ProductionRubricBundle) -> float:
+        raw = self._params().get("approval_threshold", bundle.policy.approval_threshold)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid key vision audit approval_threshold: {raw!r}") from exc
+        if value < 0 or value > 10:
+            raise ValueError("key vision audit approval_threshold must be between 0 and 10")
+        return value
+
+    def _decision_model(self) -> type[ImageAuditDecision]:
+        return KeyVisionAuditDecision
+
+    def _audit_metadata(self, state: ProjectState, item: StaticAssetGenerationItem) -> dict[str, Any]:
+        metadata = super()._audit_metadata(state, item)
+        raw = self._params().get("max_output_tokens", 16384)
+        try:
+            max_output_tokens = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid key vision audit max_output_tokens: {raw!r}") from exc
+        if max_output_tokens <= 0:
+            raise ValueError("key vision audit max_output_tokens must be positive")
+        metadata["max_output_tokens"] = max_output_tokens
+        return metadata
+
+    def _render_audit_request(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
+        bundle = self._rubric_bundle(state)
+        approval_threshold = self._approval_threshold(bundle)
+        prompt_output = KeyVisionPromptOutput.model_validate(state.metadata.get("key_vision_prompt"))
+        return self.prompts.render(
+            "key_vision_image_audit",
+            asset_name=item.name,
+            expectation=self._asset_expectation(state, item),
+            shot_contract=prompt_output.shot_contract,
+            scene_style_contract=prompt_output.scene_style_contract,
+            current_prompt=item.prompt,
+            rubric=render_production_rubric(bundle),
+            approval_threshold=f"{approval_threshold:g}",
+        )
+
+    def _normalize_decision(
+        self,
+        decision: ImageAuditDecision,
+        *,
+        state: ProjectState,
+        item: StaticAssetGenerationItem,
+    ) -> ImageAuditDecision:
+        decision = super()._normalize_decision(decision, state=state, item=item)
+        if not isinstance(decision, KeyVisionAuditDecision):
+            raise TypeError("key_vision_image_audit requires KeyVisionAuditDecision")
+
+        bundle = self._rubric_bundle(state)
+        dimension_map = bundle.dimension_map
+        assessments = {row.dimension_id: row for row in decision.assessments}
+        if len(assessments) != len(decision.assessments):
+            raise ValueError("key_vision_image_audit returned duplicate rubric dimensions")
+        missing = [item.id for item in bundle.dimensions if item.id not in assessments]
+        unknown = sorted(set(assessments).difference(dimension_map))
+        if missing or unknown:
+            raise ValueError(
+                "key_vision_image_audit rubric coverage mismatch: "
+                f"missing={missing or 'none'} unknown={unknown or 'none'}"
+            )
+
+        normalized_assessments: list[ImageAuditDimensionAssessment] = []
+        for spec in bundle.dimensions:
+            assessment = assessments[spec.id].model_copy(
+                update={"category": spec.category, "weight": spec.weight, "gate": spec.gate}
+            )
+            normalized_assessments.append(assessment)
+        decision.assessments = normalized_assessments
+
+        weighted_score, category_scores = aggregate_dimension_scores(
+            bundle,
+            {
+                row.dimension_id: row.score if row.applicable else None
+                for row in decision.assessments
+            },
+        )
+        expected_categories = {item.category for item in bundle.dimensions}
+        missing_categories = sorted(expected_categories.difference(category_scores))
+        if missing_categories:
+            raise ValueError(
+                f"key_vision_image_audit has no applicable score for categories: {missing_categories}"
+            )
+
+        reject_severities = set(bundle.policy.reject_severities)
+        approval_threshold = self._approval_threshold(bundle)
+        critical = [
+            row
+            for row in decision.assessments
+            if row.applicable and row.severity in reject_severities
+        ]
+        failed_gates = [
+            row
+            for row in decision.assessments
+            if bundle.policy.reject_gate_below_threshold
+            and row.applicable
+            and dimension_map[row.dimension_id].gate
+            and row.score is not None
+            and row.score < bundle.policy.gate_threshold
+        ]
+        decision.weighted_score = weighted_score
+        decision.category_scores = dict(category_scores)
+        decision.approved = (
+            weighted_score >= approval_threshold
+            and not critical
+            and not failed_gates
+        )
+        if decision.approved:
+            decision.revised_prompt = ""
+        elif not decision.issues:
+            decision.issues = [
+                f"{row.dimension_id}: {row.defect or row.evidence}"
+                for row in decision.assessments
+                if row.applicable and (
+                    row.severity in {"major", "critical"}
+                    or row in failed_gates
+                    or (row.score is not None and row.score < approval_threshold)
+                )
+            ]
+        decision.rationale = (
+            f"未封顶加权分 {weighted_score:.4f}，通过线 {approval_threshold:g}；"
+            f"critical={len(critical)}，failed_gates={len(failed_gates)}。{decision.rationale}"
+        ).strip()
+        return decision
+
+    def _audit_output_item(
+        self,
+        *,
+        item: StaticAssetGenerationItem,
+        decision: ImageAuditDecision,
+        attempt: int,
+    ) -> ImageAssetAuditItem:
+        if not isinstance(decision, KeyVisionAuditDecision) or decision.weighted_score is None:
+            raise TypeError("key_vision_image_audit cannot persist an incomplete rubric decision")
+        bundle = load_production_rubric_bundle(
+            include_xuanhuan_style=any(row.category == "style" for row in decision.assessments)
+        )
+        return ImageAssetAuditItem(
+            asset_id=item.asset_id,
+            asset_type=self.asset_type,
+            approved=True,
+            issues=decision.issues,
+            rationale=decision.rationale,
+            attempts=attempt,
+            rubric_name=bundle.policy.name,
+            rubric_revision=bundle.revision_label,
+            weighted_score=decision.weighted_score,
+            category_scores=decision.category_scores,
+            dimension_assessments=decision.assessments,
+        )
 
     def _asset_expectation(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
         return (

@@ -220,6 +220,15 @@ class FakeTextProvider:
             }
         elif schema is KeyVisionPromptOutput or node_name == "key_vision_prompt":
             data = {
+                "shot_contract": (
+                    "Freeze the instant when Lin Zhou pins the substituted contract page to the table while Su Wan "
+                    "extends the email evidence from a separate rear depth plane. Keep Zhao Qi behind the meeting-table "
+                    "edge, with all hands, papers and sightlines readable in one continuous office space."
+                ),
+                "scene_style_contract": (
+                    "Use restrained blue-grey rainy-night ambience, motivated monitor spill and practical ceiling light. "
+                    "Separate paper, glass, skin, fabric and wet exterior reflections without a global glossy coating."
+                ),
                 "prompt": (
                     "真人电影质感，短剧主视觉原图，9:16 竖版海报式构图，雨夜现代办公室与玻璃会议室空间交叠。"
                     "林舟站在画面中央偏前，深灰职场衬衫，神情疲惫但克制，手中压着被调包的合同关键页；"
@@ -1093,6 +1102,7 @@ class FakeTextProvider:
 class FakeImageProvider:
     name = "fake"
     model = "fake-image"
+    size = "1024x1536"
     supports_reference_images = True
 
     @staticmethod

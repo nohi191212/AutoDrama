@@ -43,13 +43,11 @@ from autodrama.core.schemas import (
     ShotVideoInput,
     GateResult,
     ImageAssetAuditOutput,
-    VisualStyleSpec,
 )
 from autodrama.core.visual_contract import (
     assert_duration_gate,
     identity_brief,
     normalize_shot_durations,
-    render_visual_style_brief,
 )
 from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef
@@ -475,10 +473,10 @@ class ShotAssetNodeBase(StaticAssetNodeBase):
 
     @staticmethod
     def _visual_quality(state: ProjectState) -> str:
-        raw_spec = state.metadata.get("visual_style_spec")
-        if raw_spec is None:
-            raise ValueError("project metadata is missing required visual_style_spec")
-        return render_visual_style_brief(VisualStyleSpec.model_validate(raw_spec))
+        value = str(state.metadata.get("visual_style_prompt") or "").strip()
+        if not value:
+            raise ValueError("project metadata is missing global visual style prompt")
+        return value
 
 
 class ClipToShotsNode(ShotAssetNodeBase):
@@ -892,7 +890,6 @@ class ShotKeyframePromptNode(ShotAssetNodeBase):
             backgrounds = self._load_episode_output(project_dir, "shot_background_image_generation", episode_key, ShotBackgroundImageGenerationEpisodeOutput)
             targets = self._selected_shots(project_dir, plan)
             assets = self._all_assets(project_dir, state)
-            style_spec = VisualStyleSpec.model_validate(state.metadata.get("visual_style_spec"))
             background_by_shot: dict[str, ShotBackgroundImageGenerationItem] = {}
             for background in backgrounds.generated_backgrounds:
                 for shot_id in background.shot_ids:
@@ -963,7 +960,6 @@ class ShotKeyframePromptNode(ShotAssetNodeBase):
                     ref_ids=shot.ref_ids,
                     prompt=final_prompt,
                     negative_prompt=negative or None,
-                    style_spec_version=style_spec.version,
                     included_fields=["identity_invariants", "current_shot_state", "allowed_props", "camera", "visual_style"],
                     excluded_state_fields=["legacy_desc", "future_events", "future_prop_states", "exact_text"],
                     prompt_provenance={

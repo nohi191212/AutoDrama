@@ -91,7 +91,6 @@ SemanticProvenance
 
 为将被后续任务升级的结构定义版本规则：
 
-- `VisualStyleSpec`
 - `Role` 及声音需求
 - `VoiceCatalogProfile`
 - `ClipToShotsModelItem`

@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from autodrama.config import Settings
 from autodrama.core.ids import normalize_id, slugify
 from autodrama.core.schemas import (
     ProjectState,
@@ -26,7 +25,6 @@ from autodrama.core.schemas import (
 from autodrama.logging import get_logger, setup_logging
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.prop_design_repo import PropDesignRepository
-from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.shot_manifest_repo import ShotManifestRepository
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.repositories.roleboard_prompt_repo import RoleboardPromptRepository
@@ -135,8 +133,8 @@ class PregenWorkflow:
         prompts: PromptStore | None = None,
     ) -> None:
         self.repo = repo
-        self.settings = getattr(repo, "settings", Settings())
-        self.layout = getattr(repo, "layout", ProjectLayout(self.settings))
+        self.settings = repo.settings
+        self.layout = repo.layout
         self.router = adapt_workflow_router(router)
         self.prompts = prompts or PromptStore()
         self.script_service = ScriptService(
@@ -286,7 +284,7 @@ class PregenWorkflow:
                 self._ensure_normal_role_audio(role)
 
     def _apply_script_plan_settings(self, state: ProjectState) -> None:
-        from autodrama.core.visual_contract import build_visual_style_spec
+        from autodrama.visual_styles import load_visual_style
 
         state.metadata["episode_count"] = self.repo.settings.project.episode_count
         state.metadata["episode_duration_seconds"] = self.repo.settings.project.episode_duration_seconds
@@ -294,15 +292,10 @@ class PregenWorkflow:
             self.repo.settings.generation.expected_output_seconds
         )
         state.metadata["bgm_count"] = self.repo.settings.project.bgm_count
-        configured_style = self.repo.settings.generation.visual_style
-        if configured_style is None:
-            raise ValueError(
-                "generation.visual_style is required; migrate legacy visual_style_prompt before pregen"
-            )
-        style_spec = build_visual_style_spec(configured_style)
-        state.metadata.pop("visual_style_prompt", None)
-        state.metadata["visual_style_spec"] = style_spec.model_dump(mode="json")
-        state.metadata["style_spec_version"] = style_spec.version
+        visual_style_name = self.repo.settings.generation.visual_style
+        visual_style_prompt = load_visual_style(visual_style_name)
+        state.metadata["visual_style_name"] = visual_style_name
+        state.metadata["visual_style_prompt"] = visual_style_prompt
         state.metadata["roleboard_style_prompt"] = self.repo.settings.generation.roleboard_style_prompt
         state.metadata["prop_design_style_prompt"] = self.repo.settings.generation.prop_design_style_prompt
         state.metadata["layout_design_style_prompt"] = self.repo.settings.generation.layout_design_style_prompt

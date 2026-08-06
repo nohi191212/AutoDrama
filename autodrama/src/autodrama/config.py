@@ -9,7 +9,6 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from autodrama.core.model_catalog import ModelCatalog, NodeModelSettings
-from autodrama.core.schemas import VisualStyleSpec
 
 
 class AppSettings(BaseModel):
@@ -65,8 +64,7 @@ class BudgetSettings(BaseModel):
 class GenerationSettings(BaseModel):
     expected_output_seconds: int = Field(default=-1, strict=True)
     roleboard_style_reference_dir: Path | None = None
-    visual_style: VisualStyleSpec | None = None
-    visual_style_prompt: str = ""
+    visual_style: str
     roleboard_style_prompt: str = ""
     prop_design_style_prompt: str = ""
     layout_design_style_prompt: str = ""
@@ -77,6 +75,14 @@ class GenerationSettings(BaseModel):
         if value == 0 or value < -1:
             raise ValueError("expected_output_seconds must be -1 or a positive integer")
         return value
+
+    @field_validator("visual_style")
+    @classmethod
+    def validate_visual_style(cls, value: str) -> str:
+        name = str(value or "").strip()
+        if not name:
+            raise ValueError("generation.visual_style must name a Markdown visual-style preset")
+        return name
 
 
 class VoiceAlignmentSettings(BaseModel):
@@ -272,16 +278,6 @@ def load_settings(config_path: str | Path) -> Settings:
 
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     settings = Settings.model_validate(data)
-    if settings.generation.visual_style is None:
-        legacy_hint = (
-            " Legacy generation.visual_style_prompt was found; run the explicit visual style migration."
-            if settings.generation.visual_style_prompt.strip()
-            else ""
-        )
-        raise ValueError(
-            "generation.visual_style with schema_version=2 and an explicit medium is required."
-            + legacy_hint
-        )
     settings.config_path = path
     settings.api_keys = _load_api_keys(settings, path)
     settings.model_catalog = _load_model_catalog(settings, path)

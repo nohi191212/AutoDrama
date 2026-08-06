@@ -46,7 +46,6 @@ JSON/YAML，并作为新增代码和代码审查的强制边界。
 
 以下契约的后续结构升级都必须声明 `schema_version`：
 
-- `VisualStyleSpec`
 - `Role` 及角色声音需求
 - `VoiceCatalogProfile`
 - `ClipToShotsModelItem`

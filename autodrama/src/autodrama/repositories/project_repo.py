@@ -10,8 +10,8 @@ from pydantic import BaseModel
 from autodrama.config import Settings
 from autodrama.core.ids import make_project_id
 from autodrama.core.schemas import BudgetState, ProjectState, Role, ScriptBundle
-from autodrama.core.visual_contract import build_visual_style_spec
 from autodrama.repositories.project_layout import ProjectLayout
+from autodrama.visual_styles import load_visual_style
 
 
 class ProjectRepository:
@@ -95,12 +95,8 @@ class ProjectRepository:
             for index in range(1, resolved_episode_count + 1)
         }
 
-        configured_style = self.settings.generation.visual_style
-        if configured_style is None:
-            raise ValueError(
-                "generation.visual_style is required; migrate legacy visual_style_prompt before creating a project"
-            )
-        style_spec = build_visual_style_spec(configured_style)
+        visual_style_name = self.settings.generation.visual_style
+        visual_style_prompt = load_visual_style(visual_style_name)
         state = ProjectState(
             project_id=project_id,
             title=title,
@@ -119,8 +115,8 @@ class ProjectRepository:
                 "episode_count": resolved_episode_count,
                 "episode_duration_seconds": resolved_episode_duration_seconds,
                 "bgm_count": self.settings.project.bgm_count,
-                "visual_style_spec": style_spec.model_dump(mode="json"),
-                "style_spec_version": style_spec.version,
+                "visual_style_name": visual_style_name,
+                "visual_style_prompt": visual_style_prompt,
                 "roleboard_style_prompt": self.settings.generation.roleboard_style_prompt,
                 "prop_design_style_prompt": self.settings.generation.prop_design_style_prompt,
                 "layout_design_style_prompt": self.settings.generation.layout_design_style_prompt,
