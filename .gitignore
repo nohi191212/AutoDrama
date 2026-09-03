@@ -11,6 +11,7 @@ config.yaml
 outputs/
 .tmp/
 .assets/
+autodrama/build/
 intpus/
 provider_docs/
 
