@@ -9,12 +9,6 @@ model_catalog_file: ./model_catalog.yaml.example
 # Node-level model bindings. If a node is omitted here, AutoDrama falls back to the legacy routing section.
 # Params are validated against model_catalog_file when the config is loaded.
 nodes:
-  script_import:
-    model: rightcode:gpt-5.6-terra
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.25
-      response_format: json_object
   script_cinematic_adapt:
     model: aibox:gemini-3.6-flash
     params:

@@ -19,7 +19,7 @@ from autodrama.logging import get_logger
 from autodrama.repositories.project_layout import ProjectLayout
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.repositories.script_content_repo import ScriptContentRepository
-from autodrama.services.script_chapter_service import format_chapter_context, load_script_chapters
+from autodrama.services.script_chapter_service import combine_chapter_contents, load_script_chapters
 from autodrama.services.script_service import ScriptService
 from autodrama.workflows.runner import WorkflowNode
 
@@ -158,50 +158,10 @@ class ScriptImportNode(ScriptNodeBase):
                 "script_import chapter count does not match project episode keys: "
                 f"expected {self.expected_episode_keys(state)}, got {episode_keys}"
             )
-        source_script = format_chapter_context(chapters).strip()
-        if not source_script:
-            raise ValueError("script_import raw_script is empty")
-
-        provider = self.router.text("script", node_name=self.name)
-        self.logger.info(
-            "node=script_import provider=%s model=%s",
-            getattr(provider, "name", "unknown"),
-            getattr(provider, "model", "-"),
-        )
-        output = await self.script_service.script_import(
-            state,
-            provider,
-            raw_script=source_script,
-        )
-        outline = str(output.outline or "").strip()
-        if not outline:
-            raise ValueError("script_import outline is empty")
-        episode_outlines = [
-            str(value or "").strip()
-            for value in list(output.episode_outlines or [])
-            if str(value or "").strip()
-        ]
-        if not episode_outlines:
-            episode_outlines = [outline]
-        if len(episode_outlines) != len(chapters):
-            raise ValueError(
-                "script_import must produce one episode outline per imported chapter; "
-                f"expected {len(chapters)}, got {len(episode_outlines)}"
-            )
-
-        state.raw_script = "\n\n".join(chapter.content for chapter in chapters)
+        state.raw_script = combine_chapter_contents(chapters)
         state.script.raw_script = state.raw_script
-        state.script.outline = outline
-        state.script.episode_outlines = {
-            episode_key: self.script_contents.write_content(
-                project_dir,
-                "outlines",
-                episode_key,
-                node_name=self.name,
-                content=episode_outline,
-            )
-            for episode_key, episode_outline in zip(episode_keys, episode_outlines, strict=True)
-        }
+        state.script.outline = None
+        state.script.episode_outlines = {}
         state.script.novel_full = {
             episode_key: self.script_contents.write_content(
                 project_dir,
@@ -215,31 +175,34 @@ class ScriptImportNode(ScriptNodeBase):
             for episode_key, chapter in zip(episode_keys, chapters, strict=True)
         }
         state.script.novel_extract = {
-            episode_key: state.script.novel_extract.get(episode_key) or False
+            episode_key: False
             for episode_key in episode_keys
         }
-        roles = [role.model_dump(mode="json") for role in output.roles]
-        props = [prop.model_dump(mode="json") for prop in output.props]
-        layouts = [layout.model_dump(mode="json") for layout in output.layouts]
+        source_chapters = [
+            {
+                "number": chapter.number,
+                "title": chapter.title,
+                "filename": chapter.filename,
+                "path": str(chapter.path),
+            }
+            for chapter in chapters
+        ]
+        for metadata_key in (
+            "script_import_episode_outlines",
+            "script_import_roles",
+            "script_import_props",
+            "script_import_layouts",
+            "script_import_notes",
+            "script_import_facts",
+            "script_import_semantic_attempts",
+        ):
+            state.metadata.pop(metadata_key, None)
         state.metadata.update(
             {
                 "script_mode": "mature_chapters",
                 "script_import_source_chapters_dir": str(source_dir_value),
-                "script_import_source_chapters": [
-                    {
-                        "number": chapter.number,
-                        "title": chapter.title,
-                        "filename": chapter.filename,
-                        "path": str(chapter.path),
-                    }
-                    for chapter in chapters
-                ],
+                "script_import_source_chapters": source_chapters,
                 "script_import_episode_keys": episode_keys,
-                "script_import_episode_outlines": episode_outlines,
-                "script_import_roles": roles,
-                "script_import_props": props,
-                "script_import_layouts": layouts,
-                "script_import_notes": output.notes,
                 "script_novel_full_episode_paths": dict(state.script.novel_full),
             }
         )
@@ -247,18 +210,12 @@ class ScriptImportNode(ScriptNodeBase):
             project_dir,
             self.name,
             {
-                "outline": outline,
-                "episode_outlines": episode_outlines,
-                "episode_outline_paths": state.script.episode_outlines,
+                "source_chapters_dir": str(source_dir_value),
+                "source_chapters": source_chapters,
                 "novel_full": state.script.novel_full,
-                "roles": roles,
-                "props": props,
-                "layouts": layouts,
-                "notes": output.notes,
                 "imported_mature_chapters": True,
             },
         )
-        state.budget.used_text_calls += 1
         return state
 
 

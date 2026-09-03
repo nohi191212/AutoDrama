@@ -7,8 +7,8 @@
 # Run exactly one node:
 #   bash scripts/cmd_list.sh <pregen|generation|postgen> <node> <project_id>
 #
-# Start with a new project ID for script_import.  After a node passes its audit,
-# reuse that same project ID for the next approved node.  This script never
+# Start with a new project ID for script_import.  After a node completes,
+# reuse that same project ID for the next node.  This script never
 # supplies --force, --until, --provider, --clips, --shots, or --assets.
 
 set -euo pipefail

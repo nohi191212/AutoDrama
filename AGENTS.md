@@ -14,6 +14,10 @@ Python Environment: `D:/miniforge3/envs/autodrama/python.exe`
 - All prompt templates are sent directly to the LLM API, not to an Agent. When designing prompt templates, include only information the model needs to perform the requested content task.
 - Do not add content-irrelevant project metadata merely for context, such as project title, project ID, source file path, episode key, episode count, or reference duration. Include such fields only when they directly affect the required output format, constraints, or reasoning.
 
+## Git Change Discipline
+
+- After each code or functional change, immediately stage the complete change with `git add` and create one focused `git commit`. Do not mix unrelated changes into that commit.
+
 ## Known Permission / File Write Notes
 
 - In this Codex desktop workspace, `apply_patch` may fail to create a new root-level file with only `Failed to write file ...`, even when the target is inside the writable repository and after explicit single-file write permission is granted. If this happens, retry `apply_patch` once after requesting explicit write permission for the target path. If it still fails and the user explicitly asked to create or update that file, use PowerShell `Set-Content -Encoding UTF8` as the fallback and immediately read the file back to verify the write.

@@ -71,7 +71,7 @@ echo The chapter directory is read from project.script_chapters_dir.
 echo Each file must be named chap####_chapter-title.txt.
 echo.
 echo Default behavior:
-echo   1. Run the script_import node to import every chapter as one episode.
+echo   1. Run the script_import node to import each chapter as one episode.
 echo   2. Run script_cinematic_adapt and script_novel_extract.
 goto end
 

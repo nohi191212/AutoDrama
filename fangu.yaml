@@ -88,12 +88,6 @@ postgen:
     fail_on_reject: false
     max_output_tokens: 8192
 nodes:
-  script_import:
-    model: rightcode:gpt-5.6-terra
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.25
-      response_format: text
   script_cinematic_adapt:
     model: aibox:gemini-3.6-flash
     params:

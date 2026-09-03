@@ -423,61 +423,6 @@ class NodeRecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
-class ScriptImportRoleStageOutput(BaseModel):
-    """A time-specific appearance stage for one role."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    time_period: str = Field(min_length=1)
-    appearance_notes: list[str] = Field(default_factory=list)
-
-
-class ScriptImportRoleOutput(BaseModel):
-    """Stable role identity plus explicitly separated time-specific appearances."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    role_tier: Literal["primary", "functional"] | str = "primary"
-    intro: str
-    aliases: list[str] = Field(default_factory=list)
-    identity_notes: list[str] = Field(default_factory=list)
-    appearance_stages: list[ScriptImportRoleStageOutput] = Field(default_factory=list)
-    has_dialogue: bool = True
-    visual_reuse_required: bool = True
-
-
-class ScriptImportPropOutput(BaseModel):
-    """A stable prop identity for imported story context."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    identity_description: str = Field(min_length=1)
-    aliases: list[str] = Field(default_factory=list)
-
-
-class ScriptImportLayoutOutput(BaseModel):
-    """A physical space identity, without actions or future visual state."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    spatial_description: str = Field(min_length=1)
-    time_periods: list[str] = Field(default_factory=list)
-
-
-class ScriptImportOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    outline: str
-    episode_outlines: list[str] = Field(default_factory=list)
-    roles: list[ScriptImportRoleOutput] = Field(default_factory=list)
-    props: list[ScriptImportPropOutput] = Field(default_factory=list)
-    layouts: list[ScriptImportLayoutOutput] = Field(default_factory=list)
-    notes: str | None = None
-
-
 class ScriptOutlineOutput(BaseModel):
     outline: str
     episode_outlines: dict[str, str] = Field(default_factory=dict)

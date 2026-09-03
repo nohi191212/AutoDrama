@@ -7,7 +7,6 @@ from autodrama.core.schemas import (
     ClipSegmentOutput,
     ProjectState,
     ScriptCinematicAdaptOutput,
-    ScriptImportOutput,
     ScriptNovelExtractModelOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
@@ -66,28 +65,6 @@ class ScriptService:
     @staticmethod
     def format_json(value: object) -> str:
         return json.dumps(value, ensure_ascii=False, indent=2)
-
-    async def script_import(
-        self,
-        state: ProjectState,
-        provider: TextLLM,
-        *,
-        raw_script: str,
-    ) -> ScriptImportOutput:
-        prompt = self.prompts.render(
-            "script_import",
-            raw_script=raw_script,
-        )
-        return await provider.generate_json(
-            prompt,
-            ScriptImportOutput,
-            temperature=0.25,
-            metadata={
-                "node_name": "script_import",
-                "project_id": state.project_id,
-                "expected_keys": self.state_episode_keys(state),
-            },
-        )
 
     async def script_outline(self, state: ProjectState, provider: TextLLM) -> ScriptOutlineOutput:
         episode_duration_seconds = self.episode_duration_seconds(state)

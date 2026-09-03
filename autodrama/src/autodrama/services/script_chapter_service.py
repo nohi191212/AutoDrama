@@ -67,12 +67,6 @@ def load_script_chapters(chapters_dir: Path) -> list[ScriptChapter]:
     return sorted(chapters, key=lambda chapter: chapter.number)
 
 
-def format_chapter_context(chapters: list[ScriptChapter]) -> str:
-    return "\n\n".join(
-        f"【{chapter.filename}】\n{chapter.content}" for chapter in chapters
-    )
-
-
 def combine_chapter_contents(chapters: list[ScriptChapter]) -> str:
     return "\n\n".join(chapter.content for chapter in chapters)
 
@@ -80,6 +74,5 @@ def combine_chapter_contents(chapters: list[ScriptChapter]) -> str:
 __all__ = [
     "ScriptChapter",
     "combine_chapter_contents",
-    "format_chapter_context",
     "load_script_chapters",
 ]

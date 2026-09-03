@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import shutil
 from pathlib import Path
 
 from autodrama.config import load_settings
-from autodrama.core.schemas import ScriptImportOutput
 from autodrama.providers.router import ProviderRouter
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.services.script_chapter_service import load_script_chapters
@@ -64,10 +62,6 @@ def expect_rejected(chapters_dir: Path, filename: str, content: str) -> None:
 
 
 async def main() -> None:
-    import_schema = ScriptImportOutput.model_json_schema()
-    assert "facts" not in import_schema["properties"]
-    assert "evidence_quotes" not in json.dumps(import_schema)
-
     fangu_settings = load_settings(ROOT / "fangu.yaml")
     fangu_chapters = load_script_chapters(fangu_settings.project.script_chapters_dir)
     assert [chapter.filename for chapter in fangu_chapters] == [
@@ -105,8 +99,11 @@ async def main() -> None:
     )
     expected_keys = {"episode_001", "episode_002", "episode_003"}
     assert set(state.script.novel_full) == expected_keys
+    assert state.script.outline is None
+    assert state.script.episode_outlines == {}
     assert state.metadata["script_mode"] == "mature_chapters"
     assert state.metadata["source_chapters_dir"] == str(settings.project.script_chapters_dir)
+    assert state.budget.used_text_calls == 0
     assert "script_import_facts" not in state.metadata
     assert "script_import_semantic_attempts" not in state.metadata
     print("script chapter import smoke: PASS")

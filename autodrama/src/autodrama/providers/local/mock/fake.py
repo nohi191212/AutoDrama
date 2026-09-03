@@ -32,7 +32,6 @@ from autodrama.core.schemas import (
     ShotBlockingPlanModelOutput,
     ShotKeyframePromptModelOutput,
     ScriptCinematicAdaptOutput,
-    ScriptImportOutput,
     ScriptNovelExtractModelOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
@@ -151,18 +150,6 @@ class FakeTextProvider:
                     "confidence": 1.0,
                     "model": "fake-text",
                 },
-            }
-        elif schema is ScriptImportOutput or node_name == "script_import":
-            data = {
-                "outline": "江未晞在破败殿宇中醒来，遇见由银白光点凝聚成形的乐园AI管家九韶，得知自己被乐园令牌选中，并可通过运营密室夺回被掠夺的气运与人生。九韶演示山海经主题新手区，九尾狐密室的真实触感和狐爪机关让江未晞第一次贡献恐惧与惊喜能量，也激起她开启密室的欲望。",
-                "episode_outlines": [
-                    f"原始章节 {key} 中的角色围绕核心冲突推进事件，并在结尾保留后续悬念。"
-                    for key in episode_keys
-                ],
-                "roles": [],
-                "props": [],
-                "layouts": [],
-                "notes": "fake script_import output",
             }
         elif schema is ScriptOutlineOutput or node_name == "script_outline":
             data = {

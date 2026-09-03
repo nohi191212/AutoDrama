@@ -64,7 +64,7 @@ async def main() -> None:
     assert fangu_binding.model == "aibox:gemini-3.6-flash"
     assert fangu_binding.params["temperature"] == 0.35
     example_settings = load_settings(ROOT / "config.yaml.example")
-    assert "script_import" in example_settings.nodes
+    assert "script_import" not in example_settings.nodes
     assert "script_cinematic_adapt" in example_settings.nodes
 
     settings = load_settings(write_fixture())
