@@ -1,0 +1,82 @@
+{
+  "name": "roleboard-keyvision-person-design-v1",
+  "revision": "1.0",
+  "description": "Measures whether a roleboard belongs to the key vision's shared character-design and rendering language without copying a depicted identity.",
+  "scale": {
+    "0": "opposite or unusable",
+    "2": "severe mismatch dominates",
+    "4": "major mismatch with isolated similarities",
+    "6": "recognizably related but visibly inconsistent",
+    "8": "strong same-project match with minor differences",
+    "10": "exceptionally coherent same-project character language with concrete visible evidence"
+  },
+  "policy": {
+    "approval_threshold": 8.0,
+    "minimum_dimension_score": 7.0,
+    "fatal_gate_policy": "ineligible",
+    "require_evidence": true,
+    "identity_copy_is_similarity": false
+  },
+  "dimensions": [
+    {
+      "id": "rendering_medium_and_finish",
+      "weight": 12,
+      "question": "Does the roleboard use the same stylized 3D/CG rendering family, edge treatment, depth, polish, and finishing level as the key-vision characters?"
+    },
+    {
+      "id": "facial_modeling_language",
+      "weight": 20,
+      "question": "Do facial planes, feature simplification, eye treatment, nose and mouth construction, age handling, and stylization intensity follow the same design language without copying a specific face?"
+    },
+    {
+      "id": "skin_surface_response",
+      "weight": 10,
+      "question": "Do skin smoothness, subsurface softness, highlight rolloff, tonal transitions, and texture restraint match the key-vision character treatment?"
+    },
+    {
+      "id": "hair_rendering_response",
+      "weight": 8,
+      "question": "Do hair massing, strand grouping, edge softness, highlight behavior, and integration with the head belong to the same rendering family?"
+    },
+    {
+      "id": "body_proportion_language",
+      "weight": 10,
+      "question": "Do head-to-body ratio, shoulder and torso construction, limb proportions, posture, and stylization level feel designed for the same project while respecting the role's age and identity?"
+    },
+    {
+      "id": "garment_structure_language",
+      "weight": 10,
+      "question": "Do garment silhouettes, layer hierarchy, seam and closure logic, drape, and profile/back readability use the same production-design logic without copying a specific costume?"
+    },
+    {
+      "id": "material_response_system",
+      "weight": 10,
+      "question": "Do cloth, hair, skin, wood, leather, and metal respond to light with the same restrained material hierarchy and physical coherence as the key vision?"
+    },
+    {
+      "id": "palette_relationships",
+      "weight": 7,
+      "question": "Do hue restraint, saturation, value grouping, warm-cool balance, and accent use belong to the key vision's character palette system?"
+    },
+    {
+      "id": "lighting_and_atmospheric_integration",
+      "weight": 7,
+      "question": "Do light softness, directionality, facial readability, contact shadows, ambient fill, and atmospheric restraint match the key-vision character presentation?"
+    },
+    {
+      "id": "design_density_and_restraint",
+      "weight": 6,
+      "question": "Does the roleboard match the key vision's balance of readable silhouette, controlled ornament, cultural detail, asymmetry, and non-game-skin restraint?"
+    }
+  ],
+  "gates": [
+    {"id": "exact_three_views", "fatal": true, "description": "Exactly one front, one true profile, and one back full-body view, with no extra panel."},
+    {"id": "single_same_identity", "fatal": true, "description": "All three views depict one consistent identity."},
+    {"id": "full_body_visibility", "fatal": true, "description": "Heads, bodies, hands, garments, and feet are complete and usable."},
+    {"id": "source_identity_fidelity", "fatal": true, "description": "Age, gender presentation, stable facts, wardrobe facts, and role status are not contradicted."},
+    {"id": "spatial_template_contamination", "fatal": true, "description": "The template's warrior face, crown, hair, armor, sword, costume, body, or white-clay material is not copied."},
+    {"id": "keyvision_identity_copy", "fatal": true, "description": "No concrete key-vision face, hairstyle, costume, prop, pose, or scene is copied as the target identity."},
+    {"id": "severe_anatomy", "fatal": true, "description": "No production-breaking facial, hand, limb, or body defect."},
+    {"id": "clean_output", "fatal": true, "description": "No text, watermark, logo, extra subject, extra prop, or collage artifact."}
+  ]
+}

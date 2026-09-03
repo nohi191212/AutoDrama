@@ -1,0 +1,46 @@
+{
+  "name": "roleboard-prompt-v1",
+  "revision": "1.0",
+  "description": "Text-only evaluation for Gemini-generated roleboard prompt JSON before downstream image calls.",
+  "scale": {
+    "0": "absent, opposite, or unusable",
+    "2": "severe failure dominates",
+    "4": "major defects; fragments work",
+    "6": "broadly usable but visibly flawed",
+    "8": "strong production result with minor defects",
+    "10": "exceptional, specific, clean, and fully supported"
+  },
+  "policy": {
+    "scope_weights": {"prompt": 1.0},
+    "scope_thresholds": {"prompt": 8.2},
+    "minimum_records": {"prompt": 6},
+    "minimum_distinct_roles": {"prompt": 3},
+    "fatal_gate_policy": "ineligible",
+    "nonfatal_gate_cap": 7.0,
+    "require_evidence": true,
+    "downstream_composite": {"prompt": 0.30, "image": 0.70}
+  },
+  "dimensions": [
+    {"id": "json_schema_validity", "scope": "prompt", "weight": 5, "question": "Is the output parseable JSON with exactly the required four keys and no surrounding prose?"},
+    {"id": "source_fact_fidelity", "scope": "prompt", "weight": 16, "question": "Does the prompt preserve every relevant hard fact without converting a design choice into a false story fact?"},
+    {"id": "stable_state_separation", "scope": "prompt", "weight": 10, "question": "Does it exclude shot-only pose, emotion, injury, held prop, action, energy, and event state?"},
+    {"id": "exact_view_contract", "scope": "prompt", "weight": 10, "question": "Does it request one 16:9 front/profile/back board with equal scale, full body, baseline, spacing, and identity consistency?"},
+    {"id": "reference_semantics", "scope": "prompt", "weight": 8, "question": "Does it separate spatial-template, key-vision-style, and optional same-role-identity responsibilities?"},
+    {"id": "facial_observability", "scope": "prompt", "weight": 12, "question": "Does it specify concrete face geometry and age evidence that can be verified in pixels?"},
+    {"id": "body_silhouette_observability", "scope": "prompt", "weight": 8, "question": "Does it specify visible and plausible body proportion, posture, and silhouette decisions?"},
+    {"id": "wardrobe_logic", "scope": "prompt", "weight": 8, "question": "Does it specify functional garment structure, layers, material, palette, wear, footwear, and rear/profile readability?"},
+    {"id": "restrained_signature_design", "scope": "prompt", "weight": 8, "question": "Does it add only safe stable choices on unconstrained axes with a limited motif and ornament budget?"},
+    {"id": "cast_contrast", "scope": "prompt", "weight": 8, "question": "Does it distinguish the target from the cast without putting other roles into the image?"},
+    {"id": "positive_executability", "scope": "prompt", "weight": 4, "question": "Are desired pixels stated positively in priority order with only short targeted exclusions?"},
+    {"id": "concision_consistency", "scope": "prompt", "weight": 2, "question": "Is the prompt free of repetition, contradiction, and low-value quality adjectives?"},
+    {"id": "negative_prompt_precision", "scope": "prompt", "weight": 1, "question": "Does the negative prompt cover likely failures without duplicating the positive prompt?"}
+  ],
+  "gates": [
+    {"id": "exact_json", "scope": "prompt", "fatal": true, "description": "Output parses and matches the required schema."},
+    {"id": "no_source_contradiction", "scope": "prompt", "fatal": true, "description": "No hard source fact is changed."},
+    {"id": "no_transient_state", "scope": "prompt", "fatal": true, "description": "No shot-only state enters canonical identity."},
+    {"id": "exact_views", "scope": "prompt", "fatal": true, "description": "No extra view, close-up, panel, label, or conflicting layout."},
+    {"id": "no_medium_conflict", "scope": "prompt", "fatal": true, "description": "No conflict with the frozen project rendering medium."},
+    {"id": "no_extra_entity", "scope": "prompt", "fatal": true, "description": "No other named role, creature, or unrequested prop becomes an image subject."}
+  ]
+}

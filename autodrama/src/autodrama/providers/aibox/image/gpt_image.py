@@ -449,7 +449,12 @@ class AiboxImageProvider:
         max_attempts = max(1, self.max_attempts)
         for attempt in range(1, max_attempts + 1):
             try:
-                return await self._generate_image_once(prompt, refs=refs, size=size, metadata=metadata)
+                return await self._generate_image_once(
+                    prompt,
+                    refs=refs,
+                    size=size,
+                    metadata={**metadata, "provider_attempt": attempt},
+                )
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 if attempt < max_attempts:
                     await self._retry_after_failure(
@@ -484,6 +489,28 @@ class AiboxImageProvider:
             f"AIBOX image generation failed after {max_attempts} attempt(s): no response received"
         )
 
+    def _before_generation_post(
+        self,
+        *,
+        payload: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> Any:
+        """Hook invoked immediately before a real provider generation POST."""
+
+        del payload, metadata
+        return None
+
+    def _record_generation_submission_status(
+        self,
+        ticket: Any,
+        *,
+        status: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """Hook for providers that persist actual submission lifecycle events."""
+
+        del ticket, status, details
+
     async def _generate_image_once(
         self,
         prompt: str,
@@ -517,24 +544,66 @@ class AiboxImageProvider:
                 len(uploaded_refs),
                 len(prompt),
             )
-            create_response = await client.post(
-                self.generation_endpoint,
-                headers=self._headers(),
-                json=payload,
+            request_headers = self._headers()
+            submission_ticket = self._before_generation_post(
+                payload=payload,
+                metadata=metadata,
             )
-            create_body = self._json_response(create_response, label="AIBOX image generation")
-            self._raise_for_error(create_response, create_body, label="AIBOX image generation")
+            try:
+                create_response = await client.post(
+                    self.generation_endpoint,
+                    headers=request_headers,
+                    json=payload,
+                )
+            except Exception as exc:
+                self._record_generation_submission_status(
+                    submission_ticket,
+                    status="transport_error",
+                    details={
+                        "error_type": type(exc).__name__,
+                        "error": self._format_exception(exc),
+                    },
+                )
+                raise
 
-            image_urls, image_data = self._extract_images(create_body)
-            task_id = self._task_id(create_body)
-            final_body = create_body
-            status = self._status(create_body)
-            if task_id and not image_urls and not image_data and not self._is_completed(create_body):
-                final_body = await self._wait_for_task(client, task_id)
-                image_urls, image_data = self._extract_images(final_body)
-                status = self._status(final_body)
+            try:
+                create_body = self._json_response(create_response, label="AIBOX image generation")
+                self._raise_for_error(create_response, create_body, label="AIBOX image generation")
+                task_id = self._task_id(create_body)
+                self._record_generation_submission_status(
+                    submission_ticket,
+                    status="submitted",
+                    details={
+                        "http_status": create_response.status_code,
+                        "task_id": task_id,
+                    },
+                )
+
+                image_urls, image_data = self._extract_images(create_body)
+                final_body = create_body
+                status = self._status(create_body)
+                if task_id and not image_urls and not image_data and not self._is_completed(create_body):
+                    final_body = await self._wait_for_task(client, task_id)
+                    image_urls, image_data = self._extract_images(final_body)
+                    status = self._status(final_body)
+            except Exception as exc:
+                self._record_generation_submission_status(
+                    submission_ticket,
+                    status="failed",
+                    details={
+                        "http_status": create_response.status_code,
+                        "error_type": type(exc).__name__,
+                        "error": self._format_exception(exc),
+                    },
+                )
+                raise
 
         if not image_urls:
+            self._record_generation_submission_status(
+                submission_ticket,
+                status="failed",
+                details={"error": "provider response contained no image"},
+            )
             raise ProviderBadResponseError(f"AIBOX image response has no image URL or base64 data: {final_body}")
 
         raw_response = {
@@ -544,7 +613,7 @@ class AiboxImageProvider:
         if uploaded_refs:
             raw_response["uploaded_reference_images"] = uploaded_refs
 
-        return ImageGenerationResult(
+        result = ImageGenerationResult(
             provider=self.name,
             model=str(payload["model"]),
             image_urls=self._dedupe(image_urls),
@@ -555,6 +624,16 @@ class AiboxImageProvider:
             usage=self._usage(final_body, create_body),
             raw_response=raw_response,
         )
+        self._record_generation_submission_status(
+            submission_ticket,
+            status="completed",
+            details={
+                "task_id": task_id,
+                "task_status": status,
+                "image_count": len(result.image_urls),
+            },
+        )
+        return result
 
     async def _wait_for_task(self, client: httpx.AsyncClient, task_id: str) -> dict[str, Any]:
         started_at = asyncio.get_running_loop().time()

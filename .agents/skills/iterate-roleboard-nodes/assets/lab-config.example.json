@@ -1,0 +1,49 @@
+{
+  "schema_version": 2,
+  "mode": "design",
+  "project_id": "saodi_0803",
+  "config": "saodi.yaml",
+  "project_dir": "outputs/saodi_0803",
+  "spatial_template": ".assets/image_templates/roleboard_template.png",
+  "key_vision": "REQUIRED_USER_CONFIRMED_ABSOLUTE_OR_REPO_RELATIVE_IMAGE_PATH",
+  "key_vision_selection_basis": "user_confirmed",
+  "key_vision_selection_record": null,
+  "models": {
+    "image_provider": "aibox",
+    "image_model": "gpt-image-2",
+    "image_size": "3840x2160",
+    "image_quality": "high",
+    "gemini_provider": "aibox",
+    "gemini_model": "gemini-3.6-flash",
+    "gemini_temperature": 0.3,
+    "audit_model": "gemini-3.6-flash",
+    "audit_temperature": 0.1
+  },
+  "budgets": {
+    "image": 96,
+    "edit": 16,
+    "gemini": 128,
+    "audit": 96
+  },
+  "concurrency": {
+    "image": 3,
+    "gemini": 3,
+    "audit": 2
+  },
+  "splits": {
+    "exploration": [
+      "叶凡/base",
+      "柳菡烟/base",
+      "李德海/base"
+    ],
+    "holdout": [
+      "叶凡/youth_80_years_ago"
+    ]
+  },
+  "stopping": {
+    "new_high_delta": 0.05,
+    "max_non_improving_cycles": 3,
+    "phase1_max_checkpoint_variance": 0.35,
+    "phase2_max_checkpoint_variance": 0.4
+  }
+}

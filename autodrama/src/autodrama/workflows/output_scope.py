@@ -11,10 +11,15 @@ from autodrama.core.schemas import ClipShotPlan, ClipToShotsEpisodeOutput, Proje
 
 
 EXPECTED_OUTPUT_PREGEN_NODES = (
+    "scene_multiview_plan",
+    "scene_multiview_image_generation",
     "layout_to_background_prompt",
     "shot_background_image_generation",
     "shot_background_image_audit",
+    "shot_blocking_plan",
+    "shot_blocking_control_render",
     "shot_keyframe_prompt",
+    "shot_keyframe_stage_generation",
     "shot_keyframe_image_generation",
     "shot_keyframe_image_audit",
     "shot_manifest_generation",

@@ -10,6 +10,7 @@ set "WORKFLOW=pregen"
 set "PROVIDER_ARGS="
 set "UNTIL=shot_manifest_generation"
 set "ONLY="
+set "NODE_GROUP="
 set "EPISODES="
 set "SHOTS="
 set "CLIPS="
@@ -66,6 +67,18 @@ if "%~1"=="--until" (
 )
 if "%~1"=="--only" (
   set "ONLY=%~2"
+  shift
+  shift
+  goto parse
+)
+if "%~1"=="--node_group" (
+  set "NODE_GROUP=%~2"
+  shift
+  shift
+  goto parse
+)
+if "%~1"=="--node-group" (
+  set "NODE_GROUP=%~2"
   shift
   shift
   goto parse
@@ -132,12 +145,13 @@ goto help_error
 :help
 echo Usage:
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force]
-echo   run\start.cmd [--only NODE] [--episodes 1,3] [--roles ROLE1,ROLE2] [--clips 1-3]
+echo   run\start.cmd [--only NODE] [--node_group key_vision^|key_vision_edit^|role_extract^|prop_layout_extract^|roleboard_gen^|prop_gen^|layout_gen] [--episodes 1,3] [--roles ROLE1,ROLE2] [--clips 1-3]
 echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force]
 echo   run\start.cmd --postgen [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-9] [--only NODE] [--fake] [--force]
 echo   --episode is accepted as an alias for --episodes.
 echo   --role is accepted as an alias for --roles.
 echo   --clip is accepted as an alias for --clips.
+echo   --node-group is accepted as an alias for --node_group.
 echo   run\start.cmd --workflow pregen^|generation^|postgen [options]
 echo.
 echo This is the native Windows entry point. It uses runtime.python.windows
@@ -155,6 +169,13 @@ echo   clip_prompt, clip_storyboard_prompt, clip_storyboard_image_generation, th
 echo   clip_storyboard_keyframe_generation remains available only as an optional manual node.
 echo   pregen --roles is supported with --only role_voice_select.
 echo   pregen --clips is supported with --only clip_storyboard_prompt, clip_storyboard_image_generation, clip_storyboard_keyframe_generation, or clip_manifest_generation.
+echo   --node_group key_vision runs script_worldview_extract, key_vision_prompt, key_vision_image_generation, and key_vision_image_audit as one group.
+echo   --node_group key_vision_edit edits the current key vision with the latest project audit feedback, then audits it.
+echo   --node_group role_extract runs role_extract_primary, role_extract_functional, and role_finalize as one group.
+echo   --node_group prop_layout_extract runs prop_extract, prop_finalize, layout_extract, layout_finalize, and layout_prop_boundary_review as one group.
+echo   --node_group roleboard_gen runs roleboard_prompt, roleboard_image_generation, and roleboard_image_audit as one group; role_extract must be complete first.
+echo   --node_group prop_gen runs prop_prompt, prop_image_generation, and prop_image_audit as one group; prop_layout_extract must be complete first.
+echo   --node_group layout_gen runs layout_prompt, layout_image_generation, and layout_image_audit as one group; prop_layout_extract must be complete first.
 echo   generation starts with shot_dialogue_audio_generation, then clip_video_generation and solidification.
 echo   postgen audits source clips, edits with native audio, optionally aligns voices and subtitles, then audits the final video.
 goto end
@@ -162,12 +183,13 @@ goto end
 :help_error
 echo Usage: 1>&2
 echo   run\start.cmd [--config FILE] [--project ID_OR_DIR] [--fake] [--force] 1>&2
-echo   run\start.cmd [--only NODE] [--episodes 1,3] [--roles ROLE1,ROLE2] [--clips 1-3] 1>&2
+echo   run\start.cmd [--only NODE] [--node_group key_vision^|key_vision_edit^|role_extract^|prop_layout_extract^|roleboard_gen^|prop_gen^|layout_gen] [--episodes 1,3] [--roles ROLE1,ROLE2] [--clips 1-3] 1>&2
 echo   run\start.cmd --generation [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-3] [--only NODE] [--fake] [--force] 1>&2
 echo   run\start.cmd --postgen [--config FILE] [--project ID_OR_DIR] [--episodes episode_001,episode_003] [--shots 1-9] [--only NODE] [--fake] [--force] 1>&2
 echo   --episode is accepted as an alias for --episodes. 1>&2
 echo   --role is accepted as an alias for --roles. 1>&2
 echo   --clip is accepted as an alias for --clips. 1>&2
+echo   --node-group is accepted as an alias for --node_group. 1>&2
 exit /b 2
 
 :run
@@ -211,6 +233,7 @@ if not "%SHOTS%"=="" call :log "shots: %SHOTS%"
 if not "%CLIPS%"=="" call :log "clips: %CLIPS%"
 if not "%ROLES%"=="" call :log "roles: %ROLES%"
 if not "%ONLY%"=="" call :log "only: %ONLY%"
+if not "%NODE_GROUP%"=="" call :log "node_group: %NODE_GROUP%"
 
 set "PROJECT_ARGS="
 if not "%PROJECT%"=="" set "PROJECT_ARGS=--project "%PROJECT%""
@@ -231,7 +254,10 @@ if /I "%WORKFLOW%"=="pregen" if not "%ROLES%"=="" set "ROLE_ARGS=--roles "%ROLES
 set "ONLY_ARGS="
 if not "%ONLY%"=="" set "ONLY_ARGS=--only "%ONLY%""
 
-"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %EPISODE_ARGS% %ROLE_ARGS% %CLIP_ARGS% %SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
+set "NODE_GROUP_ARGS="
+if not "%NODE_GROUP%"=="" set "NODE_GROUP_ARGS=--node-group "%NODE_GROUP%""
+
+"%AUTODRAMA_PYTHON%" -m autodrama.cli run %WORKFLOW% --config "%CONFIG%" %PROJECT_ARGS% --until "%UNTIL%" %ONLY_ARGS% %NODE_GROUP_ARGS% %EPISODE_ARGS% %ROLE_ARGS% %CLIP_ARGS% %SHOT_ARGS% %PROVIDER_ARGS% %FORCE%
 set "EXIT_CODE=%ERRORLEVEL%"
 
 popd >nul

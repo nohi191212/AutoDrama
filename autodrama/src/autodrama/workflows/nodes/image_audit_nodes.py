@@ -33,7 +33,7 @@ from autodrama.core.schemas import (
 from autodrama.image_audit_rubrics import (
     ProductionRubricBundle,
     aggregate_dimension_scores,
-    load_production_rubric_bundle,
+    load_key_vision_audit_rubric_bundle,
     render_production_rubric,
 )
 from autodrama.logging import get_logger
@@ -74,6 +74,8 @@ class KeyVisionAuditDecision(ImageAuditDecision):
 class ImageAuditNodeBase:
     """Audit generated images and repair only the rejected asset in place."""
 
+    REPAIR_FEEDBACK_MARKER = "【本轮图像审计修复约束】"
+    MAX_REPAIR_ATTEMPTS = 4
     source_node: str
     asset_type: str
 
@@ -94,7 +96,7 @@ class ImageAuditNodeBase:
             return max(
                 1,
                 min(
-                    4,
+                    self.MAX_REPAIR_ATTEMPTS,
                     int(
                         self._params().get(
                             "max_attempts",
@@ -137,6 +139,15 @@ class ImageAuditNodeBase:
             metadata={"asset_type": item.asset_type, "source_node": self.source_node, "asset_id": item.asset_id},
         )
 
+    def _audit_refs(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: StaticAssetGenerationItem,
+    ) -> list[AssetRef]:
+        del state
+        return [self._asset_ref(project_dir, item)]
+
     def _asset_expectation(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
         raise NotImplementedError
 
@@ -149,6 +160,91 @@ class ImageAuditNodeBase:
 
     def _save_revised_prompt(self, project_dir: Path, state: ProjectState, asset_id: str, prompt: str) -> None:
         raise NotImplementedError
+
+    def _on_rejection(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: StaticAssetGenerationItem,
+        decision: ImageAuditDecision,
+        attempt: int,
+    ) -> None:
+        del project_dir, state, item, decision, attempt
+
+    def _prepare_repair(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: StaticAssetGenerationItem,
+        decision: ImageAuditDecision,
+    ) -> None:
+        self._save_revised_prompt(project_dir, state, item.asset_id, decision.revised_prompt)
+
+    @classmethod
+    def _without_previous_repair_feedback(cls, prompt: str) -> str:
+        text = str(prompt or "").strip()
+        marker_index = text.find(cls.REPAIR_FEEDBACK_MARKER)
+        if marker_index >= 0:
+            text = text[:marker_index].rstrip()
+        return text
+
+    @classmethod
+    def _compose_repair_prompt(
+        cls,
+        *,
+        current_prompt: str,
+        decision: ImageAuditDecision,
+    ) -> str:
+        prompt = cls._without_previous_repair_feedback(decision.revised_prompt)
+        if not prompt:
+            prompt = cls._without_previous_repair_feedback(current_prompt)
+        reasons: list[str] = []
+        raw_reasons = decision.issues or [decision.rationale]
+        for raw_reason in raw_reasons:
+            reason = str(raw_reason or "").strip()
+            if reason and reason not in reasons:
+                reasons.append(reason)
+        if not reasons:
+            reasons.append("修复所有阻止当前图片直接交付的可见问题")
+        feedback = "\n".join(f"- {reason}" for reason in reasons)
+        return (
+            f"{prompt.rstrip()}\n\n{cls.REPAIR_FEEDBACK_MARKER}\n"
+            "下一轮生成必须修复以下本轮可见问题；保留已通过的主体身份、构图、视图数量、"
+            "比例、材质和整体视觉风格，不要引入新的主体、道具、文字或水印：\n"
+            f"{feedback}"
+        ).strip()
+
+    def _requires_revised_prompt(self) -> bool:
+        return True
+
+    def _force_accept_rejection(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: StaticAssetGenerationItem,
+        decision: ImageAuditDecision,
+        attempt: int,
+    ) -> ImageAssetAuditItem | None:
+        del project_dir, state, item, decision, attempt
+        return None
+
+    def _record_rejection(
+        self,
+        project_dir: Path,
+        item: StaticAssetGenerationItem,
+        decision: ImageAuditDecision,
+        attempt: int,
+    ) -> None:
+        self.repo.append_audit_rejection(
+            project_dir,
+            node_name=self.name,
+            asset_id=item.asset_id,
+            attempt=attempt,
+            issues=decision.issues,
+            rationale=decision.rationale,
+            current_prompt=item.prompt,
+            revised_prompt=decision.revised_prompt,
+        )
 
     def _render_audit_request(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
         return self.prompts.render(
@@ -234,7 +330,7 @@ class ImageAuditNodeBase:
                 request,
                 self._decision_model(),
                 temperature=0.1,
-                refs=[self._asset_ref(project_dir, item)],
+                refs=self._audit_refs(project_dir, state, item),
                 metadata=self._audit_metadata(state, item),
             )
             state.budget.used_text_calls += 1
@@ -243,13 +339,28 @@ class ImageAuditNodeBase:
             decision = self._normalize_decision(decision, state=state, item=item)
             if decision.approved:
                 return self._audit_output_item(item=item, decision=decision, attempt=attempt)
-            if not decision.revised_prompt:
-                raise ValueError(f"{self.name} rejected {item.asset_id} without a revised_prompt")
+            decision.revised_prompt = self._compose_repair_prompt(
+                current_prompt=item.prompt,
+                decision=decision,
+            )
+            self._record_rejection(project_dir, item, decision, attempt)
+            self._on_rejection(project_dir, state, item, decision, attempt)
+            forced_acceptance = self._force_accept_rejection(
+                project_dir,
+                state,
+                item,
+                decision,
+                attempt,
+            )
+            if forced_acceptance is not None:
+                return forced_acceptance
             if attempt > max_repairs:
                 raise ValueError(
                     f"{self.name} could not obtain an accepted image for {initial_item.asset_id} "
                     f"after {max_repairs} repair attempt(s)"
                 )
+            if self._requires_revised_prompt() and not decision.revised_prompt:
+                raise ValueError(f"{self.name} rejected {item.asset_id} without a revised_prompt")
             self.logger.warning(
                 "%s rejected asset=%s attempt=%d/%d issues=%s; repairing only this asset",
                 self.name,
@@ -258,7 +369,7 @@ class ImageAuditNodeBase:
                 max_repairs,
                 "; ".join(decision.issues) or "unspecified visual issue",
             )
-            self._save_revised_prompt(project_dir, state, item.asset_id, decision.revised_prompt)
+            self._prepare_repair(project_dir, state, item, decision)
             await self._regenerate_one(project_dir, state, item.asset_id)
             refreshed = {row.asset_id: row for row in self._source_items(project_dir)}
             item = refreshed.get(item.asset_id)
@@ -287,6 +398,7 @@ class PropImageAuditNode(ImageAuditNodeBase):
     name = "prop_image_audit"
     source_node = "prop_image_generation"
     asset_type = "prop"
+    MAX_REPAIR_ATTEMPTS = 2
 
     @staticmethod
     def _find_asset(state: ProjectState, asset_id: str) -> tuple[Prop, PropAsset]:
@@ -318,14 +430,20 @@ class KeyVisionImageAuditNode(ImageAuditNodeBase):
     source_node = "key_vision_image_generation"
     asset_type = "key_vision"
 
-    @staticmethod
-    def _uses_xuanhuan_style_rubric(state: ProjectState) -> bool:
-        return str(state.metadata.get("visual_style_name") or "").startswith("xuanhuan-")
-
     def _rubric_bundle(self, state: ProjectState) -> ProductionRubricBundle:
-        return load_production_rubric_bundle(
-            include_xuanhuan_style=self._uses_xuanhuan_style_rubric(state)
-        )
+        del state
+        return load_key_vision_audit_rubric_bundle()
+
+    def _max_attempts(self) -> int:
+        """Allow at most three prompt-generation-audit repair cycles."""
+        try:
+            configured = self._params().get(
+                "max_attempts",
+                self._params().get("max_iterations", 3),
+            )
+            return max(1, min(3, int(configured)))
+        except (TypeError, ValueError):
+            return 3
 
     def _approval_threshold(self, bundle: ProductionRubricBundle) -> float:
         raw = self._params().get("approval_threshold", bundle.policy.approval_threshold)
@@ -463,9 +581,7 @@ class KeyVisionImageAuditNode(ImageAuditNodeBase):
     ) -> ImageAssetAuditItem:
         if not isinstance(decision, KeyVisionAuditDecision) or decision.weighted_score is None:
             raise TypeError("key_vision_image_audit cannot persist an incomplete rubric decision")
-        bundle = load_production_rubric_bundle(
-            include_xuanhuan_style=any(row.category == "style" for row in decision.assessments)
-        )
+        bundle = load_key_vision_audit_rubric_bundle()
         return ImageAssetAuditItem(
             asset_id=item.asset_id,
             asset_type=self.asset_type,
@@ -482,35 +598,104 @@ class KeyVisionImageAuditNode(ImageAuditNodeBase):
 
     def _asset_expectation(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
         return (
-            "一张可作为全片风格与世界观锚点的主视觉。核心叙事主体、关键灵兽或标志物和整体氛围"
-            f"必须清晰统一；服从以下视觉契约：{self._style_brief(state)}。"
-            "没有额外主体、畸形、可读文字、logo 或水印。"
+            "一张由剧本类型定义、可作为全片世界观与空间尺度锚点的主视觉。只检查人物与建筑的相对比例、"
+            "人物整体头身比例、空间透视、画面构图、遮挡层级、世界空间逻辑，以及是否存在会污染主视觉交付的"
+            "生成模型风格高频噪点和局部伪影；不以媒介风格偏好、一般材质/色彩/灯光偏好、文字、水印、手脚细节"
+            "或步态作为拒绝理由。真实材质纹理、合理雾气和合法电影颗粒不应被误判为噪点。"
         )
 
-    def _save_revised_prompt(self, project_dir: Path, state: ProjectState, asset_id: str, prompt: str) -> None:
-        payload = state.metadata.get("key_vision_prompt")
-        if not isinstance(payload, dict):
-            raise ValueError("key_vision_image_audit requires key_vision_prompt metadata")
-        payload = dict(payload)
-        payload["prompt"] = prompt
-        state.metadata["key_vision_prompt"] = payload
+    def _requires_revised_prompt(self) -> bool:
+        return False
+
+    def _force_accept_rejection(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: StaticAssetGenerationItem,
+        decision: ImageAuditDecision,
+        attempt: int,
+    ) -> ImageAssetAuditItem | None:
+        if attempt <= self._max_attempts():
+            return None
+        decision.approved = True
+        decision.rationale = (
+            f"已完成最多 {self._max_attempts()} 次主视觉重试；本轮仍有审计意见，按策略强制接收。"
+            f"{decision.rationale}"
+        ).strip()
+        state.metadata["key_vision_audit_forced_acceptance"] = {
+            "attempt": attempt,
+            "reason": "达到主视觉审计重试上限后强制接收",
+        }
+        self.repo.save_state(project_dir, state)
+        self.logger.warning(
+            "%s force-accepted asset after retry limit attempt=%d",
+            self.name,
+            attempt,
+        )
+        return self._audit_output_item(item=item, decision=decision, attempt=attempt)
+
+    def _on_rejection(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: StaticAssetGenerationItem,
+        decision: ImageAuditDecision,
+        attempt: int,
+    ) -> None:
+        del item
+        feedback = state.metadata.get("key_vision_audit_feedback")
+        if not isinstance(feedback, list):
+            feedback = []
+        feedback = list(feedback)
+        feedback.append(
+            {
+                "attempt": attempt,
+                "issues": list(decision.issues),
+                "rationale": decision.rationale,
+            }
+        )
+        state.metadata["key_vision_audit_feedback"] = feedback
+        state.metadata["key_vision_audit_rejection_log_path"] = self.layout.project_relative(
+            project_dir,
+            self.layout.audit_rejection_log_path(project_dir),
+        )
+        # Persist feedback before invoking the next prompt node so a failed
+        # repair still becomes input to the next manually resumed cycle.
+        self.repo.save_state(project_dir, state)
+
+    def _prepare_repair(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: StaticAssetGenerationItem,
+        decision: ImageAuditDecision,
+    ) -> None:
+        del project_dir, state, item, decision
 
     async def _regenerate_one(self, project_dir: Path, state: ProjectState, asset_id: str) -> None:
-        previous_force = getattr(self.workflow, "_force_pregen", None)
-        self.workflow._force_pregen = True
-        try:
-            await build_director_node_runners(self.workflow)[self.source_node].run(project_dir, state)
-        finally:
-            if previous_force is None:
-                delattr(self.workflow, "_force_pregen")
-            else:
-                self.workflow._force_pregen = previous_force
+        del asset_id
+        runners = build_director_node_runners(self.workflow)
+        await runners["key_vision_prompt"].run(project_dir, state)
+        self.repo.save_state(project_dir, state)
+        await runners["key_vision_image_generation"].run(project_dir, state)
+        self.repo.save_state(project_dir, state)
 
 
 class RoleboardImageAuditNode(ImageAuditNodeBase):
     name = "roleboard_image_audit"
     source_node = "roleboard_image_generation"
     asset_type = "roleboard"
+    MAX_REPAIR_ATTEMPTS = 2
+
+    def _render_audit_request(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
+        role, appearance = self._find_appearance(state, item.asset_id)
+        return self.prompts.render(
+            "roleboard_image_audit",
+            asset_name=item.name,
+            expectation=self._asset_expectation(state, item),
+            current_prompt=item.prompt,
+            reference_context=self._reference_context(role, appearance),
+        )
 
     @staticmethod
     def _find_appearance(state: ProjectState, asset_id: str) -> tuple[Role, RoleAppearance]:
@@ -524,11 +709,118 @@ class RoleboardImageAuditNode(ImageAuditNodeBase):
     def _asset_expectation(self, state: ProjectState, item: StaticAssetGenerationItem) -> str:
         role, appearance = self._find_appearance(state, item.asset_id)
         details = identity_brief(appearance)
-        return (
-            f"单角色身份板“{role.name} / {appearance.name}”。{details}。"
-            "必须严格只呈现同一主体的正面、侧面、背面三个等尺度完整全身视图，身份一致且结构自然；"
-            f"服从以下视觉契约：{self._style_brief(state)}。无其他角色、文字、logo、水印或畸形肢体。"
+        stage = "；".join(
+            value
+            for value in (
+                str(appearance.age_band or "").strip(),
+                str(appearance.time_period or "").strip(),
+            )
+            if value
         )
+        stage_expectation = f"目标年龄与时间阶段：{stage}。" if stage else ""
+        return (
+            f"单角色身份板“{role.name} / {appearance.name}”。{stage_expectation}{details}。"
+            "必须严格只呈现同一主体的正面、侧面、背面三个等尺度完整全身视图，身份一致且结构自然；"
+            "人物的脸型骨相、眉眼鼻唇、年龄感、发型轮廓、体型与服装结构应具体可辨，生物的头部、"
+            "躯干、肢体、表面纹理与识别特征应具体可辨；不得以标准美型、通用英雄脸或无依据的繁复装饰"
+            f"代替角色设计。服从以下视觉契约：{self._style_brief(state)}。无其他角色、文字、logo、水印或畸形肢体。"
+        )
+
+    @staticmethod
+    def _reference_appearance(role: Role, appearance: RoleAppearance) -> RoleAppearance | None:
+        if appearance.asset_role == "base":
+            return None
+        reference_name = str(appearance.reference_asset_name or "").strip()
+        if not reference_name:
+            raise ValueError(f"role variant {role.name}/{appearance.name} requires reference_asset_name")
+        reference = role.appearances.get(reference_name)
+        if reference is None:
+            raise ValueError(
+                f"role variant {role.name}/{appearance.name} references missing base appearance {reference_name}"
+            )
+        if reference.asset_role != "base":
+            raise ValueError(f"role variant {role.name}/{appearance.name} must reference a base appearance")
+        return reference
+
+    @classmethod
+    def _reference_context(cls, role: Role, appearance: RoleAppearance) -> str:
+        reference = cls._reference_appearance(role, appearance)
+        if reference is None:
+            return "本次只提供图片1作为待审查身份板，没有同角色基础造型对照图。"
+        target_stage = "；".join(
+            value
+            for value in (
+                str(appearance.age_band or "").strip(),
+                str(appearance.time_period or "").strip(),
+            )
+            if value
+        ) or "当前变化造型规定的阶段"
+        source_stage = "；".join(
+            value
+            for value in (
+                str(reference.age_band or "").strip(),
+                str(reference.time_period or "").strip(),
+            )
+            if value
+        ) or "基础造型阶段"
+        return (
+            f"图片2是同一角色“{role.name}”的基础造型“{reference.name}”，其阶段为“{source_stage}”，"
+            f"只用于核对跨阶段的身份血缘连续性。图片1的目标阶段是“{target_stage}”；"
+            "应保留能够跨年龄成立的脸部骨相、五官关系和身体血缘特征，同时必须真实呈现目标年龄与时间阶段，"
+            "不得照搬图片2只属于原阶段的皱纹、发色发量、体态、服装、妆造或其他阶段性特征。"
+        )
+
+    def _same_role_identity_ref(
+        self,
+        project_dir: Path,
+        role: Role,
+        appearance: RoleAppearance,
+    ) -> AssetRef | None:
+        reference = self._reference_appearance(role, appearance)
+        if reference is None:
+            return None
+        ref_path = reference.asset_path or reference.design_image_asset_path
+        ref_url = reference.asset_url or reference.design_image_asset_url
+        path: str | None = None
+        if ref_path:
+            existing = self.layout.existing_project_file(project_dir, ref_path)
+            if existing is not None:
+                path = str(project_dir / existing)
+        if not path and not ref_url:
+            raise ValueError(
+                f"roleboard audit for {role.name}/{appearance.name} requires generated base image {reference.name}"
+            )
+        return AssetRef(
+            id=reference.asset_id or reference.design_image_asset_id or reference.id,
+            type="image",
+            path=path,
+            url=ref_url,
+            metadata={
+                "asset_type": "roleboard_identity_reference",
+                "source_node": self.source_node,
+                "reference_role": "same_role_identity",
+                "reference_index": 2,
+                "role_id": role.id,
+                "role_name": role.name,
+                "appearance_id": reference.id,
+                "appearance_name": reference.name,
+                "reference_for": appearance.id,
+                "identity_transfer_allowed": True,
+            },
+        )
+
+    def _audit_refs(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        item: StaticAssetGenerationItem,
+    ) -> list[AssetRef]:
+        role, appearance = self._find_appearance(state, item.asset_id)
+        refs = [self._asset_ref(project_dir, item)]
+        identity_ref = self._same_role_identity_ref(project_dir, role, appearance)
+        if identity_ref is not None:
+            refs.append(identity_ref)
+        return refs
 
     def _save_revised_prompt(self, project_dir: Path, state: ProjectState, asset_id: str, prompt: str) -> None:
         _role, appearance = self._find_appearance(state, asset_id)
@@ -620,6 +912,7 @@ class LayoutImageAuditNode(ImageAuditNodeBase):
     name = "layout_image_audit"
     source_node = "layout_image_generation"
     asset_type = "layout"
+    MAX_REPAIR_ATTEMPTS = 2
 
     @staticmethod
     def _find_layout(state: ProjectState, asset_id: str) -> Layout:
@@ -632,8 +925,15 @@ class LayoutImageAuditNode(ImageAuditNodeBase):
         layout = self._find_layout(state, item.asset_id)
         space = "；".join(layout.space_features)
         return (
-            f"单幅可用于镜头调度的场景母版“{layout.name}”。{layout.desc}。空间要点：{space}。"
-            f"无人、无文字、无三视图或拼图；服从以下视觉契约：{self._style_brief(state)}。"
+            f"A single 2:3 spatial-anchor image for the scene {layout.name}. {layout.desc}. "
+            f"Fixed spatial anchors: {space}. It must show the same empty location as one coherent, "
+            "production-ready single view from a readable natural camera height and angle — a finished set "
+            "reference, not a technical diagram. Keep the structure readable at a glance: the main entrance "
+            "and its approach, the fixed architecture and largest set pieces, and a clear foreground / "
+            "midground / background depth. Do NOT split the scene into paired, stacked, or two-view panels, "
+            "and do not add a floor-plan inset, north arrow, compass, crop marks, or border. "
+            "No people, camera or character overlays, "
+            f"readable text, logo, or watermark. Visual contract: {self._style_brief(state)}."
         )
 
     def _save_revised_prompt(self, project_dir: Path, state: ProjectState, asset_id: str, prompt: str) -> None:
@@ -784,6 +1084,16 @@ class ShotImageAuditNodeBase(ImageAuditNodeBase):
                     rationale=str(decision.rationale or "").strip(),
                     attempts=attempt,
                 )
+            self.repo.append_audit_rejection(
+                project_dir,
+                node_name=self.name,
+                asset_id=item.asset_id,
+                attempt=attempt,
+                issues=decision.issues,
+                rationale=str(decision.rationale or "").strip(),
+                current_prompt=item.prompt,
+                revised_prompt=decision.revised_prompt,
+            )
             if not decision.revised_prompt:
                 raise ValueError(f"{self.name} rejected {item.asset_id} without a revised_prompt")
             if attempt > max_repairs:
@@ -824,7 +1134,32 @@ class ShotImageAuditNodeBase(ImageAuditNodeBase):
             await self._audit_candidate(provider=provider, project_dir=project_dir, state=state, initial=candidate)
             for candidate in self._candidates(project_dir, state)
         ]
-        self.repo.save_node_output(project_dir, self.name, ImageAssetAuditOutput(source_node=self.source_node, audited_assets=audited))
+        if set(getattr(self.workflow, "_active_shot_selectors", set()) or set()):
+            path = self.layout.node_output_path(project_dir, self.name)
+            existing_by_id: dict[str, ImageAssetAuditItem] = {}
+            if path.exists():
+                try:
+                    existing = ImageAssetAuditOutput.model_validate_json(
+                        path.read_text(encoding="utf-8")
+                    )
+                except Exception as exc:
+                    self.logger.warning(
+                        "%s ignored incompatible existing audit output during partial rerun: %s",
+                        self.name,
+                        exc,
+                    )
+                else:
+                    existing_by_id = {
+                        item.asset_id: item for item in existing.audited_assets
+                    }
+            for item in audited:
+                existing_by_id[item.asset_id] = item
+            audited = list(existing_by_id.values())
+        self.repo.save_node_output(
+            project_dir,
+            self.name,
+            ImageAssetAuditOutput(source_node=self.source_node, audited_assets=audited),
+        )
         return state
 
 
@@ -844,12 +1179,12 @@ class ShotBackgroundImageAuditNode(ShotImageAuditNodeBase):
             output = ShotBackgroundImageGenerationEpisodeOutput.model_validate_json(output_path.read_text(encoding="utf-8"))
             selected_shots = self._selected_shot_ids(project_dir, plan)
             for row in output.generated_backgrounds:
-                if not selected_shots.intersection(row.shot_ids):
+                if row.shot_id not in selected_shots:
                     continue
                 candidates.append(
                     ShotImageAuditCandidate(
                         episode_key=episode_key,
-                        selector=row.shot_ids[0],
+                        selector=row.shot_id,
                         item=StaticAssetGenerationItem(
                             asset_id=row.background_id,
                             asset_type="layout",
@@ -870,9 +1205,10 @@ class ShotBackgroundImageAuditNode(ShotImageAuditNodeBase):
 
     def _asset_expectation_for_candidate(self, state: ProjectState, candidate: ShotImageAuditCandidate) -> str:
         return (
-            "单幅可直接用作镜头背景的无人场景板。保持空间结构、机位与透视可信，"
-            f"服从以下视觉契约：{self._style_brief(state)}；"
-            "无人物、可读文字、logo、水印、拼图、多视图或畸形建筑。"
+            "One empty cinematic background plate for exactly one shot. It must preserve the bound scene's "
+            "topology and the scene multiview master's camera position, target, field of view, height, pitch, "
+            f"perspective, and reserved staging areas. Visual contract: {self._style_brief(state)}. "
+            "No people, diagram overlays, readable text, logo, watermark, split view, or malformed architecture."
         )
 
     def _save_revised_prompt_for_candidate(

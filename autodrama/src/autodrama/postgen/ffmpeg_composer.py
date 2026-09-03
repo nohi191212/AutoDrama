@@ -50,6 +50,41 @@ async def probe_video_duration_seconds(path: Path, *, ffmpeg_path: str = "ffmpeg
     return None
 
 
+async def probe_video_dimensions(path: Path, *, ffmpeg_path: str = "ffmpeg") -> tuple[int, int] | None:
+    for candidate in _ffprobe_candidates(ffmpeg_path):
+        process = await asyncio.to_thread(
+            subprocess.run,
+            [
+                candidate,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0:s=x",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if process.returncode != 0:
+            continue
+        raw = (process.stdout or "").strip()
+        try:
+            width_text, height_text = raw.split("x", 1)
+            width, height = int(width_text), int(height_text)
+        except (TypeError, ValueError):
+            continue
+        if width > 0 and height > 0:
+            return width, height
+    return None
+
+
 async def probe_has_audio(path: Path, *, ffmpeg_path: str = "ffmpeg") -> bool:
     for candidate in _ffprobe_candidates(ffmpeg_path):
         process = await asyncio.to_thread(
@@ -205,4 +240,9 @@ class PostgenFfmpegComposer:
         await ffmpeg_tools.run_ffmpeg(command, cwd=output_path.parent)
 
 
-__all__ = ["PostgenFfmpegComposer", "probe_has_audio", "probe_video_duration_seconds"]
+__all__ = [
+    "PostgenFfmpegComposer",
+    "probe_has_audio",
+    "probe_video_dimensions",
+    "probe_video_duration_seconds",
+]

@@ -11,10 +11,21 @@ from autodrama.config import Settings
 from autodrama.core.ids import make_project_id
 from autodrama.core.schemas import BudgetState, ProjectState, Role, ScriptBundle
 from autodrama.repositories.project_layout import ProjectLayout
+from autodrama.services.script_chapter_service import (
+    ScriptChapter,
+    combine_chapter_contents,
+    load_script_chapters,
+)
 from autodrama.visual_styles import load_visual_style
 
 
 class ProjectRepository:
+    AUDIT_REJECTION_LOG_HEADER = (
+        "# Audit rejection log\n\n"
+        "This document is append-only. Each section records a rejected audit "
+        "and is available as feedback for later prompt iterations.\n"
+    )
+
     DROPPED_STATE_METADATA_KEYS = {        "prop_extract",
         "dynamic_assets",
         "simple_script",
@@ -51,28 +62,33 @@ class ProjectRepository:
         self,
         *,
         title: str | None = None,
-        script_file: str | Path | None = None,
+        chapters_dir: str | Path | None = None,
         project_id: str | None = None,
     ) -> Path:
         resolved_title = title or self.settings.project.title
-        resolved_script_file = Path(script_file).expanduser().resolve() if script_file else self.settings.project.script_outline_file
+        resolved_chapters_dir = (
+            Path(chapters_dir).expanduser().resolve()
+            if chapters_dir
+            else self.settings.project.script_chapters_dir
+        )
         resolved_project_id = project_id or self.settings.project.id
 
         if not resolved_title:
             raise ValueError("Missing project title. Set project.title in config.yaml or pass --title.")
-        if not resolved_script_file:
+        if not resolved_chapters_dir:
             raise ValueError(
-                "Missing script outline file. Set project.script_outline_file in config.yaml or pass --script-file."
+                "Missing script chapters directory. Set project.script_chapters_dir in config.yaml "
+                "or pass --chapters-dir."
             )
-        if not resolved_script_file.exists():
-            raise FileNotFoundError(f"Script outline file not found: {resolved_script_file}")
+        chapters = load_script_chapters(resolved_chapters_dir)
 
-        raw_script = resolved_script_file.read_text(encoding="utf-8")
         return self.create_project(
             title=resolved_title,
-            raw_script=raw_script,
+            raw_script=combine_chapter_contents(chapters),
             project_id=resolved_project_id,
-            source_script_file=resolved_script_file,
+            source_chapters_dir=resolved_chapters_dir,
+            source_chapters=chapters,
+            episode_count=len(chapters),
         )
 
     def create_project(
@@ -81,7 +97,8 @@ class ProjectRepository:
         title: str,
         raw_script: str,
         project_id: str | None = None,
-        source_script_file: Path | None = None,
+        source_chapters_dir: Path | None = None,
+        source_chapters: list[ScriptChapter] | None = None,
         episode_count: int | None = None,
         episode_duration_seconds: int | None = None,
     ) -> Path:
@@ -110,7 +127,16 @@ class ProjectRepository:
             budget=BudgetState.model_validate(self.settings.budget.model_dump()),
             metadata={
                 "created_by": "autodrama",
-                "source_script_file": str(source_script_file) if source_script_file else None,
+                "source_chapters_dir": str(source_chapters_dir) if source_chapters_dir else None,
+                "source_chapters": [
+                    {
+                        "number": chapter.number,
+                        "title": chapter.title,
+                        "filename": chapter.filename,
+                        "path": str(chapter.path),
+                    }
+                    for chapter in (source_chapters or [])
+                ],
                 "config_path": str(self.settings.config_path) if self.settings.config_path else None,
                 "episode_count": resolved_episode_count,
                 "episode_duration_seconds": resolved_episode_duration_seconds,
@@ -124,6 +150,7 @@ class ProjectRepository:
         )
         self.save_state(project_dir, state)
         self.write_json(self.layout.project_json_path(project_dir), {"project_id": project_id, "title": title})
+        self.ensure_audit_rejection_log(project_dir)
         self.save_current_project(project_dir, state)
         return project_dir
 
@@ -259,6 +286,54 @@ class ProjectRepository:
         self.write_json(path, data)
         return path
 
+    def ensure_audit_rejection_log(self, project_dir: Path) -> Path:
+        path = self.layout.audit_rejection_log_path(project_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(self.AUDIT_REJECTION_LOG_HEADER, encoding="utf-8", newline="\n")
+        return path
+
+    def append_audit_rejection(
+        self,
+        project_dir: Path,
+        *,
+        node_name: str,
+        asset_id: str,
+        attempt: int,
+        issues: list[str],
+        rationale: str,
+        current_prompt: str,
+        revised_prompt: str = "",
+    ) -> Path:
+        """Append one durable rejection record without replacing prior feedback."""
+        path = self.ensure_audit_rejection_log(project_dir)
+        timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        issue_lines = "\n".join(f"- {issue}" for issue in issues) or "- 未提供结构化原因"
+        section = (
+            f"\n## {timestamp} | {node_name} | {asset_id} | attempt {attempt}\n\n"
+            f"- 审计节点：`{node_name}`\n"
+            f"- 资产：`{asset_id}`\n"
+            f"- 本轮尝试：`{attempt}`\n"
+            "- 拒绝原因：\n"
+            f"{issue_lines}\n"
+            f"- 审计说明：{rationale or '未提供'}\n\n"
+            "### 本轮生成提示词\n\n"
+            "```text\n"
+            f"{current_prompt.rstrip()}\n"
+            "```\n"
+        )
+        if revised_prompt:
+            section += (
+                "\n### 审计返回的修订提示词\n\n"
+                "```text\n"
+                f"{revised_prompt.rstrip()}\n"
+                "```\n"
+            )
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(section)
+            handle.flush()
+        return path
+
     def current_project_path(self) -> Path:
         return self.layout.current_project_path()
 
@@ -287,4 +362,16 @@ class ProjectRepository:
             payload = data.model_dump(mode="json")
         else:
             payload = data
+        # 写前快照：目标文件若已存在，先把旧内容备份到同目录 _history 下（带时间戳），
+        # 保证任何重跑/覆盖都不丢失历史过程产物（用户要求）。
+        if path.exists():
+            try:
+                history_dir = path.parent / "_history"
+                history_dir.mkdir(parents=True, exist_ok=True)
+                ts = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
+                backup = history_dir / f"{path.stem}.{ts}{path.suffix}"
+                backup.write_bytes(path.read_bytes())
+            except Exception:
+                # 备份失败不应阻断写入，降级为直接覆盖
+                pass
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

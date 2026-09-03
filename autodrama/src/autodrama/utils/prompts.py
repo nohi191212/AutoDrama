@@ -8,6 +8,7 @@ payload or media reference.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import re
@@ -177,6 +178,13 @@ class PromptStore:
         if not (self.prompt_dir / node_name).is_dir():
             raise FileNotFoundError(f"Prompt node directory not found: {self.prompt_dir / node_name}")
         return None
+
+    def renderer_fingerprint(self, node_name: str) -> str | None:
+        """Hash the deterministic renderer so cached prompts follow renderer edits."""
+        path = self.renderer_path(node_name)
+        if path is None:
+            return None
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def render_final(
         self,

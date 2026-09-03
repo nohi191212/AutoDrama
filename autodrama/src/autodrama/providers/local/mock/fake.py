@@ -28,12 +28,15 @@ from autodrama.core.schemas import (
     RoleSubjectVideoIntroTextOutput,
     RoleboardPromptModelOutput,
     SafeImagePromptRewriteOutput,
+    SceneMultiviewPlanModelOutput,
+    ShotBlockingPlanModelOutput,
     ShotKeyframePromptModelOutput,
-    ScriptDetailExpandOutput,
+    ScriptCinematicAdaptOutput,
     ScriptImportOutput,
     ScriptNovelExtractModelOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
+    ScriptWorldviewExtractOutput,
     ShotManifestEpisodeOutput,
 )
 from autodrama.core.voice_catalog import (
@@ -150,43 +153,15 @@ class FakeTextProvider:
                 },
             }
         elif schema is ScriptImportOutput or node_name == "script_import":
-            source_section = prompt.partition("原始剧本文本：")[2]
-            source_section = source_section.partition("返回由系统提供结构约束的纯 JSON")[0]
-            source_excerpt = next(
-                (line.strip() for line in source_section.splitlines() if line.strip()),
-                "原始剧本",
-            )
             data = {
                 "outline": "江未晞在破败殿宇中醒来，遇见由银白光点凝聚成形的乐园AI管家九韶，得知自己被乐园令牌选中，并可通过运营密室夺回被掠夺的气运与人生。九韶演示山海经主题新手区，九尾狐密室的真实触感和狐爪机关让江未晞第一次贡献恐惧与惊喜能量，也激起她开启密室的欲望。",
                 "episode_outlines": [
-                    "原始剧本中的角色围绕核心冲突推进事件，并在结尾保留后续悬念。",
+                    f"原始章节 {key} 中的角色围绕核心冲突推进事件，并在结尾保留后续悬念。"
+                    for key in episode_keys
                 ],
                 "roles": [],
                 "props": [],
                 "layouts": [],
-                "facts": {
-                    "events": [
-                        {
-                            "summary": "原始剧本中的核心事件推进。",
-                            "time_period": None,
-                            "participant_names": [],
-                            "prop_names": [],
-                            "layout_names": [],
-                            "precondition": None,
-                            "result": None,
-                            "evidence_quotes": [source_excerpt],
-                        }
-                    ],
-                    "entity_mentions": [
-                        {
-                            "name": "叙事片段",
-                            "entity_type": "group",
-                            "time_period": None,
-                            "evidence_quotes": [source_excerpt],
-                        }
-                    ],
-                    "prop_observations": [],
-                },
                 "notes": "fake script_import output",
             }
         elif schema is ScriptOutlineOutput or node_name == "script_outline":
@@ -197,16 +172,16 @@ class FakeTextProvider:
                     for index, key in enumerate(episode_keys, start=1)
                 },
             }
-        elif schema is ScriptDetailExpandOutput or node_name == "script_detail_expand":
-            source_script = _extract_markdown_section(prompt, "输入剧本", "绝对禁止")
+        elif schema is ScriptCinematicAdaptOutput or node_name == "script_cinematic_adapt":
+            source_script = _extract_markdown_section(prompt, "待导演化文本")
             source_script = source_script or "第一集：\n1-1：室内-日-内\n人物：角色\n△角色站在原地。"
-            expanded_script = (
+            cinematic_script = (
                 source_script.rstrip()
-                + "\n△细节补强：空气里有细微浮尘，光线从场景边缘斜切进来，"
-                + "角色的视线短暂停在关键物件上后才继续动作。"
+                + "\n\n门外先传来一声金属碰响，窗玻璃轻轻一颤。"
+                + "角色的动作停了半拍，视线越过关键物件；阴影漫过门槛时，他才抬起头。"
             )
             data = {
-                "expanded_script": expanded_script,
+                "cinematic_script": cinematic_script,
             }
         elif schema is ScriptNovelEpisodeOutput or node_name == "script_novel_episode":
             episode_key = str(metadata.get("episode_key") or episode_keys[0])
@@ -218,23 +193,39 @@ class FakeTextProvider:
                     "林舟没有立刻说话，他把证据一页页拍下，听着窗外雨声，第一次决定不再退让。"
                 ),
             }
+        elif schema is ScriptWorldviewExtractOutput or node_name == "script_worldview_extract":
+            data = {
+                "script_type": (
+                    "Eastern cultivation fantasy centered on immortal sects, mountain sanctuaries, "
+                    "spiritual energy, hierarchical martial traditions, and supernatural ascension."
+                )
+            }
         elif schema is KeyVisionPromptOutput or node_name == "key_vision_prompt":
             data = {
                 "shot_contract": (
-                    "Freeze the instant when Lin Zhou pins the substituted contract page to the table while Su Wan "
-                    "extends the email evidence from a separate rear depth plane. Keep Zhao Qi behind the meeting-table "
-                    "edge, with all hands, papers and sightlines readable in one continuous office space."
+                    "Establish one canonical cultivation-world mountain sanctuary in a cinematic medium-wide frame: "
+                    "two generic world-native figures occupy the middle distance, one three-quarter front while "
+                    "playing a qin and one in clear side profile while looking across the valley. Keep the layered "
+                    "gate, inner terraces, distant peaks, sky, and vegetation in one continuous near/mid/far "
+                    "perspective system, with the gate as the primary environmental anchor."
                 ),
                 "scene_style_contract": (
-                    "Use restrained blue-grey rainy-night ambience, motivated monitor spill and practical ceiling light. "
-                    "Separate paper, glass, skin, fabric and wet exterior reflections without a global glossy coating."
+                    "Use distinct silhouettes and costume language for the two figures, cool mountain haze, restrained "
+                    "jade and stone tones, warm low sunlight on timber and carved stone, matte cloth, weathered rock, "
+                    "clear atmospheric depth, and premium polished 3D CG rendering without glossy spectacle."
                 ),
                 "prompt": (
-                    "真人电影质感，短剧主视觉原图，9:16 竖版海报式构图，雨夜现代办公室与玻璃会议室空间交叠。"
-                    "林舟站在画面中央偏前，深灰职场衬衫，神情疲惫但克制，手中压着被调包的合同关键页；"
-                    "苏晚位于左后方冷蓝电脑光边缘，递出旧邮件截图；赵启在右侧会议桌阴影里后撤，形成三角对峙。"
-                    "前景是纸张色差、错位装订孔和半杯冷咖啡，背景窗玻璃有雨痕和城市霓虹反射，投影冷光与顶灯冷白光压低环境。"
-                    "低饱和蓝灰色调，克制悬疑张力，稳定电影镜头感，细节清晰，无可读文字、字幕、水印、logo和无关人物。"
+                    "A premium stylized 3D CG xuanhuan world-establishing medium-wide frame: on a high stone terrace "
+                    "above a cultivation-sect valley, a seated world-native musician in layered jade-and-ink robes "
+                    "plays a qin in three-quarter front view while a second figure in a distinct dark ceremonial "
+                    "silhouette stands in clear side profile looking toward the peaks. Place the two figures at a "
+                    "readable middle distance, not as tiny scale markers. Use a nearby carved stone balustrade and "
+                    "weathered timber in the foreground, a monumental gate, terraced roofs, and suspended bridges in "
+                    "the middle ground, and misty peaks, sky, and mountain vegetation in the far distance. Keep one "
+                    "continuous spatial system, polished anatomy, strong silhouette separation, warm directional light "
+                    "on stone and cloth, cool atmospheric fill, nuanced jade and charcoal color design, believable "
+                    "materials, and refined atmospheric perspective. No screenplay scene, named character, plot event, "
+                    "title, readable text, subtitle, logo, watermark, collage, split scene, crowd, or poster symmetry."
                 )
             }
         elif schema is ScriptNovelExtractModelOutput or node_name == "script_novel_extract":
@@ -250,6 +241,9 @@ class FakeTextProvider:
             segment_seconds = int(metadata.get("segment_seconds") or 15)
             duration = int(metadata.get("episode_duration_seconds") or episode_duration_seconds or 30)
             episode_key = str(metadata.get("episode_key") or episode_keys[0])
+            scene_ids = re.findall(r"^(layout_[^:\s]+):", prompt, flags=re.MULTILINE)
+            if not scene_ids:
+                scene_ids = ["layout_雨夜办公室", "layout_会议室"]
             data = {
                 str(index): {
                     "text": (
@@ -259,7 +253,7 @@ class FakeTextProvider:
                     ),
                     "role_names": ["林舟", "苏晚"] if index == 1 else ["林舟", "赵启"],
                     "prop_names": ["被调包的合同", "邮件截图"],
-                    "layout_names": ["雨夜办公室"] if index == 1 else ["会议室"],
+                    "scene_id": scene_ids[min(index - 1, len(scene_ids) - 1)],
                 }
                 for index in range(1, max(1, (duration + segment_seconds - 1) // segment_seconds) + 1)
             }
@@ -405,62 +399,120 @@ class FakeTextProvider:
             role_name = str(metadata.get("role_name") or "林舟").strip() or "林舟"
             data = {"intro_text": f"我是{role_name}，我会记住这一刻。"}
         elif schema is ClipToShotsModelOutput or node_name == "clip_to_shots":
-            available_ids = re.findall(r"^([a-zA-Z0-9_\-\u4e00-\u9fff]+):", prompt, flags=re.MULTILINE)
-            layout_ids = [value for value in available_ids if value.startswith("layout_")]
-            roleboard_rows = re.findall(
-                r"^([^:\s]+):.*?\[role_id=([^;\]]+);\s*appearance_id=([^\]]+)",
+            character_ref_rows = re.findall(
+                r"^([^:\s]+):\s*character reference for .+? \(([^)]+)\),",
                 prompt,
                 flags=re.MULTILINE,
             )
-            roleboard_by_role = {
-                role_id: (asset_id, appearance_id)
-                for asset_id, role_id, appearance_id in roleboard_rows
-            }
-            role_ids = [asset_id for asset_id, _appearance_id in roleboard_by_role.values()]
-            entity_bindings = [
-                (role_id, appearance_id)
-                for role_id, (_asset_id, appearance_id) in roleboard_by_role.items()
-            ]
-            prop_ids = re.findall(r"\[prop_id=([^\]]+)", prompt)
+            character_ref_ids: list[str] = []
+            seen_character_roles: set[str] = set()
+            for reference_id, role_id in character_ref_rows:
+                if role_id in seen_character_roles:
+                    continue
+                seen_character_roles.add(role_id)
+                character_ref_ids.append(reference_id)
+            prop_ref_ids = re.findall(
+                r"^([^:\s]+):\s*prop reference\b",
+                prompt,
+                flags=re.MULTILINE,
+            )
             data = {
-                "shot_1": {
-                    "shot_description": "林舟在办公室查看合同，苏晚在桌边递出邮件截图。",
-                    "narrative_angle": "从苏晚一侧平视观察林舟与桌面证据。",
-                    "opening_state": "林舟位于左前景低头看合同，苏晚在中景桌边伸出邮件截图。",
-                    "ref_ids": [*layout_ids[:1], *role_ids[:2]],
-                    "video_prompt": "中景固定镜头，林舟翻看合同，苏晚把旧邮件截图推到他面前。",
-                    "duration_seconds": 8,
-                    "entity_states": [
-                        {
-                            "schema_version": 1,
-                            "entity_id": role_id,
-                            "appearance_id": appearance_id,
-                            "pose": "位于办公室桌边",
-                            "emotion": "专注",
-                            "injury": None,
-                            "held_props": [],
-                            "energy_state": None,
-                            "event_refs": [],
-                        }
-                        for role_id, appearance_id in entity_bindings[:2]
-                    ],
-                    "dialogue_lines": [],
-                    "overlay_text_spec": None,
-                    "allowed_props": prop_ids[:1],
-                }
+                "shots": [
+                    {
+                        "video_prompt": (
+                            "An eye-level medium shot holds both characters across the evidence table, "
+                            "preserving their opening positions as they compare the contract and register "
+                            "each other's reaction in one continuous restrained performance; the camera "
+                            "remains locked and the beat ends with both gazes settled on the evidence."
+                        ),
+                        "ref_ids": [*character_ref_ids[:2], *prop_ref_ids[:1]],
+                        "duration_seconds": duration,
+                    }
+                    for duration in (3, 2, 5)
+                ]
             }
         elif schema is LayoutBackgroundPromptModelOutput or node_name == "layout_to_background_prompt":
             indices = [int(value) for value in re.findall(r'"index"\s*:\s*(\d+)', prompt)] or [1]
             data = {
-                "background_1": {
-                    "prompt_content": "办公室内部的单张无人电影背景，平视中景，机位位于桌边一侧朝向合同与窗边，保留雨痕玻璃、办公桌、冷白顶灯与固定陈设。",
-                    "shot_indices": indices,
-                    "description": "林舟和苏晚在办公室围绕合同对话，镜头从苏晚一侧朝向林舟。",
+                f"background_{output_index}": {
+                    "prompt_content": "An empty cinematic office background from the specified eye-level three-quarter camera, preserving the evidence table, rain-streaked windows, aisle geometry, cool ceiling lights, and fixed set dressing.",
+                    "shot_index": shot_index,
+                    "description": "An empty office plate aligned to the planned evidence-table two-shot.",
                 }
+                for output_index, shot_index in enumerate(indices, start=1)
             }
+        elif schema is SceneMultiviewPlanModelOutput or node_name == "scene_multiview_plan":
+            shot_rows = _extract_json_after_label(prompt, "目标镜头")
+            if not isinstance(shot_rows, list) or not shot_rows:
+                shot_rows = [{"shot_index": 1}]
+            data = {
+                "views": [
+                    {
+                        "view_index": index,
+                        "camera_description": f"代表机位 {index}，保持同一场景拓扑与高重叠空间锚点",
+                        "visible_anchors": ["固定入口", "主要通道"],
+                    }
+                    for index in range(1, 5)
+                ],
+                "assignments": [
+                    {
+                        "shot_index": int(row.get("shot_index") or index),
+                        "primary_view_index": ((index - 1) % 4) + 1,
+                        "secondary_view_indices": [],
+                    }
+                    for index, row in enumerate(shot_rows, start=1)
+                    if isinstance(row, dict)
+                ],
+            }
+        elif schema is ShotBlockingPlanModelOutput or node_name == "shot_blocking_plan":
+            shot_rows = _extract_json_after_label(prompt, "目标镜头")
+            if not isinstance(shot_rows, list) or not shot_rows:
+                shot_rows = [{"shot_index": 1, "active_bindings": []}]
+            planned_shots: list[dict[str, Any]] = []
+            for row_index, row in enumerate(shot_rows, start=1):
+                if not isinstance(row, dict):
+                    continue
+                active = [
+                    item
+                    for item in row.get("active_bindings", [])
+                    if isinstance(item, dict)
+                    and item.get("asset_kind") == "roleboard"
+                    and item.get("binding_id")
+                ]
+                count = len(active)
+                placements = []
+                for subject_index, subject in enumerate(active, start=1):
+                    center_x = subject_index / (count + 1)
+                    gaze_x = (count + 1 - subject_index) / (count + 1) if count > 1 else 0.5
+                    placements.append(
+                        {
+                            "binding_id": str(subject["binding_id"]),
+                            "center_x": center_x,
+                            "ground_y": 0.92,
+                            "width": min(0.24, 0.8 / max(1, count)),
+                            "height": 0.58,
+                            "depth_rank": subject_index,
+                            "facing_x": 1.0 if center_x <= 0.5 else -1.0,
+                            "facing_y": 0.0,
+                            "gaze_target_x": gaze_x,
+                            "gaze_target_y": 0.4,
+                            "facing": "朝向画面内侧",
+                            "gaze": "看向表演关系中心",
+                            "opening_pose": "稳定站立并保持动作起势",
+                            "occludes_binding_ids": [],
+                        }
+                    )
+                planned_shots.append(
+                    {
+                        "shot_index": int(row.get("shot_index") or row_index),
+                        "composition_intent": "保持主体关系清晰的电影化纵深构图",
+                        "placements": placements,
+                    }
+                )
+            data = {"shots": planned_shots}
         elif schema is ShotKeyframePromptModelOutput or node_name == "shot_keyframe_prompt":
             data = {
-                "prompt_content": "保持图1的办公室背景、平视机位、桌面透视和雨夜光线不变；将图2中的林舟放在左前景查看合同，将图3中的苏晚置于桌边中景递出邮件截图，两人视线指向桌面证据。"
+                "prompt_content": "保持既定开场构图，主体处于动作刚要发生的稳定姿态，视线、接触、遮挡和景深关系清晰，人物与环境光影自然融合。"
             }
         elif schema is VoiceSelectShortlistOutput or node_name == "role_voice_select_shortlist":
             candidates = metadata.get("heuristic_candidates")
@@ -706,7 +758,7 @@ class FakeTextProvider:
                         "asset_role": "base",
                         "reference_asset_name": "",
                         "prompt_type": "text_to_image",
-                        "prompt": "Photorealistic cinematic location reference sheet showing three consistent views of the same empty modern office. Preserve identical workstations, windows, desk, entrance and circulation. No people, text, logo or watermark.",
+                        "prompt": "A 2:3 spatial-anchor sheet with two vertically stacked complementary high-angle isometric views of the same empty modern office. Preserve identical workstations, windows, evidence table, entrance, scale, north orientation, materials, lighting, and circulation. No people, camera overlays, readable text, logo, or watermark.",
                     },
                     {
                         "name": "办公室_雨夜",
@@ -714,7 +766,7 @@ class FakeTextProvider:
                         "asset_role": "variant",
                         "reference_asset_name": "办公室",
                         "prompt_type": "image_edit",
-                        "prompt": "以办公室基准图为参考，保持工位区、玻璃窗、文件桌、入口通道和材质关系不变，仅改为深夜冷白灯与窗外雨光交织，玻璃窗出现雨痕反射，无人物、无可读文字、无水印。",
+                        "prompt": "Edit the office spatial-anchor sheet while preserving both views, topology, workstations, windows, evidence table, entrance, scale, north orientation, materials, and circulation. Change only the state to a rainy night with cool white interior light, reflected exterior rain light, and rain streaks on the glass. No people, camera overlays, readable text, logo, or watermark.",
                     },
                     {
                         "name": "会议室",
@@ -722,7 +774,7 @@ class FakeTextProvider:
                         "asset_role": "base",
                         "reference_asset_name": "",
                         "prompt_type": "text_to_image",
-                        "prompt": "Photorealistic cinematic location reference sheet showing three consistent views of the same empty modern meeting room. Preserve identical table, glass wall, entrances and fixed lighting. No people, text, logo or watermark.",
+                        "prompt": "A 2:3 spatial-anchor sheet with two vertically stacked complementary high-angle isometric views of the same empty modern meeting room. Preserve identical table, glass walls, entrances, aisle, scale, north orientation, materials, and fixed lighting. No people, camera overlays, readable text, logo, or watermark.",
                     },
                 ]
             }
@@ -1109,8 +1161,23 @@ class FakeImageProvider:
     def _png_bytes(*, asset_id: str, prompt: str, metadata: dict[str, Any]) -> bytes:
         from PIL import Image, ImageDraw
 
-        asset_type = str(metadata.get("asset_type") or "")
-        if asset_type == "contact_sheet":
+        asset_type = str(
+            metadata.get("asset_type") or metadata.get("prompt_asset_type") or ""
+        )
+        if asset_type == "scene_multiview_board":
+            width, height = 1280, 720
+            image = Image.new("RGB", (width, height), "white")
+            draw = ImageDraw.Draw(image)
+            colors = ("#6f8fa8", "#829f72", "#a28b6f", "#81789e")
+            for index, color in enumerate(colors):
+                left = (index % 2) * (width // 2)
+                top = (index // 2) * (height // 2)
+                right = left + width // 2
+                bottom = top + height // 2
+                draw.rectangle((left, top, right, bottom), fill=color)
+                draw.line((left + 20, bottom - 30, right - 20, top + 30), fill="white", width=3)
+                draw.rectangle((left + 80, top + 70, right - 80, bottom - 60), outline="white", width=3)
+        elif asset_type == "contact_sheet":
             width, height = 1200, 1600
             image = Image.new("RGB", (width, height), "white")
             draw = ImageDraw.Draw(image)

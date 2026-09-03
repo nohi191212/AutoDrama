@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from autodrama.workflows.nodes.bgm_nodes import BGM_NODE_NAMES, build_bgm_nodes
-from autodrama.workflows.nodes.director_nodes import DIRECTOR_NODE_NAMES, build_director_nodes
+from autodrama.workflows.nodes.director_nodes import (
+    DIRECTOR_NODE_NAMES,
+    MANUAL_DIRECTOR_NODE_NAMES,
+    build_director_node_runners,
+    build_director_nodes,
+)
 from autodrama.workflows.nodes.image_audit_nodes import (
     IMAGE_AUDIT_NODE_NAMES,
     build_image_audit_nodes,
@@ -53,6 +58,7 @@ DEFERRED_PREGEN_NODE_NAMES = [
     *MANUAL_SCRIPT_NODE_NAMES,
     *MANUAL_PREGEN_ROLE_NODE_NAMES,
     *MANUAL_PREGEN_ROLE_SUBJECT_NODE_NAMES,
+    *MANUAL_DIRECTOR_NODE_NAMES,
     "role_subject_frontal_image_audit",
     *VOICE_NODE_NAMES,
     *BGM_NODE_NAMES,
@@ -60,9 +66,15 @@ DEFERRED_PREGEN_NODE_NAMES = [
 
 
 def _image_audits_enabled(workflow: Any) -> bool:
-    # Visual acceptance is a required delivery gate.  The historical switch
-    # only disabled optional audits; it may no longer bypass required gates.
-    del workflow
+    # 图审计总开关：遵循 config 的 app.enable_image_audit。
+    # 为 true 时，pregen 节点图会插入各图片审计节点；
+    # 为 false 时审计节点不进入节点图（由 ShotManifestGenerationNode 负责 gate 兜底全量接受）。
+    try:
+        settings = getattr(workflow, "repo", None) and getattr(workflow.repo, "settings", None)
+        if settings is not None:
+            return bool(getattr(settings.app, "enable_image_audit", True))
+    except Exception:
+        pass
     return True
 
 
@@ -134,10 +146,16 @@ def build_manual_pregen_nodes(workflow: Any) -> list[WorkflowNode]:
         node for node in build_role_nodes(workflow) if node.name in manual_role_names
     ]
     role_subject_by_name = {node.name: node for node in build_role_subject_nodes(workflow)}
+    director_runners = build_director_node_runners(workflow)
+    manual_director_nodes = [
+        WorkflowNode(name=node_name, run=director_runners[node_name].run)
+        for node_name in MANUAL_DIRECTOR_NODE_NAMES
+    ]
     return [
         *manual_script_nodes,
         *manual_role_nodes,
         *[role_subject_by_name[name] for name in MANUAL_PREGEN_ROLE_SUBJECT_NODE_NAMES],
+        *manual_director_nodes,
         *build_voice_nodes(workflow),
         *build_bgm_nodes(workflow),
     ]
@@ -196,12 +214,14 @@ GENERATION_NODE_NAMES = [
 
 
 def build_generation_episode_nodes(workflow: Any) -> list[EpisodeWorkflowNode]:
-    return [
+    nodes = [
         build_shot_dialogue_audio_episode_node(workflow),
         build_shot_video_episode_node(workflow),
-        build_shot_video_audit_episode_node(workflow),
-        build_dynamic_asset_solidification_episode_node(workflow),
     ]
+    if _image_audits_enabled(workflow):
+        nodes.append(build_shot_video_audit_episode_node(workflow))
+    nodes.append(build_dynamic_asset_solidification_episode_node(workflow))
+    return nodes
 
 
 __all__ = [
@@ -209,6 +229,7 @@ __all__ = [
     "AVAILABLE_PREGEN_NODE_NAMES",
     "DEFERRED_PREGEN_NODE_NAMES",
     "DIRECTOR_NODE_NAMES",
+    "MANUAL_DIRECTOR_NODE_NAMES",
     "IMAGE_AUDIT_NODE_NAMES",
     "DYNAMIC_ASSET_SOLIDIFICATION_NODE_NAME",
     "GENERATION_NODE_NAMES",
@@ -225,6 +246,7 @@ __all__ = [
     "VOICE_NODE_NAMES",
     "build_bgm_nodes",
     "build_director_nodes",
+    "build_director_node_runners",
     "build_image_audit_nodes",
     "build_dynamic_asset_solidification_episode_node",
     "build_generation_episode_nodes",

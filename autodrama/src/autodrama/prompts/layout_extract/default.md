@@ -1,11 +1,31 @@
-根据剧本维护完整、可复用的场景资产表。
+Maintain a complete, reusable scene asset table from the script.
 
-剧本：
+Script:
 {{novel_full_all_episodes}}
 
-已有场景：
+Existing scenes:
 {{existing_layouts}}
 
-只提取实际被镜头呈现、可供人物调度的具体空间；排除人物、道具、纯天气/情绪/镜头和仅被提及的地点。一个物理空间只建一个 `base`，固定结构、入口、动线和稳定陈设写入其 `space_features`；只有不改变空间拓扑的明确视觉状态变化才建 `variant`，并引用该 base。
+Only extract concrete spaces that are actually shown on camera and that characters can move through. Exclude people, props, and purely weather / mood / camera / merely-mentioned places. Create one `base` per physical space; write its fixed structure, entrance, circulation, and stable furnishings into `space_features`. Create a `variant` only for a clear visual state change that does not change the spatial topology, and reference that base.
 
-返回完整 `layouts` 及可选简短 `notes`，严格符合 JSON Schema。场景名简短稳定，内容只写客观可见的空间特征与状态变化，不写生图提示或技术字段；episode_keys 只能使用剧本中的 key。匾额、卷轴、墙字等文字信息只能描述为模糊、不可辨读的痕迹或纹样。
+Return the complete `layouts` plus optional short `notes`, strictly conforming to the JSON Schema. Scene names should be short and stable. Content must describe only objective, visible spatial features and state changes — no image prompt phrasing, no technical fields. `episode_keys` may only use keys present in the script. Text like plaques, scrolls, or wall inscriptions may only be described as blurred, illegible marks or patterns.
+
+# Spatial topology (required)
+
+For every `base` scene, write `space_features` as a small ordered set of SELF-CONTAINED sentences that make the structure unambiguous. Each sentence must stand alone (the list may be re-ordered downstream, so never rely on cross-sentence order). Cover, in plain spatial language, for every scene:
+
+- Setting type and anchor structure (e.g. a ridge pass, a courtyard gatehouse, an open forest clearing).
+- The main entrance and the approach that reaches it: WHERE it connects from and goes to, and its direction (e.g. "a single stone stair runs from the south forecourt up through the gatehouse doorway to the inner courtyard").
+- The fixed architecture and largest set pieces, and by what walkable route they are reached.
+- A clear foreground / midground / background layering, with relative depth between elements.
+- Ground and elevation change: what the floor is, whether there is a slope / drop / rise, and how much.
+
+# Nearby landmark rule
+
+If the plot places this scene NEAR a sect / monastery / palace / building complex, you MUST state the landmark in `space_features` with its relative direction and the reachable route from the scene (e.g. "the sect's main hall sits north up the ridge, reached by the same stone stair through the gatehouse"). Do NOT leave out a nearby landmark that is implied by the story — describe it, even if only as a distant background mass.
+
+If a scene is genuinely isolated (no nearby landmark), say so explicitly rather than omitting it.
+
+# Readable text rule
+
+Plaques, scrolls, wall inscriptions, and any signage may only appear as blurred, illegible marks or patterns. Never describe readable words.

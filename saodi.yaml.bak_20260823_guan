@@ -1,0 +1,748 @@
+app:
+  env: dev
+  default_quality_preset: cheap
+  enable_human_review: false
+  enable_image_audit: false
+  enable_llm_audit: false
+apikeys_file: ./apikeys.yaml
+model_catalog_file: ./model_catalog.yaml.example
+project:
+  id: saodi_0803
+  title: 扫地八十年，从宗门杂役飞升成仙
+  script_outline_file: ./inputs/扫地八十年，从宗门杂役飞升成仙_第1集.txt
+  episode_count: 1
+  episode_duration_seconds: 150
+  bgm_count: 1
+output:
+  root_dir: ./outputs
+  project_dir_template: '{date}_{slug}'
+  db_filename: autodrama.sqlite
+  subdirs:
+    logs: logs
+    assets: assets
+    outputs: outputs
+    images: assets/images
+    videos: assets/videos
+    audios: assets/audios
+    json: assets/json
+runtime:
+  python:
+    windows: D:/miniforge3/envs/autodrama/python.exe
+    linux: python3
+    macos: python3
+    default: python3
+  max_text_retry: 5
+  max_media_retry: 2
+  request_timeout_seconds: 1200
+  # Text providers retry transient connection, timeout, proxy/TLS, and 5xx failures.
+  text_retry_initial_delay_seconds: 2
+  text_retry_max_delay_seconds: 30
+  ffmpeg_path: ffmpeg
+budget:
+  max_total_cny: 100
+  max_image_count: 200
+  max_video_seconds: 45
+  max_music_count: 5
+  max_text_calls: 200
+generation:
+  roleboard_spatial_template_path: ./.assets/image_templates/roleboard_template.png
+  visual_style: xuanhuan-v1
+  roleboard_style_prompt: 在无缝中性中灰背景上呈现与主视觉原图同一视觉契约的写实3DCG人物，背景保持干净且不发白、不形成头部光晕。视觉媒介严格锁定为写实3DCG：离线PBR着色、物理可信的全局照明、自然数字电影摄影机响应、稳定的三维几何与真实三维接触，呈现电影级真实渲染效果。不是油画、不是厚涂、不是水彩、不是二维插画、不是真人摄影照片，也不是卡通渲染或国漫卡通质感，不要任何颜料笔触、帆布纹理、罩染或肉眼可辨的笔刷痕迹。人物遵循自然成人比例，总体约7至8头身，头骨紧凑不偏大，肩宽、躯干、骨盆与四肢比例正常，避免幼态大头、Q版或过短四肢。服装采用仙侠风设计：东方古典仙侠的宽袍大袖、交领右衽、束腰与飘逸衣摆，面料有丝绸、棉麻、轻纱等区分，配以克制腰带、玉饰或金属扣件，整体素雅飘逸而不繁复；服装服从身份与功能并限制装饰。使用一个偏暖的侧前方主光塑造眉骨、眼窝、鼻侧、颧骨、下颌、发束和衣褶，再以弱一档的清冷环境填充保留暗部信息；控制曝光，让浅色衣料和皮肤高光仍有纹理，避免均匀正面柔光、环形美容光和灰平无阴影表面。人物面貌具体、有自然不对称和年龄结构，皮肤、头发、织物、皮革与少量金属具有不同粗糙度。整体光色、材质与关键参考画面同属一个物理世界，不复制其中任何具体人物、服装、动作、构图或场景。
+  prop_design_style_prompt: 采用高质感东方玄幻3D国漫的通用道具设计语言。道具结构兼顾东方古典工艺、清晰功能逻辑和适度超自然想象；材料、纹样、磨损、制造精度、能量状态和使用方式必须符合其时代、用途、等级与持有者身份。织物、木材、石材、陶瓷、金属、药物和能量材质应有明确差异，环境光与自发光关系稳定。不预设具体道具类型，造型完整、比例准确、便于不同镜头复用。无人物、手持、可读文字、水印或logo。
+  layout_design_style_prompt: 采用高质感东方玄幻3D国漫的通用场景设计语言。具体空间的建筑形制、自然环境、功能分区、尺度、陈设、通行关系和使用痕迹必须依据剧情地点生成，并在同一世界观中保持结构、材质和装饰体系一致。使用青灰石材、深色木构、冷白雾气与克制金属装饰建立空间基调，超自然光效根据剧情需要出现但不取代真实光照逻辑。场景需支持竖屏近景表演、多人调度、动作场面与能量效果，不预设具体地点或剧情事件。无人物、字幕、水印或logo。
+postgen:
+  max_source_clips_per_plan: 9
+  render_width: 720
+  render_height: 1280
+  fps: 25
+  burn_subtitles: true
+  edit_plan_mode: deterministic
+  keep_tmp_cuts: true
+  voice_alignment:
+    enabled: false
+    demucs_model: htdemucs
+    demucs_device: cpu
+    diarization_model: pyannote/speaker-diarization-3.1
+    huggingface_token_env: HUGGINGFACE_TOKEN
+    speaker_role_map: {}
+    role_rvc_models: {}
+    speaker_rvc_models: {}
+    rvc_command: []
+    fail_on_unmapped_speaker: true
+  subtitles:
+    enabled: false
+    backend: whisperx
+    model: large-v3
+    language: zh
+    device: cpu
+    compute_type: int8
+    batch_size: 4
+    max_chars_per_line: 18
+    max_lines: 2
+    font_name: Microsoft YaHei
+  audit:
+    enabled: true
+    source_asr: true
+    source_audit: true
+    final_audit: true
+    frame_count: 9
+    include_audio: true
+    fail_on_reject: false
+    max_output_tokens: 8192
+nodes:
+  script_import:
+    model: rightcode:gpt-5.6-terra
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.25
+      response_format: json_object
+  script_novel_extract:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  script_worldview_extract:
+    model: aibox:gpt-5.6-sol
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
+  key_vision_prompt:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.45
+      response_format: json_object
+  key_vision_image_generation:
+    model: aibox:gpt-image-2-guan
+    params:
+      size: "3840x2160"
+      quality: high
+  key_vision_edit:
+    model: aibox:gpt-image-2-guan
+    params:
+      size: "3840x2160"
+      quality: high
+  role_extract_primary:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  role_extract_functional:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  role_finalize:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
+  roleboard_prompt:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  roleboard_image_generation:
+    model: aibox:gpt-image-2-guan
+    params:
+      roleboard_prompt_template: aibox_gpt_image_2_guan
+      roleboard_image_generation_concurrency: 3
+      size: 3840x2160
+      quality: high
+  role_subject_frontal_image_generation:
+    model: aibox:gpt-image-2-guan
+    params:
+      size: 1920x1088
+      quality: high
+      image_generation_concurrency: 3
+  prop_extract:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  prop_finalize:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
+      max_iterations: 1
+  layout_extract:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.3
+      response_format: json_object
+  layout_finalize:
+    model: aibox:gpt-5.6-luna
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
+      max_iterations: 1
+  layout_prop_boundary_review:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
+  prop_prompt:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  layout_prompt:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  prop_image_generation:
+    model: aibox:gemini-3-pro-image-preview
+    params:
+      aspectRatio: "1:1"
+      imageSize: "2K"
+      concurrency: 1
+      max_attempts: 5
+  layout_image_generation:
+    model: aibox:gemini-3-pro-image-preview
+    params:
+      aspectRatio: "16:9"
+      imageSize: "4K"
+      concurrency: 3
+  clip_to_shots:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.35
+      response_format: json_object
+  layout_to_background_prompt:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.25
+  shot_background_shot_reference:
+    model: aibox:gemini-3-pro-image-preview
+    params:
+      aspectRatio: "16:9"
+      imageSize: 4K
+      concurrency: 2
+  shot_background_image_generation:
+    model: aibox:gemini-3-pro-image-preview
+    params:
+      aspectRatio: "16:9"
+      imageSize: 4K
+      concurrency: 2
+  shot_keyframe_prompt:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.3
+      negative_prompt: extra people, duplicate bodies, identity drift, malformed hands, inconsistent scale, floating objects, text, subtitles, logo, watermark
+  shot_keyframe_image_generation:
+    model: aibox:gemini-3-pro-image-preview
+    params:
+      aspectRatio: "16:9"
+      imageSize: "4K"
+      concurrency: 2
+  shot_manifest_generation:
+    params: {}
+  script_outline:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  script_novel:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.7
+      response_format: json_object
+  role_kling_voice_generation:
+    model: kling:kling-v3-omni
+    params:
+      require_dialogue_voice: true
+  role_subject_video_intro_text:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: low
+      temperature: 0.5
+      response_format: json_object
+  role_subject_video_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: '16:9'
+      mode: pro
+      sound: 'on'
+      watermark: false
+      max_reference_images: 2
+      max_reference_elements: 3
+      role_subject_video_generation_concurrency: 5
+  role_subject_element_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: '16:9'
+      mode: pro
+      sound: native
+      watermark: false
+      subject_reference_type: image_refer
+  role_voice_select:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: low
+      temperature: 0.2
+      response_format: json_object
+  role_voice_select_audio_judge:
+    model: aliyun_omni:qwen3.5-omni-plus
+    params:
+      temperature: 0.2
+  bgm_design:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.4
+      response_format: json_object
+  bgm_generation:
+    model: minimax:music-2.6
+    params:
+      format: mp3
+      sample_rate: 44100
+      output_format: url
+      is_instrumental: true
+  image_prompt_safety_rewrite:
+    model: aibox:gemini-3.6-flash
+    params:
+      reasoning_effort: low
+      temperature: 0.2
+      response_format: json_object
+  shot_dialogue_audio_generation:
+    model: volcengine:seed-tts-2.0
+    params:
+      sample_rate: 24000
+      response_format: mp3
+      max_generated_audio_duration_seconds: 10
+  shot_video_generation:
+    model: kling:kling-v3-omni
+    params:
+      aspect_ratio: '16:9'
+      mode: pro
+      audio: native
+      resolution: 1080p
+      multi_shot: false
+      watermark: false
+      prompt_template: kling
+      negative_rules:
+      - 无字幕、无logo、无水印、无分格线、无面板编号、不要直接展示场景三视图、人物三视图。
+      max_reference_images: 7
+      shot_video_generation_concurrency: 5
+  postgen_source_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+      max_output_tokens: 8192
+  postgen_edit_plan_generation:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.2
+      response_format: json_object
+  postgen_final_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+      max_output_tokens: 8192
+  key_vision_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  roleboard_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  role_subject_frontal_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  prop_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  layout_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  shot_background_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  shot_keyframe_image_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+  shot_video_audit:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.1
+      max_output_tokens: 8192
+providers:
+  aliyun:
+    base_url: https://dashscope.aliyuncs.com
+    api_key_env: ALIYUN_API_KEY
+    models:
+      text: qwen-plus
+      voice_design: voice-enrollment
+      voice_clone: voice-enrollment
+      target_model: qwen3-tts-vd-2026-01-26
+      clone_target_model: qwen3-tts-vc-2026-01-22
+      vision: qwen-vl-max
+      omni: qwen-omni-turbo
+      music: fun-music-v1
+      image: wan2.7-image-pro
+      text_to_video: wan2.7-t2v-2026-04-25
+    options:
+      text_response_format: true
+      language: zh
+      sample_rate: 24000
+      response_format: wav
+      websocket_url: wss://dashscope.aliyuncs.com/api-ws/v1/inference
+      music_format: mp3
+      music_gender: female
+      enable_aigc_watermark: false
+      image_size: 2K
+      n: 1
+      thinking_mode: true
+      resolution: 720P
+      ratio: '16:9'
+      prompt_extend: true
+      watermark: false
+      poll_interval_seconds: 15
+      max_polls: 80
+  aliyun_omni:
+    base_url: https://dashscope.aliyuncs.com
+    api_key_env: ALIYUN_API_KEY
+    models:
+      audio_judge: qwen3.5-omni-plus
+    options:
+      omni_response_format: false
+  rightcode:
+    base_url: https://rightapi.ai
+    api_key_env: RIGHTCODE_API_KEY
+    models:
+      text: gpt-5.6-terra
+      shot: gpt-5.6-terra
+      image: gpt-image-2
+      key_vision: gpt-image-2
+      roleboard: gpt-image-2-vip
+    options:
+      model_base_paths:
+        gpt-5.6-terra: /codex
+        gpt-image-2: /draw
+        gpt-image-2-vip: /draw
+      httpx_trust_env: false
+      text_response_format: true
+      reasoning_effort: xhigh
+      shot_reasoning_effort: xhigh
+      size: 1024x1024
+      roleboard_size: 3840x2160
+      roleboard_quality: high
+      key_vision_size: 3840x2160
+      key_vision_quality: high
+      n: 1
+  aibox:
+    base_url: https://api.lk888.ai
+    api_key_env: AIBOX_API_KEY
+    models:
+      text: gemini-3.6-flash
+      postgen_audit: gemini-3.6-flash
+      image: gpt-image-2-guan
+      key_vision: gpt-image-2-guan
+      roleboard: gpt-image-2-guan
+      shot: gpt-image-2
+      prop: gemini-3-pro-image-preview
+      layout: gpt-image-2
+      banana: gemini-3-pro-image-preview
+    options:
+      size: auto
+      quality: auto
+      key_vision_size: 3840x2160
+      key_vision_quality: high
+      roleboard_size: 3840x2160
+      shot_size: 2048x2048
+      prop_size: 2048x2048
+      layout_size: 3840x2160
+      max_reference_images: 10
+      aibox_request_timeout_seconds: 240
+      aibox_max_attempts: 3
+      aibox_retry_initial_delay_seconds: 2
+      aibox_retry_max_delay_seconds: 30
+      poll_interval_seconds: 4
+      max_wait_seconds: 900
+  toapi:
+    base_url: https://toapis.com
+    api_key_env: TOAPI_API_KEY
+    models:
+      image: gpt-image-2
+      key_vision: gpt-image-2
+      roleboard: gpt-image-2
+    options:
+      resolution: 4K
+      size: '16:9'
+      roleboard_size: '16:9'
+      roleboard_resolution: 4K
+      key_vision_size: '16:9'
+      key_vision_resolution: 4K
+      prop_size: '1:1'
+      prop_resolution: 2K
+      prop_image_generation_concurrency: 3
+      layout_size: '16:9'
+      layout_resolution: 4K
+      response_format: url
+      n: 1
+      toapi_max_attempts: 10
+      toapi_retry_initial_delay_seconds: 2
+      toapi_retry_max_delay_seconds: 30
+      toapi_reference_upload_max_attempts: 5
+      toapi_reference_upload_retry_initial_delay_seconds: 2
+      toapi_reference_upload_retry_max_delay_seconds: 30
+      toapi_reference_url_cache_ttl_seconds: 86400
+      poll_interval_seconds: 3
+      max_wait_seconds: 900
+  deepseek:
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+    models:
+      text: deepseek-v4-pro
+      shot: deepseek-v4-pro
+    options:
+      reasoning_effort: max
+      thinking_enabled: true
+      shot_reasoning_effort: max
+      shot_thinking_enabled: true
+  google:
+    base_url: https://generativelanguage.googleapis.com
+    api_key_env: GOOGLE_API_KEY
+    models:
+      text: gemini-3.6-flash
+      postgen_edit_plan: gemini-3.6-flash
+    options:
+      response_format: json_object
+      temperature: 0.2
+      max_output_tokens: 8192
+  minimax:
+    base_url: https://api.minimaxi.com
+    api_key_env: MINIMAX_API_KEY
+    group_id_env: MINIMAX_GROUP_ID
+    models:
+      tts: speech-02
+      music: music-2.6
+    options:
+      music_format: mp3
+      music_sample_rate: 44100
+      music_bitrate: 256000
+      output_format: url
+      is_instrumental: true
+      lyrics_optimizer: false
+      aigc_watermark: false
+      music_timeout_seconds: 600
+  elevenlabs:
+    base_url: https://api.elevenlabs.io
+    api_key_env: ELEVENLABS_API_KEY
+    models:
+      music: music_v1
+    options:
+      output_format: mp3_44100_128
+      force_instrumental: true
+      respect_sections_durations: true
+      music_timeout_seconds: 600
+  volcengine:
+    base_url: https://openspeech.bytedance.com
+    region: cn-beijing
+    api_key_env: VOLCENGINE_API_KEY
+    app_id_env: VOLCENGINE_APP_ID
+    access_key_env: VOLCENGINE_ACCESS_KEY
+    secret_key_env: VOLCENGINE_SECRET_KEY
+    models:
+      speech_synthesis: seed-tts-2.0
+      speech_synthesis_fallback: seed-tts-1.0
+      voice_design: voice_design
+      voice_clone: voice_clone
+      tts: seed-icl-2.0
+      target_model: seed-icl-2.0
+      clone_target_model: seed-icl-2.0
+      image: doubao-seedream-5-0-260128
+      key_vision: doubao-seedream-5-0-260128
+      seedream_5: doubao-seedream-5-0-260128
+      seedream_5_lite: doubao-seedream-5-0-lite-260128
+      video: doubao-seedance-2-0-260128
+      seedance_2: doubao-seedance-2-0-260128
+      upscale: video-upscale
+    options:
+      language: cn
+      sample_rate: 24000
+      response_format: mp3
+      max_generated_audio_duration_seconds: 10
+      role_voice_preview_text_chars: 40
+      seed_tts_api_key_env: SEED_TTS_API_KEY
+      seedream_base_url: https://ark.cn-beijing.volces.com
+      seedream_api_key_env: VOLCENGINE_API_KEY
+      seedream_image_size: 2848x1600
+      seedream_key_vision_size: 2848x1600
+      seedream_roleboard_size: 2848x1600
+      seedream_prop_size: 2048x2048
+      seedream_layout_size: 2848x1600
+      seedream_output_format: png
+      seedream_response_format: url
+      seedream_watermark: false
+      seedream_sequential_image_generation: disabled
+      seedream_max_reference_images: 14
+      seedance_base_url: https://ark.cn-beijing.volces.com
+      seedance_api_key_env: VOLCENGINE_API_KEY
+      video_ratio: '16:9'
+      video_resolution: 720p
+      video_reference_mode: full
+      previous_video_preroll_seconds: 0
+      max_reference_images: 4
+      max_reference_audio: 1
+      max_reference_audio_duration_seconds: 15.2
+      max_reference_videos: 2
+      max_reference_video_total_duration_seconds: 15.2
+      video_poll_interval_seconds: 30
+      return_last_frame: true
+      generate_audio: false
+      video_min_duration_seconds: 4
+      video_max_duration_seconds: 10
+      tts_resource_id: seed-tts-2.0
+      tts_fallback_resource_id: seed-tts-1.0
+      instruction_mode: none
+      additions_as_json_string: true
+      default_speaker: zh_male_m191_uranus_bigtts
+      default_male_speaker: zh_male_m191_uranus_bigtts
+      default_female_speaker: zh_female_xiaohe_uranus_bigtts
+      role_speakers: {}
+      emotion_instructions:
+        normal:
+          emotion: neutral
+          emotion_scale: 2
+          speech_rate: 0
+          loudness_rate: 0
+          instruction: 自然、克制、口语化，像影视短剧对白，保持角色身份感。
+        tense:
+          emotion: tension
+          emotion_scale: 4
+          speech_rate: 6
+          loudness_rate: -2
+          instruction: 压低声音，呼吸略紧，像强忍情绪，语尾收住，不要夸张表演。
+        angry:
+          emotion: angry
+          emotion_scale: 4
+          speech_rate: 5
+          loudness_rate: 4
+          instruction: 愤怒但不要吼叫，语气锋利，停顿短促，压迫感强。
+        sad:
+          emotion: sad
+          emotion_scale: 4
+          speech_rate: -8
+          loudness_rate: -4
+          instruction: 低落、疲惫，语速稍慢，尾音略沉，带一点忍住不哭的感觉。
+        happy:
+          emotion: happy
+          emotion_scale: 3
+          speech_rate: 4
+          loudness_rate: 2
+          instruction: 轻松、有笑意，节奏明快，但不要广告腔。
+        whisper:
+          emotion: ASMR
+          emotion_scale: 3
+          speech_rate: -10
+          loudness_rate: -8
+          instruction: 贴近耳语，音量较低，气声更明显，但吐字保持清晰。
+        low:
+          emotion: neutral
+          emotion_scale: 3
+          speech_rate: -6
+          loudness_rate: -4
+          instruction: 压低声线，声音低沉克制，带私密感或压迫感，但不是耳语，吐字保持清晰。
+        other:
+          emotion: neutral
+          emotion_scale: 2
+          speech_rate: 0
+          loudness_rate: 0
+          instruction: 按角色设定自然表达，根据文本上下文微调情绪。
+      speaker_id_pool: []
+      poll_interval_seconds: 5
+      max_polls: 60
+      voice_clone_extra_params:
+        voice_clone_denoise_model_id: ''
+        enable_audio_denoise: false
+  kling:
+    base_url: https://api-beijing.klingai.com
+    api_key_env: KLING_API_KEY
+    models:
+      video: kling-v3-omni
+      subject_element: advanced-custom-elements
+    options:
+      api_schema: official_v3
+      mode: pro
+      resolution: 1080p
+      aspect_ratio: '16:9'
+      duration: 5
+      sound: native
+      multi_shot: false
+      watermark: false
+      video_reference_mode: shot_keyframe
+      subject_reference_type: image_refer
+      subject_video_duration_seconds: 5
+      max_reference_images: 7
+      max_reference_elements: 3
+      require_dialogue_voice: true
+      auto_select_official_voice: true
+      refresh_official_voice_catalog: false
+      download_official_voice_trials: true
+      official_voice_download_concurrency: 8
+      synthesize_short_official_voice_trials: true
+      official_voice_min_sample_seconds: 5
+      official_voice_tts_target_seconds: 8
+      official_voice_tts_map: {}
+      httpx_trust_env: false
+      role_voice_map: {}
+      poll_interval_seconds: 10
+      max_polls: 120
+routing:
+  text:
+    script: aibox
+    director: aibox
+    role: aibox
+    role_voice_select: aibox
+    prop: aibox
+    layout: aibox
+    shot: aibox
+    shot_bgm: aibox
+    postgen_edit_plan: aibox
+    postgen_audit: aibox
+    edit_plan: aibox
+    bgm_plan: aibox
+  image:
+    role: aibox
+    key_vision: aibox
+    shot: aibox
+    prop: aibox
+    layout: aibox
+  video:
+    shot: kling
+    upscale: volcengine
+  audio:
+    speech: volcengine
+    music: minimax
+  music:
+    bgm: minimax
+    shot_bgm: elevenlabs
+  judge:
+    voice_catalog_profile: aliyun_omni
+    role_voice_select: aliyun_omni
+  vision:
+    media_review: aliyun

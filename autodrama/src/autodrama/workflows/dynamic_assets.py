@@ -764,9 +764,12 @@ class DynamicAssetNodeMixin:
                     )
 
                 try:
-                    prompt = str(shot.final_video_prompt or "").strip()
+                    # Recompile from the current source prompt. final_video_prompt may already be
+                    # provider-ready output from an earlier submission and must not become the
+                    # source for a new task.
+                    prompt = str(shot.video_prompt or "").strip()
                     if not prompt:
-                        raise ProviderError(f"{shot.shot_id} missing final_video_prompt; rerun shot_manifest_generation")
+                        raise ProviderError(f"{shot.shot_id} missing video_prompt; rerun shot_manifest_generation")
                     video_inputs = self._shot_video_inputs(project_dir, shot, provider=provider)
                     video_refs = self._shot_video_refs(project_dir, state, shot, provider, video_inputs)
                     prompt = self._kling_native_prompt(prompt, state, shot, provider)

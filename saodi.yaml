@@ -9,10 +9,10 @@ model_catalog_file: ./model_catalog.yaml.example
 project:
   id: saodi_0803
   title: 扫地八十年，从宗门杂役飞升成仙
-  script_outline_file: ./inputs/扫地八十年，从宗门杂役飞升成仙_第1集.txt
+  script_chapters_dir: ./inputs/saodi_chapters
   episode_count: 1
   episode_duration_seconds: 150
-  bgm_count: 1
+  bgm_count: 0
 output:
   root_dir: ./outputs
   project_dir_template: '{date}_{slug}'
@@ -31,25 +31,27 @@ runtime:
     linux: python3
     macos: python3
     default: python3
-  max_text_retry: 3
+  max_text_retry: 5
   max_media_retry: 2
   request_timeout_seconds: 1200
+  # Text providers retry transient connection, timeout, proxy/TLS, and 5xx failures.
+  text_retry_initial_delay_seconds: 2
+  text_retry_max_delay_seconds: 30
   ffmpeg_path: ffmpeg
 budget:
   max_total_cny: 100
-  max_image_count: 20
+  max_image_count: 100
   max_video_seconds: 45
-  max_music_count: 5
+  max_music_count: 0
   max_text_calls: 200
 generation:
+  roleboard_spatial_template_path: ./.assets/image_templates/roleboard_template.png
   visual_style: xuanhuan-v1
-  roleboard_style_prompt: 使用参考图片统一东方古典衣冠结构、交领层次、冠发方式和人物仪态，并转译为高完成度3D国漫角色。脸部采用风格化CG表现，五官、年龄特征、体态和表情服务角色设定，但避免真人毛孔级写实。服装形制、材质、颜色、纹样、整洁程度和配饰必须依据角色的时代、年龄、身份、职业、阶层、性格与经历生成，不预设具体人物造型。背景干净，人物轮廓和服装层次清楚；除指定角色名和视图标签外，不出现其他文字、水印或logo。
+  roleboard_style_prompt: 在无缝中性中灰背景上呈现与主视觉原图同一视觉契约的写实3DCG人物，背景保持干净且不发白、不形成头部光晕。视觉媒介严格锁定为写实3DCG：离线PBR着色、物理可信的全局照明、自然数字电影摄影机响应、稳定的三维几何与真实三维接触，呈现电影级真实渲染效果。不是油画、不是厚涂、不是水彩、不是二维插画、不是真人摄影照片，也不是卡通渲染或国漫卡通质感，不要任何颜料笔触、帆布纹理、罩染或肉眼可辨的笔刷痕迹。人物遵循自然成人比例，总体约7至8头身，头骨紧凑不偏大，肩宽、躯干、骨盆与四肢比例正常，避免幼态大头、Q版或过短四肢。服装采用仙侠风设计：东方古典仙侠的宽袍大袖、交领右衽、束腰与飘逸衣摆，面料有丝绸、棉麻、轻纱等区分，配以克制腰带、玉饰或金属扣件，整体素雅飘逸而不繁复；服装服从身份与功能并限制装饰。使用一个偏暖的侧前方主光塑造眉骨、眼窝、鼻侧、颧骨、下颌、发束和衣褶，再以弱一档的清冷环境填充保留暗部信息；控制曝光，让浅色衣料和皮肤高光仍有纹理，避免均匀正面柔光、环形美容光和灰平无阴影表面。人物面貌具体、有自然不对称和年龄结构，皮肤、头发、织物、皮革与少量金属具有不同粗糙度。整体光色、材质与关键参考画面同属一个物理世界，不复制其中任何具体人物、服装、动作、构图或场景。
   prop_design_style_prompt: 采用高质感东方玄幻3D国漫的通用道具设计语言。道具结构兼顾东方古典工艺、清晰功能逻辑和适度超自然想象；材料、纹样、磨损、制造精度、能量状态和使用方式必须符合其时代、用途、等级与持有者身份。织物、木材、石材、陶瓷、金属、药物和能量材质应有明确差异，环境光与自发光关系稳定。不预设具体道具类型，造型完整、比例准确、便于不同镜头复用。无人物、手持、可读文字、水印或logo。
   layout_design_style_prompt: 采用高质感东方玄幻3D国漫的通用场景设计语言。具体空间的建筑形制、自然环境、功能分区、尺度、陈设、通行关系和使用痕迹必须依据剧情地点生成，并在同一世界观中保持结构、材质和装饰体系一致。使用青灰石材、深色木构、冷白雾气与克制金属装饰建立空间基调，超自然光效根据剧情需要出现但不取代真实光照逻辑。场景需支持竖屏近景表演、多人调度、动作场面与能量效果，不预设具体地点或剧情事件。无人物、字幕、水印或logo。
 postgen:
   max_source_clips_per_plan: 9
-  render_width: 720
-  render_height: 1280
   fps: 25
   burn_subtitles: true
   edit_plan_mode: deterministic
@@ -77,10 +79,10 @@ postgen:
     max_lines: 2
     font_name: Microsoft YaHei
   audit:
-    enabled: true
-    source_asr: true
-    source_audit: true
-    final_audit: true
+    enabled: false
+    source_asr: false
+    source_audit: false
+    final_audit: false
     frame_count: 9
     include_audio: true
     fail_on_reject: false
@@ -98,6 +100,12 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.3
       response_format: json_object
+  script_worldview_extract:
+    model: aibox:gpt-5.6-sol
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
+      response_format: json_object
   key_vision_prompt:
     model: aibox:gemini-3.6-flash
     params:
@@ -105,9 +113,14 @@ nodes:
       temperature: 0.45
       response_format: json_object
   key_vision_image_generation:
-    model: aibox:gpt-image-2
+    model: aibox:gpt-image-2-guan
     params:
-      size: 3840x2160
+      size: "3840x2160"
+      quality: high
+  key_vision_edit:
+    model: aibox:gpt-image-2-guan
+    params:
+      size: "3840x2160"
       quality: high
   role_extract_primary:
     model: aibox:gemini-3.6-flash
@@ -134,15 +147,16 @@ nodes:
       temperature: 0.4
       response_format: json_object
   roleboard_image_generation:
-    model: aibox:gpt-image-2
+    model: aibox:gpt-image-2-guan
     params:
       roleboard_prompt_template: aibox_gpt_image_2_guan
       roleboard_image_generation_concurrency: 3
       size: 3840x2160
+      quality: high
   role_subject_frontal_image_generation:
-    model: aibox:gpt-image-2
+    model: aibox:gpt-image-2-guan
     params:
-      size: 1088x1920
+      size: 1920x1088
       quality: high
       image_generation_concurrency: 3
   prop_extract:
@@ -165,7 +179,7 @@ nodes:
       temperature: 0.3
       response_format: json_object
   layout_finalize:
-    model: aibox:gemini-3.6-flash
+    model: aibox:gpt-5.6-luna
     params:
       reasoning_effort: xhigh
       temperature: 0.2
@@ -190,40 +204,68 @@ nodes:
       temperature: 0.4
       response_format: json_object
   prop_image_generation:
-    model: aibox:gpt-image-2
+    model: aibox:gemini-3-pro-image-preview
     params:
-      size: 2048x2048
-      prop_image_generation_concurrency: 1
+      aspectRatio: "1:1"
+      imageSize: "2K"
+      concurrency: 1
       max_attempts: 5
   layout_image_generation:
-    model: aibox:gpt-image-2
+    model: aibox:gemini-3-pro-image-preview
     params:
-      size: 3840x2160
+      aspectRatio: "16:9"
+      imageSize: "4K"
       concurrency: 3
   clip_to_shots:
     model: aibox:gemini-3.6-flash
     params:
       temperature: 0.35
       response_format: json_object
+  scene_multiview_plan:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.2
+      response_format: json_object
+  scene_multiview_image_generation:
+    model: aibox:gemini-3-pro-image-preview
+    params:
+      aspectRatio: "16:9"
+      imageSize: "4K"
+      concurrency: 1
   layout_to_background_prompt:
     model: aibox:gemini-3.6-flash
     params:
       temperature: 0.25
   shot_background_image_generation:
-    model: aibox:gpt-image-2
+    model: aibox:gemini-3-pro-image-preview
     params:
+      aspectRatio: "16:9"
+      imageSize: "4K"
       concurrency: 2
-      size: 1088x1920
+  shot_blocking_plan:
+    model: aibox:gemini-3.6-flash
+    params:
+      temperature: 0.25
+      response_format: json_object
+  shot_blocking_control_render:
+    params: {}
   shot_keyframe_prompt:
     model: aibox:gemini-3.6-flash
     params:
       temperature: 0.3
       negative_prompt: extra people, duplicate bodies, identity drift, malformed hands, inconsistent scale, floating objects, text, subtitles, logo, watermark
-  shot_keyframe_image_generation:
-    model: aibox:gpt-image-2
+  shot_keyframe_stage_generation:
+    model: aibox:gemini-3-pro-image-preview
     params:
+      aspectRatio: "16:9"
+      imageSize: "4K"
       concurrency: 2
-      size: 1088x1920
+  shot_keyframe_image_generation:
+    model: aibox:gemini-3-pro-image-preview
+    params:
+      aspectRatio: "16:9"
+      imageSize: "4K"
+      concurrency: 2
   shot_manifest_generation:
     params: {}
   script_outline:
@@ -251,7 +293,7 @@ nodes:
   role_subject_video_generation:
     model: kling:kling-v3-omni
     params:
-      aspect_ratio: '9:16'
+      aspect_ratio: '16:9'
       mode: pro
       sound: 'on'
       watermark: false
@@ -261,7 +303,7 @@ nodes:
   role_subject_element_generation:
     model: kling:kling-v3-omni
     params:
-      aspect_ratio: '9:16'
+      aspect_ratio: '16:9'
       mode: pro
       sound: native
       watermark: false
@@ -304,7 +346,7 @@ nodes:
   shot_video_generation:
     model: kling:kling-v3-omni
     params:
-      aspect_ratio: '9:16'
+      aspect_ratio: '16:9'
       mode: pro
       audio: native
       resolution: 1080p
@@ -424,7 +466,7 @@ providers:
       size: 1024x1024
       roleboard_size: 3840x2160
       roleboard_quality: high
-      key_vision_size: 1024x1536
+      key_vision_size: 3840x2160
       key_vision_quality: high
       n: 1
   aibox:
@@ -433,12 +475,13 @@ providers:
     models:
       text: gemini-3.6-flash
       postgen_audit: gemini-3.6-flash
-      image: gpt-image-2
-      key_vision: gpt-image-2
-      roleboard: gpt-image-2
+      image: gpt-image-2-guan
+      key_vision: gpt-image-2-guan
+      roleboard: gpt-image-2-guan
       shot: gpt-image-2
-      prop: gpt-image-2
+      prop: gemini-3-pro-image-preview
       layout: gpt-image-2
+      banana: gemini-3-pro-image-preview
     options:
       size: auto
       quality: auto
@@ -447,7 +490,7 @@ providers:
       roleboard_size: 3840x2160
       shot_size: 2048x2048
       prop_size: 2048x2048
-      layout_size: 2160x3840
+      layout_size: 3840x2160
       max_reference_images: 10
       aibox_request_timeout_seconds: 240
       aibox_max_attempts: 3
@@ -467,12 +510,12 @@ providers:
       size: '16:9'
       roleboard_size: '16:9'
       roleboard_resolution: 4K
-      key_vision_size: '9:16'
+      key_vision_size: '16:9'
       key_vision_resolution: 4K
       prop_size: '1:1'
       prop_resolution: 2K
       prop_image_generation_concurrency: 3
-      layout_size: '9:16'
+      layout_size: '16:9'
       layout_resolution: 4K
       response_format: url
       n: 1
@@ -563,11 +606,11 @@ providers:
       seed_tts_api_key_env: SEED_TTS_API_KEY
       seedream_base_url: https://ark.cn-beijing.volces.com
       seedream_api_key_env: VOLCENGINE_API_KEY
-      seedream_image_size: 1600x2848
-      seedream_key_vision_size: 1600x2848
+      seedream_image_size: 2848x1600
+      seedream_key_vision_size: 2848x1600
       seedream_roleboard_size: 2848x1600
       seedream_prop_size: 2048x2048
-      seedream_layout_size: 1600x2848
+      seedream_layout_size: 2848x1600
       seedream_output_format: png
       seedream_response_format: url
       seedream_watermark: false
@@ -575,7 +618,7 @@ providers:
       seedream_max_reference_images: 14
       seedance_base_url: https://ark.cn-beijing.volces.com
       seedance_api_key_env: VOLCENGINE_API_KEY
-      video_ratio: '9:16'
+      video_ratio: '16:9'
       video_resolution: 720p
       video_reference_mode: full
       previous_video_preroll_seconds: 0
@@ -662,7 +705,7 @@ providers:
       api_schema: official_v3
       mode: pro
       resolution: 1080p
-      aspect_ratio: '9:16'
+      aspect_ratio: '16:9'
       duration: 5
       sound: native
       multi_shot: false

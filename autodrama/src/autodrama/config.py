@@ -22,7 +22,7 @@ class AppSettings(BaseModel):
 class ProjectSettings(BaseModel):
     id: str | None = None
     title: str | None = None
-    script_outline_file: Path | None = None
+    script_chapters_dir: Path | None = None
     episode_count: int = Field(default=1, ge=1)
     episode_duration_seconds: int = Field(default=30, ge=1)
     bgm_count: int = Field(default=3, ge=0)
@@ -47,9 +47,11 @@ class OutputSettings(BaseModel):
 
 class RuntimeSettings(BaseModel):
     python: dict[str, str] = Field(default_factory=dict)
-    max_text_retry: int = 3
+    max_text_retry: int = 5
     max_media_retry: int = 2
     request_timeout_seconds: int = 120
+    text_retry_initial_delay_seconds: float = Field(default=2.0, ge=0, le=60)
+    text_retry_max_delay_seconds: float = Field(default=30.0, ge=0, le=300)
     ffmpeg_path: str = "ffmpeg"
 
 
@@ -63,7 +65,9 @@ class BudgetSettings(BaseModel):
 
 class GenerationSettings(BaseModel):
     expected_output_seconds: int = Field(default=-1, strict=True)
-    roleboard_style_reference_dir: Path | None = None
+    roleboard_spatial_template_path: Path = Path(
+        ".assets/image_templates/roleboard_template.png"
+    )
     visual_style: str
     roleboard_style_prompt: str = ""
     prop_design_style_prompt: str = ""
@@ -132,8 +136,6 @@ class AuditSettings(BaseModel):
 
 class PostgenSettings(BaseModel):
     max_source_clips_per_plan: int = Field(default=9, ge=1, le=9)
-    render_width: int = Field(default=720, ge=64)
-    render_height: int = Field(default=1280, ge=64)
     fps: int = Field(default=25, ge=1, le=120)
     burn_subtitles: bool = True
     edit_plan_mode: Literal["llm", "deterministic"] = "llm"
@@ -290,14 +292,11 @@ def load_settings(config_path: str | Path) -> Settings:
     else:
         settings.output.root_dir = settings.output.root_dir.resolve()
 
-    if settings.project.script_outline_file and not settings.project.script_outline_file.is_absolute():
-        settings.project.script_outline_file = (path.parent / settings.project.script_outline_file).resolve()
-    if (
-        settings.generation.roleboard_style_reference_dir
-        and not settings.generation.roleboard_style_reference_dir.is_absolute()
-    ):
-        settings.generation.roleboard_style_reference_dir = (
-            path.parent / settings.generation.roleboard_style_reference_dir
+    if settings.project.script_chapters_dir and not settings.project.script_chapters_dir.is_absolute():
+        settings.project.script_chapters_dir = (path.parent / settings.project.script_chapters_dir).resolve()
+    if not settings.generation.roleboard_spatial_template_path.is_absolute():
+        settings.generation.roleboard_spatial_template_path = (
+            path.parent / settings.generation.roleboard_spatial_template_path
         ).resolve()
     settings.apikeys_file = _resolve_optional_path(settings.apikeys_file, path)
 

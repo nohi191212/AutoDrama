@@ -9,23 +9,29 @@ model_catalog_file: ./model_catalog.yaml.example
 # Node-level model bindings. If a node is omitted here, AutoDrama falls back to the legacy routing section.
 # Params are validated against model_catalog_file when the config is loaded.
 nodes:
-  script_outline:
+  script_import:
     model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
-      temperature: 0.4
+      temperature: 0.25
       response_format: json_object
-  script_novel:
-    model: rightcode:gpt-5.6-terra
+  script_cinematic_adapt:
+    model: aibox:gemini-3.6-flash
     params:
       reasoning_effort: xhigh
-      temperature: 0.7
+      temperature: 0.35
       response_format: json_object
   script_novel_extract:
     model: rightcode:gpt-5.6-terra
     params:
       reasoning_effort: xhigh
       temperature: 0.3
+      response_format: json_object
+  script_worldview_extract:
+    model: aibox:gpt-5.6-sol
+    params:
+      reasoning_effort: xhigh
+      temperature: 0.2
       response_format: json_object
   key_vision_prompt:
     model: rightcode:gpt-5.6-terra
@@ -34,9 +40,10 @@ nodes:
       temperature: 0.45
       response_format: json_object
   key_vision_image_generation:
-    model: aibox:gpt-image-2-guan
+    model: aibox:gemini-3-pro-image-preview
     params:
-      size: 2160x3840
+      aspectRatio: "9:16"
+      imageSize: 4K
   role_extract_primary:
     model: rightcode:gpt-5.6-terra
     params:
@@ -78,8 +85,6 @@ nodes:
     params:
       roleboard_prompt_template: aibox_gpt_image_2_guan
       roleboard_image_generation_concurrency: 3
-      anchor_role: ""
-      anchor_appearance: base
       size: 3840x2160
   role_subject_frontal_image_generation:
     model: aibox:gpt-image-2-guan
@@ -88,7 +93,7 @@ nodes:
       quality: high
       image_generation_concurrency: 3
   clip_to_shots:
-    model: rightcode:gpt-5.6-terra
+    model: aibox:gemini-3.5-flash
     params:
       temperature: 0.35
       response_format: json_object
@@ -96,11 +101,18 @@ nodes:
     model: aibox:gemini-3.5-flash
     params:
       temperature: 0.25
-  shot_background_image_generation:
-    model: aibox:gpt-image-2-guan
+  shot_background_shot_reference:
+    model: aibox:gemini-3-pro-image-preview
     params:
+      aspectRatio: "2:3"
+      imageSize: 4K
       concurrency: 2
-      size: 1088x1920
+  shot_background_image_generation:
+    model: aibox:gemini-3-pro-image-preview
+    params:
+      aspectRatio: "9:16"
+      imageSize: 4K
+      concurrency: 2
   shot_keyframe_prompt:
     model: aibox:gemini-3.5-flash
     params:
@@ -166,9 +178,10 @@ nodes:
       temperature: 0.2
       response_format: json_object
   layout_image_generation:
-    model: aibox:gpt-image-2-guan
+    model: aibox:gemini-3-pro-image-preview
     params:
-      size: 2160x3840
+      aspectRatio: "2:3"
+      imageSize: 4K
       concurrency: 3
   bgm_design:
     model: rightcode:gpt-5.6-terra
@@ -267,8 +280,8 @@ project:
   # Stable ID is recommended because resume relies on it.
   id: review_demo
   title: 测试短片
-  script_outline_file: ./inputs/story_outline.md
-  # The script pipeline lets the text model split the story into this many episodes.
+  script_chapters_dir: ./inputs/story_chapters
+  # Every file must be named chap####_chapter-title.txt; one file becomes one episode.
   episode_count: 1
   # Target duration for each episode, in seconds.
   episode_duration_seconds: 30
@@ -314,8 +327,8 @@ generation:
   # then limits expensive downstream work to the smallest complete clip prefix
   # whose normalized shot durations reach this per-episode target.
   expected_output_seconds: -1
-  # Used by roleboard_image_generation as Image 2 style references.
-  roleboard_style_reference_dir: ./.assets/sample
+  # Image 1 for every roleboard: spatial layout only; character identity and style are ignored.
+  roleboard_spatial_template_path: ./.assets/image_templates/roleboard_template.png
   # Plain Markdown preset loaded verbatim from autodrama/src/autodrama/prompts/visual_styles/.
   visual_style: xuanhuan-v1
   # Unified role image style prompt used by roleboard_prompt and roleboard_image_generation.
@@ -455,7 +468,7 @@ providers:
       text: gemini-3.5-flash
       postgen_audit: gemini-3.5-flash
       image: gpt-image-2-guan
-      key_vision: gpt-image-2-guan
+      key_vision: gemini-3-pro-image-preview
       roleboard: gpt-image-2-guan
       shot: gpt-image-2-guan
       prop: gpt-image-2-guan

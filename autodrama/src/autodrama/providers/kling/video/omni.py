@@ -51,7 +51,7 @@ class KlingOmniVideoProvider:
             settings.options.get("aspect_ratio")
             or settings.options.get("video_aspect_ratio")
             or settings.options.get("ratio")
-            or "9:16"
+            or "16:9"
         )
         self.sound = self._sound_value(settings.options.get("sound") or "off")
         self.resolution = str(settings.options.get("resolution") or "1080p")
@@ -75,6 +75,19 @@ class KlingOmniVideoProvider:
     def omni_video_path(self) -> str:
         default = "/omni-video/kling-3.0-omni" if self.api_schema == "official_v3" else "/v1/videos/omni-video"
         return str(self.settings.options.get("omni_video_endpoint") or default)
+
+    @property
+    def max_prompt_characters(self) -> int:
+        return 3072 if self.api_schema == "official_v3" else 2500
+
+    def _validated_prompt(self, prompt: object) -> str:
+        normalized = str(prompt or "")
+        if len(normalized) > self.max_prompt_characters:
+            raise ProviderError(
+                f"Kling {self.api_schema} prompt has {len(normalized)} characters; "
+                f"provider limit is {self.max_prompt_characters}. Compile to the provider budget before submission."
+            )
+        return normalized
 
     @property
     def task_query_path(self) -> str:
@@ -150,7 +163,7 @@ class KlingOmniVideoProvider:
         refs = refs or []
         payload: dict[str, Any] = {
             "model_name": str(metadata.get("model") or self.model),
-            "prompt": str(prompt or "")[:2500],
+            "prompt": self._validated_prompt(prompt),
             "mode": str(metadata.get("mode") or self.mode),
             "aspect_ratio": str(metadata.get("aspect_ratio") or metadata.get("ratio") or self.aspect_ratio),
             "duration": str(self._duration(duration, metadata)),
@@ -229,11 +242,12 @@ class KlingOmniVideoProvider:
                 content_type = "base_video" if refer_type in {"base", "edit"} else "feature_video"
                 contents.append({"type": content_type, "url": value, "id": content_id})
 
-        normalized_prompt = str(prompt or "")[:3072]
+        normalized_prompt = str(prompt or "")
         for item in contents:
             content_id = str(item.get("id") or "")
             if content_id:
                 normalized_prompt = normalized_prompt.replace(f"<<<{content_id}>>>", f"@{content_id}")
+        normalized_prompt = self._validated_prompt(normalized_prompt)
         contents.insert(0, {"type": "prompt", "text": normalized_prompt})
 
         audio = self._official_audio_value(metadata.get("audio", metadata.get("sound", self.sound)))

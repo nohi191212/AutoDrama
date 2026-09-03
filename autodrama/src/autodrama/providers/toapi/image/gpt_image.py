@@ -208,7 +208,7 @@ class ToAPIImageProvider:
     def _purpose_size(self, metadata: dict[str, Any]) -> object | None:
         node_name = self._purpose_node_name(metadata)
         if node_name == "shot_keyframe_image_generation":
-            return self.settings.options.get("shot_keyframe_size") or self.settings.options.get("shot_size") or "9:16"
+            return self.settings.options.get("shot_keyframe_size") or self.settings.options.get("shot_size") or "16:9"
         if node_name == "roleboard_image_generation":
             return (
                 self.settings.options.get("roleboard_size")
@@ -219,7 +219,7 @@ class ToAPIImageProvider:
         if node_name == "layout_image_generation":
             return self.settings.options.get("layout_size") or "16:9"
         if node_name == "key_vision_image_generation":
-            return self.settings.options.get("key_vision_size") or "9:16"
+            return self.settings.options.get("key_vision_size") or "16:9"
         return None
 
     def _purpose_resolution(self, metadata: dict[str, Any]) -> object | None:

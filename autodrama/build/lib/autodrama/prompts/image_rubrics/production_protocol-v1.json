@@ -1,0 +1,37 @@
+{
+  "name": "production-image-audit-v1",
+  "revision": "1.0-weighted-no-score-caps",
+  "rubric_files": [
+    "general_rubrics-v2.json",
+    "xuanhuan-v2-rubrics.json"
+  ],
+  "category_weights": {
+    "physical": 0.4,
+    "contract": 0.3,
+    "cinematic": 0.15,
+    "style": 0.15
+  },
+  "approval_threshold": 7.0,
+  "gate_threshold": 6.0,
+  "reject_gate_below_threshold": true,
+  "reject_severities": [
+    "critical"
+  ],
+  "score_caps": false,
+  "score_formula": "Compute the weighted mean of applicable dimensions inside each category, then the weighted mean of the available category scores. Never replace, clamp, or cap the result because of a gate, severity, or individual dimension.",
+  "scale_anchors": {
+    "0": "The required visual fact is absent or wholly contradictory.",
+    "2": "Severe visible failure; the intended fact is barely recoverable.",
+    "4": "Major visible failure that prevents production use without repair.",
+    "6": "Minimum usable result with clear but repairable weaknesses.",
+    "8": "Strong production result with only minor localized defects.",
+    "10": "Nearly flawless visible execution with specific supporting evidence."
+  },
+  "evidence_rules": [
+    "Score only visible image evidence; do not infer that an obscured or unreadable requirement was probably generated correctly.",
+    "Every applicable dimension must include observable evidence and every score below 10 must name a concrete defect.",
+    "Major and critical defects must include at least one normalized x1,y1,x2,y2 image region.",
+    "Hidden, cropped, blurred, or ambiguous required evidence should receive the score supported by the visible pixels; it has no automatic numeric ceiling.",
+    "A failed delivery gate or critical severity may independently block production approval, but neither changes the weighted score."
+  ]
+}

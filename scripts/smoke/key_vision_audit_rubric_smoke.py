@@ -22,7 +22,7 @@ from autodrama.core.schemas import (  # noqa: E402
 from autodrama.providers.base import AssetRef  # noqa: E402
 from autodrama.image_audit_rubrics import (  # noqa: E402
     aggregate_dimension_scores,
-    load_production_rubric_bundle,
+    load_key_vision_audit_rubric_bundle,
     render_production_rubric,
 )
 from autodrama.utils.prompts import PromptStore  # noqa: E402
@@ -37,7 +37,7 @@ OUTPUT = ROOT / ".tmp" / "key-vision-audit-rubric-smoke.json"
 
 class FakeProvider:
     async def generate_json(self, _prompt: str, schema: type, **_kwargs: object) -> object:
-        bundle = load_production_rubric_bundle(include_xuanhuan_style=True)
+        bundle = load_key_vision_audit_rubric_bundle()
         return schema(
             approved=True,
             issues=[],
@@ -52,6 +52,7 @@ class FakeProvider:
                     score=10,
                     severity="none",
                     evidence="该维度的可见证据完整且无缺陷。",
+                    defect="",
                 )
                 for dimension in bundle.dimensions
             ],
@@ -68,10 +69,10 @@ class SmokeKeyVisionAuditNode(KeyVisionImageAuditNode):
 
 
 def build_assessments(*, critical: bool) -> list[ImageAuditDimensionAssessment]:
-    bundle = load_production_rubric_bundle(include_xuanhuan_style=True)
+    bundle = load_key_vision_audit_rubric_bundle()
     rows: list[ImageAuditDimensionAssessment] = []
     for dimension in bundle.dimensions:
-        failed = dimension.id == "prop_rigidity_topology"
+        failed = dimension.id == "continuous_space"
         rows.append(
             ImageAuditDimensionAssessment(
                 dimension_id=dimension.id,
@@ -80,19 +81,22 @@ def build_assessments(*, critical: bool) -> list[ImageAuditDimensionAssessment]:
                 applicable=True,
                 score=0 if failed else 10,
                 severity="critical" if failed and critical else ("major" if failed else "none"),
-                evidence="刚性道具在画面中心出现可见分叉。" if failed else "该维度的可见证据完整且无缺陷。",
-                defect="一件刚性道具错误分叉。" if failed else "",
-                regions=[ImageAuditRegion(label="道具分叉", x1=0.4, y1=0.3, x2=0.7, y2=0.8)] if failed else [],
+                evidence="人物与建筑的相对尺度在同一地面透视中不成立。" if failed else "该维度的可见证据完整且无缺陷。",
+                defect="建筑入口与人物高度比例明显失真。" if failed else "",
+                regions=[ImageAuditRegion(label="建筑尺度", x1=0.4, y1=0.3, x2=0.7, y2=0.8)] if failed else [],
             )
         )
     return rows
 
 
 def main() -> int:
-    bundle = load_production_rubric_bundle(include_xuanhuan_style=True)
+    bundle = load_key_vision_audit_rubric_bundle()
+    decision_schema = KeyVisionAuditDecision.model_json_schema()
+    assessment_schema = decision_schema["$defs"]["ImageAuditDimensionAssessment"]
+    assert "defect" in assessment_schema["required"]
     assert bundle.policy.score_caps is False
     assert "general_rubrics-v2" in bundle.rubric_revisions
-    assert "xuanhuan-v2-rubrics" in bundle.rubric_revisions
+    assert "xuanhuan-v2-rubrics" not in bundle.rubric_revisions
 
     scores = {
         row.dimension_id: row.score
@@ -126,9 +130,9 @@ def main() -> int:
     node = SmokeKeyVisionAuditNode()
     decision = KeyVisionAuditDecision(
         approved=True,
-        issues=["刚性道具分叉"],
-        revised_prompt="保留原画面，只把刚性道具修复为一条连续轴线。",
-        rationale="存在严重道具拓扑错误。",
+        issues=["人物与建筑比例不协调"],
+        revised_prompt="",
+        rationale="人物与建筑的相对尺度不成立。",
         assessments=build_assessments(critical=True),
     )
     normalized = node._normalize_decision(decision, state=state, item=item)
@@ -150,7 +154,7 @@ def main() -> int:
         approval_threshold=f"{bundle.policy.approval_threshold:g}",
     )
     assert "general_rubrics-v2" in prompt
-    assert "xuanhuan-v2-rubrics" in prompt
+    assert "xuanhuan-v2-rubrics" not in prompt
     assert "一根刚性长棍保持连续轴线" in prompt
     assert "干燥石材和柔哑织物" in prompt
     assert "不得因为 gate" in prompt

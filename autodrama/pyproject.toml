@@ -33,6 +33,18 @@ where = ["src"]
 [tool.setuptools.package-data]
 autodrama = [
   "prompts/*.md",
+  "prompts/clip_segment/*.md",
+  "prompts/clip_to_shots/*.md",
+  "prompts/layout_prompt/*.md",
+  "prompts/layout_to_background_prompt/*.md",
+  "prompts/layout_to_background_prompt/*.py",
+  "prompts/scene_multiview_plan/*.md",
+  "prompts/scene_multiview_image_generation/*.md",
+  "prompts/shot_blocking_plan/*.md",
+  "prompts/shot_keyframe_prompt/*.md",
+  "prompts/shot_keyframe_prompt/*.py",
+  "prompts/video_asset_audit/*.md",
+  "prompts/script_worldview_extract/*.md",
   "prompts/image_asset_audit/*.md",
   "prompts/key_vision_prompt/*.md",
   "prompts/key_vision_image_audit/*.md",

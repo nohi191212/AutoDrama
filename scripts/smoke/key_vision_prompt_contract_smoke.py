@@ -18,7 +18,11 @@ PROMPT_DIR = ROOT_DIR / "autodrama" / "src" / "autodrama" / "prompts"
 
 
 def main() -> int:
-    state = SimpleNamespace(metadata={})
+    worldview = (
+        "Eastern cultivation fantasy centered on immortal sects, mountain sanctuaries, "
+        "spiritual energy, hierarchical martial traditions, and supernatural ascension."
+    )
+    state = SimpleNamespace(metadata={"script_type": worldview})
     portrait = DirectorService.key_vision_render_contract(state, "1024x1536")
     landscape = DirectorService.key_vision_render_contract(state, "3840x2160")
     continuity = DirectorService.key_vision_continuity_contract(state)
@@ -34,22 +38,26 @@ def main() -> int:
     style_prompt = load_visual_style("xuanhuan-v1")
     rendered = PromptStore(PROMPT_DIR).render(
         "key_vision_prompt",
-        story_context="An elderly gatekeeper crosses one stone threshold while a witness stays behind.",
+        script_type=worldview,
         global_visual_style=style_prompt,
         director_brief=director_brief,
         render_contract=portrait,
         continuity_contract=continuity,
+        audit_feedback="（没有上一轮主视觉审计拒绝原因。）",
     )
-    assert "Eastern xuanhuan and wuxia stylized 3D CG" in rendered
+    assert "Eastern xuanhuan and wuxia semi-realistic stylized 3D CG donghua" in rendered
     for marker in (
-        "<crossing_camera_rule>",
-        "<shot_contract_example non_binding=\"true\">",
-        "<scene_style_contract_design>",
-        "anatomical RIGHT maps to screen-LEFT",
-        "[FINAL 2D SCREEN CHECK]",
-        "`shot_contract`, then `scene_style_contract`, then `prompt`",
+        f"Worldview brief: {worldview}",
+        "reusable visual anchor",
+        "Do not use named characters",
+        "exactly two or three world-native designed figures",
+        "clear side profile",
+        "near, middle, and far depth",
+        "premium production-art finish",
+        "`shot_contract`, `scene_style_contract`, `prompt`",
     ):
         assert marker in rendered, marker
+    assert "{{story_context}}" not in rendered
     assert "{{" not in rendered and "}}" not in rendered
     output = KeyVisionPromptOutput(
         shot_contract="Locked camera and action proof.",
@@ -67,10 +75,9 @@ def main() -> int:
         DirectorService(PromptStore(PROMPT_DIR)).key_vision_prompt(
             SimpleNamespace(
                 project_id="key-vision-contract-smoke",
-                metadata={"visual_style_prompt": style_prompt},
+                metadata={"script_type": worldview, "visual_style_prompt": style_prompt},
             ),
             FakeTextProvider(),
-            story_context="One subject performs a consequential action in one continuous space.",
             image_canvas="1024x1536",
         )
     )

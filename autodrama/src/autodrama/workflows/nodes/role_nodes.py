@@ -234,7 +234,7 @@ class RoleNodeBase:
         target: RoleExtractItem,
         incoming: RoleExtractItem,
         episode_keys: list[str],
-    ) -> None:
+    ) -> int:
         target.aliases = self.dedupe_texts([*target.aliases, *incoming.aliases])
         target.source_chapters = self.dedupe_texts([*target.source_chapters, *incoming.source_chapters])
         target.appearance_notes = self.dedupe_texts([*target.appearance_notes, *incoming.appearance_notes])
@@ -244,6 +244,19 @@ class RoleNodeBase:
             target.brief = incoming.brief
         target.has_dialogue = target.has_dialogue or incoming.has_dialogue
         target.visual_reuse_required = target.visual_reuse_required or incoming.visual_reuse_required
+        existing_appearance_names = {
+            str(appearance.name or "base").strip().casefold()
+            for appearance in target.appearance_assets
+        }
+        added_appearances = 0
+        for appearance in incoming.appearance_assets:
+            appearance_name = str(appearance.name or "base").strip().casefold()
+            if appearance_name in existing_appearance_names:
+                continue
+            target.appearance_assets.append(appearance)
+            existing_appearance_names.add(appearance_name)
+            added_appearances += 1
+        return added_appearances
 
     @staticmethod
     def _role_tuples(roles: list[RoleExtractItem]) -> list[tuple[str, str]]:
@@ -261,6 +274,31 @@ class RoleNodeBase:
             result.append((name, brief))
         return result
 
+    @staticmethod
+    def _role_appearance_summaries(roles: list[RoleExtractItem]) -> list[dict[str, object]]:
+        return [
+            {
+                "name": item.name,
+                "aliases": list(item.aliases),
+                "brief": item.brief,
+                "appearance_assets": [
+                    {
+                        "name": appearance.name,
+                        "asset_role": appearance.asset_role,
+                        "reference_asset_name": appearance.reference_asset_name,
+                        "time_period": appearance.time_period,
+                        "age_band": appearance.age_band,
+                        "identity_invariants": list(appearance.identity_invariants),
+                        "wardrobe": list(appearance.wardrobe),
+                        "valid_from_event": appearance.valid_from_event,
+                        "valid_to_event": appearance.valid_to_event,
+                    }
+                    for appearance in item.appearance_assets
+                ],
+            }
+            for item in roles
+        ]
+
     def _append_new_roles(
         self,
         *,
@@ -268,18 +306,19 @@ class RoleNodeBase:
         roles_by_key: dict[str, RoleExtractItem],
         output_roles: list[RoleExtractItem],
         episode_keys: list[str],
-    ) -> int:
+    ) -> tuple[int, int]:
         new_count = 0
+        new_appearance_count = 0
         for item in output_roles:
             name_key = self.role_name_key(item.name)
             existing_item = roles_by_key.get(name_key)
             if existing_item is not None:
-                self._merge_extract_item(existing_item, item, episode_keys)
+                new_appearance_count += self._merge_extract_item(existing_item, item, episode_keys)
                 continue
             roles_by_key[name_key] = item
             roles.append(item)
             new_count += 1
-        return new_count
+        return new_count, new_appearance_count
 
     def load_role_extract_node_output(self, project_dir: Path, node_name: str) -> RoleExtractOutput:
         path = self.repo.layout.node_output_path(project_dir, node_name)
@@ -319,7 +358,7 @@ class RolePrimaryExtractNode(RoleNodeBase):
                 state,
                 provider,
                 novel_full_context=self.role_service.format_novel_full_context(novel_full),
-                existing_primary_roles=self._role_tuples(roles),
+                existing_primary_roles=self._role_appearance_summaries(roles),
             )
             text_call_count += 1
             output_roles = self._clean_extract_items(
@@ -329,7 +368,7 @@ class RolePrimaryExtractNode(RoleNodeBase):
                 node_name=self.name,
                 required_tier="primary",
             )
-            new_count = self._append_new_roles(
+            new_count, new_appearance_count = self._append_new_roles(
                 roles=roles,
                 roles_by_key=roles_by_key,
                 output_roles=output_roles,
@@ -337,14 +376,15 @@ class RolePrimaryExtractNode(RoleNodeBase):
             )
             self.save_role_extract_progress(project_dir, self.name, roles)
             self.logger.info(
-                "role_extract_primary iteration %d/%d returned=%d new=%d total=%d",
+                "role_extract_primary iteration %d/%d returned=%d new_roles=%d new_appearances=%d total=%d",
                 iteration,
                 self.max_iterations,
                 len(output_roles),
                 new_count,
+                new_appearance_count,
                 len(roles),
             )
-            if new_count == 0:
+            if new_count == 0 and new_appearance_count == 0:
                 break
         else:
             self.logger.warning(
@@ -387,7 +427,7 @@ class RoleFunctionalExtractNode(RoleNodeBase):
                 provider,
                 novel_full_context=self.role_service.format_novel_full_context(novel_full),
                 primary_roles=primary_roles,
-                existing_functional_roles=self._role_tuples(roles),
+                existing_functional_roles=self._role_appearance_summaries(roles),
             )
             text_call_count += 1
             output_roles = self._clean_extract_items(
@@ -412,7 +452,7 @@ class RoleFunctionalExtractNode(RoleNodeBase):
                     "role_extract_functional returned roles that already exist in primary_roles: "
                     f"{', '.join(duplicated_primary)}"
                 )
-            new_count = self._append_new_roles(
+            new_count, new_appearance_count = self._append_new_roles(
                 roles=roles,
                 roles_by_key=roles_by_key,
                 output_roles=output_roles,
@@ -420,14 +460,15 @@ class RoleFunctionalExtractNode(RoleNodeBase):
             )
             self.save_role_extract_progress(project_dir, self.name, roles)
             self.logger.info(
-                "role_extract_functional iteration %d/%d returned=%d new=%d total=%d",
+                "role_extract_functional iteration %d/%d returned=%d new_roles=%d new_appearances=%d total=%d",
                 iteration,
                 self.max_iterations,
                 len(output_roles),
                 new_count,
+                new_appearance_count,
                 len(roles),
             )
-            if new_count == 0:
+            if new_count == 0 and new_appearance_count == 0:
                 break
         else:
             self.logger.warning(
@@ -728,63 +769,6 @@ class RoleFinalizeNode(RoleNodeBase):
 
 class RoleboardPromptNode(RoleNodeBase):
     name = "roleboard_prompt"
-    ROLEBOARD_STYLE_PROMPT_HEADER = "统一角色身份板风格要求（优先级高于角色身份板 prompt 中的画面风格）"
-    STYLE_REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
-
-    def roleboard_style_reference_count(self) -> int:
-        ref_dir = self.repo.settings.generation.roleboard_style_reference_dir
-        if ref_dir is None:
-            return 0
-        if not ref_dir.exists() or not ref_dir.is_dir():
-            raise FileNotFoundError(f"roleboard_style_reference_dir does not exist or is not a directory: {ref_dir}")
-        count = sum(
-            1
-            for path in ref_dir.iterdir()
-            if path.is_file() and path.suffix.lower() in self.STYLE_REFERENCE_EXTENSIONS
-        )
-        if count <= 0:
-            raise ValueError(f"roleboard_style_reference_dir contains no supported image files: {ref_dir}")
-        return count
-
-    def roleboard_style_prefix(
-        self,
-        *,
-        style_reference_count: int,
-        identity_reference_index: int | None = None,
-    ) -> str:
-        parts: list[str] = []
-        style_prompt = str(self.repo.settings.generation.roleboard_style_prompt or "").strip()
-        if style_prompt:
-            parts.append(f"{self.ROLEBOARD_STYLE_PROMPT_HEADER}：{style_prompt}")
-        if style_reference_count > 0:
-            style_ref_text = "参考图片1" if style_reference_count == 1 else f"参考图片1-{style_reference_count}"
-            parts.append(
-                f"{style_ref_text}只作为角色身份板的整体美术风格、材质质感、光影、色彩和画面气质参考；"
-                "不要照搬参考图中的人物身份、脸、服装或构图。"
-            )
-        if identity_reference_index is not None:
-            parts.append(
-                f"参考图片{identity_reference_index}是同一角色的全身身份参考，必须保持人物脸型、发型、服装、"
-                "随身道具、体型比例和身份特征一致。"
-            )
-        if parts:
-            parts.append("下方角色提示词中的人物身份、服装、道具和结构要求仍需保留；若画面风格冲突，以上方统一风格要求和参考图片风格为准。")
-        return "\n".join(parts)
-
-    def final_roleboard_prompt(
-        self,
-        *,
-        role_name: str,
-        appearance_name: str,
-        asset_role: str,
-        core_prompt: str,
-        negative_prompt: str | None,
-        style_reference_count: int,
-        identity_reference_index: int | None,
-        key_vision_reference_index: int,
-    ) -> str:
-        del role_name, appearance_name, asset_role, negative_prompt, style_reference_count, identity_reference_index, key_vision_reference_index
-        return core_prompt.strip()
 
     @staticmethod
     def _appearance_desc(extract_item: RoleExtractItem) -> str:
@@ -998,8 +982,6 @@ class RoleboardPromptNode(RoleNodeBase):
         appearance_asset: RoleAppearanceExtractItem,
         output: Any,
         state: ProjectState,
-        *,
-        style_reference_count: int,
     ) -> RoleboardPromptItem:
         core_prompt = str(getattr(output, "roleboard_prompt", "") or "").strip()
         appearance_name = self._appearance_name(appearance_asset)
@@ -1013,23 +995,9 @@ class RoleboardPromptNode(RoleNodeBase):
         reference_name = str(appearance_asset.reference_asset_name or "").strip() or None
         if asset_role == "base":
             reference_name = None
-            identity_reference_index = None
         elif not reference_name:
             raise ValueError(f"role variant {extract_item.name}/{appearance_name} requires reference_asset_name")
-        else:
-            identity_reference_index = style_reference_count + 1
-        key_vision_reference_index = style_reference_count + (1 if identity_reference_index is not None else 0) + 1
         negative_prompt = str(getattr(output, "roleboard_negative_prompt", "") or "").strip() or None
-        final_prompt = self.final_roleboard_prompt(
-            role_name=extract_item.name,
-            appearance_name=appearance_name,
-            asset_role=asset_role,
-            core_prompt=core_prompt,
-            negative_prompt=negative_prompt,
-            style_reference_count=style_reference_count,
-            identity_reference_index=identity_reference_index,
-            key_vision_reference_index=key_vision_reference_index,
-        )
         return RoleboardPromptItem(
             role_id=role_id,
             role_name=extract_item.name,
@@ -1051,7 +1019,7 @@ class RoleboardPromptNode(RoleNodeBase):
             clothing="；".join(appearance_asset.wardrobe) or None,
             visual_features="；".join(appearance_asset.identity_invariants) or None,
             core_roleboard_prompt=core_prompt,
-            roleboard_prompt=final_prompt,
+            roleboard_prompt=core_prompt,
             roleboard_negative_prompt=negative_prompt,
             voice_profile_prompt=str(getattr(output, "voice_profile_prompt", "") or "").strip() or None,
             design_notes=str(getattr(output, "design_notes", "") or "").strip() or None,
@@ -1221,13 +1189,11 @@ class RoleboardPromptNode(RoleNodeBase):
         key_vision_asset = self._key_vision_asset_for_prompt(state)
         roleboard_image_context = self._roleboard_image_binding_context()
         prompt_variant = self._resolve_roleboard_prompt_variant(roleboard_image_context)
-        style_reference_count = self.roleboard_style_reference_count()
         self.logger.info(
-            "roleboard_prompt variant=%s image_provider=%s image_model=%s style_refs=%d",
+            "roleboard_prompt variant=%s image_provider=%s image_model=%s",
             prompt_variant,
             roleboard_image_context.get("provider_name") or "-",
             roleboard_image_context.get("model_name") or "-",
-            style_reference_count,
         )
 
         for extract_item in target_extract_roles:
@@ -1277,7 +1243,6 @@ class RoleboardPromptNode(RoleNodeBase):
                     appearance_asset,
                     output,
                     state,
-                    style_reference_count=style_reference_count,
                 )
                 prompt_path = self.roleboard_prompts.item_relative_path_for_name(project_dir, item.role_name)
                 self._apply_roleboard_prompt_item(

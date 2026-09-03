@@ -40,6 +40,10 @@ class ProjectLayout:
     def dynamic_assets_index_path(self, project_dir: Path) -> Path:
         return project_dir / "assets" / "json" / "assets" / "dynamic_assets.json"
 
+    def audit_rejection_log_path(self, project_dir: Path) -> Path:
+        """Permanent project document containing every rejected audit."""
+        return project_dir / "docs" / "audit_rejections.md"
+
     def ambient_entities_path(self, project_dir: Path) -> Path:
         return project_dir / "assets" / "json" / "assets" / "ambient_entities.json"
 
@@ -114,6 +118,7 @@ class ProjectLayout:
     def required_subdirs(self, project_dir: Path) -> list[Path]:
         configured = [project_dir / subdir for subdir in self.settings.output.subdirs.values()]
         fixed = [
+            project_dir / "docs",
             project_dir / "assets" / "json" / "nodes",
             project_dir / "assets" / "json" / "nodes" / "clip_segment",
             project_dir / "assets" / "json" / "scripts",
@@ -125,7 +130,11 @@ class ProjectLayout:
             project_dir / "assets" / "json" / "props",
             project_dir / "assets" / "images" / "roles",
             project_dir / "assets" / "images" / "key_visions",
+            project_dir / "assets" / "images" / "scene_multiview_boards",
+            project_dir / "assets" / "images" / "scene_multiview_views",
             project_dir / "assets" / "images" / "shot_backgrounds",
+            project_dir / "assets" / "images" / "shot_blocking_controls",
+            project_dir / "assets" / "images" / "shot_keyframe_stages",
             project_dir / "assets" / "images" / "shot_keyframes",
             project_dir / "assets" / "images" / "props",
             project_dir / "assets" / "images" / "layouts",

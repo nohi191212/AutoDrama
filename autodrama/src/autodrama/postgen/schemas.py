@@ -45,8 +45,8 @@ class PostgenTimelineItem(BaseModel):
 
 class PostgenOutputSpec(BaseModel):
     path: str
-    width: int = 720
-    height: int = 1280
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
     fps: int = 25
     burn_subtitles: bool = True
     audio: bool = True

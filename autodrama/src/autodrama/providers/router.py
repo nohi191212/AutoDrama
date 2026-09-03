@@ -6,7 +6,9 @@ from typing import Any
 from autodrama.config import Settings
 from autodrama.core.errors import ProviderBadResponseError
 from autodrama.core.model_catalog import ModelBinding, ModelCapability
+from autodrama.providers.aibox.image.banana import AiboxBananaImageProvider
 from autodrama.providers.aibox.image.gpt_image import AiboxImageProvider
+from autodrama.providers.aibox.text.gpt import AiboxGPTTextProvider
 from autodrama.providers.aliyun.audio.qwen_tts import QwenVoiceDesignProvider
 from autodrama.providers.aliyun.image.wanxiang import WanxiangImageProvider
 from autodrama.providers.aliyun.music.fun_music import BailianMusicProvider
@@ -57,7 +59,7 @@ MINIMAX_MUSIC_PROVIDER_NAMES = {"minimax", "minimax_music"}
 ELEVENLABS_MUSIC_PROVIDER_NAMES = {"elevenlabs", "elevenlabs_music"}
 VOLCENGINE_IMAGE_PROVIDER_NAMES = {"volcengine", "seedream", "volcengine_seedream"}
 KLING_VIDEO_PROVIDER_NAMES = {"kling", "kling_omni", "kling_video"}
-GOOGLE_TEXT_PROVIDER_NAMES = {"google", "gemini", "aibox", "aibox_gemini"}
+GOOGLE_TEXT_PROVIDER_NAMES = {"google", "gemini", "aibox_gemini"}
 
 
 class BoundProviderProxy:
@@ -188,7 +190,9 @@ class BoundProviderProxy:
             "roleboard_image_generation": "roleboard",
             "prop_image_generation": "prop",
             "layout_image_generation": "layout",
+            "scene_multiview_image_generation": "scene_multiview_board",
             "shot_background_image_generation": "shot_background",
+            "shot_keyframe_stage_generation": "shot_keyframe_stage",
             "shot_keyframe_image_generation": "shot_keyframe",
             "shot_video_generation": "shot_video",
             "bgm_generation": "bgm",
@@ -207,6 +211,7 @@ class BoundProviderProxy:
             "role_name",
             "prop_id",
             "prop_name",
+            "scene_id",
             "layout_id",
             "layout_name",
             "episode_key",
@@ -467,6 +472,14 @@ class ProviderRouter:
         )
         self.registry.register(
             "text",
+            {"aibox"},
+            lambda provider_name, purpose, binding=None, **_: self._aibox_text_provider(
+                purpose,
+                binding=binding,
+            ),
+        )
+        self.registry.register(
+            "text",
             GOOGLE_TEXT_PROVIDER_NAMES,
             lambda provider_name, purpose, **_: GeminiTextProvider(
                 self._settings_for(
@@ -498,10 +511,10 @@ class ProviderRouter:
         self.registry.register(
             "image",
             {"aibox", "ai_box"},
-            lambda provider_name, **_: AiboxImageProvider(
-                self._settings_for("aibox" if provider_name == "ai_box" else provider_name),
-                self.settings.runtime,
-                reference_uploader_settings=self.settings.providers.get("toapi"),
+            lambda provider_name, purpose="image", binding=None, **_: self._aibox_image_provider(
+                provider_name,
+                purpose=purpose,
+                binding=binding,
             ),
         )
         self.registry.register(
@@ -623,7 +636,7 @@ class ProviderRouter:
         factory = self.registry.factory_for(capability, provider_name)
         if factory is None:
             raise ValueError(f"Unsupported {capability} provider: {provider_name}")
-        provider = factory(provider_name=provider_name, purpose=purpose)
+        provider = factory(provider_name=provider_name, purpose=purpose, binding=binding)
         if binding is None and self._prompt_audit is None:
             return provider
         return BoundProviderProxy(
@@ -677,6 +690,57 @@ class ProviderRouter:
         if provider_name == "aliyun":
             return self.settings.providers["aliyun"]
         return self.settings.providers[provider_name]
+
+    def _aibox_text_provider(self, purpose: str, *, binding: ModelBinding | None = None):
+        if binding is not None and binding.spec.family == "gpt":
+            return AiboxGPTTextProvider(
+                self._settings_for("aibox"),
+                self.settings.runtime,
+                model_key=purpose,
+            )
+        return GeminiTextProvider(
+            self._settings_for("aibox"),
+            self.settings.runtime,
+            model_key=purpose,
+            provider_name="aibox",
+        )
+
+    def _aibox_image_provider(
+        self,
+        provider_name: str,
+        *,
+        purpose: str = "image",
+        binding: ModelBinding | None = None,
+    ):
+        settings_name = "aibox" if provider_name == "ai_box" else provider_name
+        settings = self._settings_for(settings_name)
+        configured_model = str(
+            (binding.spec.provider_model_name if binding is not None else "")
+            or settings.models.get(purpose)
+            or settings.models.get("image")
+            or ""
+        ).strip().casefold()
+        if (
+            binding is not None and binding.spec.family == "gemini-image"
+        ) or configured_model == "gemini-3-pro-image-preview":
+            return AiboxBananaImageProvider(
+                settings,
+                self.settings.runtime,
+                reference_uploader_settings=self.settings.providers.get("toapi"),
+                submission_ledger_path=(
+                    self._prompt_audit.project_dir
+                    / "logs"
+                    / "budgets"
+                    / "aibox_banana_image_submissions.jsonl"
+                    if self._prompt_audit is not None
+                    else None
+                ),
+            )
+        return AiboxImageProvider(
+            settings,
+            self.settings.runtime,
+            reference_uploader_settings=self.settings.providers.get("toapi"),
+        )
 
     def _aliyun_settings(self, *, base_url: str | None = None):
         settings = self.settings.providers["aliyun"].model_copy(deep=True)

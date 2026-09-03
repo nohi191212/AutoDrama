@@ -21,8 +21,9 @@ OUTPUT_ROOT='C:/Users/csh10/Desktop/projects/202605_AIGC/AutoDrama/outputs'
 # nodes remain listed because the code treats them as required delivery gates.
 pregen_default_nodes=(
   script_import
-  script_detail_expand
+  script_cinematic_adapt
   script_novel_extract
+  script_worldview_extract
   key_vision_prompt
   key_vision_image_generation
   key_vision_image_audit
@@ -45,6 +46,7 @@ pregen_default_nodes=(
   clip_segment
   clip_to_shots
   layout_to_background_prompt
+  shot_background_shot_reference
   shot_background_image_generation
   shot_background_image_audit
   shot_keyframe_prompt
@@ -57,6 +59,7 @@ pregen_default_nodes=(
 # by the current YAML's optional branches.  Run them only when deliberately
 # enabled or required by the selected workflow path.
 pregen_optional_nodes=(
+  key_vision_edit
   script_outline
   script_novel
   layout_prop_boundary_review
@@ -125,6 +128,13 @@ print_commands() {
 EOF
   print_group pregen 'Pregen default chain' "${pregen_default_nodes[@]}"
   print_group pregen 'Pregen optional/deferred nodes' "${pregen_optional_nodes[@]}"
+  printf '\n# Pregen node groups\n'
+  printf '"%s" -m autodrama.cli run pregen --config "%s" --project "<PROJECT_ID>" --node-group key_vision\n' \
+    "$PYTHON_EXE" "$CONFIG_PATH"
+  printf '"%s" -m autodrama.cli run pregen --config "%s" --project "<PROJECT_ID>" --node-group key_vision_edit\n' \
+    "$PYTHON_EXE" "$CONFIG_PATH"
+  printf '"%s" -m autodrama.cli run pregen --config "%s" --project "<PROJECT_ID>" --node-group role_extract\n' \
+    "$PYTHON_EXE" "$CONFIG_PATH"
   print_group generation 'Generation chain' "${generation_nodes[@]}"
   print_group postgen 'Postgen chain' "${postgen_nodes[@]}"
 }

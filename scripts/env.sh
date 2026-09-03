@@ -222,7 +222,7 @@ autodrama_cli() {
 
     args+=("${arg}")
     case "${arg}" in
-      --config|--script-file)
+      --config|--chapters-dir)
         convert_next="true"
         ;;
     esac

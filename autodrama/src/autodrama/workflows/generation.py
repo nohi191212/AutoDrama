@@ -21,6 +21,11 @@ from autodrama.providers.base import AssetRef
 from autodrama.repositories.dynamic_asset_repo import DynamicAssetRepository
 from autodrama.repositories.project_repo import ProjectRepository
 from autodrama.utils.prompts import PromptStore
+from autodrama.utils.video_prompts import (
+    VideoDialogueCue,
+    VideoRoleBinding,
+    compile_kling_video_prompt,
+)
 from autodrama.workflows.delegation import PregenWorkflowDelegateMixin
 from autodrama.workflows.generation_checklist import (
     selected_episode_keys_from_checklist,
@@ -40,6 +45,14 @@ from autodrama.workflows.selection import normalize_shot_selectors, sort_episode
 GENERATION_NODES = GENERATION_NODE_NAMES
 
 DEFAULT_GENERATION_NODES = list(GENERATION_NODE_NAMES)
+
+
+def _enabled_automatic_generation_nodes(
+    target_nodes: list[str],
+    *,
+    available_node_names: set[str],
+) -> list[str]:
+    return [node_name for node_name in target_nodes if node_name in available_node_names]
 
 
 class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
@@ -220,34 +233,40 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
     def _kling_native_prompt(self, prompt: str, state: ProjectState, shot: ShotManifestItem, provider: object) -> str:
         if not bool(getattr(provider, "supports_kling_omni_placeholders", False)):
             return prompt
-        marker = "[AUTODRAMA_KLING_ROLE_REFERENCES]"
-        legacy_marker = "[AUTODRAMA_KLING_ROLE_BINDINGS]"
-        if marker in prompt or legacy_marker in prompt:
-            return prompt
-        lines = [marker, "人物身份板引用绑定（必须严格遵守）："]
+        role_bindings: list[VideoRoleBinding] = []
+        role_token_by_id: dict[str, str] = {}
         for role_index, role_id in enumerate(shot.role_ids, start=1):
             role = state.roles.get(role_id)
             if role is None:
                 continue
-            lines.append(
-                f"- @role_{role_index} 是角色“{role.name}”的身份板；"
-                "仅用于保持脸、发型、体型、服装和整体造型一致。"
+            role_token = f"@role_{role_index}"
+            role_token_by_id[role_id] = role_token
+            role_bindings.append(
+                VideoRoleBinding(role_token=role_token, name=role.name)
             )
-        if shot.dialogue_lines:
-            lines.append("对白必须按以下顺序和角色归属逐字说出；角色依次说话，不要抢词、串音或互换音色：")
-            for line in shot.dialogue_lines:
-                speaker = state.roles.get(line.speaker_role_id) if line.speaker_role_id else None
-                speaker_label = speaker.name if speaker is not None else (line.speaker_name or "未指定说话人")
-                lines.append(
-                    f"- {speaker_label}（{line.delivery_mode}，{line.emotion}）：{line.text}"
+        dialogue_cues = []
+        for line in shot.dialogue_lines:
+            speaker = state.roles.get(line.speaker_role_id) if line.speaker_role_id else None
+            dialogue_cues.append(
+                VideoDialogueCue(
+                    speaker=speaker.name if speaker is not None else (line.speaker_name or "未指定说话人"),
+                    text=line.text,
+                    delivery_mode=line.delivery_mode,
+                    emotion=line.emotion,
+                    role_token=role_token_by_id.get(line.speaker_role_id or ""),
                 )
-        lines.append(
-            "以镜头关键帧为构图、机位和剧情状态锚点；仅延续关键帧中已有画面元素，"
-            "禁止新增、重绘、强化、显现或变形出任何文字、字幕、标语、logo、水印或假文字。"
+            )
+        action = shot.video_prompt
+        return compile_kling_video_prompt(
+            prompt,
+            duration_seconds=shot.duration_seconds,
+            dialogue_cues=dialogue_cues,
+            role_bindings=role_bindings,
+            action=action,
+            camera_movement="",
+            has_props=bool(shot.prop_ids),
+            max_characters=getattr(provider, "max_prompt_characters", None),
         )
-        # Keep role-reference/dialogue constraints before the long cinematic prompt so Kling's
-        # documented prompt-length limit cannot truncate the binding block.
-        return "\n".join(lines) + f"\n\n{prompt.rstrip()}"
 
     async def _run_generation_node_for_episode(
         self,
@@ -467,8 +486,8 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         episode_key: str,
     ) -> ShotVideoGenerationOutput:
         episode = self._load_shot_manifest(project_dir, episode_key)
-        if episode.schema_version != 5:
-            raise ValueError("shot_video_generation requires the schema_version=5 shot manifest")
+        if episode.schema_version != 6:
+            raise ValueError("shot_video_generation requires the schema_version=6 shot manifest")
         previous = getattr(self, "_active_video_node_name", None)
         self._active_video_node_name = "shot_video_generation"
         try:
@@ -508,6 +527,11 @@ class GenerationWorkflow(DynamicAssetNodeMixin, PregenWorkflowDelegateMixin):
         if only is not None and only not in GENERATION_NODES:
             raise ValueError(f"Unsupported generation only node: {only}")
         target_nodes = self._target_generation_nodes(until, only)
+        if only is None:
+            target_nodes = _enabled_automatic_generation_nodes(
+                target_nodes,
+                available_node_names={node.name for node in self.generation_episode_nodes},
+            )
 
         logger = setup_logging(project_dir)
         self.router.set_prompt_audit_project_dir(project_dir)

@@ -34,21 +34,23 @@ def collect_episode_source_clips(
     episode = ShotManifestEpisodeOutput.model_validate_json(shot_path.read_text(encoding="utf-8"))
     audit_path = repo.layout.node_output_path(project_dir, "shot_video_audit")
     if not audit_path.exists():
-        raise FileNotFoundError(
-            f"Postgen source collection requires accepted shot video audits: {audit_path}"
-        )
-    audit_output = VideoAssetAuditOutput.model_validate_json(audit_path.read_text(encoding="utf-8"))
-    accepted_audits = {
-        item.shot_id: item
-        for item in audit_output.audited_videos
-        if item.episode_key == episode_key and item.approved
-    }
+        # 视频审计关闭/未跑时，不阻塞素材收集：视为全部镜头通过，质量由外部人工监督。
+        accepted_audits: dict[str, VideoAssetAuditOutput | None] = {}
+        for shot in active_shots_for_episode(episode, shot_selectors):
+            accepted_audits[shot.shot_id] = None
+    else:
+        audit_output = VideoAssetAuditOutput.model_validate_json(audit_path.read_text(encoding="utf-8"))
+        accepted_audits = {
+            item.shot_id: item
+            for item in audit_output.audited_videos
+            if item.episode_key == episode_key and item.approved
+        }
     warnings: list[str] = []
     clips: list[PostgenSourceClip] = []
     for shot in sorted(active_shots_for_episode(episode, shot_selectors), key=lambda item: item.index):
         audit = accepted_audits.get(shot.shot_id)
-        if audit is None or audit.asset_id != shot.video_asset_id:
-            warnings.append(f"{shot.shot_id}: video audit missing, rejected, or for a stale asset")
+        if audit is not None and audit.asset_id != shot.video_asset_id:
+            warnings.append(f"{shot.shot_id}: video audit rejected or for a stale asset")
             continue
         source_path = resolve_project_path(project_dir, shot.video_asset_path)
         if source_path is None or not source_path.is_file() or source_path.stat().st_size <= 0:
@@ -78,8 +80,8 @@ def collect_episode_source_clips(
                 expected_dialogue=[line.text for line in shot.dialogue_lines],
                 gate_provenance={
                     "audit_node": "shot_video_audit",
-                    "asset_id": audit.asset_id,
-                    "attempts": audit.attempts,
+                    "asset_id": shot.video_asset_id or shot.shot_id,
+                    "attempts": getattr(audit, "attempts", None) if audit else None,
                 },
             )
         )

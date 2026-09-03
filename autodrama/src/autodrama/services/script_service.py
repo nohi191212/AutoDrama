@@ -5,21 +5,21 @@ import re
 
 from autodrama.core.schemas import (
     ClipSegmentOutput,
-    ScriptDetailExpandOutput,
-    ScriptImportOutput,
     ProjectState,
+    ScriptCinematicAdaptOutput,
+    ScriptImportOutput,
     ScriptNovelExtractModelOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
+    ScriptWorldviewExtractOutput,
 )
 from autodrama.providers.base import TextLLM
 from autodrama.utils.prompts import PromptStore
 
 
 class ScriptService:
-    def __init__(self, prompts: PromptStore, *, max_semantic_attempts: int = 1) -> None:
+    def __init__(self, prompts: PromptStore) -> None:
         self.prompts = prompts
-        self.max_semantic_attempts = max(1, int(max_semantic_attempts))
 
     @staticmethod
     def episode_count(state: ProjectState) -> int:
@@ -73,15 +73,11 @@ class ScriptService:
         provider: TextLLM,
         *,
         raw_script: str,
-        semantic_feedback: str | None = None,
-        prompt_attempt: int = 0,
     ) -> ScriptImportOutput:
         prompt = self.prompts.render(
             "script_import",
             raw_script=raw_script,
         )
-        if semantic_feedback:
-            prompt = f"{prompt.rstrip()}\n\n{semantic_feedback.strip()}\n"
         return await provider.generate_json(
             prompt,
             ScriptImportOutput,
@@ -89,9 +85,10 @@ class ScriptService:
             metadata={
                 "node_name": "script_import",
                 "project_id": state.project_id,
-                "prompt_attempt": prompt_attempt,
+                "expected_keys": self.state_episode_keys(state),
             },
         )
+
     async def script_outline(self, state: ProjectState, provider: TextLLM) -> ScriptOutlineOutput:
         episode_duration_seconds = self.episode_duration_seconds(state)
         prompt = self.prompts.render(
@@ -110,25 +107,24 @@ class ScriptService:
             },
         )
 
-    async def script_detail_expand(
+    async def script_cinematic_adapt(
         self,
         state: ProjectState,
         provider: TextLLM,
         *,
         episode_key: str,
         raw_script: str,
-        episode_outline: str = "",
-    ) -> ScriptDetailExpandOutput:
+    ) -> ScriptCinematicAdaptOutput:
         prompt = self.prompts.render(
-            "script_detail_expand",
+            "script_cinematic_adapt",
             raw_script=raw_script,
         )
         return await provider.generate_json(
             prompt,
-            ScriptDetailExpandOutput,
+            ScriptCinematicAdaptOutput,
             temperature=0.35,
             metadata={
-                "node_name": "script_detail_expand",
+                "node_name": "script_cinematic_adapt",
                 "project_id": state.project_id,
                 "episode_key": episode_key,
             },
@@ -157,6 +153,27 @@ class ScriptService:
             },
         )
 
+    async def script_worldview_extract(
+        self,
+        state: ProjectState,
+        provider: TextLLM,
+        *,
+        raw_script: str,
+    ) -> ScriptWorldviewExtractOutput:
+        prompt = self.prompts.render(
+            "script_worldview_extract",
+            raw_script=raw_script,
+        )
+        return await provider.generate_json(
+            prompt,
+            ScriptWorldviewExtractOutput,
+            temperature=0.2,
+            metadata={
+                "node_name": "script_worldview_extract",
+                "project_id": state.project_id,
+            },
+        )
+
     async def clip_segment(
         self,
         state: ProjectState,
@@ -167,14 +184,14 @@ class ScriptService:
         novel_extract_all_episodes: str,
         role_index: str,
         prop_index: str,
-        layout_index: str,
+        scene_index: str,
     ) -> ClipSegmentOutput:
         episode_duration_seconds = self.episode_duration_seconds(state)
         min_clip_seconds = 60
         max_clip_seconds = 120
         duration_reference_note = (
-            "episode_duration_seconds 只用于帮助判断文本节奏和信息密度，"
-            "不要据此机械计算或强行满足 clip 数量。"
+            "Use episode_duration_seconds only to judge text pacing and information density. "
+            "Do not mechanically calculate or force a clip count from it."
         )
         prompt = self.prompts.render(
             "clip_segment",
@@ -186,7 +203,7 @@ class ScriptService:
             novel_extract_all_episodes=novel_extract_all_episodes,
             role_index=role_index,
             prop_index=prop_index,
-            layout_index=layout_index,
+            scene_index=scene_index,
         )
         return await provider.generate_json(
             prompt,

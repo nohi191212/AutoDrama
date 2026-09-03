@@ -1,11 +1,13 @@
 # Shot-first 生成链路重构实施文档
 
+> 历史方案，仅供追溯。本文中的 `layout_names`、旧版 `clip_to_shots`、共享/内嵌背景步骤和节点顺序已被当前空间合同取代，不得作为实现依据。当前权威接口与顺序见 `PLAN_260705.md`、`PREGEN_NODES.md` 和源码 schema：每个 clip 只有一个 `scene_id`，每个 shot 显式携带人物站位与相机合同，并经过 `shot_background_shot_reference` 生成一对一的机位示意图和背景图；相关最终模板为英文，场景图片统一使用 Banana Pro 4K。
+
 ## 1. 文档目标
 
 本文档用于把当前以 `clip` 为视频生成单位、依赖十二宫格 storyboard 的链路，重构为：
 
 - `clip` 只表示一段约 1 到 2 分钟的连续剧情；
-- `shot` 表示一次 3 到 15 秒的视频生成任务；
+- `shot` 表示一次 1 到 15 秒的视频生成任务；
 - `shot` 拥有独立首帧关键帧；
 - 关键帧通过场景三视图、角色板和道具图进行两阶段图生图；
 - 视频模型主要接收已经融合好空间和人物信息的首帧关键帧；
@@ -23,7 +25,7 @@
 | `episode` | 一集完整剧本文本 |
 | `clip_segment` | 从 episode 中切出的长剧情段落，建议 60 到 120 秒 |
 | `clip` | 剧情组织容器，不直接对应一次生图或视频任务 |
-| `shot` | 一次 3 到 15 秒的视频生成任务，拥有一张首帧关键帧 |
+| `shot` | 一次 1 到 15 秒的视频生成任务，拥有一张首帧关键帧 |
 | 单镜头 `video_prompt` | 一个连续摄影镜头的运动和表演描述 |
 | 多镜头 `video_prompt` | 一个视频任务内包含多个编号镜头，由可灵 `multi_shot` 执行 |
 | 场景三视图 | 同一场景、同一空间结构下的三个一致视角，是场景母版 |
@@ -92,7 +94,7 @@ clip_manifest_generation
 ```text
 episode 文本
   -> clip_segment：60-120 秒剧情段落
-  -> clip_to_shots：每段生成多个 3-15 秒 shot
+  -> clip_to_shots：每段生成多个 1-15 秒 shot
   -> shot_keyframe_prompt：拼接风格和负面词
   -> shot_keyframe_image_generation：
        1. 场景三视图 -> 当前 shot 无人背景
@@ -168,7 +170,7 @@ class ClipToShotsModelItem(BaseModel):
     ref_ids: list[str] = Field(default_factory=list)
     video_prompt: str
     duration_seconds: int = Field(
-        ge=3,
+        ge=1,
         le=15,
         validation_alias=AliasChoices("duration_seconds", "duration"),
     )
@@ -184,13 +186,13 @@ class ClipToShotsModelOutput(RootModel[dict[str, ClipToShotsModelItem]]):
 约束：
 
 - JSON 中时长使用整数秒，例如 `3`，不使用非法值 `3s`；
-- `duration_seconds` 必须在 3 到 15 之间；
+- `duration_seconds` 必须在 1 到 15 之间；
 - `keyframe_prompt` 使用纯英文；
 - `keyframe_prompt` 只描述动作开始前的首帧状态；
 - `keyframe_prompt` 必须明确摄影机角度、景别、人物站位、前中后景、朝向、视线和遮挡；
 - `keyframe_prompt` 不写完整动作过程，不写视频运镜，不写风格词和负面词；
-- `video_prompt` 可以是单镜头，也可以是连续编号的多镜头；
-- 多镜头格式固定为每行 `镜头N-内容`；
+- 每个 shot 只能描述一个连续机位，`video_prompt` 不得包含内部切镜、反打、插入第二视点或多镜头编号；
+- 相邻 shot 默认直接切镜，需要新机位时必须拆成新的 shot；
 - `ref_ids` 只能引用输入资产索引里提供的真实 ID；
 - `ref_ids` 不包含路径、URL、文件名或 provider 信息；
 - 有实体场景的 shot 必须且只能选一个主 layout；
@@ -654,7 +656,7 @@ prop_snowmobile_asset_base: 黑红色雪地摩托
 `clip_to_shots.md` 保持简短，核心规则：
 
 - 把当前 clip 完整切成有序 shot；
-- 每个 shot 3 到 15 秒；
+- 每个 shot 1 到 15 秒；
 - 不遗漏剧情，不重复动作；
 - 对白不跨 shot 生硬切断；
 - 空间变化必须切 shot；
@@ -679,7 +681,7 @@ prop_snowmobile_asset_base: 黑红色雪地摩托
 - 至少一个 shot；
 - key 从 `clip_N_shot_1` 连续递增；
 - canonical shot ID 不重复；
-- `duration_seconds` 在 3 到 15；
+- `duration_seconds` 在 1 到 15；
 - `keyframe_prompt` 和 `video_prompt` 非空；
 - `ref_ids` 全部可以解析；
 - 每个有实体空间的 shot 恰好一个 layout；
@@ -911,7 +913,7 @@ image_2..N: involved_character_roleboards
 - 每个 `ref_id` 可解析；
 - 每个角色 appearance 有有效 roleboard；
 - 每个 layout 有有效三视图；
-- `duration_seconds` 在 3 到 15；
+- `duration_seconds` 在 1 到 15；
 - `video_prompt` 非空；
 - 有对白角色可以映射到 `role_id`；
 - manifest 中不出现 storyboard 资产。
@@ -1323,7 +1325,7 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/shot_pipeline_fake_e2e_smo
 
 - `clip_segment` prompt 明确 60 到 120 秒；
 - clip 数量不再与 episode 时长硬绑定；
-- 每个 shot 时长为 3 到 15 秒；
+- 每个 shot 时长为 1 到 15 秒；
 - shot ID 全局稳定且顺序连续；
 - keyframe prompt 明确空间关系和摄影角度；
 - `ref_ids` 全部可解析；
@@ -1375,7 +1377,7 @@ D:/miniforge3/envs/autodrama/python.exe scripts/smoke/shot_pipeline_fake_e2e_smo
 - 不把 layout 三视图重复提交到最终关键帧；
 - 超过 provider 限制时硬报错并要求拆 shot。
 
-### 18.4 多镜头内容与 3 到 15 秒不匹配
+### 18.4 多镜头内容与 1 到 15 秒不匹配
 
 处理：
 

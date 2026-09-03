@@ -15,9 +15,13 @@ from autodrama.postgen.audio_pipeline import (
     separate_stems,
 )
 from autodrama.postgen.audit import audit_final_video, audit_source_clips, build_review_reel
-from autodrama.postgen.edit_plan_validator import estimate_timeline_duration, validate_edit_plan
+from autodrama.postgen.edit_plan_validator import (
+    estimate_timeline_duration,
+    resolve_project_path,
+    validate_edit_plan,
+)
 from autodrama.postgen.edit_prompt import build_postgen_edit_plan_prompt
-from autodrama.postgen.ffmpeg_composer import PostgenFfmpegComposer
+from autodrama.postgen.ffmpeg_composer import PostgenFfmpegComposer, probe_video_dimensions
 from autodrama.postgen.schemas import (
     POSTGEN_EDIT_PLAN_SCHEMA_VERSION,
     PostgenEditPlan,
@@ -424,6 +428,21 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
                 mode = "gemini_batched" if len(batches) > 1 else "gemini"
             path = self._source_audit_path(project_dir, episode_key)
             self.repo.write_json(path, report)
+            for clip in report.clips:
+                if clip.verdict != "reject":
+                    continue
+                self.repo.append_audit_rejection(
+                    project_dir,
+                    node_name="postgen_source_audit",
+                    asset_id=clip.shot_id,
+                    attempt=1,
+                    issues=[
+                        f"[{issue.category}/{issue.severity}] {issue.description}"
+                        for issue in clip.issues
+                    ],
+                    rationale=clip.edit_guidance,
+                    current_prompt="",
+                )
             outputs.append({"episode_key": episode_key, "path": self._relative(project_dir, path), "mode": mode})
         self.repo.save_node_output(project_dir, "postgen_source_audit", {"episodes": outputs})
         state.metadata["postgen_source_audits"] = outputs
@@ -469,15 +488,24 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
         output_path: str,
     ) -> PostgenEditPlan:
         settings = self.repo.settings.postgen
+        width, height = await self._inherited_source_dimensions(project_dir, clips)
         if settings.edit_plan_mode == "deterministic":
-            return self._deterministic_plan(state, episode_key, clips, audit, output_path)
+            return self._deterministic_plan(
+                state,
+                episode_key,
+                clips,
+                audit,
+                output_path,
+                width=width,
+                height=height,
+            )
         provider = self.router.text("postgen_edit_plan", node_name="postgen_edit_plan_generation")
         prompt = build_postgen_edit_plan_prompt(
             source_clips=clips,
             source_audit=audit,
             output_path=output_path,
-            width=settings.render_width,
-            height=settings.render_height,
+            width=width,
+            height=height,
             fps=settings.fps,
         )
         review_reel, review_ranges = await build_review_reel(
@@ -505,6 +533,30 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
         plan.metadata.update({"provider": getattr(provider, "name", "unknown"), "model": getattr(provider, "model", None), "mode": "llm"})
         return plan
 
+    async def _inherited_source_dimensions(
+        self,
+        project_dir: Path,
+        clips: list[PostgenSourceClip],
+    ) -> tuple[int, int]:
+        dimensions_by_shot: dict[str, tuple[int, int]] = {}
+        for clip in clips:
+            source_path = resolve_project_path(project_dir, clip.source_path)
+            dimensions = await probe_video_dimensions(
+                source_path,
+                ffmpeg_path=self.repo.settings.runtime.ffmpeg_path,
+            )
+            if dimensions is None:
+                raise ValueError(f"cannot read source video dimensions for {clip.shot_id}: {source_path}")
+            dimensions_by_shot[clip.shot_id] = dimensions
+        unique_dimensions = set(dimensions_by_shot.values())
+        if len(unique_dimensions) != 1:
+            details = ", ".join(
+                f"{shot_id}={width}x{height}"
+                for shot_id, (width, height) in dimensions_by_shot.items()
+            )
+            raise ValueError(f"postgen source videos must share one frame size: {details}")
+        return next(iter(unique_dimensions))
+
     def _deterministic_plan(
         self,
         state: ProjectState,
@@ -512,6 +564,9 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
         clips: list[PostgenSourceClip],
         audit: PostgenSourceAuditReport,
         output_path: str,
+        *,
+        width: int,
+        height: int,
     ) -> PostgenEditPlan:
         audit_by_shot = {item.shot_id: item for item in audit.clips}
         timeline: list[PostgenTimelineItem] = []
@@ -544,8 +599,8 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
             timeline=timeline,
             output=PostgenOutputSpec(
                 path=output_path,
-                width=self.repo.settings.postgen.render_width,
-                height=self.repo.settings.postgen.render_height,
+                width=width,
+                height=height,
                 fps=self.repo.settings.postgen.fps,
                 burn_subtitles=self.repo.settings.postgen.burn_subtitles,
                 audio=True,
@@ -557,6 +612,7 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
         outputs: list[dict[str, Any]] = []
         for episode_key in episode_keys:
             clips = self._load_source_clips(project_dir, episode_key)
+            width, height = await self._inherited_source_dimensions(project_dir, clips)
             raw_path = self._raw_plan_path(project_dir, episode_key)
             raw = PostgenEditPlan.model_validate_json(raw_path.read_text(encoding="utf-8"))
             audit = PostgenSourceAuditReport.model_validate_json(
@@ -569,8 +625,8 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
                 expected_source_clips=clips,
                 source_audit=audit,
                 output_path=self._relative(project_dir, self._edited_video_path(project_dir, episode_key)),
-                width=self.repo.settings.postgen.render_width,
-                height=self.repo.settings.postgen.render_height,
+                width=width,
+                height=height,
                 fps=self.repo.settings.postgen.fps,
             )
             path = self._validated_plan_path(project_dir, episode_key)
@@ -739,12 +795,15 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
                 transcript = self._read_json(self._transcript_path(project_dir, episode_key))
                 cues = build_cues(transcript, settings)
                 cue_count = len(cues)
+                validated_plan = PostgenEditPlan.model_validate_json(
+                    self._validated_plan_path(project_dir, episode_key).read_text(encoding="utf-8")
+                )
                 write_subtitle_files(
                     cues,
                     srt_path=srt_path,
                     ass_path=ass_path,
-                    width=self.repo.settings.postgen.render_width,
-                    height=self.repo.settings.postgen.render_height,
+                    width=validated_plan.output.width,
+                    height=validated_plan.output.height,
                     settings=settings,
                 )
                 if self.repo.settings.postgen.burn_subtitles:
@@ -796,6 +855,19 @@ class PostgenWorkflow(PregenWorkflowDelegateMixin):
                 mode = "gemini"
             path = self._final_audit_path(project_dir, episode_key)
             self.repo.write_json(path, report)
+            if report.verdict == "fail":
+                self.repo.append_audit_rejection(
+                    project_dir,
+                    node_name="postgen_final_audit",
+                    asset_id=episode_key,
+                    attempt=1,
+                    issues=[
+                        f"[{issue.category}/{issue.severity}] {issue.description}"
+                        for issue in report.issues
+                    ],
+                    rationale=report.summary,
+                    current_prompt="",
+                )
             deliverable_path = None
             if report.verdict == "pass":
                 deliverable = self._deliverable_video_path(project_dir, episode_key)

@@ -8,6 +8,7 @@ AutoDrama 将剧本拆成可生成的 shot，并为每个 shot 生成可审计�
 clip_segment
 → clip_to_shots
 → layout_to_background_prompt
+→ shot_background_shot_reference
 → shot_background_image_generation
 → shot_keyframe_prompt
 → shot_keyframe_image_generation
@@ -15,7 +16,7 @@ clip_segment
 → shot_video_generation
 ```
 
-每个 shot 都有一个唯一的 `narrative_angle`。场景母版图用于规划可复用的无人背景；关键帧再以该背景为图 1，按角色、道具顺序使用后续参考图。无人 shot 也会生成独立的关键帧文件，不与背景图共用路径。视频生成只提交这张剧情关键帧和该 shot 涉及人物的角色身份板；关键帧是普通参考图，不强制作为首帧，也不要求尾帧。
+每个 clip 必须且只能绑定一个 `scene_id`，同一场景可以供多个 clip 使用。`clip_to_shots` 会结合这张唯一的场景空间母版，为每个 shot 显式规划人物站位、相机位置、拍摄角度、景别、俯仰和视场角。随后 `shot_background_shot_reference` 先把空间母版编辑成机位与站位示意图，背景节点再同时参考空间母版和该示意图生成一对一的无人背景；关键帧以该背景为图 1，按角色、道具顺序使用后续参考图。无人 shot 也会生成独立的关键帧文件，不与背景图共用路径。视频生成只提交这张剧情关键帧和该 shot 涉及人物的角色身份板；关键帧是普通参考图，不强制作为首帧，也不要求尾帧。
 
 所有实际发送给模型的提示词会在调用边界原样保存到：
 
@@ -24,7 +25,7 @@ logs/prompts/<asset_type>/<asset_name>.prompt.txt
 logs/prompts/<asset_type>/history/<asset_name>.attempt-XX.prompt.txt
 ```
 
-模板位于 `autodrama/src/autodrama/prompts/<node>/`。`default.md` 描述内容任务；可选的 `render.py` 只做确定性的最终提示词组装。
+模板位于 `autodrama/src/autodrama/prompts/<node>/`。本链路的最终提示词模板使用英文，直接发送给裸模型 API；`default.md` 描述内容任务，可选的 `render.py` 只做确定性的最终提示词组装，不依赖 skill。
 
 ## 运行
 

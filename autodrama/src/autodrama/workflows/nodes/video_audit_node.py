@@ -18,6 +18,12 @@ from autodrama.core.schemas import (
 )
 from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef
+from autodrama.utils.video_prompts import (
+    VideoDialogueCue,
+    classify_video_prompt_profile,
+    is_grounded_locomotion_action,
+    is_prop_transfer_action,
+)
 from autodrama.workflows.runner import EpisodeWorkflowNode
 
 
@@ -65,11 +71,80 @@ class ShotVideoAuditNode:
 
     @staticmethod
     def _expectation(shot: ShotManifestItem) -> str:
+        dialogue_cues = [
+            VideoDialogueCue(
+                speaker=line.speaker_name or line.speaker_role_id or "未指定说话人",
+                text=line.text,
+                delivery_mode=line.delivery_mode,
+                emotion=line.emotion,
+            )
+            for line in shot.dialogue_lines
+        ]
+        profile = classify_video_prompt_profile(
+            dialogue_cues,
+            duration_seconds=shot.duration_seconds,
+        )
+        if profile == "voiceover":
+            exact_lines = "；".join(
+                f"{cue.speaker}逐字旁白“{cue.text}”" for cue in dialogue_cues
+            )
+            audio_expectation = (
+                f"旁白：{exact_lines}。旁白应随镜头开始并完整播放；所有画中人物始终闭嘴，"
+                "输入中已有的画面动作与旁白同步推进。"
+            )
+        elif profile == "offscreen_dialogue":
+            cue = dialogue_cues[0]
+            audio_expectation = (
+                f"画外对白：{cue.speaker}在画外逐字说“{cue.text}”。"
+                "声音应在0.8秒内开始且声源始终在画外；所有画中人物始终闭嘴，"
+                "输入中已有的画面动作与画外对白同步推进。"
+            )
+        elif profile == "multi_dialogue":
+            exact_lines = "；".join(
+                f"{cue.speaker}（{cue.delivery_mode}）逐字说“{cue.text}”" for cue in dialogue_cues
+            )
+            audio_expectation = (
+                f"多句对白：{exact_lines}。实际音频必须完整、顺序和说话人正确；"
+                "画中对白只允许当前具名说话者动嘴，所有听者闭嘴；"
+                "画外对白和旁白不得激活任何画中人物嘴型；第一句应在0.8秒内开始。"
+            )
+        elif dialogue_cues:
+            exact_lines = "；".join(
+                f"{cue.speaker}逐字说“{cue.text}”" for cue in dialogue_cues
+            )
+            audio_expectation = (
+                f"对白：{exact_lines}。实际音频必须完整、顺序和说话人正确；"
+                "说话应与输入中已有的镜头表演同步开始，不得增加独立无声开场；"
+                "所有非说话者始终闭嘴，说完后嘴部闭合并短暂稳定。"
+            )
+        else:
+            audio_expectation = "静默镜头：所有人物始终闭嘴，不得出现对白或旁白。"
+        action = shot.video_prompt
+        prop_expectation = ""
+        if shot.prop_ids and is_prop_transfer_action(action):
+            prop_expectation = (
+                "输入中已有的道具交接应呈现清楚的接触、重量承接、释放与分离；"
+                "不得增加未描述的道具行为，道具不得脱离接触自行运动，手指不得融合或穿插。"
+            )
+        locomotion_expectation = ""
+        if is_grounded_locomotion_action(action):
+            locomotion_expectation = (
+                "输入中已有的位移动作应保持可信的平衡、支撑和重量转移，次级运动自然跟随；"
+                "不得增加未描述的位移动作，也不得出现滑行或失重感。"
+            )
+        silent_pacing_expectation = ""
+        if not dialogue_cues:
+            silent_pacing_expectation = (
+                "记录输入中已有主动作的完成时间、已有后续动作的结束时间和纯停留长度；"
+                "不得把动作拖满全片，也不得过早完成后长时间空等；"
+                "运镜随已有动作落点结束，结尾短暂稳定，不增加新的表演动作。"
+            )
         return (
-            f"镜头内容：{shot.shot_description or shot.content or shot.title}。"
-            f"动作与叙事：{shot.narrative_angle}。"
+            f"镜头提示词：{shot.video_prompt}。"
+            f"{audio_expectation}{prop_expectation}{locomotion_expectation}{silent_pacing_expectation}"
             "动作自然连贯、节奏稳定，角色身份和服饰持续一致，肢体结构正确；"
             "画面不得出现字幕、logo、水印、假文字或无关主体。"
+            "不得把输入中没有的姿态、视线、表情、动作、道具行为或镜头设计作为通过条件。"
         )
 
     def _merge_regenerated_video(
@@ -166,6 +241,16 @@ class ShotVideoAuditNode:
                     rationale=str(decision.rationale or "").strip(),
                     attempts=attempt,
                 )
+            self.repo.append_audit_rejection(
+                project_dir,
+                node_name=self.name,
+                asset_id=shot.video_asset_id or shot.shot_id,
+                attempt=attempt,
+                issues=decision.issues,
+                rationale=str(decision.rationale or "").strip(),
+                current_prompt=shot.final_video_prompt or shot.video_prompt,
+                revised_prompt=decision.revised_prompt,
+            )
             if not decision.revised_prompt:
                 raise ValueError(f"shot_video_audit rejected {shot.shot_id} without a revised_prompt")
             if attempt > max_repairs:

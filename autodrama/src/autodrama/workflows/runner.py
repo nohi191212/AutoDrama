@@ -14,7 +14,6 @@ NodeFunc = Callable[[Path, ProjectState], Awaitable[ProjectState]]
 EpisodeNodeFunc = Callable[[Path, ProjectState, str], Awaitable[BaseModel]]
 NODE_COMPLETION_ALIASES = {
     "script_import": ("script_outline",),
-    "script_detail_expand": ("script_novel",),
     "key_vision_prompt": ("design_key_vision_prompt",),
     "key_vision_image_generation": ("key_vision_image", "design_key_vision_image"),
 }

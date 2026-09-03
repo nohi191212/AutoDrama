@@ -18,7 +18,7 @@ def test_router_supports_qwen_wanxiang_and_rightcode(tmp_path: Path) -> None:
 project:
   id: demo
   title: Demo
-  script_outline_file: ./story.md
+  script_chapters_dir: ./chapters
 output:
   root_dir: ./outputs
 providers:
@@ -85,7 +85,7 @@ def test_router_keeps_aliyun_audio_alias(tmp_path: Path) -> None:
 project:
   id: demo
   title: Demo
-  script_outline_file: ./story.md
+  script_chapters_dir: ./chapters
 output:
   root_dir: ./outputs
 providers:

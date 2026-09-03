@@ -1,0 +1,238 @@
+from __future__ import annotations
+
+from typing import Any, Literal, Protocol, TypeVar
+
+from pydantic import BaseModel, Field
+
+T = TypeVar("T", bound=BaseModel)
+
+
+class TextLLM(Protocol):
+    name: str
+
+    async def generate_json(
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        temperature: float = 0.7,
+        metadata: dict[str, Any] | None = None,
+        refs: list["AssetRef"] | None = None,
+    ) -> T:
+        """Generate JSON validated by the requested Pydantic schema."""
+
+
+class AudioJudgeLLM(Protocol):
+    name: str
+
+    async def judge_audio_json(
+        self,
+        prompt: str,
+        schema: type[T],
+        *,
+        refs: list["AssetRef"],
+        temperature: float = 0.2,
+        metadata: dict[str, Any] | None = None,
+    ) -> T:
+        """Judge or describe audio references and return schema-validated JSON."""
+
+
+class AssetRef(BaseModel):
+    id: str | None = None
+    type: Literal["image", "video", "audio", "file", "url", "element"] = "url"
+    path: str | None = None
+    url: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ImageGenerationResult(BaseModel):
+    provider: str
+    model: str
+    image_urls: list[str] = Field(default_factory=list)
+    image_data: list[str] = Field(default_factory=list)
+    task_id: str | None = None
+    task_status: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class MusicGenerationResult(BaseModel):
+    provider: str
+    model: str
+    audio_id: str | None = None
+    audio_url: str | None = None
+    audio_data: str | None = None
+    audio_format: str | None = None
+    duration_seconds: float | None = None
+    lyrics: str | None = None
+    sample_rate: int | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class ImageGenerator(Protocol):
+    name: str
+
+    async def generate_image(
+        self,
+        prompt: str,
+        refs: list[AssetRef] | None = None,
+        *,
+        size: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ImageGenerationResult:
+        """Generate image assets and return temporary URLs or base64 image data."""
+
+
+class MusicGenerator(Protocol):
+    name: str
+
+    async def generate_music(
+        self,
+        prompt: str,
+        *,
+        lyrics: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> MusicGenerationResult:
+        """Generate a music asset and return a temporary URL or base64 audio data."""
+
+
+class VoiceDesignResult(BaseModel):
+    provider: str
+    model: str
+    voice: str
+    target_model: str | None = None
+    preview_audio_data: str | None = None
+    preview_audio_sample_rate: int | None = None
+    preview_audio_format: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class VoiceSynthesisResult(BaseModel):
+    provider: str
+    model: str
+    voice: str
+    audio_data: str | None = None
+    audio_sample_rate: int | None = None
+    audio_format: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class VoiceAssetResult(BaseModel):
+    """Reusable provider-side voice asset, such as a Kling custom voice."""
+
+    provider: str
+    model: str
+    task_id: str | None = None
+    task_status: str | None = None
+    voice_id: str | None = None
+    voice_name: str | None = None
+    trial_url: str | None = None
+    owned_by: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class SpeechSynthesizer(Protocol):
+    name: str
+
+    async def synthesize_speech(
+        self,
+        *,
+        voice: str,
+        text: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceSynthesisResult:
+        """Synthesize speech using an existing provider voice/speaker."""
+
+
+class VoiceDesigner(Protocol):
+    name: str
+
+    async def create_voice(
+        self,
+        *,
+        voice_prompt: str,
+        preview_text: str,
+        preferred_name: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceDesignResult:
+        """Create a reusable TTS voice and return its preview audio."""
+
+    async def clone_voice_from_audio(
+        self,
+        *,
+        source_audio_path: str,
+        preferred_name: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceDesignResult:
+        """Clone a reusable TTS voice from a local audio sample."""
+
+    async def synthesize_speech(
+        self,
+        *,
+        voice: str,
+        text: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> VoiceSynthesisResult:
+        """Synthesize sample speech using an existing voice."""
+
+
+class VideoGenerationResult(BaseModel):
+    provider: str
+    model: str
+    task_id: str | None = None
+    task_status: str | None = None
+    video_url: str | None = None
+    video_data: str | None = None
+    last_frame_url: str | None = None
+    last_frame_data: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class SubjectElementResult(BaseModel):
+    provider: str
+    model: str
+    task_id: str | None = None
+    task_status: str | None = None
+    element_id: str | None = None
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class VideoGenerator(Protocol):
+    name: str
+
+    async def submit_video(
+        self,
+        prompt: str,
+        refs: list[AssetRef] | None = None,
+        *,
+        duration: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> VideoGenerationResult:
+        """Submit a video generation task and return its task id/status."""
+
+    async def query_video_task(self, task_id: str) -> VideoGenerationResult:
+        """Query an async video generation task."""
+
+    async def generate_video(
+        self,
+        prompt: str,
+        refs: list[AssetRef] | None = None,
+        *,
+        duration: float | None = None,
+        wait: bool = False,
+        metadata: dict[str, Any] | None = None,
+    ) -> VideoGenerationResult:
+        """Submit a video task, optionally polling until completion."""

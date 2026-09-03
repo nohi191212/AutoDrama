@@ -9,9 +9,9 @@ def identity_brief(appearance: RoleAppearance) -> str:
     if appearance.asset_role == "variant":
         if not appearance.reference_asset_name:
             raise ValueError(f"variant appearance {appearance.id} requires reference_asset_name")
-        if not (appearance.valid_from_event or appearance.valid_to_event):
+        if not (appearance.time_period or appearance.valid_from_event or appearance.valid_to_event):
             raise ValueError(
-                f"variant appearance {appearance.id} requires an explicit event validity range"
+                f"variant appearance {appearance.id} requires a time_period or an explicit event validity range"
             )
     clean_values = normalize_identity_values([*appearance.identity_invariants, *appearance.wardrobe])
     if not clean_values:
@@ -61,43 +61,3 @@ def render_character_visual_context(
         "stable_identity": stable_identity,
         "current_shot_state": "；".join(state_parts),
     }
-
-
-def assert_duration_gate(total: float, target: float, *, tolerance: float = 0.05) -> None:
-    low = target * (1 - tolerance)
-    high = target * (1 + tolerance)
-    if not low <= total <= high:
-        raise ValueError(
-            f"shot duration gate rejected total={total:.3f}s; expected {low:.3f}-{high:.3f}s for target={target:.3f}s"
-        )
-
-
-def normalize_shot_durations(durations: list[int], target: int, *, minimum: int = 3, maximum: int = 15) -> list[int]:
-    if not durations:
-        raise ValueError("cannot allocate duration to an empty shot plan")
-    if not len(durations) * minimum <= target <= len(durations) * maximum:
-        raise ValueError(
-            f"shot count {len(durations)} cannot satisfy target {target}s within {minimum}-{maximum}s per shot"
-        )
-    weights = [max(minimum, min(maximum, int(value))) for value in durations]
-    scaled = [target * value / sum(weights) for value in weights]
-    result = [max(minimum, min(maximum, int(value))) for value in scaled]
-    remainder = target - sum(result)
-    order = sorted(range(len(result)), key=lambda i: scaled[i] - int(scaled[i]), reverse=remainder > 0)
-    while remainder:
-        changed = False
-        for index in order:
-            if remainder > 0 and result[index] < maximum:
-                result[index] += 1
-                remainder -= 1
-                changed = True
-            elif remainder < 0 and result[index] > minimum:
-                result[index] -= 1
-                remainder += 1
-                changed = True
-            if remainder == 0:
-                break
-        if not changed:
-            raise ValueError("duration allocation became infeasible")
-    assert_duration_gate(float(sum(result)), float(target))
-    return result

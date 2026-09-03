@@ -38,7 +38,7 @@ class VolcengineSeedreamImageProvider:
             settings.options.get("seedream_image_size")
             or settings.options.get("image_size")
             or settings.options.get("size")
-            or "1600x2848"
+            or "2848x1600"
         )
         self.output_format = str(
             settings.options.get("seedream_output_format") or settings.options.get("output_format") or "png"

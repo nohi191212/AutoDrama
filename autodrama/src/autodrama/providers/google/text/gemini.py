@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import mimetypes
@@ -11,6 +12,7 @@ from pydantic import BaseModel, ValidationError
 
 from autodrama.config import ProviderSettings, RuntimeSettings
 from autodrama.core.errors import ProviderAuthError, ProviderBadResponseError
+from autodrama.logging import get_logger
 from autodrama.providers.base import AssetRef
 from autodrama.providers.json_utils import parse_json_object
 
@@ -20,6 +22,7 @@ T = TypeVar("T", bound=BaseModel)
 class GeminiTextProvider:
     name = "google"
     supports_local_refs = True
+    RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
     def __init__(
         self,
@@ -139,6 +142,113 @@ class GeminiTextProvider:
             }
         }
 
+    def _max_request_attempts(self) -> int:
+        try:
+            return max(1, int(self.runtime.max_text_retry))
+        except (TypeError, ValueError):
+            return 5
+
+    def _retry_delay_seconds(self, attempt: int) -> float:
+        options = self.settings.options
+        try:
+            initial = float(
+                options.get(
+                    "text_retry_initial_delay_seconds",
+                    options.get(
+                        "retry_initial_delay_seconds",
+                        self.runtime.text_retry_initial_delay_seconds,
+                    ),
+                )
+            )
+        except (TypeError, ValueError):
+            initial = float(self.runtime.text_retry_initial_delay_seconds)
+        try:
+            maximum = float(
+                options.get(
+                    "text_retry_max_delay_seconds",
+                    options.get(
+                        "retry_max_delay_seconds",
+                        self.runtime.text_retry_max_delay_seconds,
+                    ),
+                )
+            )
+        except (TypeError, ValueError):
+            maximum = float(self.runtime.text_retry_max_delay_seconds)
+        return min(max(0.0, maximum), max(0.0, initial) * (2 ** max(0, attempt - 1)))
+
+    async def _post_with_retries(
+        self,
+        *,
+        payload: dict[str, Any],
+        params: dict[str, str],
+        headers: dict[str, str],
+        metadata: dict[str, Any],
+        operation: str,
+    ) -> httpx.Response:
+        max_attempts = self._max_request_attempts()
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(
+                        self._endpoint(),
+                        params=params,
+                        headers=headers,
+                        json=payload,
+                    )
+            except httpx.TransportError as exc:
+                if attempt >= max_attempts:
+                    raise ProviderBadResponseError(
+                        f"Gemini {operation} request failed after {attempt} attempt(s): "
+                        f"{exc.__class__.__name__}: {exc}"
+                    ) from exc
+                await self._retry_after_failure(
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    metadata=metadata,
+                    operation=operation,
+                    reason=f"{exc.__class__.__name__}: {exc}",
+                )
+                continue
+
+            if response.status_code in self.RETRYABLE_HTTP_STATUS_CODES and attempt < max_attempts:
+                await self._retry_after_failure(
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    metadata=metadata,
+                    operation=operation,
+                    reason=f"HTTP {response.status_code}: {response.text[:300]}",
+                )
+                continue
+            return response
+
+        raise ProviderBadResponseError(
+            f"Gemini {operation} request failed after {max_attempts} attempt(s): no response received"
+        )
+
+    async def _retry_after_failure(
+        self,
+        *,
+        attempt: int,
+        max_attempts: int,
+        metadata: dict[str, Any],
+        operation: str,
+        reason: str,
+    ) -> None:
+        delay_seconds = self._retry_delay_seconds(attempt)
+        get_logger().warning(
+            "Gemini text %s attempt %d/%d failed node=%s provider=%s model=%s: %s; retrying in %.1fs",
+            operation,
+            attempt,
+            max_attempts,
+            metadata.get("node_name") or "-",
+            self.name,
+            self.model,
+            reason,
+            delay_seconds,
+        )
+        if delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+
     @staticmethod
     def _extract_text(payload: dict[str, Any]) -> str:
         candidates = payload.get("candidates")
@@ -170,44 +280,64 @@ class GeminiTextProvider:
         payload = self.build_payload(prompt, schema, temperature=temperature, metadata=merged_metadata, refs=refs)
         headers = self._headers()
         request_params = self._request_params()
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(self._endpoint(), params=request_params, headers=headers, json=payload)
+        response = await self._post_with_retries(
+            payload=payload,
+            params=request_params,
+            headers=headers,
+            metadata=merged_metadata,
+            operation="generate_json",
+        )
         if response.status_code >= 400:
             raise ProviderBadResponseError(
                 f"Gemini generateContent failed with HTTP {response.status_code}: {response.text[:2000]}"
             )
         response_payload = response.json()
         content = self._extract_text(response_payload)
-        parsed = parse_json_object(content)
-        try:
-            return schema.model_validate(parsed)
-        except ValidationError as exc:
-            repair_prompt = (
-                "将下面未通过校验的 JSON 修复为指定结构。只输出修复后的 JSON，不要解释，不要新增事实。\n\n"
-                f"JSON Schema:\n{json.dumps(self._gemini_json_schema(schema), ensure_ascii=False)}\n\n"
-                f"校验错误:\n{exc}\n\n"
-                f"原始 JSON:\n{content[:16000]}"
-            )
-            repair_payload = self.build_payload(
-                repair_prompt,
-                schema,
-                temperature=0.0,
-                metadata={**merged_metadata, "temperature": 0.0},
-                refs=None,
-            )
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                repair_response = await client.post(
-                    self._endpoint(),
+        current_content = content
+        for repair_attempt in range(3):
+            try:
+                return schema.model_validate(parse_json_object(current_content))
+            except ProviderBadResponseError as exc:
+                preview = current_content[:1000].replace("\r", "\\r").replace("\n", "\\n")
+                raise ProviderBadResponseError(
+                    f"{exc}; content_preview={preview!r}"
+                ) from exc
+            except ValidationError as exc:
+                if repair_attempt >= 2:
+                    raise
+                audit_repair_rule = ""
+                if schema.__name__ == "KeyVisionAuditDecision":
+                    audit_repair_rule = (
+                        "\n\n主视觉审计的额外硬约束：每条 assessment 必须包含 defect 字段；"
+                        "score=10 时 defect 必须是空字符串，score<10 时 defect 必须是具体可观察缺陷，不能省略或留空。"
+                    )
+                repair_prompt = (
+                    "将下面未通过校验的 JSON 修复为指定结构。只输出修复后的 JSON，不要解释，不要新增事实。"
+                    "严格满足校验错误指出的跨字段条件，不要通过删除字段或填空字符串绕过校验。"
+                    f"{audit_repair_rule}\n\n"
+                    f"JSON Schema:\n{json.dumps(self._gemini_json_schema(schema), ensure_ascii=False)}\n\n"
+                    f"校验错误：\n{exc}\n\n"
+                    f"待修复 JSON：\n{current_content[:16000]}"
+                )
+                repair_payload = self.build_payload(
+                    repair_prompt,
+                    schema,
+                    temperature=0.0,
+                    metadata={**merged_metadata, "temperature": 0.0},
+                    refs=None,
+                )
+                repair_response = await self._post_with_retries(
+                    payload=repair_payload,
                     params=request_params,
                     headers=headers,
-                    json=repair_payload,
+                    metadata={**merged_metadata, "temperature": 0.0},
+                    operation="json_repair",
                 )
-            if repair_response.status_code >= 400:
-                raise ProviderBadResponseError(
-                    f"Gemini JSON repair failed with HTTP {repair_response.status_code}: {repair_response.text[:2000]}"
-                ) from exc
-            repaired_content = self._extract_text(repair_response.json())
-            return schema.model_validate(parse_json_object(repaired_content))
+                if repair_response.status_code >= 400:
+                    raise ProviderBadResponseError(
+                        f"Gemini JSON repair failed with HTTP {repair_response.status_code}: {repair_response.text[:2000]}"
+                    ) from exc
+                current_content = self._extract_text(repair_response.json())
 
 
 __all__ = ["GeminiTextProvider"]

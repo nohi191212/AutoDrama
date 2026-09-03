@@ -5,13 +5,14 @@ from typing import Any
 
 
 def render(model_output: str, context: dict[str, Any]) -> str:
-    """Add only invariant single-background image constraints."""
+    """Bind scene multiview references without letting the model reinterpret slots."""
     sections = [
+        str(context.get("reference_guide") or "").strip(),
         model_output.strip(),
-        str(context.get("visual_quality") or "").strip(),
-        "严格参考场景母版的空间结构、材质、比例和光线；只生成一张单画面电影背景。",
-        "保留固定建筑与固定陈设；不得生成三视图、拼图、宫格、参考表或 UI。",
-        "画面中不得出现人物、人体局部、文字、字幕、logo 或水印。",
+        "以 Image 1 的机位和可见空间为主，使用 Image 2 锁定同一场景的总体拓扑；若提供 Image 3，只用它补充高重叠区域中被 Image 1 遮挡的固定结构。",
+        "生成一张完整、连续、无分格的电影级空背景。不得复制母版的面板边界，不得拼接多个视角，也不得重新设计建筑、地面、通道、固定陈设、材质、天气或主光方向。",
+        "若构图来自过肩、反打或主观镜头，只保留相应机位、视线方向、景深和空白构图区，不得用任何头部、肩背、身体轮廓或人物形遮挡物来表现镜头术语。",
+        "不得出现人物、人体、身体部位、剪影、代理人、可读文字、字幕、logo 或水印。",
     ]
     unique: list[str] = []
     for section in sections:

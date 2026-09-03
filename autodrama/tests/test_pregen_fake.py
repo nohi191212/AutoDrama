@@ -8,14 +8,22 @@ from autodrama.workflows.pregen import PREGEN_NODES, PregenWorkflow
 
 
 def write_config(tmp_path: Path) -> Path:
-    (tmp_path / "story.md").write_text("一个被陷害的年轻人在会议上拿出证据反击。", encoding="utf-8")
+    chapters_dir = tmp_path / "chapters"
+    chapters_dir.mkdir()
+    chapter_texts = [
+        "林舟在会议上发现合同关键页被调包。",
+        "苏晚递来旧邮件截图，林舟决定当众反击。",
+        "林舟拿出证据，会议在真相中结束。",
+    ]
+    for index, text in enumerate(chapter_texts, start=1):
+        (chapters_dir / f"chap{index:04d}_测试章节{index}.txt").write_text(text, encoding="utf-8")
     config = tmp_path / "config.yaml"
     config.write_text(
         """
 project:
   id: test_project
   title: 测试短片
-  script_outline_file: ./story.md
+  script_chapters_dir: ./chapters
   episode_count: 3
   episode_duration_seconds: 45
 output:

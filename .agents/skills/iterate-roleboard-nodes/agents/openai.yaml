@@ -1,0 +1,4 @@
+interface:
+  display_name: "迭代角色板节点"
+  short_description: "对角色板生成、提示词与审核节点做可复现的分阶段实验"
+  default_prompt: "Use $iterate-roleboard-nodes 对当前项目的三个角色板节点做受控迭代，并给出可晋级的生产方案。"

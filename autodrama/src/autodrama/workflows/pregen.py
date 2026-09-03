@@ -68,12 +68,80 @@ from autodrama.workflows.output_scope import (
 )
 from autodrama.workflows.nodes.voice_nodes import VoiceNodeBase, build_voice_node_runners
 from autodrama.workflows.router_adapter import adapt_workflow_router
-from autodrama.workflows.runner import WorkflowRunner
+from autodrama.workflows.runner import WorkflowRunner, node_is_completed
 from autodrama.workflows.selection import normalize_clip_selectors, normalize_shot_selectors, select_episode_keys
 
 
 PREGEN_NODES = PREGEN_NODE_NAMES
 PREGEN_ONLY_NODES = AVAILABLE_PREGEN_NODE_NAMES
+
+
+def _enabled_automatic_pregen_nodes(
+    target_nodes: list[str],
+    *,
+    image_audits_enabled: bool,
+) -> list[str]:
+    if image_audits_enabled:
+        return list(target_nodes)
+    image_audit_nodes = set(IMAGE_AUDIT_NODE_NAMES)
+    return [node_name for node_name in target_nodes if node_name not in image_audit_nodes]
+
+
+PREGEN_NODE_GROUPS = {
+    "key_vision": (
+        "script_worldview_extract",
+        "key_vision_prompt",
+        "key_vision_image_generation",
+        "key_vision_image_audit",
+    ),
+    "key_vision_edit": (
+        "key_vision_edit",
+        "key_vision_image_audit",
+    ),
+    "role_extract": (
+        "role_extract_primary",
+        "role_extract_functional",
+        "role_finalize",
+    ),
+    "prop_layout_extract": (
+        "prop_extract",
+        "prop_finalize",
+        "layout_extract",
+        "layout_finalize",
+        "layout_prop_boundary_review",
+    ),
+    "roleboard_gen": (
+        "roleboard_prompt",
+        "roleboard_image_generation",
+        "roleboard_image_audit",
+    ),
+    "prop_gen": (
+        "prop_prompt",
+        "prop_image_generation",
+        "prop_image_audit",
+    ),
+    "layout_gen": (
+        "layout_prompt",
+        "layout_image_generation",
+        "layout_image_audit",
+    ),
+}
+PREGEN_NODE_GROUP_PREREQUISITES = {
+    "key_vision_edit": ("key_vision",),
+    "roleboard_gen": ("role_extract",),
+    "prop_gen": ("prop_layout_extract",),
+    "layout_gen": ("prop_layout_extract",),
+}
+PREGEN_NODE_PREREQUISITE_GROUPS = {
+    node_name: ("role_extract",)
+    for node_name in PREGEN_NODE_GROUPS["roleboard_gen"]
+}
+PREGEN_NODE_PREREQUISITE_GROUPS.update(
+    {
+        node_name: ("prop_layout_extract",)
+        for node_name in (*PREGEN_NODE_GROUPS["prop_gen"], *PREGEN_NODE_GROUPS["layout_gen"])
+    }
+)
 EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "clip_segment",
     "roleboard_prompt",
@@ -83,9 +151,14 @@ EPISODE_SCOPED_PREGEN_ONLY_NODES = {
     "role_kling_voice_generation",
     "role_subject_element_generation",
     "clip_to_shots",
+    "scene_multiview_plan",
+    "scene_multiview_image_generation",
     "layout_to_background_prompt",
     "shot_background_image_generation",
+    "shot_blocking_plan",
+    "shot_blocking_control_render",
     "shot_keyframe_prompt",
+    "shot_keyframe_stage_generation",
     "shot_keyframe_image_generation",
     "shot_manifest_generation",
     "role_voice_select",
@@ -101,15 +174,21 @@ CLIP_SCOPED_PREGEN_ONLY_NODES = {
     "clip_to_shots",
 }
 SHOT_SCOPED_PREGEN_ONLY_NODES = {
+    "scene_multiview_plan",
+    "scene_multiview_image_generation",
     "layout_to_background_prompt",
     "shot_background_image_generation",
     "shot_background_image_audit",
     "shot_keyframe_prompt",
+    "shot_blocking_plan",
+    "shot_blocking_control_render",
+    "shot_keyframe_stage_generation",
     "shot_keyframe_image_generation",
     "shot_keyframe_image_audit",
     "shot_manifest_generation",
 }
 ASSET_SCOPED_PREGEN_ONLY_NODES = {
+    "key_vision_edit",
     "key_vision_image_audit",
     "roleboard_image_generation",
     "roleboard_image_audit",
@@ -137,10 +216,7 @@ class PregenWorkflow:
         self.layout = repo.layout
         self.router = adapt_workflow_router(router)
         self.prompts = prompts or PromptStore()
-        self.script_service = ScriptService(
-            self.prompts,
-            max_semantic_attempts=self.settings.runtime.max_text_retry,
-        )
+        self.script_service = ScriptService(self.prompts)
         self.director_service = DirectorService(self.prompts)
         self.role_service = RoleService(self.prompts)
         self.asset_service = AssetService(self.prompts)
@@ -611,6 +687,44 @@ class PregenWorkflow:
     def _load_script_novel_episode_text(path: Path) -> str | None:
         return ScriptContentRepository.load_episode_text(path)
 
+    @staticmethod
+    def _completed_pregen_group(group_name: str, state: ProjectState) -> bool:
+        return all(
+            node_is_completed(node_name, state.completed_nodes)
+            for node_name in PREGEN_NODE_GROUPS[group_name]
+        )
+
+    @classmethod
+    def _validate_pregen_group_prerequisites(
+        cls,
+        state: ProjectState,
+        *,
+        node_group: str | None,
+        only: str | None,
+    ) -> None:
+        required_groups: set[str] = set()
+        if node_group is not None:
+            required_groups.update(PREGEN_NODE_GROUP_PREREQUISITES.get(node_group, ()))
+        elif only is not None:
+            required_groups.update(PREGEN_NODE_PREREQUISITE_GROUPS.get(only, ()))
+
+        missing_groups = sorted(
+            group_name
+            for group_name in required_groups
+            if not cls._completed_pregen_group(group_name, state)
+        )
+        if not missing_groups:
+            return
+
+        details = "; ".join(
+            f"{group_name} ({', '.join(PREGEN_NODE_GROUPS[group_name])})"
+            for group_name in missing_groups
+        )
+        target = f"node group {node_group}" if node_group else f"node {only}"
+        raise ValueError(
+            f"pregen {target} requires completed prerequisite node group(s): {details}"
+        )
+
     async def run(
         self,
         project_dir: Path,
@@ -618,6 +732,7 @@ class PregenWorkflow:
         until: str = "shot_manifest_generation",
         force: bool = False,
         only: str | None = None,
+        node_group: str | None = None,
         episode_keys: list[str] | None = None,
         role_names: list[str] | None = None,
         clip_selectors: list[str] | None = None,
@@ -627,7 +742,14 @@ class PregenWorkflow:
 
         if only is not None and only not in PREGEN_ONLY_NODES:
             raise ValueError(f"Unsupported pregen only node: {only}")
-        if only is None and until not in PREGEN_NODES:
+        if node_group is not None and node_group not in PREGEN_NODE_GROUPS:
+            raise ValueError(
+                f"Unsupported pregen node group: {node_group}; "
+                f"expected {', '.join(sorted(PREGEN_NODE_GROUPS))}"
+            )
+        if node_group is not None and only is not None:
+            raise ValueError("pregen --node-group cannot be combined with --only/--node")
+        if node_group is None and only is None and until not in PREGEN_NODES:
             if until in PREGEN_ONLY_NODES:
                 raise ValueError(
                     f"pregen stop node {until} is deferred from the default pregen chain; "
@@ -638,6 +760,11 @@ class PregenWorkflow:
         logger = setup_logging(project_dir)
         self.router.set_prompt_audit_project_dir(project_dir)
         state = self.repo.load_state(project_dir)
+        self._validate_pregen_group_prerequisites(
+            state,
+            node_group=node_group,
+            only=only,
+        )
         scope_sync = synchronize_expected_output_scope(
             self.repo,
             project_dir,
@@ -645,8 +772,17 @@ class PregenWorkflow:
             self._expected_episode_keys(state),
         )
         self._apply_script_plan_settings(state)
-        target_nodes = [only] if only else PREGEN_NODES[: PREGEN_NODES.index(until) + 1]
-        if only is None and not self.settings.app.enable_llm_audit:
+        if node_group is not None:
+            target_nodes = list(PREGEN_NODE_GROUPS[node_group])
+            until = target_nodes[-1]
+        else:
+            target_nodes = [only] if only else PREGEN_NODES[: PREGEN_NODES.index(until) + 1]
+        if only is None:
+            target_nodes = _enabled_automatic_pregen_nodes(
+                target_nodes,
+                image_audits_enabled=self.settings.app.enable_image_audit,
+            )
+        if only is None and node_group is None and not self.settings.app.enable_llm_audit:
             target_nodes = [node_name for node_name in target_nodes if node_name != "layout_prop_boundary_review"]
         selected_episode_keys = self._select_episode_keys(state, episode_keys) if episode_keys else None
         selected_role_names = self._select_role_names(role_names) if role_names else None
@@ -676,7 +812,10 @@ class PregenWorkflow:
         if selected_episode_keys and (len(target_nodes) != 1 or target_nodes[0] not in EPISODE_SCOPED_PREGEN_ONLY_NODES):
             raise ValueError(
                 "--episodes is only supported for pregen --only clip_segment, roleboard_prompt, roleboard_image_generation, "
-                "clip_to_shots, layout_to_background_prompt, shot_background_image_generation, shot_keyframe_prompt, shot_keyframe_image_generation, shot_manifest_generation, "
+                "clip_to_shots, scene_multiview_plan, scene_multiview_image_generation, layout_to_background_prompt, "
+                "shot_background_image_generation, shot_blocking_plan, shot_blocking_control_render, "
+                "shot_keyframe_prompt, shot_keyframe_stage_generation, shot_keyframe_image_generation, "
+                "shot_manifest_generation, "
                 "role_subject_frontal_image_generation, role_kling_voice_generation, role_subject_video_generation, "
                 "role_subject_element_generation, role_voice_select, prop_prompt, prop_image_generation, "
                 "or layout_image_generation."
@@ -697,14 +836,17 @@ class PregenWorkflow:
             len(target_nodes) != 1
             or target_nodes[0] not in SHOT_SCOPED_PREGEN_ONLY_NODES
         ):
-            raise ValueError("--shots is only supported for pregen --only layout_to_background_prompt, shot_background_image_generation, shot_keyframe_prompt, shot_keyframe_image_generation, or shot_manifest_generation.")
+            raise ValueError(
+                "--shots is only supported for pregen shot-scoped spatial/background/keyframe nodes."
+            )
         if selected_asset_ids and (len(target_nodes) != 1 or target_nodes[0] not in ASSET_SCOPED_PREGEN_ONLY_NODES):
-            raise ValueError("--assets is only supported for pregen --only roleboard_image_generation, role_subject_frontal_image_generation, prop_image_generation, layout_image_generation, prop_image_audit, or layout_image_audit.")
+            raise ValueError("--assets is only supported for pregen --only key_vision_edit, roleboard_image_generation, role_subject_frontal_image_generation, prop_image_generation, layout_image_generation, prop_image_audit, or layout_image_audit.")
         logger.info(
-            "workflow=pregen project_id=%s until=%s only=%s force=%s episodes=%s roles=%s clips=%s shots=%s shot_scope=%s assets=%s completed=%s",
+            "workflow=pregen project_id=%s until=%s only=%s node_group=%s force=%s episodes=%s roles=%s clips=%s shots=%s shot_scope=%s assets=%s completed=%s",
             state.project_id,
             until,
             only or "-",
+            node_group or "-",
             force,
             ",".join(selected_episode_keys or []) or "-",
             ",".join(selected_role_names or []) or "-",
@@ -851,8 +993,8 @@ class PregenWorkflow:
     async def _run_script_import(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._script_node_runner("script_import").run(project_dir, state)
 
-    async def _run_script_detail_expand(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._script_node_runner("script_detail_expand").run(project_dir, state)
+    async def _run_script_cinematic_adapt(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._script_node_runner("script_cinematic_adapt").run(project_dir, state)
 
     async def _run_script_outline(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._script_node_runner("script_outline").run(project_dir, state)
@@ -865,6 +1007,9 @@ class PregenWorkflow:
 
     async def _run_script_novel_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._script_node_runner("script_novel_extract").run(project_dir, state)
+
+    async def _run_script_worldview_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
+        return await self._script_node_runner("script_worldview_extract").run(project_dir, state)
 
     @staticmethod
     def _role_name_key(name: object) -> str:

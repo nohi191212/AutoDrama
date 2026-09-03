@@ -678,8 +678,8 @@ class StaticAssetNodeBase:
                 model=existing.model if existing else None,
                 request_id=existing.request_id if existing else None,
                 usage=dict(existing.usage) if existing else {},
-                reference_image_kind="single_view",
-                prompt_language="zh" if item.asset_role == "base" else (existing.prompt_language if existing else "zh"),
+                reference_image_kind="spatial_anchor",
+                prompt_language="en",
             )
         return layouts
 
@@ -1057,91 +1057,78 @@ class StaticAssetNodeBase:
                 },
             )
         ]
+        return refs
+
+    def key_vision_reference_ref(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        *,
+        reference_for: str,
+    ) -> AssetRef:
+        asset = state.metadata.get("key_vision_asset")
+        if isinstance(asset, dict):
+            asset_id = asset.get("asset_id") or state.metadata.get("key_vision_asset_id")
+            asset_path = asset.get("asset_path") or state.metadata.get("key_vision_asset_path")
+            asset_url = asset.get("asset_url") or state.metadata.get("key_vision_asset_url")
+            name = asset.get("name") or state.metadata.get("key_vision_name") or "主视觉原图"
+        else:
+            asset_id = state.metadata.get("key_vision_asset_id")
+            asset_path = state.metadata.get("key_vision_asset_path")
+            asset_url = state.metadata.get("key_vision_asset_url")
+            name = state.metadata.get("key_vision_name") or "主视觉原图"
+        if not asset_path and not asset_url:
+            raise FileNotFoundError(
+                "layout_image_generation requires the key vision image; run key_vision_image_generation first"
+            )
+
+        path: str | None = None
+        if asset_path:
+            existing = self.layout.existing_project_file(project_dir, str(asset_path))
+            if existing is None:
+                if not asset_url:
+                    raise FileNotFoundError(
+                        f"layout_image_generation key vision image is missing: {asset_path}"
+                    )
+            else:
+                path = str(project_dir / existing)
+        return AssetRef(
+            id=str(asset_id or "key_vision_original"),
+            type="image",
+            path=path,
+            url=str(asset_url) if asset_url else None,
+            metadata={
+                "asset_type": "key_vision",
+                "reference_role": "key_vision_style",
+                "reference_index": 2,
+                "name": str(name),
+                "reference_for": reference_for,
+                "identity_transfer_allowed": False,
+            },
+        )
+
 class RoleAppearanceGenerationBase(StaticAssetNodeBase):
-    ROLEBOARD_STYLE_PROMPT_HEADER = ""
-    STYLE_REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
     DEFAULT_ROLEBOARD_IMAGE_GENERATION_CONCURRENCY = 1
     MAX_ROLEBOARD_IMAGE_GENERATION_CONCURRENCY = 5
 
-    def roleboard_style_reference_refs(self) -> list[AssetRef]:
-        ref_dir = self.repo.settings.generation.roleboard_style_reference_dir
-        if ref_dir is None:
-            return []
-        if not ref_dir.exists() or not ref_dir.is_dir():
-            raise FileNotFoundError(f"roleboard_style_reference_dir does not exist or is not a directory: {ref_dir}")
-
-        paths = [
-            path
-            for path in sorted(ref_dir.iterdir(), key=lambda item: item.name.lower())
-            if path.is_file() and path.suffix.lower() in self.STYLE_REFERENCE_EXTENSIONS
-        ]
-        if not paths:
-            raise ValueError(f"roleboard_style_reference_dir contains no supported image files: {ref_dir}")
-
-        return [
-            AssetRef(
-                id=f"roleboard_style_ref_{index}",
-                type="image",
-                path=str(path),
-                metadata={
-                    "asset_type": "roleboard_style_reference",
-                    "role": "style_reference",
-                    "source_dir": str(ref_dir),
-                },
+    def roleboard_spatial_template_ref(self, *, reference_for: str) -> AssetRef:
+        template_path = self.repo.settings.generation.roleboard_spatial_template_path
+        if not template_path.is_file():
+            raise FileNotFoundError(
+                f"roleboard spatial template does not exist: {template_path}"
             )
-            for index, path in enumerate(paths, start=1)
-        ]
-
-    def roleboard_style_prompt(self) -> str:
-        return str(self.repo.settings.generation.roleboard_style_prompt or "").strip()
-
-    def roleboard_style_prefix(
-        self,
-        *,
-        style_reference_count: int,
-        identity_reference_index: int | None = None,
-        output_kind: str,
-    ) -> str:
-        parts: list[str] = []
-        style_prompt = self.roleboard_style_prompt()
-        if style_prompt:
-            parts.append(f"{self.ROLEBOARD_STYLE_PROMPT_HEADER}：{style_prompt}")
-        if style_reference_count > 0:
-            if style_reference_count == 1:
-                style_ref_text = "参考图片1"
-            else:
-                style_ref_text = f"参考图片1-{style_reference_count}"
-            parts.append(
-                f"{style_ref_text}只作为{output_kind}的整体美术风格、材质质感、光影、色彩和画面气质参考；"
-                "不要照搬参考图中的人物身份、脸、服装或构图。"
-            )
-        if identity_reference_index is not None:
-            parts.append(
-                f"参考图片{identity_reference_index}是同一角色的全身身份参考，必须保持人物脸型、发型、服装、"
-                "随身道具、体型比例和身份特征一致。"
-            )
-        if parts:
-            parts.append("下方角色提示词中的人物身份、服装、道具和结构要求仍需保留；若画面风格冲突，以上方统一风格要求和参考图片风格为准。")
-        return "\n".join(parts)
-
-    def apply_roleboard_style_context(
-        self,
-        prompt: str,
-        *,
-        style_reference_count: int,
-        identity_reference_index: int | None = None,
-        output_kind: str,
-    ) -> str:
-        prefix = self.roleboard_style_prefix(
-            style_reference_count=style_reference_count,
-            identity_reference_index=identity_reference_index,
-            output_kind=output_kind,
+        return AssetRef(
+            id="roleboard_spatial_template",
+            type="image",
+            path=str(template_path),
+            metadata={
+                "asset_type": "roleboard_spatial_template",
+                "reference_role": "spatial_template",
+                "reference_index": 1,
+                "reference_for": reference_for,
+                "identity_transfer_allowed": False,
+            },
         )
-        if not prefix:
-            return prompt
-        if prompt.lstrip().startswith(self.ROLEBOARD_STYLE_PROMPT_HEADER):
-            return prompt
-        return "\n\n".join([prefix, prompt])
 
     def load_existing_generation_items(
         self,
@@ -1180,79 +1167,56 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
     def roleboard_asset_id(appearance: RoleAppearance) -> str:
         return f"{appearance.id}_roleboard"
 
-    def key_vision_reference_ref(
-        self,
-        project_dir: Path,
-        state: ProjectState,
-        *,
-        reference_for: str,
-    ) -> AssetRef:
-        asset = state.metadata.get("key_vision_asset")
-        if isinstance(asset, dict):
-            asset_id = asset.get("asset_id") or state.metadata.get("key_vision_asset_id")
-            asset_path = asset.get("asset_path") or state.metadata.get("key_vision_asset_path")
-            asset_url = asset.get("asset_url") or state.metadata.get("key_vision_asset_url")
-            name = asset.get("name") or state.metadata.get("key_vision_name") or "主视觉原图"
-        else:
-            asset_id = state.metadata.get("key_vision_asset_id")
-            asset_path = state.metadata.get("key_vision_asset_path")
-            asset_url = state.metadata.get("key_vision_asset_url")
-            name = state.metadata.get("key_vision_name") or "主视觉原图"
-        if not asset_path and not asset_url:
-            raise FileNotFoundError(
-                "roleboard_image_generation requires the key vision image; run key_vision_image_generation first"
-            )
-
-        path: str | None = None
-        if asset_path:
-            existing = self.layout.existing_project_file(project_dir, str(asset_path))
-            if existing is None:
-                if not asset_url:
-                    raise FileNotFoundError(
-                        f"roleboard_image_generation key vision image is missing: {asset_path}"
-                    )
-            else:
-                path = str(project_dir / existing)
-        return AssetRef(
-            id=str(asset_id or "key_vision_original"),
-            type="image",
-            path=path,
-            url=str(asset_url) if asset_url else None,
-            metadata={
-                "asset_type": "key_vision",
-                "name": str(name),
-                "reference_for": reference_for,
-            },
-        )
-
     def roleboard_prompt_for_generation(
         self,
         *,
         role: Role,
         appearance: RoleAppearance,
+        refs: list[AssetRef],
     ) -> str:
         base_prompt = str(appearance.roleboard_prompt or appearance.prompt or "").strip()
         if not base_prompt:
             raise ValueError(
                 f"Cannot generate roleboard for {role.name}/{appearance.name}: missing roleboard_prompt"
             )
+        reference_instructions: list[str] = []
+        for index, ref in enumerate(refs, start=1):
+            reference_role = str(
+                ref.metadata.get("reference_role")
+                or ref.metadata.get("asset_type")
+                or ""
+            )
+            if reference_role == "spatial_template":
+                reference_instructions.append(
+                    f"参考图片{index}只用于横向16:9身份板的三视图排布、正面/真侧面/背面顺序、"
+                    "等尺度、共同脚底线、间距、中性站姿和完整全身可见；不得复制模板人物的身份、"
+                    "脸、体型、发型、服饰、配件、道具或白模材质。"
+                )
+            elif reference_role == "key_vision_style":
+                reference_instructions.append(
+                    f"参考图片{index}用于统一人物设计语言与视觉呈现：沿用其共性的面部塑造方式、"
+                    "身体比例、服装轮廓与结构逻辑、装饰密度、材质层次、色彩关系、光影和完成度，"
+                    "并将这些设计原则重新应用于当前角色；不得复制其中任何具体人物的身份、具体五官、"
+                    "发型、服装款式、配饰、武器、动作、场景或构图，不得改变当前角色设定。"
+                )
+            elif reference_role == "same_role_identity":
+                reference_instructions.append(
+                    f"参考图片{index}是同一角色的基础身份参考；保持稳定脸部、体型与可延续的身份特征，"
+                    "只采用当前提示词明确要求的造型变化。"
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported roleboard reference role at index {index}: {reference_role or '-'}"
+                )
         return "\n".join(
             [
+                *reference_instructions,
                 base_prompt,
-                "保持参考图的水墨二维国漫渲染、光影与色彩处理。",
+                "严格保留当前提示词已经明确的身份与造型。若仍有稳定可见特征未说明，依据角色年龄、"
+                "身份、职业与整体视觉方向，具体设计脸型骨相、眉眼、鼻唇、发型轮廓、身体比例和服装结构；"
+                "设计清晰可见、克制统一，避免无依据的标准美型、通用英雄脸和繁复装饰。",
                 "只生成一张干净的 16:9 单角色身份板；避免身份漂移、重复主体、畸形肢体、文字、logo 和水印。",
             ]
-        )
-
-    @staticmethod
-    def _roleboard_ref(project_dir: Path, role: Role, appearance: RoleAppearance) -> AssetRef:
-        path = appearance.asset_path or appearance.design_image_asset_path
-        return AssetRef(
-            id=appearance.asset_id or appearance.design_image_asset_id or f"{appearance.id}_roleboard",
-            type="image",
-            path=str(project_dir / path) if path else None,
-            url=appearance.asset_url or appearance.design_image_asset_url,
-            metadata={"asset_type": "roleboard", "role_id": role.id, "appearance_id": appearance.id},
         )
 
     def existing_roleboard_path(self, project_dir: Path, appearance: RoleAppearance) -> str | None:
@@ -1299,13 +1263,43 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
             url=ref_url,
             metadata={
                 "asset_type": "roleboard_identity_reference",
+                "reference_role": "same_role_identity",
+                "reference_index": 3,
                 "role_id": role.id,
                 "role_name": role.name,
                 "appearance_id": reference.id,
                 "appearance_name": reference.name,
                 "reference_for": appearance.id,
+                "identity_transfer_allowed": True,
             },
         )
+
+    def roleboard_reference_refs(
+        self,
+        project_dir: Path,
+        state: ProjectState,
+        role: Role,
+        appearance: RoleAppearance,
+    ) -> list[AssetRef]:
+        asset_id = self.roleboard_asset_id(appearance)
+        refs = [
+            self.roleboard_spatial_template_ref(reference_for=asset_id),
+            self.key_vision_reference_ref(project_dir, state, reference_for=asset_id),
+        ]
+        identity_ref = self.roleboard_identity_reference_ref(project_dir, role, appearance)
+        if identity_ref is not None:
+            refs.append(identity_ref)
+
+        expected_roles = ["spatial_template", "key_vision_style"]
+        if appearance.asset_role == "variant":
+            expected_roles.append("same_role_identity")
+        actual_roles = [str(ref.metadata.get("reference_role") or "") for ref in refs]
+        if actual_roles != expected_roles:
+            raise ValueError(
+                f"roleboard reference order mismatch for {role.name}/{appearance.name}: "
+                f"expected {expected_roles}, got {actual_roles}"
+            )
+        return refs
 
     @classmethod
     def roleboard_image_generation_concurrency(cls, provider: object) -> int:
@@ -1355,26 +1349,16 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         role: Role,
         appearance: RoleAppearance,
         node_name: str,
-        style_refs: list[AssetRef],
         reuse_existing_assets: bool,
-        anchor_ref: AssetRef | None = None,
-        is_anchor: bool = False,
     ) -> StaticAssetGenerationItem:
         asset_id = self.roleboard_asset_id(appearance)
-        identity_ref = self.roleboard_identity_reference_ref(project_dir, role, appearance)
-        identity_refs = [identity_ref] if identity_ref is not None else []
-        if is_anchor:
-            key_vision_ref = self.key_vision_reference_ref(project_dir, state, reference_for=asset_id)
-            refs = [*style_refs, key_vision_ref]
-        else:
-            if anchor_ref is None:
-                raise ValueError("roleboard_image_generation could not resolve its anchor roleboard")
-            refs = [anchor_ref, *identity_refs]
-        identity_reference_index = len(refs) if identity_refs else None
-        key_vision_reference_index = len(refs) if is_anchor else None
+        refs = self.roleboard_reference_refs(project_dir, state, role, appearance)
+        reference_roles = [str(ref.metadata.get("reference_role") or "") for ref in refs]
+        identity_reference_index = 3 if appearance.asset_role == "variant" else None
         prompt = self.roleboard_prompt_for_generation(
             role=role,
             appearance=appearance,
+            refs=refs,
         )
         output_path = self.layout.image_asset_path(project_dir, "roles", asset_id)
         existing_path = self.existing_roleboard_path(project_dir, appearance)
@@ -1408,10 +1392,10 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                     "appearance_id": appearance.id,
                     "asset_id": asset_id,
                     "asset_type": "roleboard",
-                    "style_reference_count": len(style_refs),
+                    "reference_roles": reference_roles,
+                    "spatial_template_reference_index": 1,
+                    "key_vision_reference_index": 2,
                     "identity_reference_index": identity_reference_index,
-                    "key_vision_reference_index": key_vision_reference_index,
-                    "anchor_reference": bool(anchor_ref),
                 },
                 context={
                     "asset_type": "roleboard",
@@ -1464,19 +1448,12 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         project_dir: Path,
         state: ProjectState,
         appearances: list[tuple[Role, RoleAppearance]],
-        all_appearances: list[tuple[Role, RoleAppearance]],
         node_name: str,
         generated_by_asset_id: dict[str, StaticAssetGenerationItem],
     ) -> list[StaticAssetGenerationItem]:
         generated: list[StaticAssetGenerationItem] = []
         reuse_existing_assets = not bool(getattr(self.workflow, "_force_pregen", False))
-        style_refs = self.roleboard_style_reference_refs()
-        if style_refs:
-            self.logger.info(
-                "%s using %d roleboard style reference image(s)",
-                node_name,
-                len(style_refs),
-            )
+        state.metadata.pop("roleboard_anchor", None)
         if not getattr(provider, "supports_reference_images", False):
             raise ValueError(f"{node_name} requires an image provider that supports reference images")
 
@@ -1489,30 +1466,9 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
         )
         semaphore = asyncio.Semaphore(concurrency)
 
-        def select_anchor() -> tuple[Role, RoleAppearance]:
-            params = getattr(self.repo.settings.nodes.get(node_name), "params", {}) or {}
-            wanted_role = str(params.get("anchor_role") or "").strip()
-            wanted_appearance = str(params.get("anchor_appearance") or "base").strip() or "base"
-            if wanted_role:
-                for role, appearance in all_appearances:
-                    if (role.id == wanted_role or role.name == wanted_role or wanted_role in role.aliases) and appearance.name == wanted_appearance:
-                        return role, appearance
-            for role, appearance in all_appearances:
-                if str(role.role_tier).lower() == "primary" and appearance.asset_role == "base":
-                    return role, appearance
-            for role, appearance in all_appearances:
-                if appearance.asset_role == "base":
-                    return role, appearance
-            raise ValueError("roleboard_image_generation requires a base appearance for the anchor")
-
-        anchor_role, anchor_appearance = select_anchor()
-
         async def generate_one(
             role: Role,
             appearance: RoleAppearance,
-            *,
-            anchor_ref: AssetRef | None,
-            is_anchor: bool = False,
         ) -> StaticAssetGenerationItem:
             async with semaphore:
                 return await self.generate_roleboard_asset(
@@ -1522,49 +1478,22 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                     role=role,
                     appearance=appearance,
                     node_name=node_name,
-                    style_refs=style_refs,
                     reuse_existing_assets=reuse_existing_assets,
-                    anchor_ref=anchor_ref,
-                    is_anchor=is_anchor,
                 )
 
-        target_asset_ids = {self.roleboard_asset_id(appearance) for _, appearance in appearances}
-        anchor_asset_id = self.roleboard_asset_id(anchor_appearance)
-        if anchor_asset_id in target_asset_ids:
-            anchor_item = await generate_one(anchor_role, anchor_appearance, anchor_ref=None, is_anchor=True)
-            generated.append(anchor_item)
-            generated_by_asset_id[anchor_item.asset_id] = anchor_item
-        else:
-            anchor_item = generated_by_asset_id.get(anchor_asset_id)
-            anchor_path = self.existing_roleboard_path(project_dir, anchor_appearance)
-            if anchor_path is None and not (anchor_appearance.asset_url or anchor_appearance.design_image_asset_url):
-                raise FileNotFoundError(
-                    "roleboard_image_generation requires the existing anchor roleboard for a single-asset rerun"
-                )
-        anchor_ref = self._roleboard_ref(project_dir, anchor_role, anchor_appearance)
-        if anchor_ref is None:
-            raise FileNotFoundError("roleboard_image_generation could not load its anchor roleboard")
-        state.metadata["roleboard_anchor"] = {
-            "role_id": anchor_role.id,
-            "appearance_id": anchor_appearance.id,
-            "asset_id": anchor_item.asset_id if anchor_item else anchor_asset_id,
-            "asset_path": anchor_item.asset_path if anchor_item else anchor_appearance.asset_path,
-            "asset_url": anchor_item.asset_url if anchor_item else anchor_appearance.asset_url,
-        }
-
-        independent = [
+        base_appearances = [
             (role, appearance)
             for role, appearance in appearances
-            if appearance.asset_role == "base" and appearance.id != anchor_appearance.id
+            if appearance.asset_role == "base"
         ]
-        dependent = [
+        variant_appearances = [
             (role, appearance)
             for role, appearance in appearances
             if appearance.asset_role == "variant"
         ]
 
         async def run_batch(batch: list[tuple[Role, RoleAppearance]]) -> list[StaticAssetGenerationItem]:
-            tasks = [asyncio.create_task(generate_one(role, appearance, anchor_ref=anchor_ref)) for role, appearance in batch]
+            tasks = [asyncio.create_task(generate_one(role, appearance)) for role, appearance in batch]
             try:
                 return list(await asyncio.gather(*tasks)) if tasks else []
             except Exception:
@@ -1573,7 +1502,7 @@ class RoleAppearanceGenerationBase(StaticAssetNodeBase):
                 await asyncio.gather(*tasks, return_exceptions=True)
                 raise
 
-        for batch in (independent, dependent):
+        for batch in (base_appearances, variant_appearances):
             batch_generated = await run_batch(batch)
             generated.extend(batch_generated)
             for item in batch_generated:
@@ -1608,7 +1537,6 @@ class RoleboardGenerationNode(RoleAppearanceGenerationBase):
             project_dir=project_dir,
             state=state,
             appearances=appearances,
-            all_appearances=all_appearances,
             node_name=self.name,
             generated_by_asset_id=generated_by_asset_id,
         )
@@ -2240,20 +2168,30 @@ class LayoutPromptNode(StaticAssetNodeBase):
 
     @staticmethod
     def _fallback_prompt_output(state: ProjectState, layouts: list[LayoutExtractItem]) -> LayoutPromptOutput:
-        style = str(state.metadata.get("layout_design_style_prompt") or "高质感东方玄幻二维国漫场景插画").strip()
+        style = str(
+            state.metadata.get("layout_design_style_prompt")
+            or "premium production-ready scene design"
+        ).strip()
         prompts: list[dict[str, object]] = []
         for layout in layouts:
             if layout.asset_role == "variant":
                 prompt = (
-                    f"严格保持“{layout.reference_asset_name or layout.name}”基础场景的空间结构、机位、构图、透视、材质与光线；"
-                    f"仅呈现此状态变化：{layout.state_delta or layout.brief}。{style}。"
+                    f"Edit the referenced spatial-anchor sheet for {layout.reference_asset_name or layout.name}. "
+                    "Preserve both complementary isometric views, topology, entrances, fixed structures, "
+                    "materials, scale, north orientation, paths, framing, and lighting logic. "
+                    f"Apply only this visible state change: {layout.state_delta or layout.brief}. {style}. "
+                    "No people, camera overlays, character markers, readable text, logo, or watermark."
                 )
                 prompt_type = "image_edit"
             else:
-                features = "；".join(str(value) for value in layout.space_features if str(value).strip())
+                features = "; ".join(str(value) for value in layout.space_features if str(value).strip())
                 prompt = (
-                    f"无人场景“{layout.name}”：{layout.brief}。空间要点：{features}。{style}。"
-                    "空间结构、机位与透视可信，无人物、无文字、无水印、无 logo、无拼图或多视图。"
+                    f"Create one empty 2:3 spatial-anchor sheet for {layout.name}: {layout.brief}. "
+                    f"Fixed spatial anchors: {features}. {style}. Show the same complete physical location "
+                    "in two vertically stacked, complementary high-angle isometric views from opposite corners. "
+                    "Lock topology, entrances, architecture, fixed set dressing, materials, scale, paths, and "
+                    "lighting across both views. Include a small north arrow and orientation inset. No people, "
+                    "camera overlays, character markers, readable text, logo, or watermark."
                 )
                 prompt_type = "text_to_image"
             prompts.append(
@@ -2269,9 +2207,9 @@ class LayoutPromptNode(StaticAssetNodeBase):
         return LayoutPromptOutput.model_validate({"layout_prompts": prompts})
 
     def _layout_prompt_variant(self) -> str:
-        node_settings = self.repo.settings.nodes.get(self.name)
-        params = getattr(node_settings, "params", {}) if node_settings is not None else {}
-        explicit = str(params.get("prompt_template") or "").strip()
+        image_node_settings = self.repo.settings.nodes.get(LayoutImageGenerationNode.name)
+        image_params = getattr(image_node_settings, "params", {}) if image_node_settings is not None else {}
+        explicit = str(image_params.get("prompt_template") or "").strip()
         if explicit:
             return explicit.removesuffix(".md")
 
@@ -2351,6 +2289,9 @@ class LayoutPromptNode(StaticAssetNodeBase):
 
 class LayoutImageGenerationNode(StaticAssetNodeBase):
     name = "layout_image_generation"
+    SPATIAL_ANCHOR_TEMPLATE_RELATIVE_PATH = Path(
+        ".assets/image_templates/scene_spatial_anchor_template.png"
+    )
 
     @staticmethod
     def _is_variant_layout(layout: Layout) -> bool:
@@ -2393,9 +2334,16 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
         project_dir: Path,
         layout: Layout,
         layouts_by_name: dict[str, Layout],
+        state: ProjectState,
     ) -> list[AssetRef]:
         if layout.asset_role != "variant":
-            return []
+            return [
+                self.key_vision_reference_ref(
+                    project_dir,
+                    state,
+                    reference_for=layout.id,
+                )
+            ]
         base_name = str(layout.reference_asset_name or "").strip()
         if not base_name:
             raise ValueError(f"layout variant {layout.name} requires reference_asset_name")
@@ -2425,6 +2373,24 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
             )
         ]
 
+    @staticmethod
+    def _layout_prompt_for_generation(layout: Layout, prompt: str) -> str:
+        if layout.asset_role == "variant":
+            return prompt
+        template_contract = (
+            "Reference image 1 is a style reference only. Transfer only its rendering language onto the scene: "
+            "offline PBR material response, physically plausible global illumination, camera response, color "
+            "grading, atmosphere and finish. Keep this layout as one coherent single view of the target location "
+            "from a readable natural camera height and angle; do not split it into paired or stacked panels, and "
+            "do not add a floor-plan inset, north arrow, compass, crop marks, or border. Do NOT copy the reference "
+            "image's people, characters, faces, bodies, costumes, props, incense burner, pine tree, composition, "
+            "camera framing, or any specific object. Do not imitate its white-clay rendering, letters, or lighting. "
+            "You may reuse the reference image's level of detail, material fidelity, and finish."
+        )
+        if prompt.startswith(template_contract):
+            return prompt
+        return "\n\n".join([template_contract, prompt])
+
     async def _generate_one_layout(
         self,
         *,
@@ -2438,7 +2404,8 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
         prompt = str(layout.prompt or "").strip()
         if not prompt:
             raise ValueError(f"layout_prompt is empty for {layout.id}; run pregen --only layout_prompt first")
-        refs = self._layout_reference_refs(project_dir, layout, layouts_by_name)
+        refs = self._layout_reference_refs(project_dir, layout, layouts_by_name, state)
+        prompt = self._layout_prompt_for_generation(layout, prompt)
         async with semaphore:
             result, prompt, _safety_rewrites = await self._generate_image_with_safety_prompt_rewrites(
                 provider=provider,
@@ -2452,6 +2419,10 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
                     "project_id": state.project_id,
                     "layout_id": layout.id,
                     "asset_id": layout.id,
+                    "reference_roles": [
+                        str(ref.metadata.get("reference_role") or "")
+                        for ref in refs
+                    ],
                 },
                 context={
                     "asset_type": "layout",
@@ -2475,8 +2446,8 @@ class LayoutImageGenerationNode(StaticAssetNodeBase):
         layout.request_id = result.request_id
         layout.usage = result.usage
         if layout.asset_role == "base":
-            layout.reference_image_kind = "single_view"
-            layout.prompt_language = "zh"
+            layout.reference_image_kind = "spatial_anchor"
+            layout.prompt_language = "en"
         item = StaticAssetGenerationItem(
             asset_id=layout.id,
             asset_type="layout",

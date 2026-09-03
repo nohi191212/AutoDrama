@@ -1,0 +1,156 @@
+{
+  "name": "roleboard-image-v1",
+  "revision": "1.0",
+  "description": "Asset- and cast-level evaluation for AutoDrama roleboard generation and downstream prompt validation.",
+  "scale": {
+    "0": "absent, opposite, or unusable",
+    "2": "severe failure dominates",
+    "4": "major defects; fragments work",
+    "6": "broadly usable but visibly flawed",
+    "8": "strong production result with minor defects",
+    "10": "exceptional, specific, clean, and fully supported"
+  },
+  "policy": {
+    "scope_weights": {
+      "asset": 0.82,
+      "cast": 0.18
+    },
+    "scope_thresholds": {
+      "asset": 8.0,
+      "cast": 7.8
+    },
+    "minimum_records": {
+      "asset": 3,
+      "cast": 1
+    },
+    "minimum_distinct_roles": {
+      "asset": 3,
+      "cast": 0
+    },
+    "fatal_gate_policy": "ineligible",
+    "nonfatal_gate_cap": 7.0,
+    "require_evidence": true
+  },
+  "dimensions": [
+    {
+      "id": "exact_three_view_layout",
+      "scope": "asset",
+      "weight": 12,
+      "question": "Is there exactly one front, one true profile, and one back full-body view in that order, with no extra panel or angle?"
+    },
+    {
+      "id": "full_body_scale_spacing",
+      "scope": "asset",
+      "weight": 8,
+      "question": "Are all heads and feet visible at equal scale on a shared baseline with clean spacing and useful margins?"
+    },
+    {
+      "id": "source_identity_fidelity",
+      "scope": "asset",
+      "weight": 10,
+      "question": "Do age, gender presentation, identity invariants, wardrobe facts, status, and declared variant changes match the source contract?"
+    },
+    {
+      "id": "cross_view_identity_consistency",
+      "scope": "asset",
+      "weight": 10,
+      "question": "Do face, skull, hair, body, garments, footwear, palette, and signature details remain the same identity across all views?"
+    },
+    {
+      "id": "reference_role_separation",
+      "scope": "asset",
+      "weight": 8,
+      "question": "Did the template affect only layout and the key vision only style, without copied people, armor, sword, crown, pose, or scenery?"
+    },
+    {
+      "id": "facial_specificity",
+      "scope": "asset",
+      "weight": 10,
+      "question": "Is the face defined by readable, role-specific geometry and age evidence rather than a generic beauty archetype?"
+    },
+    {
+      "id": "body_proportion_role_fit",
+      "scope": "asset",
+      "weight": 8,
+      "question": "Are head-to-body ratio, build, torso, hips, limbs, posture, age, occupation, and health plausible and intentional?"
+    },
+    {
+      "id": "wardrobe_design_logic",
+      "scope": "asset",
+      "weight": 8,
+      "question": "Do silhouette, layers, closures, footwear, material, wear, palette, and ornament fit role, era, status, and all three views?"
+    },
+    {
+      "id": "design_restraint",
+      "scope": "asset",
+      "weight": 6,
+      "question": "Is the design memorable but restrained, without random filigree, over-armoring, excessive jewelry, glowing trim, or game-skin clutter?"
+    },
+    {
+      "id": "key_vision_style_fidelity",
+      "scope": "asset",
+      "weight": 8,
+      "question": "Do medium, facial rendering, material response, palette, light character, and finish belong to the key vision?"
+    },
+    {
+      "id": "anatomy_cleanliness",
+      "scope": "asset",
+      "weight": 6,
+      "question": "Are face, ears, neck, shoulders, hands, fingers, legs, feet, profile, and back anatomy clean and plausible?"
+    },
+    {
+      "id": "artifact_cleanliness",
+      "scope": "asset",
+      "weight": 3,
+      "question": "Is the output free of labels, text, watermark, logo, frame lines, collage marks, stray props, and unexplained objects?"
+    },
+    {
+      "id": "production_usability",
+      "scope": "asset",
+      "weight": 3,
+      "question": "Can the board immediately serve as a stable identity reference for downstream image and video nodes?"
+    },
+    {
+      "id": "pairwise_face_distinctiveness",
+      "scope": "cast",
+      "weight": 30,
+      "question": "Can every role pair be distinguished by face geometry without relying only on hair, clothes, age label, or color?"
+    },
+    {
+      "id": "silhouette_distinctiveness",
+      "scope": "cast",
+      "weight": 20,
+      "question": "Do body build, posture, hair mass, garment outline, and proportion distinguish roles at thumbnail scale?"
+    },
+    {
+      "id": "wardrobe_role_distinctiveness",
+      "scope": "cast",
+      "weight": 20,
+      "question": "Do costumes encode different age, status, and function while remaining in the same culture?"
+    },
+    {
+      "id": "shared_world_cohesion",
+      "scope": "cast",
+      "weight": 20,
+      "question": "Do rendering, materials, palette family, lighting, and design culture remain one project across the cast?"
+    },
+    {
+      "id": "ai_archetype_avoidance",
+      "scope": "cast",
+      "weight": 10,
+      "question": "Does the cast avoid repeated oval faces, identical eyes and jaws, porcelain skin, generic hair, random filigree, and symmetric AI concept-art polish?"
+    }
+  ],
+  "gates": [
+    {"id": "exact_three_views", "scope": "asset", "fatal": true, "description": "Exactly the required front/profile/back views and no others."},
+    {"id": "single_same_identity", "scope": "asset", "fatal": true, "description": "All views show one consistent identity."},
+    {"id": "full_body_visibility", "scope": "asset", "fatal": true, "description": "Required anatomy and clothing are complete and visible."},
+    {"id": "source_identity", "scope": "asset", "fatal": true, "description": "No source age, gender, identity, wardrobe, or variant contradiction."},
+    {"id": "reference_contamination", "scope": "asset", "fatal": true, "description": "No spatial-template or key-vision identity, prop, costume, or scene leakage."},
+    {"id": "severe_anatomy", "scope": "asset", "fatal": true, "description": "No production-breaking facial, hand, limb, or body defect."},
+    {"id": "clean_output", "scope": "asset", "fatal": true, "description": "No extra subject, prop, text, watermark, logo, or collage artifact."},
+    {"id": "cast_clone", "scope": "cast", "fatal": true, "description": "The cast does not reuse a near-identical face, body, or costume base."},
+    {"id": "variant_lineage", "scope": "cast", "fatal": true, "description": "Variants remain recognizably the same role with only authorized changes."},
+    {"id": "shared_style", "scope": "cast", "fatal": true, "description": "Every role remains in the same validated rendering medium and style family."}
+  ]
+}

@@ -12,11 +12,11 @@ Environment:
   AUTODRAMA_CONFIG   Defaults to config.yaml, then config.yaml.example.
   AUTODRAMA_PYTHON   Defaults to D:/miniforge3/envs/autodrama/python.exe.
 
-Project title, project ID, and input outline file are read from config.yaml:
+Project title, project ID, and input chapter directory are read from config.yaml:
 
   project.id
   project.title
-  project.script_outline_file
+  project.script_chapters_dir
 USAGE
 }
 

@@ -1,16 +1,14 @@
-为下列单一角色造型写一条可直接交给图像模型的中文身份板提示词。
+Write a single image-model prompt, in English, for the character identity board described by the following content, art direction, and framing. The final prompt text must be English.
 
-人物：{{character_intro}}
+Character content:
+{{roleboard_character_description}}
 
-当前造型：{{appearance_asset}}
+Art direction:
+{{roleboard_style_prompt}}
 
-角色板风格：{{roleboard_style_prompt}}
+Framing:
+{{roleboard_view_requirement}}
 
-构图：{{roleboard_view_requirement}}
+Treat the already-established age, identity, stable appearance, and clothing as fixed facts. For stable visible parts that the material does not specify but a complete character design needs, design a concrete, restrained, non-conflicting completion. For a human, specify the facial shape and bone structure, brow/eye/ nose/lip morphology, age texture, hair silhouette, body proportions, and the clothing outline, structure, and material. For a creature, specify head structure, torso proportions, limbs, surface texture, and stable identifying features. Each look should converge on one clear main silhouette plus one or two restrained identifying details; avoid unfounded standard beauty, generic hero faces, and overly ornate decoration.
 
-只输出 JSON，且只含 `roleboard_prompt`、`roleboard_negative_prompt`、`voice_profile_prompt`、`design_notes`。
-
-- `roleboard_prompt` 只写可见画面：主体身份、外形、服装或表面、构图与水墨二维国漫风格；不要复述资料、项目背景或写成制作指南。画面只能出现当前命名主体；资料里提到的其他具名角色或生物即使是同伴，也不可一同画入。未明确的特征直接省略，不要把“不得臆造”等说明写进画面提示。必须严格采用构图要求里的正面、侧面、背面三个完整全身视图，不要写出任何其他数目或额外视图。
-- 稳定身份只能读取当前造型的 `identity_invariants`，服装只能读取 `wardrobe`；不得从人物简介、剧情文本或旧描述字段补全。变体只能采用其结构字段明确声明的差异，并保持所引用基础造型的其余身份特征一致。不得把单镜动作、姿势、情绪、手持物或瞬时效果写进身份板。
-- `roleboard_negative_prompt` 简短覆盖身份漂移、额外主体、畸形、视图重叠、裁切、文字、字幕、水印和 logo。
-- 有台词时 `voice_profile_prompt` 写稳定的声音画像；否则为空字符串。`design_notes` 仅保留确实需要人工确认的歧义，没有则为空字符串。
+Abstract adjectives (delicate, handsome, refine, dignified, elegant, ethereal, etc.) cannot substitute for design; if used, they must be immediately followed by concrete geometry, proportions, silhouettes, or material descriptions. The prompt must describe only the final image and add no plot events, relationships, rank, props, injuries, actions, emotions, or transient effects. Visual style, character image, costume, and material derive only from the current inputs; do not copy a fixed character or clothing template. Briefly write any stable design you completed into the design note of the structured result, not into the final image prompt. Do not write the project, fields, paths, model, interface, workflow, source, or production notes. Output only JSON matching the given JSON Schema.

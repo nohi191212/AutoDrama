@@ -1,11 +1,37 @@
-为下列每个场景资产写可直接用于图像生成的中文提示词：
+# Task
 
-场景：
+Write an English image-generation prompt for every supplied scene asset.
+
+Scene assets:
 {{layouts}}
 
-统一美术：
+Unified visual direction:
 {{visual_tone}}
 
-每个输入场景必须对应一个输出项，名称、group、asset_role 和引用关系保持不变。base 写一幅单一、无人、无文字的可复用场景参考图：明确空间边界、入口、固定结构、可行动线、前中后景锚点和稳定光源，为人物表演保留清晰区域。不要写摄影写实、三视图、设定板、拼图、镜头参数或尺寸。variant 写基于 reference base 的编辑提示，空间拓扑、入口、材质和动线不变，只改变 `state_delta`。
+# Output contract
 
-提示词只描述可见画面；不出现人物、手、剪影、字幕、水印、logo、可读门牌或屏幕文字。只输出符合给定 JSON Schema 的 JSON。
+Return JSON that conforms to the supplied schema. Emit exactly one `layout_prompts` item for every input scene. Preserve `name`, `group`, `asset_role`, and `reference_asset_name` exactly.
+
+- A base scene uses `prompt_type: "text_to_image"`.
+- A variant scene uses `prompt_type: "image_edit"` and references its declared base scene.
+- Every generated `prompt` must be written in English.
+
+# Base scene prompt
+
+Describe one single, empty, reusable location in the unified visual direction as a production-ready scene reference image. Write for a model with strong spatial reasoning but a weak grasp of figurative layout: make the structure readable as an actual place, not a checklist of objects.
+
+State the setting type and anchor structure up front (for example a mountain pass, a courtyard gatehouse, an open forest clearing). Then describe it as a spatial narrative rather than an inventory. Lead with a single, decisive circulation line — one main path / stair / road that a camera or a character would follow through the space — and how the largest set pieces sit along it. Say explicitly how the main entrance relates to the rest (for example the stair rises to a gatehouse and continues beyond it into a courtyard, rather than passing through the gateway's piers).
+
+Keep a clear foreground / midground / background layering and state the relative depth between elements, so the eye reads where things are in space. Describe how the ground meets the sky or the surrounding walls. Give the dominant light source, the time-of-day feel, and the atmosphere as a concrete physical state (mist, haze, sun angle, moisture on stone) rather than vague adjectives.
+
+Preserve production-quality materials and the requested visual style. Do not imitate a plain white clay model merely because the layout is technical, and do not let the reference image's objects (people, characters, specific props, incense burner, pine tree, composition, camera framing) leak into this scene.
+
+Keep it one coherent view from a readable, natural camera height and angle. Do not split the scene into paired or stacked panels, and do not add a floor-plan inset, a north arrow, a compass, crop marks, a border, or any diagram element. No prose, no readable signage, no labels.
+
+The image is an empty scene reference: no people, hands, body parts, silhouettes, crowds, camera rigs, FOV cones, character markers, shot annotations, subtitles, watermarks, logos, or readable screen text. Plaques and inscriptions may only be blurred, illegible marks.
+
+# Variant scene edit prompt
+
+Keep the referenced base image's scene structure, entrances, fixed structures, materials, scale, and framing unchanged. Apply only the declared `state_delta`, described briefly and concretely so an image-edit model can apply it. Do not introduce new geometry, camera setups, people, or annotations.
+
+Do not put model names, resolution controls, workflow terms, or filesystem paths into any generated prompt.

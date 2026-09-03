@@ -126,7 +126,6 @@ class ScriptBundle(BaseModel):
         validation_alias=AliasChoices("novel_full", "novel_script"),
     )
     novel_extract: dict[str, ScriptContentRef] = Field(default_factory=dict)
-    facts: StoryFactBundle | None = None
 
 
 class RoleAudio(BaseModel):
@@ -363,10 +362,8 @@ class Layout(BaseModel):
     model: str | None = None
     request_id: str | None = None
     usage: dict[str, Any] = Field(default_factory=dict)
-    # Legacy projects are deliberately treated as single-view until their
-    # layout prompt/image pair is regenerated for the shot-first pipeline.
-    reference_image_kind: Literal["single_view", "three_view"] = "single_view"
-    prompt_language: str | None = None
+    reference_image_kind: Literal["spatial_anchor"] = "spatial_anchor"
+    prompt_language: Literal["en"] = "en"
 
 
 class BGM(BaseModel):
@@ -426,123 +423,13 @@ class NodeRecord(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 
-class ScriptSourceSpan(BaseModel):
-    """A deterministic character and line range in the imported source script."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    start_char: int = Field(ge=0)
-    end_char: int = Field(gt=0)
-    start_line: int = Field(ge=1)
-    end_line: int = Field(ge=1)
-    quote: str = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_range(self) -> "ScriptSourceSpan":
-        if self.end_char <= self.start_char:
-            raise ValueError("source span end_char must be greater than start_char")
-        if self.end_line < self.start_line:
-            raise ValueError("source span end_line must not precede start_line")
-        return self
-
-
-class StoryFactEntity(BaseModel):
-    """Stable, source-backed entity reference derived by workflow code."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    entity_id: str = Field(min_length=1)
-    entity_type: Literal["role", "prop", "layout", "group"]
-    name: str = Field(min_length=1)
-    time_periods: list[str] = Field(default_factory=list)
-    source_spans: list[ScriptSourceSpan] = Field(min_length=1)
-
-
-class StoryFactEvent(BaseModel):
-    """Narrative event with deterministic IDs and source spans."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    event_id: str = Field(min_length=1)
-    summary: str = Field(min_length=1)
-    time_period: str | None = None
-    participant_entity_ids: list[str] = Field(default_factory=list)
-    prop_entity_ids: list[str] = Field(default_factory=list)
-    layout_entity_ids: list[str] = Field(default_factory=list)
-    precondition: str | None = None
-    result: str | None = None
-    source_spans: list[ScriptSourceSpan] = Field(min_length=1)
-
-
-class StoryFactPropObservation(BaseModel):
-    """A source-ordered prop appearance, transfer, or state transition."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    observation_id: str = Field(min_length=1)
-    prop_entity_id: str = Field(min_length=1)
-    prop_name: str = Field(min_length=1)
-    action: str = Field(min_length=1)
-    state: str | None = None
-    holder_entity_id: str | None = None
-    holder_name: str | None = None
-    time_period: str | None = None
-    event_id: str | None = None
-    source_spans: list[ScriptSourceSpan] = Field(min_length=1)
-
-
-class StoryFactBundle(BaseModel):
-    """The source-verifiable fact base produced by script_import."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    schema_version: Literal[1] = 1
-    events: list[StoryFactEvent] = Field(min_length=1)
-    entity_mentions: list[StoryFactEntity] = Field(min_length=1)
-    prop_observations: list[StoryFactPropObservation] = Field(default_factory=list)
-    timeline_order: list[str] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_references(self) -> "StoryFactBundle":
-        event_ids = [event.event_id for event in self.events]
-        if len(set(event_ids)) != len(event_ids):
-            raise ValueError("story fact event IDs must be unique")
-        if self.timeline_order != event_ids:
-            raise ValueError("story fact timeline_order must match the source-ordered event IDs")
-        entity_ids = {entity.entity_id for entity in self.entity_mentions}
-        for event in self.events:
-            for entity_id in (
-                *event.participant_entity_ids,
-                *event.prop_entity_ids,
-                *event.layout_entity_ids,
-            ):
-                if entity_id not in entity_ids:
-                    raise ValueError(f"story fact event references unknown entity: {entity_id}")
-        for observation in self.prop_observations:
-            if observation.prop_entity_id not in entity_ids:
-                raise ValueError(
-                    f"story fact prop observation references unknown prop: {observation.prop_entity_id}"
-                )
-            if observation.holder_entity_id and observation.holder_entity_id not in entity_ids:
-                raise ValueError(
-                    "story fact prop observation references unknown holder: "
-                    f"{observation.holder_entity_id}"
-                )
-            if observation.event_id and observation.event_id not in event_ids:
-                raise ValueError(
-                    f"story fact prop observation references unknown event: {observation.event_id}"
-                )
-        return self
-
-
 class ScriptImportRoleStageOutput(BaseModel):
-    """A model-supplied, source-backed appearance stage for one role."""
+    """A time-specific appearance stage for one role."""
 
     model_config = ConfigDict(extra="forbid")
 
     time_period: str = Field(min_length=1)
     appearance_notes: list[str] = Field(default_factory=list)
-    evidence_quotes: list[str] = Field(min_length=1)
 
 
 class ScriptImportRoleOutput(BaseModel):
@@ -558,18 +445,16 @@ class ScriptImportRoleOutput(BaseModel):
     appearance_stages: list[ScriptImportRoleStageOutput] = Field(default_factory=list)
     has_dialogue: bool = True
     visual_reuse_required: bool = True
-    evidence_quotes: list[str] = Field(min_length=1)
 
 
 class ScriptImportPropOutput(BaseModel):
-    """A stable prop identity; time-varying state lives in prop_observations."""
+    """A stable prop identity for imported story context."""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     identity_description: str = Field(min_length=1)
     aliases: list[str] = Field(default_factory=list)
-    evidence_quotes: list[str] = Field(min_length=1)
 
 
 class ScriptImportLayoutOutput(BaseModel):
@@ -580,56 +465,6 @@ class ScriptImportLayoutOutput(BaseModel):
     name: str
     spatial_description: str = Field(min_length=1)
     time_periods: list[str] = Field(default_factory=list)
-    evidence_quotes: list[str] = Field(min_length=1)
-
-
-class ScriptImportEntityMentionOutput(BaseModel):
-    """Model-supplied source evidence from which code creates stable entity IDs."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1)
-    entity_type: Literal["role", "prop", "layout", "group"]
-    time_period: str | None = None
-    evidence_quotes: list[str] = Field(min_length=1)
-
-
-class ScriptImportEventOutput(BaseModel):
-    """Semantic event data; IDs and spans are generated by workflow code."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    summary: str = Field(min_length=1)
-    time_period: str | None = None
-    participant_names: list[str] = Field(default_factory=list)
-    prop_names: list[str] = Field(default_factory=list)
-    layout_names: list[str] = Field(default_factory=list)
-    precondition: str | None = None
-    result: str | None = None
-    evidence_quotes: list[str] = Field(min_length=1)
-
-
-class ScriptImportPropObservationOutput(BaseModel):
-    """A semantic prop occurrence with source evidence, before code assigns IDs."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    prop_name: str = Field(min_length=1)
-    action: str = Field(min_length=1)
-    state: str | None = None
-    holder_name: str | None = None
-    time_period: str | None = None
-    evidence_quotes: list[str] = Field(min_length=1)
-
-
-class ScriptImportFactsOutput(BaseModel):
-    """Model semantic output; all operational IDs and spans are code-owned."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    events: list[ScriptImportEventOutput] = Field(min_length=1)
-    entity_mentions: list[ScriptImportEntityMentionOutput] = Field(min_length=1)
-    prop_observations: list[ScriptImportPropObservationOutput] = Field(default_factory=list)
 
 
 class ScriptImportOutput(BaseModel):
@@ -640,8 +475,8 @@ class ScriptImportOutput(BaseModel):
     roles: list[ScriptImportRoleOutput] = Field(default_factory=list)
     props: list[ScriptImportPropOutput] = Field(default_factory=list)
     layouts: list[ScriptImportLayoutOutput] = Field(default_factory=list)
-    facts: ScriptImportFactsOutput
     notes: str | None = None
+
 
 class ScriptOutlineOutput(BaseModel):
     outline: str
@@ -652,8 +487,10 @@ class ScriptNovelOutput(BaseModel):
     novel_full: dict[str, str] = Field(validation_alias=AliasChoices("novel_full", "novel_script"))
 
 
-class ScriptDetailExpandOutput(BaseModel):
-    expanded_script: str = Field(validation_alias=AliasChoices("expanded_script", "script", "novel_full"))
+class ScriptCinematicAdaptOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    cinematic_script: str = Field(min_length=1)
 
 
 class ScriptNovelExtractModelOutput(BaseModel):
@@ -664,13 +501,19 @@ class ScriptNovelExtractOutput(BaseModel):
     novel_extract: dict[str, str]
 
 
+class ScriptWorldviewExtractOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    script_type: str
+
+
 class ClipSegment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    text: str
+    text: str = Field(min_length=1)
+    scene_id: str = Field(min_length=1)
     role_names: list[str] = Field(default_factory=list)
     prop_names: list[str] = Field(default_factory=list)
-    layout_names: list[str] = Field(default_factory=list)
     allocated_seconds: float | None = Field(default=None, gt=0)
     event_ids: list[str] = Field(default_factory=list)
     required_beats: list[str] = Field(default_factory=list)
@@ -706,8 +549,9 @@ class RoleAppearanceExtractItem(BaseModel):
     asset_role: Literal["base", "variant"] = Field(
         default="base",
         description=(
-            "base for an independently generated stable asset; variant for clothing, makeup, hairstyle, "
-            "injury, dirt, wet, disguise, or other visual states that reuse a reference asset."
+            "base for an independently generated stable asset; variant for a distinct age or time period, "
+            "clothing, makeup, hairstyle, injury, dirt, wet, disguise, or another reusable visual state "
+            "that preserves same-role identity through a reference asset."
         ),
     )
     reference_asset_name: str | None = Field(
@@ -752,8 +596,10 @@ class RoleAppearanceExtractItem(BaseModel):
         if self.asset_role == "variant":
             if not str(self.reference_asset_name or "").strip():
                 raise ValueError("variant role appearance requires reference_asset_name")
-            if not (self.valid_from_event or self.valid_to_event):
-                raise ValueError("variant role appearance requires an explicit event validity range")
+            if not (self.time_period or self.valid_from_event or self.valid_to_event):
+                raise ValueError(
+                    "variant role appearance requires a time_period or an explicit event validity range"
+                )
         return self
 
 
@@ -761,13 +607,44 @@ class RoleExtractItem(BaseModel):
     name: str
     role_tier: Literal["primary", "functional"] | str = "primary"
     aliases: list[str] = Field(default_factory=list)
-    episode_keys: list[str] = Field(default_factory=list)
+    episode_keys: list[str] = Field(
+        min_length=1,
+        description=(
+            "Existing episode_key markers from the supplied script in which this role or appearance is visible; "
+            "never invent an episode key."
+        ),
+    )
     source_chapters: list[str] = Field(default_factory=list)
     brief: str | None = None
     appearance_notes: list[str] = Field(default_factory=list)
     appearance_assets: list[RoleAppearanceExtractItem] = Field(default_factory=list)
     has_dialogue: bool = False
     visual_reuse_required: bool = False
+
+    @model_validator(mode="after")
+    def validate_appearance_assets(self) -> "RoleExtractItem":
+        if not self.appearance_assets:
+            raise ValueError(
+                "role extraction requires at least one structured appearance asset, including a base asset"
+            )
+        if not any(str(asset.asset_role or "").strip().lower() == "base" for asset in self.appearance_assets):
+            raise ValueError("role extraction requires an explicit base appearance asset")
+        appearance_names = [str(asset.name or "").strip().casefold() for asset in self.appearance_assets]
+        if len(appearance_names) != len(set(appearance_names)):
+            raise ValueError("role appearance asset names must be unique within each role")
+        base_names = {
+            str(asset.name or "").strip().casefold()
+            for asset in self.appearance_assets
+            if str(asset.asset_role or "").strip().lower() == "base"
+        }
+        for asset in self.appearance_assets:
+            if str(asset.asset_role or "").strip().lower() == "variant":
+                reference_name = str(asset.reference_asset_name or "").strip().casefold()
+                if reference_name not in base_names:
+                    raise ValueError(
+                        f"role variant {asset.name} must reference an existing base appearance asset"
+                    )
+        return self
 
 
 
@@ -872,7 +749,35 @@ class PropExtractItem(BaseModel):
     episode_keys: list[str] = Field(default_factory=list)
     source_chapters: list[str] = Field(default_factory=list)
     owner_role_name: str | None = None
-    assets: list[PropAssetExtractItem] = Field(default_factory=list)
+    assets: list[PropAssetExtractItem] = Field(
+        min_length=1,
+        description=(
+            "Structured logical prop assets, not generated image files; "
+            "every prop must include at least one base asset."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_assets(self) -> "PropExtractItem":
+        if not self.assets:
+            raise ValueError(
+                "prop extraction requires at least one structured asset, including a base asset"
+            )
+        base_names = {
+            str(asset.name or "").strip()
+            for asset in self.assets
+            if asset.asset_role == "base"
+        }
+        if not base_names:
+            raise ValueError("prop extraction requires an explicit base asset")
+        for asset in self.assets:
+            if asset.asset_role == "variant":
+                reference_name = str(asset.reference_asset_name or "").strip()
+                if reference_name not in base_names:
+                    raise ValueError(
+                        f"prop variant {asset.name} must reference an existing base asset"
+                    )
+        return self
 
 
 class PropExtractOutput(BaseModel):
@@ -1012,7 +917,11 @@ class ImageAuditDimensionAssessment(BaseModel):
     score: float | None = Field(default=None, ge=0, le=10)
     severity: Literal["none", "minor", "major", "critical"] = "none"
     evidence: str = Field(min_length=1)
-    defect: str = ""
+    defect: str = Field(
+        description=(
+            "Concrete visible defect when score is below 10; use an empty string only when score is exactly 10."
+        )
+    )
     regions: list[ImageAuditRegion] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -1022,7 +931,10 @@ class ImageAuditDimensionAssessment(BaseModel):
         if not self.applicable and self.score is not None:
             raise ValueError("non-applicable image-audit dimensions require score=null")
         if self.applicable and self.score is not None and self.score < 10 and not self.defect.strip():
-            raise ValueError("every sub-perfect image-audit score requires a concrete defect")
+            raise ValueError(
+                "every sub-perfect image-audit score requires a concrete defect; "
+                "use defect=\"\" only when score is exactly 10"
+            )
         if self.severity in {"major", "critical"} and not self.regions:
             raise ValueError("major and critical image-audit defects require normalized regions")
         return self
@@ -1100,6 +1012,36 @@ class ShotSourceCoverage(BaseModel):
     end_text: str
     next_start_text: str | None = None
     note: str
+
+
+class ShotCharacterPlacement(BaseModel):
+    """A character's explicit blocking relative to stable scene anchors."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role_id: str = Field(min_length=1)
+    scene_position: str = Field(min_length=1)
+    screen_position: str = Field(min_length=1)
+    depth_layer: Literal["foreground", "midground", "background"]
+    body_facing: str = Field(min_length=1)
+    gaze_target: str | None = None
+    pose: str = Field(min_length=1)
+
+
+class ShotCameraSpecification(BaseModel):
+    """A camera placement that can be drawn onto a scene spatial anchor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scene_position: str = Field(min_length=1)
+    target: str = Field(min_length=1)
+    shooting_angle: str = Field(min_length=1)
+    shot_size: str = Field(min_length=1)
+    camera_height_m: float = Field(gt=0, le=20)
+    pitch_degrees: float = Field(ge=-90, le=90)
+    field_of_view_degrees: float = Field(gt=1, lt=180)
+    focal_length_mm: float = Field(ge=8, le=600)
+    movement: str = Field(min_length=1)
 
 
 class ShotVideoInput(BaseModel):
@@ -1189,9 +1131,11 @@ class ShotManifestItem(BaseModel):
     video_usage: dict[str, Any] = Field(default_factory=dict)
     video_raw_response: dict[str, Any] = Field(default_factory=dict)
     solidified_asset_ids: list[str] = Field(default_factory=list)
-    contract_version: Literal[2] = 2
+    contract_version: Literal[3] = 3
     gate_results: list[GateResult] = Field(default_factory=list)
     entity_state_snapshot: list[ShotEntityState] = Field(default_factory=list)
+    character_placements: list[ShotCharacterPlacement] = Field(default_factory=list)
+    camera: ShotCameraSpecification | None = None
     reference_budget: int | None = None
     text_overlay_spec: OverlayTextSpec | None = None
     input_fingerprints: dict[str, str] = Field(default_factory=dict)
@@ -1214,7 +1158,7 @@ class ShotManifestEpisodeOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     episode_key: str
-    schema_version: Literal[5] = 5
+    schema_version: Literal[6] = 6
     shots: list[ShotManifestItem] = Field(default_factory=list)
     gate_results: list[GateResult] = Field(default_factory=list)
     ready_for_video: bool = False
@@ -1223,78 +1167,235 @@ class ShotManifestEpisodeOutput(BaseModel):
 class ClipToShotsModelItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    shot_description: str
-    narrative_angle: str
-    opening_state: str
+    video_prompt: str = Field(min_length=1)
     ref_ids: list[str] = Field(default_factory=list)
-    video_prompt: str
-    duration_seconds: int = Field(ge=3, le=15)
-    entity_states: list[ShotEntityState] = Field(default_factory=list)
-    dialogue_lines: list[DialogueLine] = Field(default_factory=list)
-    overlay_text_spec: OverlayTextSpec | None = None
-    allowed_props: list[str] = Field(default_factory=list)
+    duration_seconds: int = Field(ge=1, le=15)
 
 
-class ClipToShotsModelOutput(RootModel[dict[str, ClipToShotsModelItem]]):
-    pass
+class ClipToShotsModelOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shots: list[ClipToShotsModelItem] = Field(min_length=1)
 
 
 class ShotPlanItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    shot_id: str
-    clip_id: str
+    shot_id: str = Field(min_length=1)
+    clip_id: str = Field(min_length=1)
+    scene_id: str = Field(min_length=1)
     clip_index: int
     shot_index_in_clip: int
     episode_shot_index: int
-    shot_description: str
-    narrative_angle: str
-    opening_state: str
     ref_ids: list[str] = Field(default_factory=list)
-    video_prompt: str
-    duration_seconds: int = Field(ge=3, le=15)
-    dialogue_lines: list[DialogueLine] = Field(default_factory=list)
-    dialogue: list[str] = Field(default_factory=list, description="Derived display-only dialogue text")
-    duration_budget: float | None = Field(default=None, gt=0)
-    event_ids: list[str] = Field(default_factory=list)
-    coverage_type: str | None = None
-    entity_states: list[ShotEntityState] = Field(default_factory=list)
-    allowed_props: list[str] = Field(default_factory=list)
-    reference_budget: int | None = Field(default=None, ge=1)
-    overlay_text_spec: OverlayTextSpec | None = None
-
-    @model_validator(mode="after")
-    def derive_legacy_display_fields(self) -> "ShotPlanItem":
-        expected = [line.text for line in self.dialogue_lines]
-        if self.dialogue and self.dialogue != expected:
-            raise ValueError("dialogue is display-only and must match dialogue_lines text")
-        self.dialogue = expected
-        return self
+    video_prompt: str = Field(min_length=1)
+    duration_seconds: int = Field(ge=1, le=15)
 
 
 class ClipShotPlan(BaseModel):
-    clip_id: str
+    model_config = ConfigDict(extra="forbid")
+
+    clip_id: str = Field(min_length=1)
     clip_index: int
-    shots: list[ShotPlanItem] = Field(default_factory=list)
+    scene_id: str = Field(min_length=1)
+    shots: list[ShotPlanItem] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_single_scene(self) -> "ClipShotPlan":
+        mismatched = [shot.shot_id for shot in self.shots if shot.scene_id != self.scene_id]
+        if mismatched:
+            raise ValueError(
+                f"all shots in clip {self.clip_id} must use scene {self.scene_id}; "
+                f"mismatched shots: {', '.join(mismatched)}"
+            )
+        return self
 
 
 class ClipToShotsEpisodeOutput(BaseModel):
     episode_key: str
     clips: list[ClipShotPlan] = Field(default_factory=list)
-    target_duration_seconds: float | None = None
-    total_duration_seconds: float | None = None
-    duration_gate_status: Literal["accepted", "rejected"] | None = None
 
 
 class ClipToShotsOutput(BaseModel):
     episodes: list[ClipToShotsEpisodeOutput] = Field(default_factory=list)
 
 
+class SceneMultiviewViewModelItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    view_index: int = Field(ge=1, le=4)
+    camera_description: str = Field(min_length=1)
+    visible_anchors: list[str] = Field(default_factory=list)
+
+
+class SceneMultiviewAssignmentModelItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shot_index: int = Field(ge=1)
+    primary_view_index: int = Field(ge=1, le=4)
+    secondary_view_indices: list[int] = Field(default_factory=list, max_length=1)
+
+
+class SceneMultiviewPlanModelOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    views: list[SceneMultiviewViewModelItem] = Field(min_length=4, max_length=4)
+    assignments: list[SceneMultiviewAssignmentModelItem] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_view_indices(self) -> "SceneMultiviewPlanModelOutput":
+        indices = [view.view_index for view in self.views]
+        if len(set(indices)) != 4 or set(indices) != {1, 2, 3, 4}:
+            raise ValueError("scene multiview plan must contain unique view_index values 1, 2, 3, 4")
+        return self
+
+
+class SceneMultiviewViewPlanItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    view_id: str = Field(min_length=1)
+    view_index: int = Field(ge=1, le=4)
+    camera_description: str = Field(min_length=1)
+    visible_anchors: list[str] = Field(default_factory=list)
+    shot_ids: list[str] = Field(default_factory=list)
+
+
+class SceneMultiviewShotAssignment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shot_id: str = Field(min_length=1)
+    primary_view_id: str = Field(min_length=1)
+    secondary_view_ids: list[str] = Field(default_factory=list, max_length=1)
+
+
+class SceneMultiviewPlanItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str = Field(min_length=1)
+    scene_id: str = Field(min_length=1)
+    layout_id: str = Field(min_length=1)
+    views: list[SceneMultiviewViewPlanItem] = Field(min_length=4, max_length=4)
+    assignments: list[SceneMultiviewShotAssignment] = Field(min_length=1)
+    fingerprint: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_reusable_package(self) -> "SceneMultiviewPlanItem":
+        view_indices = [view.view_index for view in self.views]
+        if len(set(view_indices)) != 4 or set(view_indices) != {1, 2, 3, 4}:
+            raise ValueError("scene multiview package must contain unique view_index values 1, 2, 3, 4")
+
+        view_ids = [view.view_id for view in self.views]
+        if len(set(view_ids)) != 4:
+            raise ValueError("scene multiview package must contain exactly four unique view_id values")
+        valid_view_ids = set(view_ids)
+
+        primary_view_by_shot: dict[str, str] = {}
+        for view in self.views:
+            if len(view.shot_ids) != len(set(view.shot_ids)):
+                raise ValueError(f"scene multiview view {view.view_id} contains duplicate shot_ids")
+            for shot_id in view.shot_ids:
+                if shot_id in primary_view_by_shot:
+                    raise ValueError(f"scene multiview shot {shot_id} is planned in multiple primary views")
+                primary_view_by_shot[shot_id] = view.view_id
+
+        assignment_shot_ids = [assignment.shot_id for assignment in self.assignments]
+        if len(assignment_shot_ids) != len(set(assignment_shot_ids)):
+            raise ValueError("scene multiview assignments must contain unique shot_id values")
+        if set(assignment_shot_ids) != set(primary_view_by_shot):
+            raise ValueError("scene multiview assignments must cover every planned shot exactly once")
+
+        for assignment in self.assignments:
+            if assignment.primary_view_id not in valid_view_ids:
+                raise ValueError(
+                    f"scene multiview assignment for {assignment.shot_id} references an unknown primary view"
+                )
+            if primary_view_by_shot[assignment.shot_id] != assignment.primary_view_id:
+                raise ValueError(
+                    f"scene multiview assignment for {assignment.shot_id} does not match its planned primary view"
+                )
+            secondary_ids = assignment.secondary_view_ids
+            if (
+                len(secondary_ids) != len(set(secondary_ids))
+                or assignment.primary_view_id in secondary_ids
+                or any(view_id not in valid_view_ids for view_id in secondary_ids)
+            ):
+                raise ValueError(
+                    f"scene multiview assignment for {assignment.shot_id} has invalid secondary views"
+                )
+        return self
+
+
+class SceneMultiviewPlanEpisodeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str = Field(min_length=1)
+    scenes: list[SceneMultiviewPlanItem] = Field(default_factory=list)
+
+
+class SceneMultiviewPlanOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episodes: list[SceneMultiviewPlanEpisodeOutput] = Field(default_factory=list)
+
+
+class SceneMultiviewGeneratedViewItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    view_id: str = Field(min_length=1)
+    view_index: int = Field(ge=1, le=4)
+    camera_description: str = Field(min_length=1)
+    asset_path: str = Field(min_length=1)
+    fingerprint: str = Field(min_length=1)
+
+
+class SceneMultiviewImageGenerationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str = Field(min_length=1)
+    scene_id: str = Field(min_length=1)
+    layout_id: str = Field(min_length=1)
+    plan_fingerprint: str = Field(min_length=1)
+    prompt: str = Field(min_length=1)
+    fingerprint: str = Field(min_length=1)
+    board_asset_id: str = Field(min_length=1)
+    board_asset_path: str = Field(min_length=1)
+    board_asset_url: str | None = None
+    views: list[SceneMultiviewGeneratedViewItem] = Field(min_length=4, max_length=4)
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_reusable_views(self) -> "SceneMultiviewImageGenerationItem":
+        view_indices = [view.view_index for view in self.views]
+        if len(set(view_indices)) != 4 or set(view_indices) != {1, 2, 3, 4}:
+            raise ValueError("generated scene multiview package must contain unique view_index values 1, 2, 3, 4")
+        view_ids = [view.view_id for view in self.views]
+        if len(set(view_ids)) != 4:
+            raise ValueError("generated scene multiview package must contain exactly four unique view_id values")
+        return self
+
+
+class SceneMultiviewImageGenerationEpisodeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str = Field(min_length=1)
+    generated_scenes: list[SceneMultiviewImageGenerationItem] = Field(default_factory=list)
+
+
+class SceneMultiviewImageGenerationOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episodes: list[SceneMultiviewImageGenerationEpisodeOutput] = Field(default_factory=list)
+
+
 class LayoutBackgroundPromptModelItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt_content: str
-    shot_indices: list[int] = Field(min_length=1)
+    shot_index: int = Field(ge=1)
     description: str
 
 
@@ -1306,8 +1407,10 @@ class ShotBackgroundPromptItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     background_id: str
-    layout_id: str
-    shot_ids: list[str] = Field(min_length=1)
+    scene_id: str = Field(min_length=1)
+    shot_id: str = Field(min_length=1)
+    primary_view_id: str = Field(min_length=1)
+    secondary_view_ids: list[str] = Field(default_factory=list, max_length=1)
     description: str
     prompt: str
 
@@ -1327,8 +1430,13 @@ class ShotBackgroundImageGenerationItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     background_id: str
-    layout_id: str
-    shot_ids: list[str] = Field(min_length=1)
+    episode_key: str
+    clip_id: str
+    shot_id: str
+    scene_id: str
+    primary_view_id: str = Field(min_length=1)
+    view_ids: list[str] = Field(min_length=1, max_length=2)
+    scene_multiview_fingerprint: str = Field(min_length=1)
     description: str
     prompt: str
     fingerprint: str
@@ -1352,6 +1460,103 @@ class ShotBackgroundImageGenerationOutput(BaseModel):
     episodes: list[ShotBackgroundImageGenerationEpisodeOutput] = Field(default_factory=list)
 
 
+class ShotBlockingPlacement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    binding_id: str = Field(min_length=1)
+    center_x: float = Field(ge=0.0, le=1.0)
+    ground_y: float = Field(ge=0.0, le=1.0)
+    width: float = Field(gt=0.0, le=1.0)
+    height: float = Field(gt=0.0, le=1.0)
+    depth_rank: int = Field(ge=0)
+    facing_x: float = Field(ge=-1.0, le=1.0)
+    facing_y: float = Field(ge=-1.0, le=1.0)
+    gaze_target_x: float = Field(ge=0.0, le=1.0)
+    gaze_target_y: float = Field(ge=0.0, le=1.0)
+    facing: str = Field(min_length=1)
+    gaze: str = Field(min_length=1)
+    opening_pose: str = Field(min_length=1)
+    occludes_binding_ids: list[str] = Field(default_factory=list)
+
+
+class ShotBlockingPlanModelItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shot_index: int = Field(ge=1)
+    composition_intent: str = Field(min_length=1)
+    placements: list[ShotBlockingPlacement] = Field(default_factory=list)
+
+
+class ShotBlockingPlanModelOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shots: list[ShotBlockingPlanModelItem] = Field(min_length=1)
+
+
+class ShotBlockingBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    binding_id: str = Field(min_length=1)
+    ref_id: str = Field(min_length=1)
+    asset_kind: Literal["roleboard", "prop"]
+    label: str = Field(min_length=1)
+
+
+class ShotBlockingPlanItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str = Field(min_length=1)
+    clip_id: str = Field(min_length=1)
+    shot_id: str = Field(min_length=1)
+    scene_id: str = Field(min_length=1)
+    background_id: str = Field(min_length=1)
+    bindings: list[ShotBlockingBinding] = Field(default_factory=list)
+    placements: list[ShotBlockingPlacement] = Field(default_factory=list)
+    composition_intent: str = Field(min_length=1)
+    input_fingerprint: str = Field(min_length=1)
+    fingerprint: str = Field(min_length=1)
+
+
+class ShotBlockingPlanEpisodeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str = Field(min_length=1)
+    shots: list[ShotBlockingPlanItem] = Field(default_factory=list)
+
+
+class ShotBlockingPlanOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episodes: list[ShotBlockingPlanEpisodeOutput] = Field(default_factory=list)
+
+
+class ShotBlockingControlItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str = Field(min_length=1)
+    clip_id: str = Field(min_length=1)
+    shot_id: str = Field(min_length=1)
+    scene_id: str = Field(min_length=1)
+    background_id: str = Field(min_length=1)
+    plan_fingerprint: str = Field(min_length=1)
+    renderer_version: str = Field(min_length=1)
+    asset_path: str = Field(min_length=1)
+    fingerprint: str = Field(min_length=1)
+
+
+class ShotBlockingControlEpisodeOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str = Field(min_length=1)
+    generated_controls: list[ShotBlockingControlItem] = Field(default_factory=list)
+
+
+class ShotBlockingControlOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episodes: list[ShotBlockingControlEpisodeOutput] = Field(default_factory=list)
+
+
 class ShotKeyframePromptModelOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1367,8 +1572,13 @@ class ShotKeyframePromptItem(BaseModel):
     background_id: str
     background_asset_path: str
     background_asset_url: str | None = None
+    blocking_control_asset_path: str = Field(min_length=1)
+    blocking_fingerprint: str = Field(min_length=1)
     ref_ids: list[str] = Field(default_factory=list)
+    bindings: list[ShotBlockingBinding] = Field(default_factory=list)
+    stage_prompt: str = Field(min_length=1)
     prompt: str
+    input_fingerprint: str = Field(min_length=1)
     negative_prompt: str | None = None
     included_fields: list[str] = Field(default_factory=list)
     excluded_state_fields: list[str] = Field(default_factory=list)
@@ -1381,6 +1591,33 @@ class ShotKeyframePromptOutput(BaseModel):
     prompts: list[ShotKeyframePromptItem] = Field(default_factory=list)
 
 
+class ShotKeyframeStageGenerationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    episode_key: str = Field(min_length=1)
+    clip_id: str = Field(min_length=1)
+    shot_id: str = Field(min_length=1)
+    background_id: str = Field(min_length=1)
+    ref_ids: list[str] = Field(default_factory=list)
+    stage_asset_id: str = Field(min_length=1)
+    stage_asset_path: str = Field(min_length=1)
+    stage_asset_url: str | None = None
+    prompt: str = Field(min_length=1)
+    fingerprint: str = Field(min_length=1)
+    blocking_fingerprint: str = Field(min_length=1)
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    request_id: str | None = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class ShotKeyframeStageGenerationOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generated_stages: list[ShotKeyframeStageGenerationItem] = Field(default_factory=list)
+
+
 class ShotKeyframeImageGenerationItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1389,6 +1626,9 @@ class ShotKeyframeImageGenerationItem(BaseModel):
     shot_id: str
     background_id: str
     ref_ids: list[str] = Field(default_factory=list)
+    stage_asset_id: str = Field(min_length=1)
+    stage_fingerprint: str = Field(min_length=1)
+    blocking_fingerprint: str = Field(min_length=1)
     keyframe_asset_id: str
     keyframe_asset_path: str
     keyframe_asset_url: str | None = None

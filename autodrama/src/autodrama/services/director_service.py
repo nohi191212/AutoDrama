@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from autodrama.core.schemas import ClipToShotsModelOutput, KeyVisionPromptOutput, ProjectState
-from autodrama.providers.base import TextLLM
+from autodrama.providers.base import AssetRef, TextLLM
 from autodrama.utils.prompts import PromptStore
 
 
@@ -50,6 +50,16 @@ class DirectorService:
         return value
 
     @staticmethod
+    def key_vision_script_type(state: ProjectState) -> str:
+        value = str(state.metadata.get("script_type") or "").strip()
+        if not value or not value.isascii() or not any(char.isalpha() for char in value):
+            raise ValueError(
+                "key_vision_prompt requires non-empty ASCII English output from "
+                "script_worldview_extract in state.metadata['script_type']"
+            )
+        return value
+
+    @staticmethod
     def key_vision_director_brief(state: ProjectState) -> str:
         return str(state.metadata.get("key_vision_director_brief") or "").strip()
 
@@ -75,30 +85,61 @@ class DirectorService:
             else:
                 orientation = "landscape" if width > height else "portrait" if height > width else "square"
         return (
-            f"Configured image canvas: {canvas} ({orientation}). Deliver one continuous in-episode "
-            "cinematic frame, not promotional key art: no title space, advertising symmetry, central hero "
-            "coronation, montage, or split scene. The configured canvas overrides conflicting orientation "
-            "or poster language in softer creative guidance."
+            f"Configured image canvas: {canvas} ({orientation}). Deliver one canonical cinematic "
+            "world-establishing frame and reusable visual anchor, not a plot-specific episode frame or title "
+            "card: no title space, advertising symmetry, central hero coronation, montage, or split scene. "
+            "The configured canvas overrides conflicting orientation or poster language in softer creative "
+            "guidance."
         )
+
+    @staticmethod
+    def key_vision_audit_feedback(state: ProjectState) -> str:
+        """Render only prior visual defects that the next prompt can repair."""
+        raw_feedback = state.metadata.get("key_vision_audit_feedback")
+        if not isinstance(raw_feedback, list):
+            return "（没有上一轮主视觉审计拒绝原因。）"
+
+        sections: list[str] = []
+        for index, raw_item in enumerate(raw_feedback, start=1):
+            if not isinstance(raw_item, dict):
+                continue
+            raw_issues = raw_item.get("issues")
+            issues = [
+                str(issue).strip()
+                for issue in raw_issues
+                if str(issue).strip()
+            ] if isinstance(raw_issues, list) else []
+            rationale = str(raw_item.get("rationale") or "").strip()
+            if not issues and not rationale:
+                continue
+            lines = [f"反馈 {index}："]
+            lines.extend(f"- {issue}" for issue in issues)
+            if rationale:
+                lines.append(f"- 审计说明：{rationale}")
+            sections.append("\n".join(lines))
+        return "\n\n".join(sections) if sections else "（没有上一轮主视觉审计拒绝原因。）"
 
     async def key_vision_prompt(
         self,
         state: ProjectState,
         provider: TextLLM,
         *,
-        story_context: str | None = None,
         image_canvas: str | None = None,
     ) -> KeyVisionPromptOutput:
-        resolved_story_context = str(story_context or "").strip()
-        if not resolved_story_context:
-            raise ValueError("key_vision_prompt requires explicit story_context")
+        resolved_script_type = self.key_vision_script_type(state)
+        if not resolved_script_type:
+            raise ValueError(
+                "key_vision_prompt requires non-empty ASCII English output from "
+                "script_worldview_extract in state.metadata['script_type']"
+            )
         prompt = self.prompts.render(
             "key_vision_prompt",
-            story_context=resolved_story_context,
+            script_type=resolved_script_type,
             global_visual_style=self.visual_style_prompt(state),
             director_brief=self.key_vision_director_brief(state),
             render_contract=self.key_vision_render_contract(state, image_canvas),
             continuity_contract=self.key_vision_continuity_contract(state),
+            audit_feedback=self.key_vision_audit_feedback(state),
         )
         output = await provider.generate_json(
             prompt,
@@ -124,21 +165,22 @@ class DirectorService:
         *,
         audit_asset_name: str,
         clip_text: str,
-        asset_index: str,
+        scene_description: str,
+        scene_ref: AssetRef,
+        entity_index: str,
         previous_context: str,
         next_context: str,
-        available_seconds: float = 30.0,
-        reference_budget: int = 4,
+        foreground_reference_budget: int = 3,
     ) -> ClipToShotsModelOutput:
         """Plan provider-sized shots without leaking project/workflow metadata."""
         prompt = self.prompts.render(
             "clip_to_shots",
             clip_text=clip_text,
-            asset_index=asset_index,
+            scene_description=scene_description,
+            entity_index=entity_index,
             previous_context=previous_context,
             next_context=next_context,
-            available_seconds=f"{available_seconds:.1f}",
-            reference_budget=str(reference_budget),
+            foreground_reference_budget=str(max(0, foreground_reference_budget)),
         )
         return await provider.generate_json(
             prompt,
@@ -149,6 +191,7 @@ class DirectorService:
                 "project_id": state.project_id,
                 "prompt_asset_name": audit_asset_name,
             },
+            refs=[scene_ref],
         )
 
 

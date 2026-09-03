@@ -1,0 +1,49 @@
+{
+  "name": "roleboard-audit-system-v1",
+  "revision": "1.0",
+  "description": "Evaluation of a roleboard audit candidate against hidden gold labels and repair routes.",
+  "scale": {
+    "0": "absent, opposite, or unusable",
+    "2": "severe failure dominates",
+    "4": "major defects; fragments work",
+    "6": "broadly usable but visibly flawed",
+    "8": "strong production result with minor defects",
+    "10": "exceptional, specific, clean, and fully supported"
+  },
+  "policy": {
+    "scope_weights": {"audit": 1.0},
+    "scope_thresholds": {"audit": 8.5},
+    "minimum_records": {"audit": 24},
+    "minimum_distinct_roles": {"audit": 0},
+    "fatal_gate_policy": "ineligible",
+    "nonfatal_gate_cap": 7.0,
+    "require_evidence": true,
+    "classification_thresholds": {
+      "critical_false_accepts": 0,
+      "hard_gate_recall": 1.0,
+      "exact_action_accuracy": 0.85,
+      "macro_f1": 0.80,
+      "accepted_false_reject_rate": 0.10,
+      "cast_clone_recall": 1.0
+    }
+  },
+  "dimensions": [
+    {"id": "visible_evidence_grounding", "scope": "audit", "weight": 15, "question": "Are findings grounded in visible pixels and regions rather than prompt claims?"},
+    {"id": "rubric_coverage", "scope": "audit", "weight": 10, "question": "Does every required dimension appear exactly once with applicable, score, evidence, and severity?"},
+    {"id": "hard_gate_detection", "scope": "audit", "weight": 15, "question": "Are all gold hard-gate failures detected without N/A evasion?"},
+    {"id": "approval_correctness", "scope": "audit", "weight": 15, "question": "Does the deterministic accepted/rejected outcome match the gold label?"},
+    {"id": "severity_calibration", "scope": "audit", "weight": 8, "question": "Are cosmetic, local, major, and critical defects assigned consistent severity?"},
+    {"id": "repair_route_correctness", "scope": "audit", "weight": 12, "question": "Is accept, edit, reroll, regenerate_prompt, or block_upstream selected correctly?"},
+    {"id": "repair_instruction_quality", "scope": "audit", "weight": 10, "question": "Is repair text complete, local when editing, preservation-aware, and directly executable?"},
+    {"id": "cast_clone_detection", "scope": "audit", "weight": 8, "question": "Does the system detect repeated face, body, or costume bases in cast context?"},
+    {"id": "output_schema_actionability", "scope": "audit", "weight": 4, "question": "Does structured output parse and contain enough data for deterministic code?"},
+    {"id": "leakage_resistance", "scope": "audit", "weight": 3, "question": "Does the judge avoid inferring success from prompts, candidate names, prior scores, or expected labels?"}
+  ],
+  "gates": [
+    {"id": "no_critical_false_accept", "scope": "audit", "fatal": true, "description": "No gold critical defect is accepted."},
+    {"id": "complete_dimension_coverage", "scope": "audit", "fatal": true, "description": "Every required dimension is returned exactly once."},
+    {"id": "correct_hard_gate_outcome", "scope": "audit", "fatal": true, "description": "Every gold hard gate produces rejection."},
+    {"id": "correct_repair_class", "scope": "audit", "fatal": true, "description": "Global or upstream failures are not misrouted to cosmetic repair."},
+    {"id": "cast_clone_recall", "scope": "audit", "fatal": true, "description": "Every gold cast-clone case is detected."}
+  ]
+}
