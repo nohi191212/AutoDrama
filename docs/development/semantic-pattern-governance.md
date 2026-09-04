@@ -80,14 +80,6 @@ D:/miniforge3/envs/autodrama/python.exe scripts/check_semantic_patterns.py
 `PATTERN`、`KEYWORD`、`MARKER`、`REWRITE`、`PHRASE` 等规则键由运行时代码执行
 分类、删除、替换、打分或过滤。
 
-## 迁移工具隔离
-
-- `scripts/migrate_visual_contract_v2.py` 和 `scripts/migrate_shot_contract.py` 是独立 CLI。
-- 正常工作流不会导入或调用迁移脚本；旧版本输入会明确失败并提示迁移。
-- 两个 CLI 都支持 `--dry-run`，要求输出路径与输入路径不同，并打印版本转换。
-- 迁移只消费人工审阅的结构字段；无法确定的对白或人物外观不会通过关键词补全。
-- 写入模式保留输入文件，视觉迁移还会生成迁移前备份。
-
 ## 任务 5 验证记录
 
 收口验证使用仓库指定 Python 环境执行，日志保存到
