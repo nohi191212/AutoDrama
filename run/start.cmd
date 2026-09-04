@@ -9,6 +9,7 @@ set "PROJECT="
 set "WORKFLOW=pregen"
 set "PROVIDER_ARGS="
 set "UNTIL=shot_manifest_generation"
+set "UNTIL_EXPLICIT="
 set "ONLY="
 set "NODE_GROUP="
 set "EPISODES="
@@ -39,13 +40,13 @@ if "%~1"=="--workflow" (
 )
 if "%~1"=="--generation" (
   set "WORKFLOW=generation"
-  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=dynamic_asset_solidification"
+  if not defined UNTIL_EXPLICIT set "UNTIL=dynamic_asset_solidification"
   shift
   goto parse
 )
 if "%~1"=="--postgen" (
   set "WORKFLOW=postgen"
-  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=postgen_final_audit"
+  if not defined UNTIL_EXPLICIT set "UNTIL=postgen_final_audit"
   shift
   goto parse
 )
@@ -61,6 +62,7 @@ if "%~1"=="--fake" (
 )
 if "%~1"=="--until" (
   set "UNTIL=%~2"
+  set "UNTIL_EXPLICIT=1"
   shift
   shift
   goto parse
@@ -159,16 +161,19 @@ echo from config.yaml when available, otherwise D:\miniforge3\envs\autodrama\pyt
 echo.
 echo Defaults:
 echo   workflow: pregen
-echo   clip_manifest_generation
+echo   pregen stop node: shot_manifest_generation
+echo   generation stop node: dynamic_asset_solidification
+echo   postgen stop node: postgen_final_audit
 echo.
 echo Notes:
-echo   pregen writes roleboards, prop/layout assets, 12-panel storyboard sheets, and shot manifests through clip_manifest_generation.
+echo   pregen writes roleboards, prop/layout assets, spatial references, keyframes, and shot manifests through shot_manifest_generation.
 echo   ambient entity, role subject, role voice selection, and BGM nodes are optional and can be run with --only.
-echo   pregen visual/static chain is roleboard_prompt, roleboard_image_generation, prop/layout generation,
-echo   clip_prompt, clip_storyboard_prompt, clip_storyboard_image_generation, then clip_manifest_generation.
-echo   clip_storyboard_keyframe_generation remains available only as an optional manual node.
+echo   pregen shot chain is clip_segment, clip_to_shots, scene_multiview_plan, scene_multiview_image_generation,
+echo   layout_to_background_prompt, shot_background_image_generation, shot_blocking_plan,
+echo   shot_blocking_control_render, shot_keyframe_prompt, shot_keyframe_stage_generation,
+echo   shot_keyframe_image_generation, then shot_manifest_generation.
 echo   pregen --roles is supported with --only role_voice_select.
-echo   pregen --clips is supported with --only clip_storyboard_prompt, clip_storyboard_image_generation, clip_storyboard_keyframe_generation, or clip_manifest_generation.
+echo   pregen --clips is supported with --only clip_to_shots.
 echo   --node_group key_vision runs script_worldview_extract, key_vision_prompt, key_vision_image_generation, and key_vision_image_audit as one group.
 echo   --node_group key_vision_edit edits the current key vision with the latest project audit feedback, then audits it.
 echo   --node_group role_extract runs role_extract_primary, role_extract_functional, and role_finalize as one group.
@@ -176,7 +181,7 @@ echo   --node_group prop_layout_extract runs prop_extract, prop_finalize, layout
 echo   --node_group roleboard_gen runs roleboard_prompt, roleboard_image_generation, and roleboard_image_audit as one group; role_extract must be complete first.
 echo   --node_group prop_gen runs prop_prompt, prop_image_generation, and prop_image_audit as one group; prop_layout_extract must be complete first.
 echo   --node_group layout_gen runs layout_prompt, layout_image_generation, and layout_image_audit as one group; prop_layout_extract must be complete first.
-echo   generation starts with shot_dialogue_audio_generation, then clip_video_generation and solidification.
+echo   generation starts with shot_dialogue_audio_generation, then shot_video_generation, shot_video_audit, and dynamic_asset_solidification.
 echo   postgen audits source clips, edits with native audio, optionally aligns voices and subtitles, then audits the final video.
 goto end
 
@@ -202,10 +207,10 @@ exit /b 2
 
 :workflow_ok
 if /I "%WORKFLOW%"=="generation" (
-  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=dynamic_asset_solidification"
+  if not defined UNTIL_EXPLICIT set "UNTIL=dynamic_asset_solidification"
 )
 if /I "%WORKFLOW%"=="postgen" (
-  if "%UNTIL%"=="clip_manifest_generation" set "UNTIL=postgen_final_audit"
+  if not defined UNTIL_EXPLICIT set "UNTIL=postgen_final_audit"
 )
 
 set "AUTODRAMA_PYTHON="
