@@ -253,18 +253,6 @@ class StaticAssetNodeBase:
                 )
                 current_prompt = rewritten.prompt
 
-    def episode_stories(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
-        episode_keys = self.expected_episode_keys(state)
-        refs = state.script.novel_extract
-        if not any(refs.get(episode_key) for episode_key in episode_keys):
-            refs = state.script.novel_full
-        return self.script_contents.load_contents(
-            project_dir,
-            refs,
-            episode_keys,
-            label="episode_stories",
-        )
-
     def novel_full_contents(
         self,
         project_dir: Path,

@@ -32,7 +32,6 @@ from autodrama.core.schemas import (
     ShotBlockingPlanModelOutput,
     ShotKeyframePromptModelOutput,
     ScriptCinematicAdaptOutput,
-    ScriptNovelExtractModelOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
     ScriptWorldviewExtractOutput,
@@ -213,15 +212,6 @@ class FakeTextProvider:
                     "on stone and cloth, cool atmospheric fill, nuanced jade and charcoal color design, believable "
                     "materials, and refined atmospheric perspective. No screenplay scene, named character, plot event, "
                     "title, readable text, subtitle, logo, watermark, collage, split scene, crowd, or poster symmetry."
-                )
-            }
-        elif schema is ScriptNovelExtractModelOutput or node_name == "script_novel_extract":
-            episode_key = str(metadata.get("episode_key") or episode_keys[0])
-            data = {
-                "script_novel_extract": (
-                    f"{episode_key}，时间是雨夜到次日会议前后，地点在公司办公室和会议室。"
-                    "林舟发现合同关键页被调包，苏晚递来旧邮件截图作为证据。"
-                    "赵启持续施压，林舟保留证据并准备在会议上反击。"
                 )
             }
         elif schema is ClipSegmentOutput or node_name == "clip_segment":

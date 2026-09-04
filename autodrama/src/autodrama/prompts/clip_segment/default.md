@@ -27,9 +27,6 @@ Only segment source text and bind the characters, props, and one scene actually 
 Episode script:
 {{novel_full_this_episode}}
 
-Whole-series summary:
-{{novel_extract_all_episodes}}
-
 Character index for this episode:
 {{role_index}}
 

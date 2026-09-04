@@ -198,7 +198,6 @@ class RoleService:
         provider: TextLLM,
         *,
         role_item: RoleExtractItem,
-        role_novel_extract: dict[str, str],
         role_novel_full: dict[str, str],
         role_index: list[dict[str, object]],
         key_vision_asset: dict[str, object] | None = None,
@@ -212,7 +211,6 @@ class RoleService:
             {
                 "role_extract_item": self.format_json(role_item.model_dump(mode="json")),
                 "character_intro": self.role_character_intro(role_item),
-                "role_novel_extract": self.format_json(role_novel_extract),
                 "role_novel_full": self.format_json(role_novel_full),
                 "clip_segments": self.clip_segments_context(state, list(role_novel_full)),
                 "project_context": DirectorService.project_context(state, episode_keys=list(role_novel_full)),

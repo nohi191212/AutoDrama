@@ -15,12 +15,6 @@ nodes:
       reasoning_effort: xhigh
       temperature: 0.35
       response_format: json_object
-  script_novel_extract:
-    model: rightcode:gpt-5.6-terra
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.3
-      response_format: json_object
   script_worldview_extract:
     model: aibox:gpt-5.6-sol
     params:

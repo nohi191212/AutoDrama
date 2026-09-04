@@ -56,10 +56,8 @@ def test_pregen_runs_integrated_role_pipeline(tmp_path: Path) -> None:
     assert state.metadata["episode_duration_seconds"] == 45
     assert set(state.script.episode_outlines) == {"episode_001", "episode_002", "episode_003"}
     assert set(state.script.novel_full) == {"episode_001", "episode_002", "episode_003"}
-    assert set(state.script.novel_extract) == {"episode_001", "episode_002", "episode_003"}
     assert all(str(value).startswith("assets/json/scripts/outlines/") for value in state.script.episode_outlines.values())
     assert all(str(value).startswith("assets/json/scripts/novel_full/") for value in state.script.novel_full.values())
-    assert all(str(value).startswith("assets/json/scripts/novel_extract/") for value in state.script.novel_extract.values())
     assert "role_林舟".lower() in {key.lower() for key in state.roles}
     dialogue_roles = [role for role in state.roles.values() if role.has_dialogue]
     assert dialogue_roles

@@ -1,7 +1,7 @@
 import asyncio
 
 from autodrama.config import ProviderSettings, RuntimeSettings
-from autodrama.core.schemas import RoleboardPromptModelOutput, ScriptNovelExtractModelOutput
+from autodrama.core.schemas import RoleboardPromptModelOutput
 from autodrama.logging import setup_logging
 from autodrama.providers.deepseek.text.deepseek import DeepSeekTextProvider
 
@@ -94,62 +94,3 @@ def test_deepseek_writes_prompt_and_output_detail_log(tmp_path, monkeypatch) -> 
     assert "roleboard_prompt" in content
     assert "RAW DEEPSEEK MESSAGE CONTENT" in content
     assert "林舟" in content
-
-
-def test_deepseek_repairs_invalid_json_response(tmp_path, monkeypatch) -> None:
-    calls = []
-    responses = [
-        '{"script_novel_extract":"第一集内容"',
-        '{"script_novel_extract":"第一集内容"}',
-    ]
-
-    class FakeCompletions:
-        async def create(self, **kwargs):
-            calls.append(kwargs)
-
-            class Message:
-                content = responses[len(calls) - 1]
-
-            class Choice:
-                message = Message()
-
-            class Response:
-                choices = [Choice()]
-
-            return Response()
-
-    class FakeChat:
-        completions = FakeCompletions()
-
-    class FakeAsyncOpenAI:
-        def __init__(self, **kwargs):
-            self.chat = FakeChat()
-
-    monkeypatch.setattr("autodrama.providers.deepseek.text.deepseek.AsyncOpenAI", FakeAsyncOpenAI)
-    setup_logging(tmp_path)
-    provider = DeepSeekTextProvider(
-        ProviderSettings(
-            api_key_env="sk-direct",
-            models={"text": "deepseek-v4-pro"},
-            options={"thinking_enabled": False},
-        ),
-        RuntimeSettings(),
-    )
-
-    output = asyncio.run(
-        provider.generate_json(
-            "请打磨剧本。",
-            ScriptNovelExtractModelOutput,
-            metadata={"node_name": "script_novel_extract", "project_id": "test_project"},
-        )
-    )
-
-    assert output.script_novel_extract == "第一集内容"
-    assert len(calls) == 2
-    assert "Return only the repaired JSON object" in calls[1]["messages"][1]["content"]
-
-    detail_log = tmp_path / "logs" / "pregen_detail.log"
-    content = detail_log.read_text(encoding="utf-8")
-    assert "DEEPSEEK RESPONSE PARSE ERROR" in content
-    assert "DEEPSEEK JSON REPAIR REQUEST" in content
-    assert "DEEPSEEK JSON REPAIR RESPONSE" in content

@@ -124,7 +124,6 @@ class ProjectLayout:
             project_dir / "assets" / "json" / "scripts",
             project_dir / "assets" / "json" / "scripts" / "outlines",
             project_dir / "assets" / "json" / "scripts" / "novel_full",
-            project_dir / "assets" / "json" / "scripts" / "novel_extract",
             project_dir / "assets" / "json" / "assets",
             project_dir / "assets" / "json" / "roles",
             project_dir / "assets" / "json" / "props",

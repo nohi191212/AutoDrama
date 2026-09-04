@@ -7,7 +7,6 @@ from autodrama.core.schemas import (
     ClipSegmentOutput,
     ProjectState,
     ScriptCinematicAdaptOutput,
-    ScriptNovelExtractModelOutput,
     ScriptNovelEpisodeOutput,
     ScriptOutlineOutput,
     ScriptWorldviewExtractOutput,
@@ -51,7 +50,6 @@ class ScriptService:
         for refs in (
             state.script.episode_outlines,
             state.script.novel_full,
-            state.script.novel_extract,
         ):
             keys = [
                 str(key)
@@ -107,29 +105,6 @@ class ScriptService:
             },
         )
 
-    async def script_novel_extract(
-        self,
-        state: ProjectState,
-        provider: TextLLM,
-        *,
-        episode_key: str,
-        script_novel_full: str,
-    ) -> ScriptNovelExtractModelOutput:
-        prompt = self.prompts.render(
-            "script_novel_extract",
-            script_novel_full=script_novel_full,
-        )
-        return await provider.generate_json(
-            prompt,
-            ScriptNovelExtractModelOutput,
-            temperature=0.5,
-            metadata={
-                "node_name": "script_novel_extract",
-                "project_id": state.project_id,
-                "episode_key": episode_key,
-            },
-        )
-
     async def script_worldview_extract(
         self,
         state: ProjectState,
@@ -158,7 +133,6 @@ class ScriptService:
         *,
         episode_key: str,
         novel_full_this_episode: str,
-        novel_extract_all_episodes: str,
         role_index: str,
         prop_index: str,
         scene_index: str,
@@ -177,7 +151,6 @@ class ScriptService:
             max_clip_seconds=max_clip_seconds,
             duration_reference_note=duration_reference_note,
             novel_full_this_episode=novel_full_this_episode,
-            novel_extract_all_episodes=novel_extract_all_episodes,
             role_index=role_index,
             prop_index=prop_index,
             scene_index=scene_index,

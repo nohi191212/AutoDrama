@@ -92,23 +92,6 @@ class RoleNodeBase:
             allow_missing=allow_missing,
         )
 
-    def novel_extract_contents(
-        self,
-        project_dir: Path,
-        state: ProjectState,
-        episode_keys: list[str] | None = None,
-        *,
-        allow_missing: bool = False,
-    ) -> dict[str, str]:
-        selected_keys = episode_keys or self.expected_episode_keys(state)
-        return self.script_contents.load_contents(
-            project_dir,
-            state.script.novel_extract,
-            selected_keys,
-            label="script_novel_extract.novel_extract",
-            allow_missing=allow_missing,
-        )
-
     def novel_full_context(
         self,
         project_dir: Path,
@@ -1185,7 +1168,6 @@ class RoleboardPromptNode(RoleNodeBase):
                 prompt_by_key[self._role_appearance_key(existing_item.role_name, existing_item.appearance_name)] = existing_item
 
         role_index = self._role_index_items(extract_output.roles)
-        role_novel_extract: dict[str, str] | None = None
         key_vision_asset = self._key_vision_asset_for_prompt(state)
         roleboard_image_context = self._roleboard_image_binding_context()
         prompt_variant = self._resolve_roleboard_prompt_variant(roleboard_image_context)
@@ -1215,8 +1197,6 @@ class RoleboardPromptNode(RoleNodeBase):
                     continue
 
                 episode_keys = self._appearance_episode_keys(extract_item, appearance_asset, state)
-                if role_novel_extract is None:
-                    role_novel_extract = self.novel_extract_contents(project_dir, state)
                 role_novel_full = self.novel_full_contents(project_dir, state, episode_keys)
                 self.logger.info(
                     "roleboard_prompt generating %s/%s from episodes=%s chapters=%s",
@@ -1229,7 +1209,6 @@ class RoleboardPromptNode(RoleNodeBase):
                     state,
                     provider,
                     role_item=extract_item,
-                    role_novel_extract=role_novel_extract,
                     role_novel_full=role_novel_full,
                     role_index=role_index,
                     key_vision_asset=key_vision_asset,

@@ -423,18 +423,6 @@ class PregenWorkflow:
             allow_missing=allow_missing,
         )
 
-    def _episode_stories(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
-        episode_keys = self._expected_episode_keys(state)
-        refs = state.script.novel_extract
-        if not any(refs.get(episode_key) for episode_key in episode_keys):
-            refs = state.script.novel_full
-        return self._load_script_contents(
-            project_dir,
-            refs,
-            episode_keys,
-            label="episode_stories",
-        )
-
     def _novel_full_contents(
         self,
         project_dir: Path,
@@ -1004,9 +992,6 @@ class PregenWorkflow:
 
     def _director_node_runner(self, node_name: str) -> DirectorNodeBase:
         return build_director_node_runners(self)[node_name]
-
-    async def _run_script_novel_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
-        return await self._script_node_runner("script_novel_extract").run(project_dir, state)
 
     async def _run_script_worldview_extract(self, project_dir: Path, state: ProjectState) -> ProjectState:
         return await self._script_node_runner("script_worldview_extract").run(project_dir, state)

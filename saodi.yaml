@@ -88,12 +88,6 @@ postgen:
     fail_on_reject: false
     max_output_tokens: 8192
 nodes:
-  script_novel_extract:
-    model: aibox:gemini-3.6-flash
-    params:
-      reasoning_effort: xhigh
-      temperature: 0.3
-      response_format: json_object
   script_worldview_extract:
     model: aibox:gpt-5.6-sol
     params:

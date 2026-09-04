@@ -122,7 +122,6 @@ class ProjectRepository:
                 raw_script=raw_script,
                 episode_outlines=initial_script_refs.copy(),
                 novel_full=initial_script_refs.copy(),
-                novel_extract=initial_script_refs.copy(),
             ),
             budget=BudgetState.model_validate(self.settings.budget.model_dump()),
             metadata={

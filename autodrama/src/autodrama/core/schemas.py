@@ -125,7 +125,6 @@ class ScriptBundle(BaseModel):
         default_factory=dict,
         validation_alias=AliasChoices("novel_full", "novel_script"),
     )
-    novel_extract: dict[str, ScriptContentRef] = Field(default_factory=dict)
 
 
 class RoleAudio(BaseModel):
@@ -436,14 +435,6 @@ class ScriptCinematicAdaptOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cinematic_script: str = Field(min_length=1)
-
-
-class ScriptNovelExtractModelOutput(BaseModel):
-    script_novel_extract: str
-
-
-class ScriptNovelExtractOutput(BaseModel):
-    novel_extract: dict[str, str]
 
 
 class ScriptWorldviewExtractOutput(BaseModel):

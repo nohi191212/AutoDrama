@@ -65,18 +65,6 @@ class VoiceNodeBase:
     def expected_episode_keys(self, state: ProjectState) -> list[str]:
         return self.script_service.state_episode_keys(state)
 
-    def episode_stories(self, project_dir: Path, state: ProjectState) -> dict[str, str]:
-        episode_keys = self.expected_episode_keys(state)
-        refs = state.script.novel_extract
-        if not any(refs.get(episode_key) for episode_key in episode_keys):
-            refs = state.script.novel_full
-        return self.script_contents.load_contents(
-            project_dir,
-            refs,
-            episode_keys,
-            label="episode_stories",
-        )
-
     def active_episode_keys(self, state: ProjectState) -> list[str]:
         context = getattr(self.workflow, "_run_context", None)
         has_selected_context = context is not None and getattr(context, "selected_episode_keys", None) is not None
