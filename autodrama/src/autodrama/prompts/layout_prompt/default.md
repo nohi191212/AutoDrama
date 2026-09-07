@@ -12,6 +12,25 @@ Unified visual direction:
 
 Return JSON that conforms to the supplied schema. Emit exactly one `layout_prompts` item for every input scene. Preserve `name`, `group`, `asset_role`, and `reference_asset_name` exactly.
 
+The top-level value must be an object, never a bare array. Its shape is:
+
+```json
+{
+  "layout_prompts": [
+    {
+      "name": "Example location",
+      "group": "example_group",
+      "asset_role": "base",
+      "reference_asset_name": null,
+      "prompt_type": "text_to_image",
+      "prompt": "A concise example scene prompt"
+    }
+  ]
+}
+```
+
+Use the example only to preserve the envelope and field names; replace every example value with the corresponding input data.
+
 - A base scene uses `prompt_type: "text_to_image"`.
 - A variant scene uses `prompt_type: "image_edit"` and references its declared base scene.
 - Every generated `prompt` must be written in English.
