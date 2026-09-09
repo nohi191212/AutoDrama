@@ -20,7 +20,6 @@ Keep one continuous location, one camera, one lighting system, and one clear foc
 
 Do not use named characters, recognizable screenplay protagonists, plot events, dialogue, scene extracts, flashbacks, titles, readable text, logos, watermarks, poster symmetry, collage, montage, split scenes, crowd scenes, generic character lineups, or unsupported details. Do not turn the image into a close-up portrait, a battle snapshot, or a decorative spectacle that hides the world. Do not make the figures tiny scale markers.
 
-Write:
 Translate genre into concrete visible people, buildings, equipment, and social conditions. Do not include "xianxia", "donghua", or "cyber-wuxia" as image-style cues. When the visual medium calls for photography, describe a camera photograph of real actors in practical costumes in a physically built location. Prefer natural skin, ordinary fabric, normal photographic detail, realistic exposure, and motivated soft fill on faces over production-art or hyper-detailed rendering language. Localize wear to contact points and exposed edges; retain intact surfaces and readable faces. Do not automatically combine heavy smog, universal wetness, deep shadows, and sharp reflections across the whole frame.
 
 Write:
