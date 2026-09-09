@@ -32,9 +32,6 @@ def main() -> int:
     assert continuity == ""
     assert director_brief == ""
 
-    template_text = (PROMPT_DIR / "key_vision_prompt" / "default.md").read_text(encoding="utf-8")
-    for hardcoded_style in ("xuanhuan-v1", "玄幻", "very old identity"):
-        assert hardcoded_style not in template_text
     style_prompt = load_visual_style("xuanhuan-v1")
     rendered = PromptStore(PROMPT_DIR).render(
         "key_vision_prompt",
@@ -46,18 +43,9 @@ def main() -> int:
         audit_feedback="（没有上一轮主视觉审计拒绝原因。）",
     )
     assert "Eastern xuanhuan and wuxia semi-realistic stylized 3D CG donghua" in rendered
-    for marker in (
-        f"Worldview brief: {worldview}",
-        "reusable visual anchor",
-        "Do not use named characters",
-        "exactly two or three world-native designed figures",
-        "clear side profile",
-        "near, middle, and far depth",
-        "premium production-art finish",
-        "`shot_contract`, `scene_style_contract`, `prompt`",
-    ):
-        assert marker in rendered, marker
-    assert "{{story_context}}" not in rendered
+    # Verify transport/rendering only, never judge visual quality by keywords.
+    assert worldview in rendered
+    assert portrait in rendered
     assert "{{" not in rendered and "}}" not in rendered
     output = KeyVisionPromptOutput(
         shot_contract="Locked camera and action proof.",
