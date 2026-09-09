@@ -120,7 +120,7 @@ if __name__ == "__main__":
     parser.add_argument("--config", default=str(ROOT / "fangu.yaml"))
     parser.add_argument("--project", default=str(ROOT / "outputs" / "fangu_0903"))
     parser.add_argument("--output", default=str(ROOT / ".tmp" / "key_vision_photo"))
-    parser.add_argument("--candidate", nargs="+", choices=["baseline", "a_scene", "b_camera", "c_film"],
+    parser.add_argument("--candidate", nargs="+", choices=["baseline", "a_scene", "b_camera", "c_film", "d_refined"],
                         default=["baseline", "a_scene", "b_camera", "c_film"])
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--dry-run", action="store_true", help="Render inputs locally; no API calls")
