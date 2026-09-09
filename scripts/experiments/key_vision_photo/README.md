@@ -1,5 +1,7 @@
 # Photographic key-vision comparison
 
+Results: [RESULTS.md](RESULTS.md). Seven images were generated; D (narrative + full photographic example) was selected and copied verbatim into production. Run `--candidate d_refined --repeat 3` for a fresh repeat. A-C remain test alternatives only, not production fallback paths. The production baseline template now means the promoted template; the original baseline is frozen in its initial experiment directory.
+
 Sources consulted 2026-09-09:
 
 - https://ai.google.dev/gemini-api/docs/image-generation — Photorealistic scenes template: "A photorealistic [type of shot] of a [subject description] in a [setting description]. [Description of the light]. Shot from a [camera angle] with a [lens type]." Candidate A adapts its concise scene-first construction.
