@@ -107,10 +107,10 @@ nodes:
       temperature: 0.45
       response_format: json_object
   key_vision_image_generation:
-    model: aibox:gemini-3-pro-image-preview
+    model: aibox:gpt-image-2-guan
     params:
-      aspectRatio: "16:9"
-      imageSize: "4K"
+      size: "3840x2160"
+      quality: high
   key_vision_edit:
     model: aibox:gpt-image-2-guan
     params:
